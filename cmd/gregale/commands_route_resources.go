@@ -155,7 +155,10 @@ func cmdAppScaleSuggest(slug string, args []string) int {
 		return appRouteSplitApply(client, slug, *since, response.Split)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(response))
+		if code := jsonOut(writeJSON(response)); code != 0 || !*apply {
+			return code
+		}
+		return 1 // --apply-split found nothing to apply
 	}
 	if response.Split == nil {
 		_, _ = fmt.Fprintf(osStdout, "No split suggested for %s over the last %s: no route holds most of its memory or CPU peaks while running in few minutes.\n", slug, *since)

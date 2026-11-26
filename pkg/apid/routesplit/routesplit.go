@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -38,6 +39,11 @@ type Store interface {
 // makes get the same validation, quotas, audit and notifications as ones a
 // customer makes through the API.
 type Host interface {
+	// ResourceAccount is the account apid acts as on app: for a company
+	// app the organization's resource account, not its creator. Every
+	// split step acts as it, so the rules and apps one step makes are the
+	// ones another step can see and remove.
+	ResourceAccount(ctx context.Context, app state.App) (state.Account, error)
 	// Suggest recomputes the app's split over the window; nil when none.
 	Suggest(ctx context.Context, acct state.Account, app state.App, window time.Duration) (*routeresources.Split, error)
 	// CreateApp creates the route's app beside source.
@@ -50,7 +56,7 @@ type Host interface {
 	AppHosts(ctx context.Context, app state.App) []string
 	// CreateRule and DeleteRule mutate edge rules.
 	CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem)
-	DeleteRule(ctx context.Context, acct state.Account, ruleID string) *api.Problem
+	DeleteRule(ctx context.Context, acct state.Account, app state.App, ruleID string) *api.Problem
 }
 
 // Service applies, advances and undoes splits.
@@ -121,7 +127,7 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 	if err != nil {
 		return state.RouteSplit{}, api.ErrCapacity("could not record the split")
 	}
-	created, prob := s.Host.CreateApp(ctx, acct, app, target, split.RouteRAMMB)
+	created, split, prob := s.createTarget(ctx, acct, app, split)
 	if prob != nil {
 		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not create the route's app: "+prob.Detail)
 		return state.RouteSplit{}, prob
@@ -150,6 +156,25 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 	}
 	s.log().Info("route split applied", "split", split.ID, "app", app.ID, "target", created.ID, "kind", split.Kind)
 	return split, nil
+}
+
+// createTarget creates the route's app, taking a suffixed name when another
+// creator took the chosen one first.
+func (s *Service) createTarget(ctx context.Context, acct state.Account, source state.App, split state.RouteSplit) (state.App, state.RouteSplit, *api.Problem) {
+	base := TargetSlug(source.Slug, split.PathGlob)
+	for attempt := 0; ; attempt++ {
+		created, prob := s.Host.CreateApp(ctx, acct, source, split.TargetSlug, split.RouteRAMMB)
+		if prob == nil || prob.Status != http.StatusConflict || attempt == 2 {
+			return created, split, prob
+		}
+		renamed := split
+		renamed.TargetSlug = withSuffix(base, randomSuffix())
+		next, err := s.Store.AdvanceRouteSplit(ctx, renamed, state.RouteSplitCreating)
+		if err != nil {
+			return state.App{}, split, prob
+		}
+		split = next
+	}
 }
 
 // Matches reports whether the request repeats the suggestion.
@@ -229,6 +254,10 @@ func (s *Service) targetSlug(ctx context.Context, slug, glob string) (string, er
 	base := TargetSlug(slug, glob)
 	name := base
 	for range 4 {
+		if api.IsReservedAppSlug(name) {
+			name = withSuffix(base, randomSuffix())
+			continue
+		}
 		_, err := s.Store.AppBySlug(ctx, name)
 		if errors.Is(err, state.ErrNotFound) {
 			return name, nil
@@ -307,9 +336,24 @@ func truncate(s string) string {
 }
 
 func (s *Service) deleteTarget(ctx context.Context, acct state.Account, app state.App) {
-	if prob := s.Host.DeleteApp(ctx, acct, app); prob != nil {
+	if prob := s.deleteApp(ctx, acct, app); prob != nil {
 		s.log().Warn("route split: could not delete the route's app", "app", app.ID, "detail", prob.Detail)
 	}
+}
+
+// deleteApp deletes an app the split made. A 404 counts as deleted only
+// when the app really is gone, so a refusal that reads as "no such app" (an
+// access check) never leaves a route's app running unnoticed.
+func (s *Service) deleteApp(ctx context.Context, acct state.Account, app state.App) *api.Problem {
+	prob := s.Host.DeleteApp(ctx, acct, app)
+	if prob == nil || prob.Status != http.StatusNotFound {
+		return prob
+	}
+	current, err := s.Store.AppByID(ctx, app.ID)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && current.Status == state.AppDeleted) {
+		return nil
+	}
+	return prob
 }
 
 // Response renders a split for the API.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -110,6 +111,33 @@ func routeSplits(t *testing.T, s contractTestStore) {
 	inFlight, err := s.InFlightRouteSplits(ctx, 10)
 	if err != nil || !containsSplit(inFlight, split.ID) {
 		t.Fatalf("in flight = %+v, %v", inFlight, err)
+	}
+
+	// One pass holds the split; a second cannot claim it until the first
+	// releases, and a release keeps updated_at, which the timeouts run on.
+	claimed, ok, err := s.ClaimRouteSplit(ctx, split, time.Now().Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if _, ok, err := s.ClaimRouteSplit(ctx, split, time.Now().Add(time.Minute)); err != nil || ok {
+		t.Fatalf("second claim: %v %v, want refused", ok, err)
+	}
+	if _, ok, err := s.ClaimRouteSplit(ctx, stale, time.Now().Add(time.Minute)); err != nil || ok {
+		t.Fatalf("claim in a stale phase: %v %v, want refused", ok, err)
+	}
+	if err := s.ReleaseRouteSplit(ctx, claimed); err != nil {
+		t.Fatal(err)
+	}
+	reclaimed, ok, err := s.ClaimRouteSplit(ctx, split, time.Now().Add(time.Minute))
+	if err != nil || !ok || !reclaimed.UpdatedAt.Equal(split.UpdatedAt) {
+		t.Fatalf("claim after release: %v %v, updated %v want %v", ok, err, reclaimed.UpdatedAt, split.UpdatedAt)
+	}
+	// A stale release (an earlier claim) leaves the live claim alone.
+	if err := s.ReleaseRouteSplit(ctx, claimed); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.ClaimRouteSplit(ctx, split, time.Now().Add(time.Minute)); err != nil || ok {
+		t.Fatalf("claim after a stale release: %v %v, want refused", ok, err)
 	}
 
 	rule := uuid.NewString()

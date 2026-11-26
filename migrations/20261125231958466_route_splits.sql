@@ -31,9 +31,13 @@ CREATE TABLE IF NOT EXISTS route_splits (
                          CHECK (phase IN ('creating', 'deploying', 'rule_live', 'done', 'rolled_back', 'undone')),
     warning              text NOT NULL DEFAULT '' CHECK (char_length(warning) <= 1024),
     error                text NOT NULL DEFAULT '' CHECK (char_length(error) <= 1024),
+    -- lease_until claims the row for one worker pass, so two apid replicas
+    -- never act on the same split at once.
+    lease_until          timestamptz,
     created_at           timestamptz NOT NULL DEFAULT now(),
-    updated_at           timestamptz NOT NULL DEFAULT now(),
-    CHECK (phase = 'creating' OR phase IN ('rolled_back', 'undone') OR target_app_id IS NOT NULL)
+    updated_at           timestamptz NOT NULL DEFAULT now()
+    -- target_app_id has no phase CHECK: deleting the route's app sets it to
+    -- NULL whatever phase the split is in.
 );
 
 -- One split in flight per source app.

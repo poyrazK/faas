@@ -173,3 +173,30 @@ func TestAppScaleApplySplit(t *testing.T) {
 		t.Fatalf("undo output:\n%s", out.String())
 	}
 }
+
+// --apply-split with nothing to apply fails in JSON mode too, so a script
+// never reads an exit 0 as an applied split.
+func TestAppScaleApplySplitWithoutSuggestionFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method+" "+r.URL.Path != "GET /v1/apps/shop/analytics/route-resources" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		main.WriteJSONTest(w, api.RouteResourcesResponse{Slug: "shop"})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	for _, args := range [][]string{
+		{"app", "scale", "shop", "--suggest", "--apply-split"},
+		{"app", "scale", "shop", "--suggest", "--apply-split", "--json"},
+	} {
+		_, _, restore := main.SwapIO(t)
+		code := main.Run(args)
+		restore()
+		if code != 1 {
+			t.Errorf("%v exit = %d, want 1", args, code)
+		}
+	}
+}

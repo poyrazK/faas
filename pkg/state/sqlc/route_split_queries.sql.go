@@ -13,19 +13,22 @@ import (
 
 const advanceRouteSplit = `-- name: AdvanceRouteSplit :one
 UPDATE route_splits
-   SET target_app_id = $1,
-       target_deployment_id = $2,
-       main_resized = $3,
-       edge_rule_ids = $4,
-       phase = $5,
-       warning = $6,
-       error = $7,
+   SET target_slug = $1,
+       target_app_id = $2,
+       target_deployment_id = $3,
+       main_resized = $4,
+       edge_rule_ids = $5,
+       phase = $6,
+       warning = $7,
+       error = $8,
+       lease_until = NULL,
        updated_at = now()
- WHERE id = $8 AND account_id = $9 AND phase = $10
-RETURNING id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, created_at, updated_at
+ WHERE id = $9 AND account_id = $10 AND phase = $11
+RETURNING id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at
 `
 
 type AdvanceRouteSplitParams struct {
+	TargetSlug         string
 	TargetAppID        pgtype.UUID
 	TargetDeploymentID pgtype.UUID
 	MainResized        bool
@@ -40,6 +43,7 @@ type AdvanceRouteSplitParams struct {
 
 func (q *Queries) AdvanceRouteSplit(ctx context.Context, db DBTX, arg AdvanceRouteSplitParams) (RouteSplit, error) {
 	row := db.QueryRow(ctx, advanceRouteSplit,
+		arg.TargetSlug,
 		arg.TargetAppID,
 		arg.TargetDeploymentID,
 		arg.MainResized,
@@ -71,6 +75,56 @@ func (q *Queries) AdvanceRouteSplit(ctx context.Context, db DBTX, arg AdvanceRou
 		&i.Phase,
 		&i.Warning,
 		&i.Error,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const claimRouteSplit = `-- name: ClaimRouteSplit :one
+UPDATE route_splits
+   SET lease_until = $1
+ WHERE id = $2 AND account_id = $3 AND phase = $4
+   AND (lease_until IS NULL OR lease_until < now())
+RETURNING id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at
+`
+
+type ClaimRouteSplitParams struct {
+	LeaseUntil pgtype.Timestamptz
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	Phase      string
+}
+
+func (q *Queries) ClaimRouteSplit(ctx context.Context, db DBTX, arg ClaimRouteSplitParams) (RouteSplit, error) {
+	row := db.QueryRow(ctx, claimRouteSplit,
+		arg.LeaseUntil,
+		arg.ID,
+		arg.AccountID,
+		arg.Phase,
+	)
+	var i RouteSplit
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.SourceAppID,
+		&i.TargetSlug,
+		&i.TargetAppID,
+		&i.TargetDeploymentID,
+		&i.Kind,
+		&i.Route,
+		&i.Method,
+		&i.PathGlob,
+		&i.RouteRamMb,
+		&i.MainRamMb,
+		&i.PreviousRamMb,
+		&i.MainResized,
+		&i.EdgeRuleIds,
+		&i.Phase,
+		&i.Warning,
+		&i.Error,
+		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -86,7 +140,7 @@ INSERT INTO route_splits (
     $1, $2, $3, $4, $5, $6, $7,
     $8, $9, $10
 )
-RETURNING id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, created_at, updated_at
+RETURNING id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at
 `
 
 type InsertRouteSplitParams struct {
@@ -137,6 +191,7 @@ func (q *Queries) InsertRouteSplit(ctx context.Context, db DBTX, arg InsertRoute
 		&i.Phase,
 		&i.Warning,
 		&i.Error,
+		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -144,7 +199,7 @@ func (q *Queries) InsertRouteSplit(ctx context.Context, db DBTX, arg InsertRoute
 }
 
 const listInFlightRouteSplits = `-- name: ListInFlightRouteSplits :many
-SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, created_at, updated_at FROM route_splits
+SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at FROM route_splits
  WHERE phase IN ('creating', 'deploying', 'rule_live')
  ORDER BY updated_at, id
  LIMIT $1
@@ -178,6 +233,7 @@ func (q *Queries) ListInFlightRouteSplits(ctx context.Context, db DBTX, rowLimit
 			&i.Phase,
 			&i.Warning,
 			&i.Error,
+			&i.LeaseUntil,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -192,7 +248,7 @@ func (q *Queries) ListInFlightRouteSplits(ctx context.Context, db DBTX, rowLimit
 }
 
 const listRouteSplitsForApp = `-- name: ListRouteSplitsForApp :many
-SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, created_at, updated_at FROM route_splits
+SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at FROM route_splits
  WHERE account_id = $1 AND source_app_id = $2
  ORDER BY created_at DESC, id DESC
  LIMIT $3
@@ -232,6 +288,7 @@ func (q *Queries) ListRouteSplitsForApp(ctx context.Context, db DBTX, arg ListRo
 			&i.Phase,
 			&i.Warning,
 			&i.Error,
+			&i.LeaseUntil,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -246,7 +303,7 @@ func (q *Queries) ListRouteSplitsForApp(ctx context.Context, db DBTX, arg ListRo
 }
 
 const readRouteSplit = `-- name: ReadRouteSplit :one
-SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, created_at, updated_at FROM route_splits WHERE id = $1 AND account_id = $2
+SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at FROM route_splits WHERE id = $1 AND account_id = $2
 `
 
 type ReadRouteSplitParams struct {
@@ -276,8 +333,27 @@ func (q *Queries) ReadRouteSplit(ctx context.Context, db DBTX, arg ReadRouteSpli
 		&i.Phase,
 		&i.Warning,
 		&i.Error,
+		&i.LeaseUntil,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const releaseRouteSplit = `-- name: ReleaseRouteSplit :exec
+UPDATE route_splits
+   SET lease_until = NULL
+ WHERE id = $1 AND account_id = $2 AND lease_until = $3
+`
+
+type ReleaseRouteSplitParams struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	LeaseUntil pgtype.Timestamptz
+}
+
+// Ends a pass's claim without touching updated_at, which the timeouts run on.
+func (q *Queries) ReleaseRouteSplit(ctx context.Context, db DBTX, arg ReleaseRouteSplitParams) error {
+	_, err := db.Exec(ctx, releaseRouteSplit, arg.ID, arg.AccountID, arg.LeaseUntil)
+	return err
 }

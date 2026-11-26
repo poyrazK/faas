@@ -28,13 +28,28 @@ SELECT * FROM route_splits
 
 -- name: AdvanceRouteSplit :one
 UPDATE route_splits
-   SET target_app_id = sqlc.narg(target_app_id),
+   SET target_slug = @target_slug,
+       target_app_id = sqlc.narg(target_app_id),
        target_deployment_id = sqlc.narg(target_deployment_id),
        main_resized = @main_resized,
        edge_rule_ids = @edge_rule_ids,
        phase = @phase,
        warning = @warning,
        error = @error,
+       lease_until = NULL,
        updated_at = now()
  WHERE id = @id AND account_id = @account_id AND phase = @from_phase
 RETURNING *;
+
+-- name: ClaimRouteSplit :one
+UPDATE route_splits
+   SET lease_until = @lease_until
+ WHERE id = @id AND account_id = @account_id AND phase = @phase
+   AND (lease_until IS NULL OR lease_until < now())
+RETURNING *;
+
+-- name: ReleaseRouteSplit :exec
+-- Ends a pass's claim without touching updated_at, which the timeouts run on.
+UPDATE route_splits
+   SET lease_until = NULL
+ WHERE id = @id AND account_id = @account_id AND lease_until = @lease_until;

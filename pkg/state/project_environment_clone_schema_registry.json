@@ -23082,6 +23082,7 @@
       "error",
       "id",
       "kind",
+      "lease_until",
       "main_ram_mb",
       "main_resized",
       "method",

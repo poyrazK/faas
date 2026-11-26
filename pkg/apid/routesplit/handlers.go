@@ -20,18 +20,28 @@ type Handlers struct {
 	Enabled func(acct state.Account) bool
 }
 
-func (h Handlers) app(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool) {
+func (h Handlers) app(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.Account, bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	if h.Enabled != nil && !h.Enabled(acct) {
 		httpkit.NotFound(w, "route resource peaks are not enabled for this account")
-		return state.App{}, false
+		return state.App{}, state.Account{}, false
 	}
-	return h.LoadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := h.LoadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return state.App{}, state.Account{}, false
+	}
+	// Every step acts as the app's resource account, as the worker does.
+	owner, err := h.Service.Host.ResourceAccount(r.Context(), app)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the app's account"))
+		return state.App{}, state.Account{}, false
+	}
+	return app, owner, true
 }
 
 // Create is POST /v1/apps/{slug}/route-splits.
 func (h Handlers) Create(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := h.app(w, r, acct)
+	app, owner, ok := h.app(w, r, acct)
 	if !ok {
 		return
 	}
@@ -44,7 +54,7 @@ func (h Handlers) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, api.ErrValidation("kind must be memory or cpu"))
 		return
 	}
-	split, prob := h.Service.Apply(r.Context(), acct, app, req)
+	split, prob := h.Service.Apply(r.Context(), owner, app, req)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -54,7 +64,7 @@ func (h Handlers) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 
 // List is GET /v1/apps/{slug}/route-splits.
 func (h Handlers) List(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, ok := h.app(w, r, acct)
+	app, _, ok := h.app(w, r, acct)
 	if !ok {
 		return
 	}
@@ -72,7 +82,7 @@ func (h Handlers) List(w http.ResponseWriter, r *http.Request, acct state.Accoun
 
 // Get is GET /v1/apps/{slug}/route-splits/{id}.
 func (h Handlers) Get(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, split, ok := h.split(w, r, acct)
+	app, _, split, ok := h.split(w, r, acct)
 	if !ok {
 		return
 	}
@@ -81,11 +91,11 @@ func (h Handlers) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 
 // Undo is DELETE /v1/apps/{slug}/route-splits/{id}.
 func (h Handlers) Undo(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, split, ok := h.split(w, r, acct)
+	app, owner, split, ok := h.split(w, r, acct)
 	if !ok {
 		return
 	}
-	out, prob := h.Service.Undo(r.Context(), acct, app, split)
+	out, prob := h.Service.Undo(r.Context(), owner, app, split)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -93,19 +103,19 @@ func (h Handlers) Undo(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	httpkit.WriteJSON(w, http.StatusOK, Response(out, app.Slug))
 }
 
-func (h Handlers) split(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.RouteSplit, bool) {
-	app, ok := h.app(w, r, acct)
+func (h Handlers) split(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.Account, state.RouteSplit, bool) {
+	app, owner, ok := h.app(w, r, acct)
 	if !ok {
-		return state.App{}, state.RouteSplit{}, false
+		return state.App{}, state.Account{}, state.RouteSplit{}, false
 	}
 	split, err := h.Service.Store.RouteSplit(r.Context(), app.AccountID, r.PathValue("id"))
 	if errors.Is(err, state.ErrNotFound) || (err == nil && split.SourceAppID != app.ID) {
 		httpkit.NotFound(w, "no such route split")
-		return state.App{}, state.RouteSplit{}, false
+		return state.App{}, state.Account{}, state.RouteSplit{}, false
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read the split"))
-		return state.App{}, state.RouteSplit{}, false
+		return state.App{}, state.Account{}, state.RouteSplit{}, false
 	}
-	return app, split, true
+	return app, owner, split, true
 }

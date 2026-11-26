@@ -2,7 +2,9 @@ package routesplit_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,11 +18,19 @@ import (
 
 // fakeHost records what the split asked apid to do and acts on the store.
 type fakeHost struct {
-	store   *state.MemStore
-	split   *routeresources.Split
-	resized map[string]int
-	deleted map[string]bool
-	ruleErr *api.Problem
+	store     *state.MemStore
+	split     *routeresources.Split
+	resized   map[string]int
+	deleted   map[string]bool
+	ruleErr   *api.Problem
+	resizeErr *api.Problem
+	// deleteNotFound answers 404 without deleting, as a refused access
+	// check does.
+	deleteNotFound bool
+}
+
+func (h *fakeHost) ResourceAccount(ctx context.Context, app state.App) (state.Account, error) {
+	return h.store.AccountByID(ctx, app.AccountID)
 }
 
 func (h *fakeHost) Suggest(context.Context, state.Account, state.App, time.Duration) (*routeresources.Split, error) {
@@ -29,6 +39,9 @@ func (h *fakeHost) Suggest(context.Context, state.Account, state.App, time.Durat
 
 func (h *fakeHost) CreateApp(ctx context.Context, acct state.Account, source state.App, slug string, ramMB int) (state.App, *api.Problem) {
 	app, err := h.store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: slug, Status: state.AppActive, Type: source.Type, RAMMB: ramMB, MaxConcurrency: 1})
+	if errors.Is(err, state.ErrConflict) {
+		return state.App{}, api.NewProblem(http.StatusConflict, "slug_taken", "Conflict", err.Error())
+	}
 	if err != nil {
 		return state.App{}, api.ErrCapacity(err.Error())
 	}
@@ -36,11 +49,17 @@ func (h *fakeHost) CreateApp(ctx context.Context, acct state.Account, source sta
 }
 
 func (h *fakeHost) ResizeApp(_ context.Context, _ state.Account, app state.App, ramMB int) *api.Problem {
+	if h.resizeErr != nil {
+		return h.resizeErr
+	}
 	h.resized[app.ID] = ramMB
 	return nil
 }
 
 func (h *fakeHost) DeleteApp(ctx context.Context, _ state.Account, app state.App) *api.Problem {
+	if h.deleteNotFound {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	}
 	h.deleted[app.ID] = true
 	if err := h.store.DeleteApp(ctx, app.ID); err != nil {
 		return api.ErrCapacity(err.Error())
@@ -66,7 +85,7 @@ func (h *fakeHost) CreateRule(ctx context.Context, acct state.Account, app state
 	return rule.ID, nil
 }
 
-func (h *fakeHost) DeleteRule(ctx context.Context, _ state.Account, ruleID string) *api.Problem {
+func (h *fakeHost) DeleteRule(ctx context.Context, _ state.Account, _ state.App, ruleID string) *api.Problem {
 	if err := h.store.DeleteEdgeRule(ctx, ruleID); err != nil {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", err.Error())
 	}
@@ -256,6 +275,14 @@ func (s bindingStore) AdvanceRouteSplit(ctx context.Context, split state.RouteSp
 	return s.Mem.AdvanceRouteSplit(ctx, split, from)
 }
 
+func (s bindingStore) ClaimRouteSplit(ctx context.Context, split state.RouteSplit, until time.Time) (state.RouteSplit, bool, error) {
+	return s.Mem.ClaimRouteSplit(ctx, split, until)
+}
+
+func (s bindingStore) ReleaseRouteSplit(ctx context.Context, claimed state.RouteSplit) error {
+	return s.Mem.ReleaseRouteSplit(ctx, claimed)
+}
+
 func (s bindingStore) SeedRouteSplitTarget(ctx context.Context, seed state.RouteSplitSeed) (state.Deployment, error) {
 	return s.Mem.SeedRouteSplitTarget(ctx, seed)
 }
@@ -311,6 +338,125 @@ func TestRuleFailureRollsBack(t *testing.T) {
 	got := f.read(t, split.ID)
 	if got.Phase != state.RouteSplitRolledBack || !f.host.deleted[split.TargetAppID] || len(f.host.resized) != 0 {
 		t.Fatalf("split after a rule failure = %+v", got)
+	}
+}
+
+// A split another pass holds is left alone (two apid replicas).
+func TestClaimFencesConcurrentPasses(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	held, ok, err := f.store.ClaimRouteSplit(f.ctx, split, time.Now().Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDeploying {
+		t.Fatalf("a held split moved: %+v", got)
+	}
+	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID); len(rules) != 0 {
+		t.Fatalf("a held split made rules: %+v", rules)
+	}
+	if err := f.store.ReleaseRouteSplit(f.ctx, held); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitRuleLive {
+		t.Fatalf("after release the split is %+v", got)
+	}
+}
+
+// A transient resize failure is retried on the next pass rather than
+// finishing the split with a warning.
+func TestResizeRetriesTransientFailures(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.host.resizeErr = api.ErrCapacity("store briefly unavailable")
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitRuleLive {
+		t.Fatalf("a transient resize failure finished the split: %+v", got)
+	}
+	f.host.resizeErr = nil
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDone || !got.MainResized || got.Warning != "" {
+		t.Fatalf("retried resize = %+v", got)
+	}
+}
+
+// Past the retry window the split finishes with a warning, the route moved.
+func TestResizeGivesUpAfterWindow(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.host.resizeErr = api.ErrCapacity("store down")
+	f.clock = f.clock.Add(api.RouteSplitResizeRetryWindow + time.Minute)
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDone || got.MainResized || got.Warning == "" {
+		t.Fatalf("split after the window = %+v", got)
+	}
+}
+
+// Undo never ends undone while the route's app survives: a 404 from the
+// delete counts only when the app is really gone.
+func TestUndoKeepsSplitWhenTargetSurvives(t *testing.T) {
+	f := newFixture(t)
+	f.host.split = &routeresources.Split{Kind: routeresources.SplitCPU, Route: "POST /render", Method: "POST", PathGlob: "/render",
+		RouteRAMMB: 1024, CurrentRAMMB: 1024, MainRAMMB: 1024}
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.svc.Step(f.ctx)
+	done := f.read(t, split.ID)
+	if done.Phase != state.RouteSplitDone {
+		t.Fatalf("split = %+v", done)
+	}
+	f.host.deleteNotFound = true
+	if _, prob := f.svc.Undo(f.ctx, f.acct, f.source, done); prob == nil {
+		t.Fatal("undo succeeded while the route's app survived")
+	}
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDone {
+		t.Fatalf("split after a failed undo = %+v", got)
+	}
+}
+
+// A taken slug gets a suffix instead of failing the split.
+func TestApplySuffixesATakenSlug(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.CreateApp(f.ctx, state.App{AccountID: f.acct.ID, Slug: "shop-exports", Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1}); err != nil {
+		t.Fatal(err)
+	}
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if split.TargetSlug == "shop-exports" || !strings.HasPrefix(split.TargetSlug, "shop-exports-") {
+		t.Fatalf("target slug = %q", split.TargetSlug)
+	}
+	if got := f.read(t, split.ID); got.TargetSlug != split.TargetSlug {
+		t.Fatalf("recorded slug %q, returned %q", got.TargetSlug, split.TargetSlug)
 	}
 }
 

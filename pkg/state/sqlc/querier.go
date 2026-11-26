@@ -643,6 +643,7 @@ type Querier interface {
 	// (ADR-20261024154324).
 	ClaimRouteInsightEvaluation(ctx context.Context, db DBTX, arg ClaimRouteInsightEvaluationParams) (int64, error)
 	ClaimRouteProbeRound(ctx context.Context, db DBTX, arg ClaimRouteProbeRoundParams) (string, error)
+	ClaimRouteSplit(ctx context.Context, db DBTX, arg ClaimRouteSplitParams) (RouteSplit, error)
 	ClaimRuntimeUpgradeOperation(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeOperation, error)
 	ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error)
 	ClaimScenarioWorkerFault(ctx context.Context, db DBTX, id string) (int64, error)
@@ -7731,6 +7732,8 @@ type Querier interface {
 	ReleaseQueueLeaseInvocation(ctx context.Context, db DBTX, arg ReleaseQueueLeaseInvocationParams) (int64, error)
 	ReleaseQueuedInvocation(ctx context.Context, db DBTX, arg ReleaseQueuedInvocationParams) error
 	ReleaseQueuedWorkflowRun(ctx context.Context, db DBTX, arg ReleaseQueuedWorkflowRunParams) error
+	// Ends a pass's claim without touching updated_at, which the timeouts run on.
+	ReleaseRouteSplit(ctx context.Context, db DBTX, arg ReleaseRouteSplitParams) error
 	// ADR-20261023181931 amendment: the release task of the deployment that
 	// replaced a rollback target, which ADR-1448 does not count as crossed
 	// because it started while the target served. It is the newest started

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/routepeaks"
 	"github.com/onebox-faas/faas/pkg/apid/routesplit"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -75,6 +76,13 @@ func (s *server) undoRouteSplit(w http.ResponseWriter, r *http.Request, acct sta
 
 type routeSplitHost struct{ s *server }
 
+// ResourceAccount is the account the app's storage and quota belong to.
+// Every step acts as it, under a grant for the one app it addresses, so an
+// org member's request never acts on an app its own grant does not name.
+func (h routeSplitHost) ResourceAccount(ctx context.Context, app state.App) (state.Account, error) {
+	return state.AppResourceAccount(ctx, h.s.store, app)
+}
+
 func (h routeSplitHost) Suggest(ctx context.Context, _ state.Account, app state.App, window time.Duration) (*routeresources.Split, error) {
 	store, ok := h.s.store.(state.RouteResourceStore)
 	appID, err := uuid.Parse(app.ID)
@@ -108,13 +116,13 @@ func (h routeSplitHost) CreateApp(ctx context.Context, acct state.Account, sourc
 }
 
 func (h routeSplitHost) ResizeApp(ctx context.Context, acct state.Account, app state.App, ramMB int) *api.Problem {
-	rec := h.serve(ctx, http.MethodPatch, "/v1/apps/"+app.Slug, map[string]int{"ram_mb": ramMB}, map[string]string{"slug": app.Slug},
+	rec := h.serve(appaccess.WithBindingGrant(ctx, app, acct), http.MethodPatch, "/v1/apps/"+app.Slug, map[string]int{"ram_mb": ramMB}, map[string]string{"slug": app.Slug},
 		func(w http.ResponseWriter, r *http.Request) { h.s.updateApp(w, r, acct) })
 	return recordedProblem(rec, http.StatusOK)
 }
 
 func (h routeSplitHost) DeleteApp(ctx context.Context, acct state.Account, app state.App) *api.Problem {
-	rec := h.serve(ctx, http.MethodDelete, "/v1/apps/"+app.Slug, nil, map[string]string{"slug": app.Slug},
+	rec := h.serve(appaccess.WithBindingGrant(ctx, app, acct), http.MethodDelete, "/v1/apps/"+app.Slug, nil, map[string]string{"slug": app.Slug},
 		func(w http.ResponseWriter, r *http.Request) { h.s.deleteApp(w, r, acct) })
 	return recordedProblem(rec, http.StatusNoContent, http.StatusOK, http.StatusAccepted)
 }
@@ -142,8 +150,8 @@ func (h routeSplitHost) CreateRule(ctx context.Context, acct state.Account, app 
 	return rule.ID, nil
 }
 
-func (h routeSplitHost) DeleteRule(ctx context.Context, acct state.Account, ruleID string) *api.Problem {
-	rec := h.serve(ctx, http.MethodDelete, "/v1/edge-rules/"+ruleID, nil, map[string]string{"id": ruleID},
+func (h routeSplitHost) DeleteRule(ctx context.Context, acct state.Account, app state.App, ruleID string) *api.Problem {
+	rec := h.serve(appaccess.WithBindingGrant(ctx, app, acct), http.MethodDelete, "/v1/edge-rules/"+ruleID, nil, map[string]string{"id": ruleID},
 		func(w http.ResponseWriter, r *http.Request) { h.s.edgeRules.DeleteEdgeRule(w, r, acct) })
 	return recordedProblem(rec, http.StatusNoContent)
 }

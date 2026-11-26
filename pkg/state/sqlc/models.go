@@ -16001,6 +16001,7 @@ type RouteSplit struct {
 	Phase              string
 	Warning            string
 	Error              string
+	LeaseUntil         pgtype.Timestamptz
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 }

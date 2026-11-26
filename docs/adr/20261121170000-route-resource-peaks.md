@@ -143,7 +143,11 @@ and may delete the app it made).
 
 The split is a durable row (`route_splits`, CHECKed phase) that apid's
 `pkg/apid/routesplit` worker advances, every step fenced by a
-compare-and-set on the phase so replicas and restarts are safe. apid is the
+compare-and-set on the phase so replicas and restarts are safe. A pass first
+claims the row (`lease_until`, two minutes, released when the pass ends), so
+two apid replicas never run one split's side effects at once. Every step
+acts as the source app's resource account under a grant for the one app it
+addresses, whoever asked. apid is the
 only writer of apps, deployments and edge rules, and it acts through its
 own create-app, scale, delete-app and edge-rule handlers in process (as the
 dashboard does), so the route's app gets the same validation, quotas,
@@ -172,8 +176,13 @@ budget charge, audit and notifications as one a customer makes:
 A failure before the rules are live rolls back: the rules made so far and
 the target app are deleted and the row ends `rolled_back` with the error.
 A deployment that is not live after 15 minutes, or a row left in
-`creating` for 5 minutes, rolls back the same way. After the rules are live
-the split is serving, so a failed resize ends `done` with a warning.
+`creating` for 5 minutes, rolls back the same way. A rollback that cannot
+delete the route's app within an hour ends `rolled_back` naming the app for
+the customer to delete, so the source can be split again. After the rules
+are live the split is serving: a transient resize failure (5xx, 429, 409)
+is retried for 15 minutes, and a refusal or one that outlasts the window
+ends `done` with a warning. Undo counts a 404 from deleting the route's app
+as deleted only when the app is really gone.
 `DELETE /v1/apps/{slug}/route-splits/{id}` undoes a finished split: the
 source gets its previous size back first (it serves the route again once
 the rules go), then the rules and the target app are deleted. A failed step

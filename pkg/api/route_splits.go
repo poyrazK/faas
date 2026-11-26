@@ -29,6 +29,16 @@ const (
 	// creating (apid died between recording it and creating the app)
 	// before the worker rolls it back.
 	RouteSplitCreateTimeout = 5 * time.Minute
+	// RouteSplitResizeRetryWindow is how long a memory split retries a
+	// transient resize failure before it finishes with a warning.
+	RouteSplitResizeRetryWindow = 15 * time.Minute
+	// RouteSplitAbandonAfter is how long a rollback retries deleting the
+	// route's app before it gives up, ends rolled_back and names the app
+	// for the customer to delete, so the source app can be split again.
+	RouteSplitAbandonAfter = time.Hour
+	// RouteSplitLease is how long one worker pass holds a split, so two
+	// apid replicas never act on it at once.
+	RouteSplitLease = 2 * time.Minute
 	// RouteSplitsListMax bounds the splits GET /v1/apps/{slug}/route-splits
 	// returns.
 	RouteSplitsListMax = 20

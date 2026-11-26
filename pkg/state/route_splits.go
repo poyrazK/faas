@@ -71,6 +71,9 @@ type RouteSplit struct {
 	Error              string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	// leaseUntil is the worker claim as the store recorded it, so a pass
+	// releases only its own claim.
+	leaseUntil time.Time
 }
 
 // InFlight reports whether the worker still moves the split.
@@ -106,6 +109,15 @@ type RouteSplitStore interface {
 	// AdvanceRouteSplit writes the split's mutable fields when its phase is
 	// still fromPhase. ErrConflict when it moved.
 	AdvanceRouteSplit(ctx context.Context, split RouteSplit, fromPhase string) (RouteSplit, error)
+	// ClaimRouteSplit leases the split to one worker pass until `until`
+	// while it is still in phase and no other lease is live; false when
+	// another pass holds it or the phase moved. AdvanceRouteSplit ends the
+	// lease.
+	ClaimRouteSplit(ctx context.Context, split RouteSplit, until time.Time) (RouteSplit, bool, error)
+	// ReleaseRouteSplit ends the claim ClaimRouteSplit returned, when no
+	// later claim replaced it, so the next pass need not wait out the
+	// lease. It leaves updated_at alone.
+	ReleaseRouteSplit(ctx context.Context, claimed RouteSplit) error
 	// SeedRouteSplitTarget creates the target's deployment from the source
 	// app's live artifact and copies the source's default-scope variables
 	// and non-managed secrets, or returns the deployment already seeded for
@@ -234,7 +246,11 @@ func (m *MemStore) AdvanceRouteSplit(_ context.Context, split RouteSplit, fromPh
 	if current.Phase != fromPhase {
 		return RouteSplit{}, ErrConflict
 	}
+	if split.TargetSlug != "" {
+		current.TargetSlug = split.TargetSlug
+	}
 	current.TargetAppID, current.TargetDeploymentID = split.TargetAppID, split.TargetDeploymentID
+	current.leaseUntil = time.Time{}
 	current.MainResized = split.MainResized
 	current.EdgeRuleIDs = slices.Clone(split.EdgeRuleIDs)
 	if current.EdgeRuleIDs == nil {
@@ -244,6 +260,35 @@ func (m *MemStore) AdvanceRouteSplit(_ context.Context, split RouteSplit, fromPh
 	current.UpdatedAt = time.Now().UTC()
 	m.routeSplits[current.ID] = current
 	return cloneRouteSplit(current), nil
+}
+
+func (m *MemStore) ClaimRouteSplit(_ context.Context, split RouteSplit, until time.Time) (RouteSplit, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.routeSplits[split.ID]
+	if !ok || current.AccountID != split.AccountID {
+		return RouteSplit{}, false, ErrNotFound
+	}
+	if current.Phase != split.Phase || current.leaseUntil.After(time.Now()) {
+		return RouteSplit{}, false, nil
+	}
+	current.leaseUntil = until
+	m.routeSplits[current.ID] = current
+	return cloneRouteSplit(current), true, nil
+}
+
+func (m *MemStore) ReleaseRouteSplit(_ context.Context, claimed RouteSplit) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.routeSplits[claimed.ID]
+	if !ok || current.AccountID != claimed.AccountID {
+		return ErrNotFound
+	}
+	if !claimed.leaseUntil.IsZero() && current.leaseUntil.Equal(claimed.leaseUntil) {
+		current.leaseUntil = time.Time{}
+		m.routeSplits[current.ID] = current
+	}
+	return nil
 }
 
 func cloneRouteSplit(s RouteSplit) RouteSplit {
@@ -400,10 +445,8 @@ func (s *PgStore) RouteSplit(ctx context.Context, accountID, id string) (RouteSp
 }
 
 func (s *PgStore) RouteSplitsForApp(ctx context.Context, accountID, sourceAppID string, limit int) ([]RouteSplit, error) {
-	_, err1 := uuid.Parse(accountID)
-	_, err2 := uuid.Parse(sourceAppID)
-	if err1 != nil || err2 != nil {
-		return []RouteSplit{}, nil
+	if !validUUIDs(accountID, sourceAppID) {
+		return []RouteSplit{}, nil // no such app, so no splits
 	}
 	rows, err := new(sqlc.Queries).ListRouteSplitsForApp(ctx, s.pool, sqlc.ListRouteSplitsForAppParams{
 		AccountID: mustPgUUID(accountID), SourceAppID: mustPgUUID(sourceAppID), RowLimit: routeSplitLimit(limit),
@@ -431,6 +474,9 @@ func (s *PgStore) AdvanceRouteSplit(ctx context.Context, split RouteSplit, fromP
 	if err1 != nil || err2 != nil {
 		return RouteSplit{}, ErrNotFound
 	}
+	if split.TargetSlug == "" {
+		return RouteSplit{}, ErrInvalidArgument
+	}
 	rules := make([]pgtype.UUID, 0, len(split.EdgeRuleIDs))
 	for _, id := range split.EdgeRuleIDs {
 		parsed, err := uuid.Parse(id)
@@ -440,7 +486,7 @@ func (s *PgStore) AdvanceRouteSplit(ctx context.Context, split RouteSplit, fromP
 		rules = append(rules, mustPgUUID(parsed.String()))
 	}
 	row, err := new(sqlc.Queries).AdvanceRouteSplit(ctx, s.pool, sqlc.AdvanceRouteSplitParams{
-		ID: mustPgUUID(split.ID), AccountID: mustPgUUID(split.AccountID), FromPhase: fromPhase,
+		ID: mustPgUUID(split.ID), AccountID: mustPgUUID(split.AccountID), FromPhase: fromPhase, TargetSlug: split.TargetSlug,
 		TargetAppID: routeSplitPgUUID(split.TargetAppID), TargetDeploymentID: routeSplitPgUUID(split.TargetDeploymentID),
 		MainResized: split.MainResized, EdgeRuleIds: rules, Phase: split.Phase, Warning: split.Warning, Error: split.Error,
 	})
@@ -454,6 +500,37 @@ func (s *PgStore) AdvanceRouteSplit(ctx context.Context, split RouteSplit, fromP
 		return RouteSplit{}, mapErr(err)
 	}
 	return routeSplitFromRow(row), nil
+}
+
+func (s *PgStore) ClaimRouteSplit(ctx context.Context, split RouteSplit, until time.Time) (RouteSplit, bool, error) {
+	if _, err := uuid.Parse(split.ID); err != nil {
+		return RouteSplit{}, false, ErrNotFound
+	}
+	row, err := new(sqlc.Queries).ClaimRouteSplit(ctx, s.pool, sqlc.ClaimRouteSplitParams{
+		ID: mustPgUUID(split.ID), AccountID: mustPgUUID(split.AccountID), Phase: split.Phase,
+		LeaseUntil: pgtype.Timestamptz{Time: until, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RouteSplit{}, false, nil
+	}
+	if err != nil {
+		return RouteSplit{}, false, mapErr(err)
+	}
+	return routeSplitFromRow(row), true, nil
+}
+
+func (s *PgStore) ReleaseRouteSplit(ctx context.Context, claimed RouteSplit) error {
+	if _, err := uuid.Parse(claimed.ID); err != nil {
+		return ErrNotFound
+	}
+	if claimed.leaseUntil.IsZero() {
+		return nil
+	}
+	err := new(sqlc.Queries).ReleaseRouteSplit(ctx, s.pool, sqlc.ReleaseRouteSplitParams{
+		ID: mustPgUUID(claimed.ID), AccountID: mustPgUUID(claimed.AccountID),
+		LeaseUntil: pgtype.Timestamptz{Time: claimed.leaseUntil, Valid: true},
+	})
+	return mapErr(err)
 }
 
 func (s *PgStore) SeedRouteSplitTarget(ctx context.Context, seed RouteSplitSeed) (Deployment, error) {
@@ -592,5 +669,6 @@ func routeSplitFromRow(row sqlc.RouteSplit) RouteSplit {
 		RouteRAMMB: int(row.RouteRamMb), MainRAMMB: int(row.MainRamMb), PreviousRAMMB: int(row.PreviousRamMb),
 		MainResized: row.MainResized, EdgeRuleIDs: rules, Phase: row.Phase, Warning: row.Warning, Error: row.Error,
 		CreatedAt: timestamptzToTime(row.CreatedAt), UpdatedAt: timestamptzToTime(row.UpdatedAt),
+		leaseUntil: timestamptzToTime(row.LeaseUntil),
 	}
 }

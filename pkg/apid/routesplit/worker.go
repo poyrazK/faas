@@ -51,15 +51,32 @@ func (s *Service) Step(ctx context.Context) {
 	}
 }
 
+// advance claims the split for this pass, so two apid replicas never run
+// its side effects at once, then moves it one phase.
 func (s *Service) advance(ctx context.Context, split state.RouteSplit) {
-	acct, err := s.Store.AccountByID(ctx, split.AccountID)
+	if split.Phase == state.RouteSplitCreating && s.now().Sub(split.UpdatedAt) < api.RouteSplitCreateTimeout {
+		return // Apply is still creating it.
+	}
+	claimed, ok, err := s.Store.ClaimRouteSplit(ctx, split, s.now().Add(api.RouteSplitLease))
+	if err != nil || !ok {
+		return
+	}
+	// A pass that leaves the phase alone ends its claim, so the next tick
+	// rechecks the split instead of waiting out the lease.
+	defer func() {
+		if err := s.Store.ReleaseRouteSplit(context.WithoutCancel(ctx), claimed); err != nil {
+			s.log().Warn("route split: release failed", "split", claimed.ID, "err", err)
+		}
+	}()
+	split = claimed
+	acct, err := s.actingAccount(ctx, split)
 	if err != nil {
 		s.log().Warn("route split: account unavailable", "split", split.ID, "err", err)
 		return
 	}
 	switch split.Phase {
 	case state.RouteSplitCreating:
-		s.advanceCreating(ctx, acct, split)
+		s.rollBack(ctx, acct, split, "the split stopped while creating the route's app")
 	case state.RouteSplitDeploying:
 		s.advanceDeploying(ctx, acct, split)
 	case state.RouteSplitRuleLive:
@@ -67,17 +84,23 @@ func (s *Service) advance(ctx context.Context, split state.RouteSplit) {
 	}
 }
 
-// advanceCreating rolls back a split apid stopped recording mid-create.
-func (s *Service) advanceCreating(ctx context.Context, acct state.Account, split state.RouteSplit) {
-	if s.now().Sub(split.UpdatedAt) < api.RouteSplitCreateTimeout {
-		return
+// actingAccount is the source app's resource account, the one the HTTP
+// requests of the split act as; the split's own account when the source is
+// gone.
+func (s *Service) actingAccount(ctx context.Context, split state.RouteSplit) (state.Account, error) {
+	if source, err := s.Store.AppByID(ctx, split.SourceAppID); err == nil {
+		return s.Host.ResourceAccount(ctx, source)
 	}
-	s.rollBack(ctx, acct, split, "the split stopped while creating the route's app")
+	return s.Store.AccountByID(ctx, split.AccountID)
 }
 
 func (s *Service) advanceDeploying(ctx context.Context, acct state.Account, split state.RouteSplit) {
+	expired := s.now().Sub(split.UpdatedAt) > api.RouteSplitDeployTimeout
 	dep, err := s.Store.DeploymentByID(ctx, split.TargetDeploymentID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		if expired {
+			s.rollBack(ctx, acct, split, "the route's deployment could not be read")
+		}
 		return
 	}
 	switch {
@@ -85,22 +108,25 @@ func (s *Service) advanceDeploying(ctx context.Context, acct state.Account, spli
 		s.rollBack(ctx, acct, split, "the route's app did not deploy")
 		return
 	case dep.Status != state.DeployLive:
-		if s.now().Sub(split.UpdatedAt) > api.RouteSplitDeployTimeout {
+		if expired {
 			s.rollBack(ctx, acct, split, "the route's app did not go live in time")
 		}
 		return
 	}
-	source, err := s.Store.AppByID(ctx, split.SourceAppID)
-	if err != nil {
-		return
-	}
-	target, err := s.Store.AppByID(ctx, split.TargetAppID)
-	if err != nil {
+	source, err1 := s.Store.AppByID(ctx, split.SourceAppID)
+	target, err2 := s.Store.AppByID(ctx, split.TargetAppID)
+	if err1 != nil || err2 != nil || source.Status == state.AppDeleted || target.Status == state.AppDeleted {
+		if errors.Is(err1, state.ErrNotFound) || errors.Is(err2, state.ErrNotFound) ||
+			source.Status == state.AppDeleted || target.Status == state.AppDeleted || expired {
+			s.rollBack(ctx, acct, split, "the app or the route's app is gone")
+		}
 		return
 	}
 	ids, prob := s.ensureRules(ctx, acct, source, target, split)
 	if prob != nil {
-		s.removeRules(ctx, acct, source, split)
+		if cleanup := s.removeRules(ctx, acct, source, split); cleanup != nil {
+			return // retried on the next pass
+		}
 		s.rollBack(ctx, acct, split, "could not route the path to the route's app: "+prob.Detail)
 		return
 	}
@@ -113,15 +139,9 @@ func (s *Service) advanceDeploying(ctx context.Context, acct state.Account, spli
 // ensureRules creates the route rule on each of the source's hosts, reusing
 // the ones an earlier pass made.
 func (s *Service) ensureRules(ctx context.Context, acct state.Account, source, target state.App, split state.RouteSplit) ([]string, *api.Problem) {
-	existing, err := s.Store.ListEdgeRulesForApp(ctx, source.ID)
-	if err != nil {
-		return nil, api.ErrCapacity("could not read the app's edge rules")
-	}
-	byHost := map[string]string{}
-	for _, rule := range existing {
-		if rule.Name == RuleName(split.ID) {
-			byHost[rule.MatchHost] = rule.ID
-		}
+	byHost, prob := s.splitRules(ctx, source, split)
+	if prob != nil {
+		return nil, prob
 	}
 	action, _ := json.Marshal(api.EdgeRuleRouteAction{TargetAppSlug: target.Slug})
 	enabled := true
@@ -152,33 +172,63 @@ func (s *Service) ensureRules(ctx context.Context, acct state.Account, source, t
 	return ids, nil
 }
 
-func (s *Service) removeRules(ctx context.Context, acct state.Account, source state.App, split state.RouteSplit) *api.Problem {
+// splitRules maps host to rule ID for the split's rules on source.
+func (s *Service) splitRules(ctx context.Context, source state.App, split state.RouteSplit) (map[string]string, *api.Problem) {
 	rules, err := s.Store.ListEdgeRulesForApp(ctx, source.ID)
 	if err != nil {
-		return api.ErrCapacity("could not read the app's edge rules")
+		return nil, api.ErrCapacity("could not read the app's edge rules")
 	}
+	byHost := map[string]string{}
 	for _, rule := range rules {
-		if rule.Name != RuleName(split.ID) {
-			continue
+		if rule.Name == RuleName(split.ID) {
+			byHost[rule.MatchHost] = rule.ID
 		}
-		if prob := s.Host.DeleteRule(ctx, acct, rule.ID); prob != nil && prob.Status != http.StatusNotFound {
+	}
+	return byHost, nil
+}
+
+// removeRules deletes the split's rules and confirms none is left, so a
+// refusal never reads as removed.
+func (s *Service) removeRules(ctx context.Context, acct state.Account, source state.App, split state.RouteSplit) *api.Problem {
+	byHost, prob := s.splitRules(ctx, source, split)
+	if prob != nil {
+		return prob
+	}
+	for _, id := range byHost {
+		if prob := s.Host.DeleteRule(ctx, acct, source, id); prob != nil && prob.Status != http.StatusNotFound {
 			return prob
 		}
+	}
+	left, prob := s.splitRules(ctx, source, split)
+	if prob != nil {
+		return prob
+	}
+	if len(left) > 0 {
+		return api.ErrCapacity("the split's edge rules could not be removed")
 	}
 	return nil
 }
 
-// advanceRuleLive sizes a memory split's source app down, then finishes.
+// advanceRuleLive sizes a memory split's source app down, then finishes. A
+// transient resize failure is retried for RouteSplitResizeRetryWindow; a
+// refusal, or one that outlasts the window, finishes with a warning.
 func (s *Service) advanceRuleLive(ctx context.Context, acct state.Account, split state.RouteSplit) {
 	if split.Kind == routeresources.SplitMemory && !split.MainResized {
 		source, err := s.Store.AppByID(ctx, split.SourceAppID)
-		if err != nil {
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return
 		}
-		if prob := s.Host.ResizeApp(ctx, acct, source, split.MainRAMMB); prob != nil {
-			split.Warning = truncate("the route moved, but the app was not sized down: " + prob.Detail)
-		} else {
+		prob := api.ErrCapacity("the app is gone")
+		if err == nil {
+			prob = s.Host.ResizeApp(ctx, acct, source, split.MainRAMMB)
+		}
+		switch {
+		case prob == nil:
 			split.MainResized = true
+		case transient(prob) && err == nil && s.now().Sub(split.UpdatedAt) < api.RouteSplitResizeRetryWindow:
+			return // a later pass retries
+		default:
+			split.Warning = truncate("the route moved, but the app was not sized down: " + prob.Detail)
 		}
 	}
 	split.Phase = state.RouteSplitDone
@@ -189,14 +239,23 @@ func (s *Service) advanceRuleLive(ctx context.Context, acct state.Account, split
 	s.log().Info("route split done", "split", split.ID, "app", split.SourceAppID, "resized", split.MainResized)
 }
 
+func transient(prob *api.Problem) bool {
+	return prob.Status >= 500 || prob.Status == http.StatusTooManyRequests || prob.Status == http.StatusConflict
+}
+
 // rollBack deletes the route's app (found by ID, or by the reserved slug
-// when apid stopped before recording it) and ends the split rolled back.
+// when apid stopped before recording it) and ends the split rolled back. A
+// delete that keeps failing past RouteSplitAbandonAfter ends the split
+// anyway, naming the app, so the source can be split again.
 func (s *Service) rollBack(ctx context.Context, acct state.Account, split state.RouteSplit, reason string) {
 	from := split.Phase
-	if target, ok := s.target(ctx, split); ok {
-		if prob := s.Host.DeleteApp(ctx, acct, target); prob != nil && prob.Status != http.StatusNotFound {
-			s.log().Warn("route split: rollback could not delete the route's app", "split", split.ID, "detail", prob.Detail)
-			return
+	if target, ok := s.target(ctx, acct, split); ok {
+		if prob := s.deleteApp(ctx, acct, target); prob != nil {
+			if s.now().Sub(split.UpdatedAt) < api.RouteSplitAbandonAfter {
+				s.log().Warn("route split: rollback could not delete the route's app", "split", split.ID, "detail", prob.Detail)
+				return
+			}
+			reason += "; " + target.Slug + " could not be deleted (" + prob.Detail + "): delete it with gregale app delete " + target.Slug
 		}
 	}
 	split.Phase, split.Error = state.RouteSplitRolledBack, truncate(reason)
@@ -207,21 +266,26 @@ func (s *Service) rollBack(ctx context.Context, acct state.Account, split state.
 	s.log().Info("route split rolled back", "split", split.ID, "app", split.SourceAppID, "reason", reason)
 }
 
-func (s *Service) target(ctx context.Context, split state.RouteSplit) (state.App, bool) {
+// target finds the route's app. Looked up by the reserved slug, it must
+// belong to the split's account or the acting one and be newer than the
+// split, so another customer's app with that name is never touched.
+func (s *Service) target(ctx context.Context, acct state.Account, split state.RouteSplit) (state.App, bool) {
 	if split.TargetAppID != "" {
 		app, err := s.Store.AppByID(ctx, split.TargetAppID)
 		return app, err == nil && app.Status != state.AppDeleted
 	}
 	app, err := s.Store.AppBySlug(ctx, split.TargetSlug)
-	if err != nil || app.AccountID != split.AccountID || app.Status == state.AppDeleted || app.CreatedAt.Before(split.CreatedAt) {
+	if err != nil || app.Status == state.AppDeleted || app.CreatedAt.Before(split.CreatedAt) ||
+		(app.AccountID != split.AccountID && app.AccountID != acct.ID) {
 		return state.App{}, false
 	}
 	return app, true
 }
 
-// Undo reverses a finished split: the rules go first so traffic returns to
-// the app, then the app gets its previous size back, then the route's app is
-// deleted. A failed step leaves the split done, so undo can be retried.
+// Undo reverses a finished split: the app gets its previous size back
+// first (it serves the route again once the rules go), then the rules and
+// the route's app are deleted. A failed step leaves the split done, so undo
+// can be retried.
 func (s *Service) Undo(ctx context.Context, acct state.Account, source state.App, split state.RouteSplit) (state.RouteSplit, *api.Problem) {
 	if split.Phase == state.RouteSplitUndone || split.Phase == state.RouteSplitRolledBack {
 		return split, nil
@@ -231,7 +295,6 @@ func (s *Service) Undo(ctx context.Context, acct state.Account, source state.App
 			"the split is still "+split.Phase+"; undo it once it is done")
 	}
 	if split.MainResized {
-		// Grow first: once the rule goes, the app serves the route again.
 		if prob := s.Host.ResizeApp(ctx, acct, source, split.PreviousRAMMB); prob != nil {
 			return state.RouteSplit{}, prob
 		}
@@ -239,8 +302,8 @@ func (s *Service) Undo(ctx context.Context, acct state.Account, source state.App
 	if prob := s.removeRules(ctx, acct, source, split); prob != nil {
 		return state.RouteSplit{}, prob
 	}
-	if target, ok := s.target(ctx, split); ok {
-		if prob := s.Host.DeleteApp(ctx, acct, target); prob != nil && prob.Status != http.StatusNotFound {
+	if target, ok := s.target(ctx, acct, split); ok {
+		if prob := s.deleteApp(ctx, acct, target); prob != nil {
 			return state.RouteSplit{}, prob
 		}
 	}
