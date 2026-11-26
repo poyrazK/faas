@@ -3878,6 +3878,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			if err := h.validateEnvironmentBranchActivation(ctx, dep, *ready, mode); err != nil {
 				return err
 			}
+		case state.DeveloperPrimeActivationReason:
+			if dep.Status == state.DeployLive {
+				return nil
+			}
+			ctx, err = h.developerPrimeActivation(ctx, app, dep, *ready, mode)
+			if err != nil {
+				return err
+			}
 		default:
 			switch mode {
 			case api.ExecutionModeWorker:

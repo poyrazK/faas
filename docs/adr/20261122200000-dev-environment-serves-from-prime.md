@@ -1,6 +1,6 @@
 # ADR 20261122200000 · A developer environment goes live from its prime instance
 
-- **Status:** proposed (needs owner approval before any code)
+- **Status:** accepted (owner, 2026-11-26)
 - **Date:** 2026-11-22
 - **Amends:** the deployment prime (spec §6, `snapshot_prepare`) for developer environments only
 - **Related:** ADR-005 (cold boot always legal), ADR-063 (shared authoritative snapshot blob), ADR-740 (live patches), ADR-1170 (watch mode), ADR-20261115213230 (snapshot drive deltas)
@@ -46,28 +46,39 @@ so every node can wake it. A developer environment is different:
 
 ## Decision
 
-For a `gregale dev` environment, behind the platform flag `dev_prime_serves`
-(default off). `state.IsDeveloperApp` (`PreviewOfSlug != ""` and
-`PreviewPrNumber == 0`) is not enough on its own: environment-branch member
-apps have the same shape. The gate is an app created by
-`PUT /v1/dev/sessions/{project}` that is **not** an environment-branch member,
-and the implementation adds an explicit marker for it rather than inferring it.
+For a `gregale dev` environment, behind the hot runtime setting
+`dev_prime_serves_enabled` (default off). `state.IsDeveloperApp`
+(`PreviewOfSlug != ""` and `PreviewPrNumber == 0`) is not enough on its own:
+environment branches and rehearsal runs deploy into apps of the same shape.
+The gate (`state.DeveloperPrimeEligible`, checked by schedd and again by
+imaged) is a developer app's own request or service deployment whose reason
+is neither `environment-branch` nor `environment-branch-seed`, that no
+environment branch created, of an app that is not a rehearsal member.
 
 1. **The prime instance becomes the live instance.** After the prime's health
    check passes, schedd promotes the deployment and moves the prime instance
    to `RUNNING` as an ordinary serving instance of the new deployment, instead
    of `RUNNING → SNAPSHOTTING → PARKED`. `gregale dev` reports `ready` at that
    point.
-   - **Concurrency (invariant 1).** While the previous deployment drains, the
-     serving prime and the old instances overlap. The serving prime counts
-     against the app's `max_concurrency`; the overlap is allowed only under
-     the existing `RolloutConcurrencyGrant` (1), which this ADR extends to
-     this one case. If the grant is already in use, the prime parks as today.
-     The invariant-1 property test covers the path.
-   - **Billing.** Metering starts at promotion, not at prime boot. The cold
-     boot and health check are platform work and are not billed to the developer.
-     The capacity ledger entry and ownership row are moved to the serving
-     instance explicitly at promotion.
+   - **Concurrency (invariant 1).** The prime is admitted as a snapshot
+     prime, outside serving concurrency. Before it serves, schedd checks the
+     app's serving capacity with the same gate a wake uses (including the
+     ADR-199 rollout grant when it applies) and converts the reservation to a
+     serving one. A rebuild next to the old deployment's one instance at
+     `max_concurrency` 1 serves through the rollout grant, the same overlap
+     a wake of the new deployment gets today while the old instance drains.
+     If there is no room even with the grant, the prime captures and parks
+     as today. No overlap beyond the existing gate is allowed.
+   - **Billing.** Unchanged. The prime is a RUNNING instance of the app and
+     is metered like one during the prime today; it keeps running and keeps
+     being metered as the serving instance, and parks at the app's idle
+     timeout.
+   - **Activation proof.** schedd sends `deployment_ready` with
+     `no_snapshot_reason=developer_prime` and the prime's instance id. imaged
+     checks eligibility and that the instance is the deployment's RUNNING
+     prime; the store's activation transaction re-checks that runtime (node,
+     wake, start time) and its configuration fence, as it does for the
+     ephemeral-secret proof.
 2. **No snapshot is captured on the critical path.** The environment's first
    capture happens at its first idle park, through the normal park path, which
    uploads synchronously as ADR-063 requires before the snapshot row is
@@ -108,7 +119,7 @@ and the implementation adds an explicit marker for it rather than inferring it.
 
 ## Rollout
 
-1. Implement behind `dev_prime_serves`, with a metal test: a developer
+1. Implement behind `dev_prime_serves_enabled`, with a metal test: a developer
    deployment goes live from its prime without a `snapshot_written` event,
    serves, parks on idle with a normal capture, and wakes from it.
 2. Enable on prod for internal accounts and compare `gregale dev` boot

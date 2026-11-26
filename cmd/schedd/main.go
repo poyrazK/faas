@@ -862,7 +862,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261109172421: memory is the only capacity limit; count what the
 	// vCPU and CPU budgets would have refused.
 	engine.WithCPUAdmissionMetrics(ops.Registry())
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones, runtimeconfig.KeyDevPrimeServes}, runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			if handled, err := requestConcurrency.Apply(key, value); handled {
 				if err == nil {
@@ -882,6 +882,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			if key == runtimeconfig.KeyFullEnvironmentClones {
 				fullEnvironmentClones.Store(enabled)
+			}
+			if key == runtimeconfig.KeyDevPrimeServes {
+				engine.SetDevPrimeServes(enabled)
+				log.Info("schedd: applied developer prime setting (ADR-20261122200000)", "enabled", enabled)
 			}
 			if key == runtimeconfig.KeyDataPlacement {
 				upstreamAffinityEnabled.Store(enabled)
