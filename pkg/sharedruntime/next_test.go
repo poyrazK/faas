@@ -3,6 +3,7 @@ package sharedruntime
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -91,7 +92,8 @@ func TestStampNextStandalone(t *testing.T) {
 	}{
 		{name: "next 15", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, "^16.0.0", "15.5.0", 1)},
 		{name: "next only a dev dependency", plan: nextPlan(t, "npm run build"), pkg: `{"scripts":{"build":"next build","start":"next start"},"devDependencies":{"next":"16.4.6"}}`},
-		{name: "start with arguments", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, `"next start"`, `"next start -p 3000"`, 1)},
+		{name: "start with a project directory", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, `"next start"`, `"next start ./web"`, 1)},
+		{name: "start with an unknown option", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, `"next start"`, `"next start --experimental-https"`, 1)},
 		{name: "custom server", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, `"next start"`, `"node server.js"`, 1)},
 		{name: "prestart hook", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, `"start"`, `"prestart":"node migrate.js","start"`, 1)},
 		{name: "customized build command", plan: nextPlan(t, "npm run build:prod"), pkg: nextPkg},
@@ -104,6 +106,12 @@ func TestStampNextStandalone(t *testing.T) {
 				t.Fatalf("err = %v, want ErrNotNextStandalone", err)
 			}
 		})
+	}
+	// ADR-20261124160000 amendment 2: listen flags the standalone server
+	// takes from its environment do not stop the stamp.
+	flagged := strings.Replace(nextPkg, `"next start"`, `"next start -p $PORT -H 0.0.0.0"`, 1)
+	if _, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(flagged), testCapMB, 0); err != nil {
+		t.Fatalf("start with listen flags: %v", err)
 	}
 	for _, pm := range []string{"pnpm", "yarn", "bun"} {
 		plan := platformPlan(t, setStart(pm+" run start"))
@@ -133,7 +141,10 @@ func TestNextStart(t *testing.T) {
 		{"pnpm run start", nextPkg, true},
 		{"bun run start", nextPkg, true},
 		{"npm run start -- -p 3000", nextPkg, false},
-		{"next start -p 3000", "", false},
+		{"next start -p 3000", "", true},
+		{"npm start", `{"scripts":{"start":"next start -p $PORT -H 0.0.0.0"}}`, true},
+		{"npm start", `{"scripts":{"start":"next start ./site"}}`, false},
+		{"npm start", `{"scripts":{"start":"next start --turbo"}}`, false},
 		{"npm run serve", nextPkg, false},
 		{"npx next start", nextPkg, false},
 		{"npm run start", `{"scripts":{"start":"next start","poststart":"echo"}}`, false},
@@ -143,6 +154,57 @@ func TestNextStart(t *testing.T) {
 		if got := NextStart(tt.command, []byte(tt.pkg)); got != tt.want {
 			t.Errorf("NextStart(%q) = %v, want %v", tt.command, got, tt.want)
 		}
+	}
+}
+
+// ADR-20261124160000 amendment 2: `next start` flags the standalone server
+// reads from its environment become that environment, and a flag still
+// overrides the variable; anything else keeps the app's own start.
+func TestNextStandaloneStartFor(t *testing.T) {
+	plain := NextStandaloneStart
+	with := func(env string) []string {
+		return []string{"/bin/sh", "-c", "exec env " + env + " node /app/.next/standalone/server.js"}
+	}
+	script := func(start string) string {
+		b, _ := json.Marshal(map[string]any{"scripts": map[string]string{"start": start}})
+		return string(b)
+	}
+	tests := []struct {
+		name    string
+		command string
+		pkg     string
+		want    []string
+	}{
+		{name: "plain", command: "npm start", pkg: script("next start"), want: plain},
+		{name: "port", command: "npm start", pkg: script("next start -p 3000"), want: with("PORT=3000")},
+		{name: "long port", command: "pnpm start", pkg: script("next start --port 3000"), want: with("PORT=3000")},
+		{name: "port with equals", command: "yarn start", pkg: script("next start --port=3000"), want: with("PORT=3000")},
+		{name: "port variable", command: "npm start", pkg: script("next start -p $PORT"), want: with("PORT=$PORT")},
+		{name: "quoted default", command: "npm start", pkg: script(`next start -p "${PORT:-3000}"`), want: with(`PORT="${PORT:-3000}"`)},
+		{name: "port and host", command: "npm start", pkg: script("next start -H 0.0.0.0 -p 8080"), want: with("HOSTNAME=0.0.0.0 PORT=8080")},
+		{name: "ipv6 host", command: "npm start", pkg: script("next start --hostname ::"), want: with("HOSTNAME=::")},
+		{name: "keep-alive", command: "npm start", pkg: script("next start --keepAliveTimeout 70000"), want: with("KEEP_ALIVE_TIMEOUT=70000")},
+		{name: "direct command", command: "next start -p 3000", want: with("PORT=3000")},
+		{name: "directory", command: "npm start", pkg: script("next start ./web")},
+		{name: "unknown option", command: "npm start", pkg: script("next start --experimental-https")},
+		{name: "repeated option", command: "npm start", pkg: script("next start -p 3000 --port 4000")},
+		{name: "missing value", command: "npm start", pkg: script("next start -p")},
+		{name: "flag as value", command: "npm start", pkg: script("next start -p -H")},
+		{name: "short option with equals", command: "npm start", pkg: script("next start -p=3000")},
+		{name: "command substitution", command: "npm start", pkg: script("next start -p $(cat port)")},
+		{name: "chained command", command: "npm start", pkg: script("next start -p 3000;rm")},
+		{name: "glob", command: "npm start", pkg: script("next start -H *")},
+		{name: "single quotes", command: "npm start", pkg: script("next start -p '3000'")},
+		{name: "forwarded arguments", command: "npm run start -- -p 3000", pkg: script("next start")},
+		{name: "lifecycle hook", command: "npm start", pkg: `{"scripts":{"start":"next start -p 3000","prestart":"node m.js"}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := NextStandaloneStartFor(tt.command, []byte(tt.pkg))
+			if ok != (tt.want != nil) || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("NextStandaloneStartFor(%q, %s) = %q, %v; want %q", tt.command, tt.pkg, got, ok, tt.want)
+			}
+		})
 	}
 }
 
