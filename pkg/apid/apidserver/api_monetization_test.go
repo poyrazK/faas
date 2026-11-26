@@ -16,8 +16,6 @@ var monetizationRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/v1/apps/shop/rate-cards"},
 	{http.MethodGet, "/v1/apps/shop/monetization-funnel"},
 	{http.MethodGet, "/v1/apps/shop/consumers/c1/billing-progress"},
-	{http.MethodGet, "/v1/apps/shop/consumer-identities"},
-	{http.MethodDelete, "/v1/apps/shop/consumer-identities/i1"},
 	{http.MethodPost, "/v1/apps/shop/consumer-plans"},
 	{http.MethodPut, "/v1/apps/shop/consumer-billing-policy"},
 	{http.MethodGet, "/v1/apps/shop/consumer-overdue-holds"},
