@@ -16,17 +16,25 @@ def _get_kwargs(
     slug: str,
     *,
     body: CreateAlertRuleRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
 
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/v1/apps/{slug}/alerts".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -80,6 +88,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -102,6 +115,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAlertRuleRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AlertRuleResponse | Problem]:
     """Create an alert rule.
@@ -111,8 +125,14 @@ def sync_detailed(
     response. webhook_url is SSRF-guarded at write time
     (loopback + metadata ranges denied).
 
+    With `environment` set to a stage, the rule watches that stage's own
+    requests, errors, latency, cold starts or failed invocations, with
+    gt, gte, lt or lte and a webhook action. Other rules stay in
+    production. Stage rules answer 501 until the platform enables them.
+
     Args:
         slug (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CreateAlertRuleRequest): Create an alert rule on an app.
 
@@ -127,6 +147,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -142,6 +163,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAlertRuleRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> AlertRuleResponse | Problem | None:
     """Create an alert rule.
@@ -151,8 +173,14 @@ def sync(
     response. webhook_url is SSRF-guarded at write time
     (loopback + metadata ranges denied).
 
+    With `environment` set to a stage, the rule watches that stage's own
+    requests, errors, latency, cold starts or failed invocations, with
+    gt, gte, lt or lte and a webhook action. Other rules stay in
+    production. Stage rules answer 501 until the platform enables them.
+
     Args:
         slug (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CreateAlertRuleRequest): Create an alert rule on an app.
 
@@ -168,6 +196,7 @@ def sync(
         slug=slug,
         client=client,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -177,6 +206,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAlertRuleRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[AlertRuleResponse | Problem]:
     """Create an alert rule.
@@ -186,8 +216,14 @@ async def asyncio_detailed(
     response. webhook_url is SSRF-guarded at write time
     (loopback + metadata ranges denied).
 
+    With `environment` set to a stage, the rule watches that stage's own
+    requests, errors, latency, cold starts or failed invocations, with
+    gt, gte, lt or lte and a webhook action. Other rules stay in
+    production. Stage rules answer 501 until the platform enables them.
+
     Args:
         slug (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CreateAlertRuleRequest): Create an alert rule on an app.
 
@@ -202,6 +238,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -215,6 +252,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAlertRuleRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> AlertRuleResponse | Problem | None:
     """Create an alert rule.
@@ -224,8 +262,14 @@ async def asyncio(
     response. webhook_url is SSRF-guarded at write time
     (loopback + metadata ranges denied).
 
+    With `environment` set to a stage, the rule watches that stage's own
+    requests, errors, latency, cold starts or failed invocations, with
+    gt, gte, lt or lte and a webhook action. Other rules stay in
+    production. Stage rules answer 501 until the platform enables them.
+
     Args:
         slug (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CreateAlertRuleRequest): Create an alert rule on an app.
 
@@ -242,6 +286,7 @@ async def asyncio(
             slug=slug,
             client=client,
             body=body,
+            environment=environment,
             idempotency_key=idempotency_key,
         )
     ).parsed

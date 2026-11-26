@@ -41,6 +41,10 @@ export type AlertRuleResponse = {
    * Pinned app id. Empty string = account-wide rule.
    */
   app_id: string;
+  /**
+   * The stage the rule belongs to. Omitted for production.
+   */
+  environment_id?: string;
   name: string;
   enabled: boolean;
   /**

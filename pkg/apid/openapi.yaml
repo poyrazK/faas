@@ -46720,6 +46720,7 @@ paths:
         '402': { $ref: '#/components/responses/AlertRuleInvalid' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
     delete:
       tags: [alert_rules]
       operationId: deleteAlertRule
@@ -46730,7 +46731,6 @@ paths:
         '402': { $ref: '#/components/responses/AlertRuleInvalid' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
-        '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/apps/{slug}/alerts/{id}/rotate-secret:
     parameters:
