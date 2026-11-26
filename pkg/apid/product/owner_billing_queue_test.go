@@ -266,7 +266,7 @@ func TestProductControlOwnerBillingQueue(t *testing.T) {
 		sync := func(payment string) {
 			t.Helper()
 			provider.payment = payment
-			if err := store.DeferStatementInvoiceSync(ctx, export.ID, clock); err != nil {
+			if err := store.SetStatementInvoiceNextSync(ctx, export.ID, &clock); err != nil {
 				t.Fatal(err)
 			}
 			if err := invoices.SyncOnce(ctx); err != nil {
