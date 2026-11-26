@@ -1,6 +1,8 @@
 """PostgreSQL-backed durable MCP Tasks for the Python starter."""
 
+import base64
 from datetime import datetime, timezone
+from decimal import Decimal
 import hashlib
 from task_queue_metrics import TASK_QUEUE_METRICS_SQL
 import hmac
@@ -20,6 +22,10 @@ from task_owners import OWNER_SCHEMA, associate_owners, cleanup_expired_tasks
 from task_execution import RetryableTaskError, TaskExecutionPolicy, TaskLeaseDeadline, TASK_LEASE_SECONDS
 from catalog import compile_tool_schema
 from protocol_headers import valid_task_submission_key
+from task_inbox_protocol import (
+    INBOX_CURSOR, INBOX_STATUSES, MAX_REVIEWED_FORMS, REVIEW_REVISION,
+    InvalidTaskInboxRequest, dump_review_json, load_review_json,
+)
 
 TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
 TASK_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
@@ -203,7 +209,7 @@ def _task_string_length(value):
 def _same_task_arguments(original, submitted):
     # Preserve JSON number equality without treating true and 1 as the same value.
     if type(original) is not type(submitted):
-        return type(original) in (int, float) and type(submitted) in (int, float) and original == submitted
+        return type(original) in (int, float, Decimal) and type(submitted) in (int, float, Decimal) and original == submitted
     if isinstance(original, dict):
         return original.keys() == submitted.keys() and all(
             _same_task_arguments(value, submitted[key]) for key, value in original.items())
@@ -213,10 +219,46 @@ def _same_task_arguments(original, submitted):
     return original == submitted
 
 
+def _base64url(value):
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _reviewable_forms(requests):
+    return 1 <= len(requests) <= MAX_REVIEWED_FORMS and all(
+        isinstance(request, dict) and request.get("method") == "elicitation/create"
+        and isinstance(request.get("params"), dict) and request["params"].get("mode", "form") == "form"
+        for request in requests.values()
+    )
+
+
+def _validate_reviewed_responses(revision, responses):
+    if (not isinstance(revision, str) or not REVIEW_REVISION.fullmatch(revision)
+            or not isinstance(responses, dict) or not 1 <= len(responses) <= MAX_REVIEWED_FORMS):
+        raise InvalidTaskInboxRequest("invalid reviewed Task input revision or responses")
+    for key, response in responses.items():
+        if not isinstance(key, str) or not key or _task_string_length(key) > 128 or not isinstance(response, dict):
+            raise InvalidTaskInboxRequest("invalid reviewed Task input response")
+        action = response.get("action")
+        if action == "accept":
+            valid = response.keys() == {"action", "content"} and isinstance(response["content"], dict)
+        else:
+            valid = action in ("decline", "cancel") and response.keys() == {"action"}
+        if not valid:
+            raise InvalidTaskInboxRequest("invalid reviewed Task input response")
+    try:
+        size = len(dump_review_json(responses).encode("utf-8"))
+    except (ValueError, TypeError, RecursionError):
+        raise InvalidTaskInboxRequest("invalid reviewed Task input responses") from None
+    if size > MAX_INPUT_STATE_BYTES:
+        raise InvalidTaskInboxRequest("Task input responses exceed 256 KiB")
+
+
 class DurableTaskRuntime:
     def __init__(self, config, role=None):
         self.role = resolve_task_role(role)
         self.task_submission_ready = False
+        self.task_inbox_ready = False
+        self.task_input_review_ready = False
         raw_timeout = os.environ.get("MCP_DRAIN_TIMEOUT_SECONDS", "10")
         if not raw_timeout.isdecimal() or not 1 <= int(raw_timeout) <= 300:
             raise ValueError("MCP_DRAIN_TIMEOUT_SECONDS must be an integer between 1 and 300")
@@ -382,6 +424,8 @@ class DurableTaskRuntime:
             check_task_schema(self.pool)
             if self.role in {"combined", "web"}:
                 self.task_submission_ready = check_task_submission_index(self.pool)
+                self.task_inbox_ready = check_task_inbox_index(self.pool)
+                self.task_input_review_ready = True
             if self.role == "observer":
                 self.queue_metrics()
             else:
@@ -894,6 +938,124 @@ class DurableTaskRuntime:
             raise TaskNotFound()
         return self._wire_metadata(task)
 
+    def _sign_inbox_value(self, purpose, value):
+        body = dump_review_json(value, sort_keys=True).encode("utf-8")
+        return hmac.digest(self.owner_keys[0]["owner_hash_key"], purpose + body, "sha256")
+
+    def _inbox_signature(self, identity, status, payload):
+        return _base64url(self._sign_inbox_value(b"gregale-mcp-task-inbox:v1:", [
+            self.namespace, identity.resource, identity.subject, identity.client_id, status, payload,
+        ]))
+
+    def _inbox_cursor(self, task, identity, status):
+        expiry = task["expires_at"].astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        payload = _base64url(f'{expiry},{task["task_id"]}'.encode("ascii"))
+        return f"{payload}.{self._inbox_signature(identity, status, payload)}"
+
+    def _read_inbox_cursor(self, cursor, identity, status):
+        if cursor is None:
+            return None, None
+        if not isinstance(cursor, str) or not INBOX_CURSOR.fullmatch(cursor):
+            raise InvalidTaskInboxRequest("invalid Task inbox cursor")
+        payload, signature = cursor.split(".")
+        if not hmac.compare_digest(signature, self._inbox_signature(identity, status, payload)):
+            raise InvalidTaskInboxRequest("invalid Task inbox cursor")
+        raw = base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+        expiry, _, task_id = raw.decode("ascii").partition(",")
+        return datetime.fromisoformat(expiry), task_id
+
+    def list_inbox(self, params, identity, tools):
+        status = params.get("status")
+        limit = params.get("limit", 20)
+        if "status" in params and status not in INBOX_STATUSES:
+            raise InvalidTaskInboxRequest("invalid Task inbox status")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise InvalidTaskInboxRequest("Task inbox limit must be between 1 and 50")
+        anchor_expiry, anchor_id = self._read_inbox_cursor(params.get("cursor"), identity, status)
+        statuses = ["queued", "running"] if status == "working" else ([status] if status else None)
+        with self.pool.connection() as connection:
+            rows = connection.execute("""SELECT task_id::text AS task_id,status,created_at,updated_at,expires_at
+                FROM gregale_mcp_tasks WHERE namespace=%s AND owner_hash=ANY(%s::bytea[])
+                  AND expires_at>clock_timestamp()
+                  AND (%s::text[] IS NULL OR status=ANY(%s::text[]))
+                  AND (%s::text[] IS NULL OR tool_name=ANY(%s::text[]))
+                  AND (%s::timestamptz IS NULL OR (expires_at,task_id)<(%s::timestamptz,%s::uuid))
+                ORDER BY expires_at DESC,task_id DESC LIMIT %s""",
+                (self.namespace, self._owner_hashes(identity), statuses, statuses, tools, tools,
+                 anchor_expiry, anchor_expiry, anchor_id, limit + 1),
+            ).fetchall()
+        result = {"resultType": "complete", "tasks": [self._wire_metadata(task) for task in rows[:limit]]}
+        if len(rows) > limit:
+            result["nextCursor"] = self._inbox_cursor(rows[limit - 1], identity, status)
+        return result
+
+    def _read_review_task(self, connection, task_id, identity, tools, *, lock=False):
+        query = """SELECT task_id::text AS task_id,status,created_at,updated_at,expires_at,input_state_encrypted
+            FROM gregale_mcp_tasks WHERE namespace=%s AND task_id=%s::uuid
+            AND owner_hash=ANY(%s::bytea[]) AND expires_at>clock_timestamp()
+            AND (%s::text[] IS NULL OR tool_name=ANY(%s::text[]))"""
+        if lock:
+            # PostgreSQL can evaluate expiry before a contended lock is available.
+            query = f"""WITH locked AS MATERIALIZED ({query} FOR UPDATE)
+                SELECT * FROM locked WHERE expires_at>clock_timestamp()"""
+        task = connection.execute(query, (self.namespace, task_id, self._owner_hashes(identity), tools, tools)).fetchone()
+        if task is None:
+            raise TaskNotFound()
+        return task
+
+    def _read_input_state(self, encrypted, task_id):
+        if encrypted is None:
+            return {"requests": {}, "responses": {}}
+        state = load_review_json(self._decrypt_payload(encrypted, task_id, "input-state"))
+        if not isinstance(state, dict) or not isinstance(state.get("requests"), dict) or not isinstance(state.get("responses"), dict):
+            raise ValueError("invalid encrypted Task input state")
+        return state
+
+    def _encrypt_input_state(self, state, task_id):
+        plain = dump_review_json(state).encode("utf-8")
+        if len(plain) > MAX_INPUT_STATE_BYTES:
+            raise InvalidTaskInboxRequest("accumulated Task input state exceeds 256 KiB")
+        return self._encrypt_payload(plain, task_id, "input-state")
+
+    def _input_review_revision(self, task_id, requests):
+        return self._sign_inbox_value(b"gregale-mcp-task-input-review:v1:", [self.namespace, task_id, requests]).hex()
+
+    def get_input_review(self, task_id, identity, tools):
+        with self.pool.connection() as connection:
+            task = self._read_review_task(connection, task_id, identity, tools)
+        result = {"resultType": "complete", "task": self._wire_metadata(task)}
+        if task["status"] == "input_required":
+            state = self._read_input_state(task["input_state_encrypted"], task_id)
+            pending = {key: value for key, value in state["requests"].items() if key not in state["responses"]}
+            if _reviewable_forms(pending):
+                result.update(reviewRevision=self._input_review_revision(task_id, pending), inputRequests=pending)
+        return result
+
+    def reviewed_input_response(self, task_id, revision, submitted, identity, tools, *, apply):
+        _validate_reviewed_responses(revision, submitted)
+        with self.pool.connection() as connection:
+            task = self._read_review_task(connection, task_id, identity, tools, lock=apply)
+            state = self._read_input_state(task["input_state_encrypted"], task_id)
+            requests, responses = state["requests"], state["responses"]
+            # Retained requests are immutable by ID. Compare the exact answers
+            # already written for the reviewed set, even after worker resume.
+            recorded = {key: requests[key] for key, value in submitted.items()
+                        if key in requests and key in responses and _same_task_arguments(value, responses[key])}
+            outcome = "unconfirmed"
+            if (len(recorded) == len(submitted) and _reviewable_forms(recorded)
+                    and hmac.compare_digest(revision, self._input_review_revision(task_id, recorded))):
+                outcome = "applied"
+            elif apply:
+                pending = {key: value for key, value in requests.items() if key not in responses}
+                if (task["status"] == "input_required" and pending.keys() == submitted.keys() and _reviewable_forms(pending)
+                        and hmac.compare_digest(revision, self._input_review_revision(task_id, pending))):
+                    responses.update(submitted)
+                    task = self._persist_input_responses(connection, task_id, state)
+                    outcome = "applied"
+                else:
+                    outcome = "stale"
+        return {"resultType": "complete", "task": self._wire_metadata(task), "outcome": outcome}
+
     def _read_task(self, task_id, identity):
         if not isinstance(task_id, str) or not TASK_ID_PATTERN.fullmatch(task_id):
             raise TaskNotFound()
@@ -971,6 +1133,7 @@ class DurableTaskRuntime:
         encoded_responses = json.dumps(input_responses, ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
         if len(encoded_responses) > MAX_INPUT_STATE_BYTES:
             raise ValueError("MCP task input responses are too large")
+        input_responses = load_review_json(encoded_responses)
         with self.pool.connection() as connection:
             with connection.transaction():
                 row = connection.execute(
@@ -981,9 +1144,8 @@ class DurableTaskRuntime:
                     raise TaskNotFound()
                 if row["status"] != "input_required" or row["input_state_encrypted"] is None:
                     return
-                state = self._decrypt(row["input_state_encrypted"], task_id, "input-state")
-                requests = state.get("requests", {})
-                responses = state.setdefault("responses", {})
+                state = self._read_input_state(row["input_state_encrypted"], task_id)
+                requests, responses = state["requests"], state["responses"]
                 changed = False
                 for key, response in input_responses.items():
                     if key not in requests or key in responses:
@@ -992,12 +1154,20 @@ class DurableTaskRuntime:
                     changed = True
                 if not changed:
                     return
-                pending = any(key not in responses for key in requests)
-                encrypted = self._encrypt(state, task_id, "input-state", MAX_INPUT_STATE_BYTES)
-                connection.execute(
-                    "UPDATE gregale_mcp_tasks SET input_state_encrypted=%s,status=CASE WHEN %s THEN 'input_required' ELSE 'queued' END,resume_pending=NOT %s,updated_at=clock_timestamp() WHERE namespace=%s AND task_id=%s AND status='input_required'",
-                    (encrypted, pending, pending, self.namespace, task_id),
-                )
+                self._persist_input_responses(connection, task_id, state)
+
+    def _persist_input_responses(self, connection, task_id, state):
+        pending = any(key not in state["responses"] for key in state["requests"])
+        encrypted = self._encrypt_input_state(state, task_id)
+        task = connection.execute("""UPDATE gregale_mcp_tasks SET input_state_encrypted=%s,
+            status=CASE WHEN %s THEN 'input_required' ELSE 'queued' END,resume_pending=NOT %s,updated_at=clock_timestamp()
+            WHERE namespace=%s AND task_id=%s::uuid AND status='input_required' AND expires_at>clock_timestamp()
+            RETURNING task_id::text AS task_id,status,created_at,updated_at,expires_at""",
+            (encrypted, pending, pending, self.namespace, task_id),
+        ).fetchone()
+        if task is None:
+            raise TaskNotFound()
+        return task
 
     def _lock_execution(self, connection):
         # All runtimes use the same lock for claims and lease renewals.
@@ -1094,13 +1264,11 @@ class DurableTaskRuntime:
                     raise TaskInputLeaseLost()
                 if row["cancel_requested_at"] is not None:
                     raise TaskInputCancelled()
-                state = {"requests": {}, "responses": {}}
-                if row["input_state_encrypted"] is not None:
-                    state = self._decrypt(row["input_state_encrypted"], task["task_id"], "input-state")
-                stored_requests = state.setdefault("requests", {})
-                stored_responses = state.setdefault("responses", {})
+                state = self._read_input_state(row["input_state_encrypted"], task["task_id"])
+                stored_requests, stored_responses = state["requests"], state["responses"]
                 for key, request in requests.items():
-                    if key in stored_requests and stored_requests[key] != request:
+                    request = load_review_json(json.dumps(request, allow_nan=False))
+                    if key in stored_requests and not _same_task_arguments(stored_requests[key], request):
                         raise ValueError("MCP task input request keys cannot be reused for different requests")
                     stored_requests.setdefault(key, request)
                 if len(stored_requests) > 64:
@@ -1108,14 +1276,16 @@ class DurableTaskRuntime:
                 responses = {key: stored_responses[key] for key in requests if key in stored_responses}
                 ready = len(responses) == len(requests)
                 if not ready:
-                    encrypted = self._encrypt(state, task["task_id"], "input-state", MAX_INPUT_STATE_BYTES)
+                    encrypted = self._encrypt_input_state(state, task["task_id"])
                     updated = connection.execute(
                         "UPDATE gregale_mcp_tasks SET status='input_required',input_state_encrypted=%s,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE namespace=%s AND task_id=%s AND lease_token=%s AND status='running' AND lease_expires_at>clock_timestamp() AND expires_at>clock_timestamp()",
                         (encrypted, self.namespace, task["task_id"], task["lease_token"]),
                     )
                     if updated.rowcount != 1:
                         raise TaskInputLeaseLost()
-                return responses, ready
+                # Keep the handler's existing Python JSON types. Store exact answers
+                # separately so adding another input round cannot round old answers.
+                return json.loads(dump_review_json(responses)), ready
 
     def _heartbeat(self, task_id, lease_token):
         lease_args = (self.namespace, task_id, lease_token)
@@ -1517,6 +1687,7 @@ def migrate_task_schema(pool):
         "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS output_schema jsonb CHECK(output_schema IS NULL OR jsonb_typeof(output_schema)='object')",
         "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS submission_key uuid",
         "CREATE UNIQUE INDEX IF NOT EXISTS gregale_mcp_tasks_submission_key_idx ON gregale_mcp_tasks(namespace,submission_key) WHERE submission_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS gregale_mcp_tasks_inbox_idx ON gregale_mcp_tasks(namespace,owner_hash,expires_at DESC,task_id DESC)",
         "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check",
         "ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))",
         "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_input_state_check",
@@ -1566,6 +1737,15 @@ def check_task_submission_index(pool):
                 AND i.indisvalid AND i.indisready AND i.indisunique AND i.indimmediate
                 AND i.indnkeyatts=2 AND i.indkey[0]=ns.attnum AND i.indkey[1]=key.attnum
                 AND pg_catalog.pg_get_expr(i.indpred,i.indrelid)='(submission_key IS NOT NULL)') AS ready""").fetchone()
+        return row["ready"]
+
+
+def check_task_inbox_index(pool):
+    with pool.connection() as connection:
+        row = connection.execute("""SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_index
+            WHERE indexrelid=to_regclass('gregale_mcp_tasks_inbox_idx')
+            AND indrelid='gregale_mcp_tasks'::regclass AND indisvalid AND indisready) AS ready""").fetchone()
         return row["ready"]
 
 

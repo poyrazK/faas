@@ -58,17 +58,33 @@ func (w *mcpTaskReceiptBatchWatcher) run(ctx context.Context, receipts []string,
 		}
 	}
 
+	return watchMCPTaskBatch(ctx, w.client, interval, interval, w)
+}
+
+func (w *mcpTaskReceiptBatchWatcher) hasPendingTasks() bool {
+	return w.working > 0
+}
+
+type mcpTaskBatchWatcher interface {
+	hasPendingTasks() bool
+	workingTasks(time.Duration) ([]mcphosting.Task, time.Duration)
+	refresh(context.Context, string) error
+}
+
+// A subscription wakes the watcher early. Every interruption or interval
+// boundary also reconciles the active Tasks using authenticated reads.
+func watchMCPTaskBatch(ctx context.Context, client *mcphosting.Client, pollInterval, streamWindow time.Duration, watcher mcpTaskBatchWatcher) error {
 	streaming := true
 	failures := 0
 	reconnectDelay := mcpWatchReconnectBase
-	for w.working > 0 {
-		tasks, pollDelay := w.workingTasks(interval)
-		if streaming && len(tasks) <= mcphosting.MaxTaskSubscriptionIDs {
-			streamCtx, cancel := context.WithTimeout(ctx, interval)
+	for watcher.hasPendingTasks() {
+		tasks, pollDelay := watcher.workingTasks(pollInterval)
+		if streaming && len(tasks) > 0 && len(tasks) <= mcphosting.MaxTaskSubscriptionIDs {
+			streamCtx, cancel := context.WithTimeout(ctx, streamWindow)
 			var updateErr error
-			streamErr := w.client.ListenTaskChanges(streamCtx, tasks, func(taskID string) (bool, error) {
-				updateErr = w.refresh(ctx, taskID)
-				return w.working == 0, updateErr
+			streamErr := client.ListenTaskChanges(streamCtx, tasks, func(taskID string) (bool, error) {
+				updateErr = watcher.refresh(ctx, taskID)
+				return !watcher.hasPendingTasks(), updateErr
 			})
 			expired := errors.Is(streamCtx.Err(), context.DeadlineExceeded)
 			cancel()
@@ -94,10 +110,10 @@ func (w *mcpTaskReceiptBatchWatcher) run(ctx context.Context, receipts []string,
 			return err
 		}
 
-		if err := w.refresh(ctx, ""); err != nil {
+		if err := watcher.refresh(ctx, ""); err != nil {
 			return err
 		}
-		if w.working > 0 && streaming && failures > 0 {
+		if watcher.hasPendingTasks() && streaming && failures > 0 {
 			if err := sleepContext(ctx, reconnectDelay); err != nil {
 				return err
 			}

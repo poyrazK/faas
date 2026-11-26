@@ -387,8 +387,24 @@ the Task expires.
 Run `go run . tasks-migrate apply` before starting the updated web runtime to
 enable this capability.
 
-The starter's `tasks/update` endpoint follows the protocol response contract; its
-sample handler does not request client input. The Go SDK does not expose a public
+On a modern external OAuth endpoint, the same migration also installs the inbox
+index. Restart the web runtime, then watch for Tasks that need approval.
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch
+```
+
+Use a reported ID with `gregale mcp client status --task-id ID
+--write-input-template ./reviewed-input.json`. Review and fill the response, then
+use `gregale mcp client respond --task-id ID --reviewed-input-file
+./reviewed-input.json` with the same endpoint and credential. The server applies
+the answer only if the Task is still waiting on the reviewed forms. Use
+`gregale mcp client wait --task-id ID` to retrieve the original result.
+
+The starter's `tasks/update` endpoint follows the protocol response contract.
+Set `request_approval` to true to pause a sample report for client input.
+The Go SDK does not expose a public
 Task result setter, so Task wire requests are handled at the stateless HTTP edge.
 If the PostgreSQL database is also used by the Node worker, run the Node
 `tasks:migrate` workflow to prepare its worker, admission and key-registry tables.

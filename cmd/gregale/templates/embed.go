@@ -331,6 +331,7 @@ var sharedTemplateCopies = map[string]map[string]string{
 		"protocol_headers.py":           "mcp-python-tasks/protocol_headers.py",
 		"protocol_telemetry.py":         "mcp-python-tasks/protocol_telemetry.py",
 		"server.py":                     "mcp-python-tasks/server.py",
+		"task_inbox_protocol.py":        "mcp-python-tasks/task_inbox_protocol.py",
 		"test_auth_policy.py":           "mcp-python-tasks/test_auth_policy.py",
 		"test_auth_verification.py":     "mcp-python-tasks/test_auth_verification.py",
 		"test_bounded_jwks.py":          "mcp-python-tasks/test_bounded_jwks.py",
