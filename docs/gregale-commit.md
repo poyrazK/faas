@@ -335,8 +335,9 @@ for the final slot. It checks that only one admission succeeds, a rejected
 Commit leaves no receipt or owner state, an accepted event replays at the
 limit, and the rejected event can be accepted after capacity is freed.
 
-The `Commit acceptance` GitHub Actions workflow runs this gate on Linux for
-pull requests, pushes to `main`, and manual runs. It provisions a disposable
+The `Commit acceptance` GitHub Actions workflow runs this gate on Linux nightly
+(called from `ci.yml`), on manual runs, and on pull requests that change
+Commit's own code (see the workflow's `paths`). It provisions a disposable
 PostgreSQL service and a separate local TLS fixture. The job also requires the
 Node and Python SDK test summaries to show tests ran without skips. Its
 `commit-acceptance-report` artifact records the tested revision, source archive

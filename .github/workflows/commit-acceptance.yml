@@ -1,20 +1,48 @@
 name: Commit acceptance
 
+# The gate is a ~27-minute cold build and test of pkg/state,
+# pkg/apid/apidserver, pkg/sched and cmd/e2e and is not a required check.
+# Pull requests run it only when Gregale Commit's own code changes. Shared hot
+# paths (the rest of pkg/state and pkg/apid, migrations, go.mod) change on
+# nearly every pull request, so ci.yml runs the gate in full nightly instead of
+# on every pull request and every merge to main. To run it on any other branch:
+#   gh workflow run commit-acceptance.yml --ref <branch>
 on:
   pull_request:
-  push:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "pkg/commit/**"
+      - "pkg/commitmanaged/**"
+      - "pkg/state/commit*"
+      - "pkg/state/*_commit*"
+      - "pkg/apid/apidserver/*commit*"
+      - "pkg/sched/*commit*"
+      - "pkg/sched/exclusive_drain*"
+      - "cmd/e2e/commit_*"
+      - "sdk/commit-tests/**"
+      - "sdk/go/**/commit*"
+      - "sdk/node/src/commit*"
+      - "sdk/python/**/*commit*"
+      - "scripts/test-commit.sh"
+      - "scripts/test-commit-sdk.sh"
+      - "scripts/ci/commit_acceptance_report*.py"
+      - ".github/workflows/commit-acceptance.yml"
+  # Nightly: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name.
   group: commit-acceptance-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   postgres-and-process:
+    if: ${{ github.event.pull_request.draft != true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
