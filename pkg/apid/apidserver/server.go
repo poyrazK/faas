@@ -2857,6 +2857,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.PutSettings))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteSettings))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-signups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.List))))
+	// ADR-20261126082046: a sold MCP server's seller stats.
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMCPSellerStats))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-identities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.ListIdentities))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-identities/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteIdentity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))

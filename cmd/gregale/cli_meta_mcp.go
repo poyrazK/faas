@@ -233,6 +233,14 @@ func mcpCLICommand() cliCommand {
 			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 			{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server insights --app my-mcp", "gregale mcp server insights --app my-mcp --json"}},
+		{Name: "stats", Short: "Show a sold server's customers, revenue, tools and customers near their limit", Notes: []string{
+			"Months are UTC calendar months; the current month is to date and its revenue is an estimate. Billed revenue is finalized statements before credits.",
+			"Needs API monetization on the account.",
+		}, Flags: []cliFlag{
+			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+			{Name: "months", Short: "calendar months to read, 1-12 (default 1: this month)", Value: "N"},
+			{Name: "timeout", Short: "API deadline (default 60s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp server stats --app my-mcp", "gregale mcp server stats --app my-mcp --months 6 --json"}},
 		{Name: "keys", Short: "Issue, list and revoke consumer keys for an api-key MCP server", Subcommands: []cliSub{
 			{Name: "create", Short: "Create a consumer key with mcp: scopes", Notes: []string{"Scopes default to the endpoint scopes in gregale-mcp.json."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
