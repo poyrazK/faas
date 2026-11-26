@@ -4,6 +4,8 @@ Everything your app writes to standard output and standard error is a log
 line. Gregale keeps the lines of every running instance, archives them when
 the instance stops, and lets you read, follow, filter and forward them.
 
+Read an app's logs and errors from the CLI:
+
 ```sh
 gregale logs my-api                # recent lines
 gregale logs my-api --follow       # stream until Ctrl-C
