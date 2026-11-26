@@ -64,7 +64,11 @@ measure what a cold agent does with a repository Gregale did not create:
 - `features` lists the Gregale features that apply to the repository. Each is
   a regex over the agent's shell commands (`command`), over files in the
   checkout after the run (`file`), or a fact about what it created
-  (`state: project_created`). `feature_score` is the share used. A feature
+  (`state: project_created`). A command feature also lists its MCP tools
+  (`tools`), so an agent that uses the feature through the management MCP
+  server scores the same as one that runs the command; a unit test requires
+  the list and checks each name against `pkg/mcpmanagement/toolsets.go`.
+  `feature_score` is the share used. A feature
   with `"unless": "first_deploy_live"` is a fix the agent needs only when
   Gregale's detection falls short; it counts as used when every app the run
   created went live on its first deployment. Until the

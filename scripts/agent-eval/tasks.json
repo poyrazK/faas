@@ -73,9 +73,9 @@
     ],
     "features": [
       {"id": "deploy-as-project", "kind": "state", "state": "project_created"},
-      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
-      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
-      {"id": "secrets-through-cli", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(\\benv\\s+(set|push)\\b|\\bsecrets\\b|--release-secrets-file)"}
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|\\bdoctor\\b|\\bdeploy\\s+check\\b)", "tools": ["gregale_plan_local_deploy", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_upload_deploy", "gregale_check_plan"]},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b", "tools": ["gregale_get_logs", "gregale_search_logs", "gregale_get_health", "gregale_get_deployment", "gregale_list_app_deployments", "gregale_list_error_groups", "gregale_get_operational_summary"]},
+      {"id": "secrets-through-cli", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(\\benv\\s+(set|push)\\b|\\bsecrets\\b|--release-secrets-file)", "tools": ["gregale_plan_env_change", "gregale_apply_env_change", "gregale_request_secret"]}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 15.0,
@@ -96,9 +96,9 @@
     ],
     "features": [
       {"id": "deploy-as-project", "kind": "state", "state": "project_created"},
-      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
-      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
-      {"id": "managed-postgres", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(add\\s+postgres|postgres\\s+(create|attach))\\b"}
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|\\bdoctor\\b|\\bdeploy\\s+check\\b)", "tools": ["gregale_plan_local_deploy", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_upload_deploy", "gregale_check_plan"]},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b", "tools": ["gregale_get_logs", "gregale_search_logs", "gregale_get_health", "gregale_get_deployment", "gregale_list_app_deployments", "gregale_list_error_groups", "gregale_get_operational_summary"]},
+      {"id": "managed-postgres", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(add\\s+postgres|postgres\\s+(create|attach))\\b", "tools": ["gregale_plan_postgres"]}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 10.0,
@@ -178,8 +178,8 @@
       {"kind": "no_traps"}
     ],
     "features": [
-      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
-      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"}
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)", "tools": ["gregale_plan_local_deploy", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_upload_deploy", "gregale_check_plan"]},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b", "tools": ["gregale_get_logs", "gregale_search_logs", "gregale_get_health", "gregale_get_deployment", "gregale_list_app_deployments", "gregale_list_error_groups", "gregale_get_operational_summary"]}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 4.0,
@@ -198,8 +198,8 @@
       {"kind": "no_traps"}
     ],
     "features": [
-      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
-      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)", "tools": ["gregale_plan_local_deploy", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_upload_deploy", "gregale_check_plan"]},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b", "tools": ["gregale_get_logs", "gregale_search_logs", "gregale_get_health", "gregale_get_deployment", "gregale_list_app_deployments", "gregale_list_error_groups", "gregale_get_operational_summary"]},
       {"id": "start-command-pinned", "kind": "file", "glob": "*", "pattern": "(?m)^(web:|\\s+start:)\\s*uvicorn\\b[^\\n]*\\bPORT\\b", "unless": "first_deploy_live"}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
@@ -218,8 +218,8 @@
       {"kind": "no_traps"}
     ],
     "features": [
-      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
-      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"}
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)", "tools": ["gregale_plan_local_deploy", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_upload_deploy", "gregale_check_plan"]},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b", "tools": ["gregale_get_logs", "gregale_search_logs", "gregale_get_health", "gregale_get_deployment", "gregale_list_app_deployments", "gregale_list_error_groups", "gregale_get_operational_summary"]}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 4.0,
@@ -237,9 +237,9 @@
       {"kind": "no_traps"}
     ],
     "features": [
-      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
-      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
-      {"id": "secrets-through-cli", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(\\benv\\s+(set|push)\\b|\\bsecrets\\b|--secrets-file)"},
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)", "tools": ["gregale_plan_local_deploy", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_upload_deploy", "gregale_check_plan"]},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b", "tools": ["gregale_get_logs", "gregale_search_logs", "gregale_get_health", "gregale_get_deployment", "gregale_list_app_deployments", "gregale_list_error_groups", "gregale_get_operational_summary"]},
+      {"id": "secrets-through-cli", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(\\benv\\s+(set|push)\\b|\\bsecrets\\b|--secrets-file)", "tools": ["gregale_plan_env_change", "gregale_apply_env_change", "gregale_request_secret"]},
       {"id": "allowed-hosts-for-gregale", "kind": "file", "glob": "gettingstarted/settings.py", "pattern": "gregale\\.dev|ALLOWED_HOSTS[^\\n]*environ|^if (?!IS_HEROKU_APP:)[^\\n]+:\\n(?:[ \\t]*#[^\\n]*\\n)*[ \\t]+ALLOWED_HOSTS = \\[\"\\*\"\\]|^IS_HEROKU_APP = (?!\"DYNO\" in os\\.environ and \"CI\" not in os\\.environ$)"}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
@@ -258,8 +258,8 @@
       {"kind": "no_traps"}
     ],
     "features": [
-      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
-      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
+      {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)", "tools": ["gregale_plan_local_deploy", "gregale_plan_deploy", "gregale_plan_source_deploy", "gregale_plan_upload_deploy", "gregale_check_plan"]},
+      {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b", "tools": ["gregale_get_logs", "gregale_search_logs", "gregale_get_health", "gregale_get_deployment", "gregale_list_app_deployments", "gregale_list_error_groups", "gregale_get_operational_summary"]},
       {"id": "start-command-fixed", "kind": "file", "glob": "*", "pattern": "(?m)^web:\\s*(?!go-getting-started\\s*$)\\S|^\\s+start:\\s*\\S"}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
@@ -279,6 +279,9 @@
       {"kind": "http", "path": "/", "status": 200, "contains": "day2-config"},
       {"kind": "file_contains", "file": "handler.js", "text": "process.env.GREETING"}
     ],
+    "features": [
+      {"id": "env-set", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(env|secrets?|config)\\s+(set|push)\\b", "tools": ["gregale_plan_env_change", "gregale_apply_env_change"]}
+    ],
     "budget_usd": 3.0,
     "timeout_s": 900
   },
@@ -294,7 +297,7 @@
       {"kind": "file_contains", "file": "handler.js", "text": "/tick"}
     ],
     "features": [
-      {"id": "cron-create", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\bcron\\s+create\\b"}
+      {"id": "cron-create", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\bcron\\s+create\\b", "tools": ["gregale_plan_cron_change", "gregale_plan_cron"]}
     ],
     "budget_usd": 3.0,
     "timeout_s": 1200
@@ -309,6 +312,9 @@
       {"kind": "app_field", "field": "min_instances", "min": 1},
       {"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"},
       {"kind": "answer", "pattern": "(\\$|usd|gb-?h)"}
+    ],
+    "features": [
+      {"id": "min-instances", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\bapp\\s+(scale|update)\\b[^\\n]*--min", "tools": ["gregale_plan_scale"]}
     ],
     "budget_usd": 3.0,
     "timeout_s": 900

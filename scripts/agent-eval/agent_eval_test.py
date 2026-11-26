@@ -66,6 +66,26 @@ class TaskTests(unittest.TestCase):
                                                     "deploy-express-render", "migrate-fastapi-render", "deploy-flask-render", "migrate-django-heroku", "deploy-go-heroku",
                                                 "day2-config-change", "day2-schedule", "day2-no-cold-start"])
 
+    def test_command_features_count_their_mcp_tools(self):
+        # An agent on the MCP toolset does through a tool what a CLI agent does
+        # with a command; a feature that only reads commands scores it 0
+        # (day2-config-change, 2026-11-26). Every named tool must exist.
+        repo = Path(__file__).resolve().parents[2]
+        served = set(re.findall(r'"(gregale_[a-z_]+)"', (repo / "pkg/mcpmanagement/toolsets.go").read_text()))
+        for task in ev.load_tasks():
+            for feature in task.get("features", []):
+                if feature["kind"] != "command":
+                    continue
+                self.assertTrue(feature.get("tools"), f"{task['id']}/{feature['id']} names no MCP tools")
+                for tool in feature["tools"]:
+                    self.assertIn(tool, served, f"{task['id']}/{feature['id']}: no MCP tool {tool}")
+        task = {"features": [{"id": "env-set", "kind": "command", "pattern": r"\bgregale\b.*\benv\s+set\b", "tools": ["gregale_apply_env_change"]}]}
+        with tempfile.TemporaryDirectory() as d:
+            mcp = ev.grade_features(task, [], Path(d), {}, tools=["mcp__gregale__gregale_apply_env_change"])
+            cli = ev.grade_features(task, ["gregale env set --app a GREETING=x"], Path(d), {}, tools=[])
+            plan_only = ev.grade_features(task, [], Path(d), {}, tools=["mcp__gregale__gregale_plan_env_change"])
+        self.assertEqual((mcp["feature_score"], cli["feature_score"], plan_only["feature_score"]), (1.0, 1.0, 0.0))
+
     def test_framework_tasks_grade_the_fix_not_the_repo(self):
         # The pristine repositories leave these features unused; only the
         # change an agent has to make (pin uvicorn on $PORT, open Django's
