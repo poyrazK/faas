@@ -28,6 +28,20 @@ ALTER TABLE sandbox_sessions
     -- resume_not_before: a resume refused for want of its capture's node
     -- is claimed again only after it.
     ADD COLUMN IF NOT EXISTS resume_not_before timestamptz;
+-- A resumed session runs a new VM whose usage counters start at zero. Each
+-- usage row remembers the lease (one per VM run) it was written under and
+-- the totals of the runs before it, so the session's usage adds up across
+-- pauses instead of stopping at the first one.
+ALTER TABLE sandbox_session_usage
+    ADD COLUMN IF NOT EXISTS lease_token text,
+    ADD COLUMN IF NOT EXISTS base_samples integer NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS base_expected_samples integer NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS base_measured_ms bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS base_paused_ms bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS base_frozen_ms bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS base_private_mb_ms bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS base_unpaused_private_mb_ms bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS base_billable_mb_ms bigint NOT NULL DEFAULT 0;
 -- +goose StatementBegin
 DO $migration$
 BEGIN
@@ -55,6 +69,10 @@ BEGIN
         ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_paused_check
             CHECK ((state = 'paused') <= (paused_at IS NOT NULL AND kind = 'persistent')) NOT VALID;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sandbox_session_usage_base_check' AND conrelid = 'sandbox_session_usage'::regclass) THEN
+        ALTER TABLE sandbox_session_usage ADD CONSTRAINT sandbox_session_usage_base_check
+            CHECK (base_measured_ms BETWEEN 0 AND measured_ms) NOT VALID;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sandbox_sessions_forked_from_fkey' AND conrelid = 'sandbox_sessions'::regclass) THEN
         ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_forked_from_fkey
             FOREIGN KEY (forked_from) REFERENCES sandbox_sessions (id) ON DELETE SET NULL NOT VALID;
@@ -69,6 +87,7 @@ ALTER TABLE sandbox_sessions VALIDATE CONSTRAINT sandbox_sessions_volume_gb_chec
 ALTER TABLE sandbox_sessions VALIDATE CONSTRAINT sandbox_sessions_durability_check;
 ALTER TABLE sandbox_sessions VALIDATE CONSTRAINT sandbox_sessions_paused_check;
 ALTER TABLE sandbox_sessions VALIDATE CONSTRAINT sandbox_sessions_forked_from_fkey;
+ALTER TABLE sandbox_session_usage VALIDATE CONSTRAINT sandbox_session_usage_base_check;
 -- The wider checks replace the narrow ones; the previous release writes
 -- only states and sizes both accept.
 ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_state_check;
@@ -103,6 +122,7 @@ SET lock_timeout = '5s';
 DROP INDEX CONCURRENTLY IF EXISTS sandbox_sessions_forked_from_idx;
 DROP INDEX CONCURRENTLY IF EXISTS sandbox_sessions_persistent_idx;
 DROP INDEX CONCURRENTLY IF EXISTS sandbox_sessions_paused_idx;
+ALTER TABLE sandbox_session_usage DROP CONSTRAINT IF EXISTS sandbox_session_usage_base_check;
 ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_forked_from_fkey;
 ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_paused_check;
 ALTER TABLE sandbox_sessions DROP CONSTRAINT IF EXISTS sandbox_sessions_durability_check;
@@ -120,3 +140,13 @@ ALTER TABLE sandbox_sessions
     DROP COLUMN IF EXISTS pause_requested_at,
     DROP COLUMN IF EXISTS volume_gb,
     DROP COLUMN IF EXISTS vcpu;
+ALTER TABLE sandbox_session_usage
+    DROP COLUMN IF EXISTS base_billable_mb_ms,
+    DROP COLUMN IF EXISTS base_unpaused_private_mb_ms,
+    DROP COLUMN IF EXISTS base_private_mb_ms,
+    DROP COLUMN IF EXISTS base_frozen_ms,
+    DROP COLUMN IF EXISTS base_paused_ms,
+    DROP COLUMN IF EXISTS base_measured_ms,
+    DROP COLUMN IF EXISTS base_expected_samples,
+    DROP COLUMN IF EXISTS base_samples,
+    DROP COLUMN IF EXISTS lease_token;

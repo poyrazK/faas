@@ -712,21 +712,56 @@ UPDATE sandbox_sessions SET state=CASE WHEN state='pausing' THEN 'pausing'
 -- name: RecordSandboxSessionUsage :execrows
 -- ADR-20261027090013 step 11: vmmd's cumulative usage of the session VM,
 -- while the lease is held and the session has a VM. A record never replaces
--- a later one (a reordered or replayed frame), nor a final one.
+-- a later one of the same VM run (a reordered or replayed frame), nor a final
+-- one of it. A persistent session's resume runs a new VM under a new lease
+-- whose counters start at zero: its first record keeps the totals so far as
+-- the base, and every record of the run adds the base, so usage sums across
+-- pauses (ADR-20261122132055).
+WITH prev AS (
+  SELECT p.samples, p.expected_samples, p.measured_ms, p.paused_ms, p.frozen_ms, p.private_mb_ms, p.unpaused_private_mb_ms,
+         p.billable_mb_ms, p.peak_private_mb, p.base_samples, p.base_expected_samples, p.base_measured_ms, p.base_paused_ms,
+         p.base_frozen_ms, p.base_private_mb_ms, p.base_unpaused_private_mb_ms, p.base_billable_mb_ms,
+         (p.lease_token IS DISTINCT FROM sqlc.arg(lease_token)::text AND (p.final OR p.lease_token IS NOT NULL)) AS new_run
+    FROM sandbox_session_usage p WHERE p.sandbox_id=sqlc.arg(session_id)::text::uuid
+), base AS (
+  SELECT CASE WHEN new_run THEN samples ELSE base_samples END AS samples,
+         CASE WHEN new_run THEN expected_samples ELSE base_expected_samples END AS expected_samples,
+         CASE WHEN new_run THEN measured_ms ELSE base_measured_ms END AS measured_ms,
+         CASE WHEN new_run THEN paused_ms ELSE base_paused_ms END AS paused_ms,
+         CASE WHEN new_run THEN frozen_ms ELSE base_frozen_ms END AS frozen_ms,
+         CASE WHEN new_run THEN private_mb_ms ELSE base_private_mb_ms END AS private_mb_ms,
+         CASE WHEN new_run THEN unpaused_private_mb_ms ELSE base_unpaused_private_mb_ms END AS unpaused_private_mb_ms,
+         CASE WHEN new_run THEN billable_mb_ms ELSE base_billable_mb_ms END AS billable_mb_ms,
+         peak_private_mb
+    FROM prev
+)
 INSERT INTO sandbox_session_usage AS u (sandbox_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
-    frozen_ms, private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot, final)
-SELECT s.id, s.account_id, sqlc.arg(method)::smallint, sqlc.arg(samples)::integer, sqlc.arg(expected_samples)::integer,
-       sqlc.arg(measured_ms)::bigint, sqlc.arg(paused_ms)::bigint, sqlc.arg(frozen_ms)::bigint, sqlc.arg(private_mb_ms)::bigint,
-       sqlc.arg(unpaused_private_mb_ms)::bigint, sqlc.arg(billable_mb_ms)::bigint, sqlc.arg(peak_private_mb)::bigint,
-       sqlc.arg(cold_boot)::boolean, sqlc.arg(final)::boolean
-  FROM sandbox_sessions s
+    frozen_ms, private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot, final, lease_token,
+    base_samples, base_expected_samples, base_measured_ms, base_paused_ms, base_frozen_ms, base_private_mb_ms,
+    base_unpaused_private_mb_ms, base_billable_mb_ms)
+SELECT s.id, s.account_id, sqlc.arg(method)::smallint,
+       coalesce(b.samples, 0)+sqlc.arg(samples)::integer, coalesce(b.expected_samples, 0)+sqlc.arg(expected_samples)::integer,
+       coalesce(b.measured_ms, 0)+sqlc.arg(measured_ms)::bigint, coalesce(b.paused_ms, 0)+sqlc.arg(paused_ms)::bigint,
+       coalesce(b.frozen_ms, 0)+sqlc.arg(frozen_ms)::bigint, coalesce(b.private_mb_ms, 0)+sqlc.arg(private_mb_ms)::bigint,
+       coalesce(b.unpaused_private_mb_ms, 0)+sqlc.arg(unpaused_private_mb_ms)::bigint,
+       coalesce(b.billable_mb_ms, 0)+sqlc.arg(billable_mb_ms)::bigint,
+       greatest(coalesce(b.peak_private_mb, 0), sqlc.arg(peak_private_mb)::bigint),
+       sqlc.arg(cold_boot)::boolean, sqlc.arg(final)::boolean, s.lease_token,
+       coalesce(b.samples, 0), coalesce(b.expected_samples, 0), coalesce(b.measured_ms, 0), coalesce(b.paused_ms, 0),
+       coalesce(b.frozen_ms, 0), coalesce(b.private_mb_ms, 0), coalesce(b.unpaused_private_mb_ms, 0), coalesce(b.billable_mb_ms, 0)
+  FROM sandbox_sessions s LEFT JOIN base b ON true
  WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen','pausing')
 ON CONFLICT (sandbox_id) DO UPDATE SET method=excluded.method, samples=excluded.samples, expected_samples=excluded.expected_samples,
        measured_ms=excluded.measured_ms, paused_ms=excluded.paused_ms, frozen_ms=excluded.frozen_ms,
        private_mb_ms=excluded.private_mb_ms, unpaused_private_mb_ms=excluded.unpaused_private_mb_ms,
        billable_mb_ms=excluded.billable_mb_ms, peak_private_mb=excluded.peak_private_mb, cold_boot=excluded.cold_boot,
-       final=excluded.final, updated_at=now()
- WHERE NOT u.final AND excluded.measured_ms >= u.measured_ms;
+       final=excluded.final, lease_token=excluded.lease_token, base_samples=excluded.base_samples,
+       base_expected_samples=excluded.base_expected_samples, base_measured_ms=excluded.base_measured_ms,
+       base_paused_ms=excluded.base_paused_ms, base_frozen_ms=excluded.base_frozen_ms,
+       base_private_mb_ms=excluded.base_private_mb_ms, base_unpaused_private_mb_ms=excluded.base_unpaused_private_mb_ms,
+       base_billable_mb_ms=excluded.base_billable_mb_ms, updated_at=now()
+ WHERE (u.lease_token IS DISTINCT FROM excluded.lease_token AND (u.final OR u.lease_token IS NOT NULL))
+    OR (NOT u.final AND (u.lease_token IS NULL OR u.lease_token=excluded.lease_token) AND excluded.measured_ms >= u.measured_ms);
 
 -- name: GetSandboxSessionUsage :one
 SELECT method, samples, expected_samples, measured_ms, paused_ms, frozen_ms, private_mb_ms, unpaused_private_mb_ms,
