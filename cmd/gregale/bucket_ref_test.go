@@ -30,6 +30,12 @@ func TestBucketCommandsAcceptTheBucketName(t *testing.T) {
 		{[]string{"sign", "bh2-svc", "bh2-files", "x.html"}, []string{"sign", "bh2-svc", id, "x.html"}},
 		{[]string{"deletion", "start", "bh2-svc", "bh2-files", "k", "u"}, []string{"deletion", "start", "bh2-svc", id, "k", "u"}},
 		{[]string{"delete", "bh2-svc", id}, []string{"delete", "bh2-svc", id}},
+		// Prod hunt r28: today's spellings the tree rewrites to.
+		{[]string{"versions", "list", "bh2-svc", "bh2-files"}, []string{"versions", "list", "bh2-svc", id}},
+		{[]string{"version-delete", "bh2-svc", "bh2-files", "k", "v"}, []string{"version-delete", "bh2-svc", id, "k", "v"}},
+		{[]string{"encryption-keys", "bh2-svc", "bh2-files"}, []string{"encryption-keys", "bh2-svc", id}},
+		{[]string{"uploads", "list", "bh2-svc", "bh2-files"}, []string{"uploads", "list", "bh2-svc", id}},
+		{[]string{"lifecycle", "get", "bh2-svc", "bh2-files"}, []string{"lifecycle", "get", "bh2-svc", id}},
 		{[]string{"list", "bh2-svc"}, []string{"list", "bh2-svc"}},
 	} {
 		got, err := resolveBucketArgs(context.Background(), tc.in, client)

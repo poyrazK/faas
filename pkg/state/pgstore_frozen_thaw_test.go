@@ -4,6 +4,7 @@
 package state_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -38,11 +39,15 @@ func TestPgFrozenThawReplaysABusyRuntimeFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	// Tx.Rollback is not safe for concurrent use: the timer and the deferred
+	// cleanup share one rollback, and a late caller waits for the first.
+	var rollbackOnce sync.Once
+	rollback := func() { rollbackOnce.Do(func() { _ = tx.Rollback(ctx) }) }
+	defer rollback()
 	if _, err := tx.Exec(ctx, `SELECT id FROM apps WHERE id=$1 FOR UPDATE`, thaw.AppID); err != nil {
 		t.Fatal(err)
 	}
-	release := time.AfterFunc(50*time.Millisecond, func() { _ = tx.Rollback(ctx) })
+	release := time.AfterFunc(50*time.Millisecond, rollback)
 	defer release.Stop()
 	ins, err := store.ThawFrozenInstance(ctx, thaw)
 	if err != nil || ins.State != string(state.StateRunning) {

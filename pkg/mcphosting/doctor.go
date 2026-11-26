@@ -3,6 +3,8 @@ package mcphosting
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -46,7 +48,7 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 			return report
 		}
 	}
-	catalog, x, err := c.DiscoverCatalog(ctx)
+	catalog, x, err := discoverCatalogRetryingGateway(ctx, c)
 	x.Result = nil // Tool schemas are represented once, in Report.Tools.
 	report.Discovery = x
 	add("modern_catalog_discovery", err)
@@ -111,4 +113,52 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 // in OAuth setup; no token or provider credential is embedded in the output.
 func ConnectionConfig(name, endpoint string) map[string]any {
 	return map[string]any{"mcpServers": map[string]any{name: map[string]string{"type": "http", "url": endpoint}}}
+}
+
+// doctorGatewayRetries bounds how often discovery is repeated after a gateway
+// 502/503/504. A candidate's first request through its preview host can meet
+// a connection or route that is still settling; failing the whole release on
+// one such answer left good candidates unpromoted.
+const doctorGatewayRetries = 2
+
+var doctorGatewayRetryDelay = time.Second
+
+// doctorSigningKeyRetries bounds how often discovery is repeated while the
+// server reports that it could not fetch its authorization server's signing
+// keys (401 invalid_token "signing keys unavailable"): the token was never
+// checked. One retry a second later still failed releases whose identity
+// provider was slow or briefly unreachable (2 of 4 external-OAuth deploys on
+// prod, 2026-11-22). About 12 s keeps this inside the 30 s verification
+// budget. A 401 for any other reason, such as a bad token, is not retried.
+const doctorSigningKeyRetries = 4
+
+var doctorSigningKeyRetryDelay = 3 * time.Second
+
+func discoverCatalogRetryingGateway(ctx context.Context, c *Client) (Catalog, Exchange, error) {
+	catalog, x, err := c.DiscoverCatalog(ctx)
+	gatewayRetries, keyRetries := 0, 0
+	for err != nil {
+		var delay time.Duration
+		switch {
+		case transientGatewayStatus(x.HTTPStatus) && gatewayRetries < doctorGatewayRetries:
+			gatewayRetries++
+			delay = doctorGatewayRetryDelay
+		case signingKeysUnavailableError(err) && keyRetries < doctorSigningKeyRetries:
+			keyRetries++
+			delay = doctorSigningKeyRetryDelay
+		default:
+			return catalog, x, err
+		}
+		select {
+		case <-ctx.Done():
+			return catalog, x, err
+		case <-time.After(delay):
+		}
+		catalog, x, err = c.DiscoverCatalog(ctx)
+	}
+	return catalog, x, err
+}
+
+func transientGatewayStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }

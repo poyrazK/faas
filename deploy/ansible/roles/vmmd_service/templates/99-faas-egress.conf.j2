@@ -58,6 +58,24 @@ Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS={{ faas_peer_ingress_ports | jo
 # predates them: it keeps the node Cloudflare-only instead of open.
 Environment="FAAS_PUBLIC_ENTRY_ADDRS={{ faas_public_entry_addrs | join(',') }}"
 {% endif %}
+{% if faas_peer_entry_addrs | default([]) %}
+# ADR-20261123100000: keep the hairpin of guests' 443 calls to the other
+# compute edges' entry addresses onto this node's own across runtime rebuilds.
+Environment="FAAS_PEER_ENTRY_ADDRS={{ faas_peer_entry_addrs | join(',') }}"
+{% endif %}
+{# ADR-20261114100000 amendment 2026-11-23: public destinations that are
+   Gregale's own, so guest traffic to them is internal, not billed egress.
+   Every compute edge's entry address (this node's and its peers', both
+   rendered from the manifest) plus any operator extras. In this drop-in, not
+   99-faas-routing.conf, because every vmmd host installs it. #}
+{% set faas_internal_egress_cidrs = ((faas_public_entry_addrs | default([], true) | list) + (faas_peer_entry_addrs | default([], true) | list) + (faas_vmmd_internal_egress_cidrs | default([], true) | list)) | unique | list %}
+{% if faas_internal_egress_cidrs %}
+Environment="FAAS_VMMD_INTERNAL_EGRESS_CIDRS={{ faas_internal_egress_cidrs | join(',') }}"
+{% endif %}
+{% if faas_vmmd_internal_egress_hosts | default([], true) %}
+# Hostnames vmmd re-resolves every 5 minutes into the same internal set.
+Environment="FAAS_VMMD_INTERNAL_EGRESS_HOSTS={{ faas_vmmd_internal_egress_hosts | join(',') }}"
+{% endif %}
 {% if (faas_cloudflare_origin_only | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
 # ADR-20261102081618: keep 80/443 Cloudflare-only across runtime rebuilds, as
 # the boot policy does; the nftables role loaded the pinned ranges.

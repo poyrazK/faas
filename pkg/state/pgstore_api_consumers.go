@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -16,7 +17,7 @@ type consumerRowScanner interface {
 	Scan(dest ...any) error
 }
 
-const apiConsumerSelectCols = `id, account_id, app_id, external_ref, name, status, created_at, updated_at, revoked_at, platform_tenant_id, platform_tenant_managed`
+const apiConsumerSelectCols = `id, account_id, app_id, external_ref, name, status, created_at, updated_at, revoked_at, platform_tenant_id, platform_tenant_managed, coalesce(environment_id::text, '')`
 
 func scanAPIConsumerRow(row consumerRowScanner) (APIConsumer, error) {
 	var c APIConsumer
@@ -35,6 +36,7 @@ func scanAPIConsumerRow(row consumerRowScanner) (APIConsumer, error) {
 		&revokedAt,
 		&platformTenantID,
 		&c.PlatformTenantManaged,
+		&c.EnvironmentID,
 	); err != nil {
 		return APIConsumer{}, err
 	}
@@ -102,7 +104,7 @@ func (s *PgStore) ListAPIConsumersForApp(ctx context.Context, accountID, appID s
 	rows, err := s.pool.Query(ctx,
 		`select `+apiConsumerSelectCols+`
 		   from api_consumers
-		  where account_id = $1::uuid and app_id = $2::uuid
+		  where account_id = $1::uuid and app_id = $2::uuid and environment_id is null
 		  order by created_at desc, id desc`,
 		accountID, appID)
 	if err != nil {
@@ -164,6 +166,9 @@ func validatePgConsumerKeyForConsumer(accountID, consumerID, name, prefix string
 		switch scope {
 		case "read", "write", "admin", "billing":
 		default:
+			if api.ValidConsumerKeyMCPScope(scope) {
+				continue
+			}
 			return fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: scope %q is not in the closed-set {read, write, admin}", scope)
 		}
 	}

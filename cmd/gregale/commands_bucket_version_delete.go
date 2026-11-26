@@ -19,6 +19,14 @@ func cmdBucketVersionDelete(args []string) int {
 		PrintUsage(osStderr, usage, "bucket")
 		return 1
 	}
+	// `version list` reports an object written while versioning was off as
+	// version "null", and this command answered it with a bare usage line,
+	// leaving a bucket that refused deletion until emptied (prod hunt r28).
+	if args[3] == "null" {
+		return printErr("Use a deletion request for version null", fmt.Errorf(
+			"version null is an object written while versioning was off; remove it with: %s bucket deletion create %s %s %s %s null",
+			recoveryCLI(), recoveryArgument(args[0]), recoveryArgument(args[1]), recoveryArgument(args[2]), uuid.NewString()))
+	}
 	for _, id := range []string{args[1], args[3]} {
 		u, err := uuid.Parse(id)
 		if err != nil || u.String() != id || u.Version() != 4 {

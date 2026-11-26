@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -31,18 +32,27 @@ type UsageBeforeReader interface {
 type spanCharge struct {
 	billedUnitSeconds, billedStorageByteSeconds, millicents int64
 	allowance, storageAllowance                             int64
+
+	// Restore history (ADR-20261123062111): history is set when it was
+	// charged; historyMillicents is its part of millicents.
+	history                                             bool
+	includedHistory                                     int64
+	billedHistoryByteSeconds, billedSnapshotByteSeconds int64
+	historyMillicents                                   int64
 }
 
 // chargeBySpan sums each span's usage above its own allowance, then charges
 // at most one more allowance of the plan held now (the last span), as its
 // doubled ceiling allows. A span on a plan without an allowance bills
-// nothing. total is the month's usage through the last span's end.
-func chargeBySpan(ctx context.Context, usage UsageBeforeReader, subjectID string, month time.Time, spans []AllowanceSpan, total UsageSnapshot, storage bool) (spanCharge, error) {
+// nothing. total is the month's usage through the last span's end. Restore
+// history past each span's included history is summed the same way, with no
+// ceiling (ADR-20261123062111).
+func chargeBySpan(ctx context.Context, usage UsageBeforeReader, subjectID string, month time.Time, spans []AllowanceSpan, total UsageSnapshot, storage, history bool) (spanCharge, error) {
 	month = monthStart(month)
 	monthSeconds := int64(month.AddDate(0, 1, 0).Sub(month) / time.Second)
 	above := func(used, allowance int64) int64 { return max(used-allowance, 0) }
 	var out spanCharge
-	var computeOver, storageOver int64
+	var computeOver, storageOver, historyOverSum, snapshotOverSum int64
 	var before UsageSnapshot // the month's usage before the span starts
 	for i, span := range spans {
 		upTo := total
@@ -59,6 +69,12 @@ func chargeBySpan(ctx context.Context, usage UsageBeforeReader, subjectID string
 			pool := poolByteSeconds(span.StorageAllowance, monthSeconds)
 			storageOver = saturatingAdd(storageOver, max(above(upTo.StorageByteSeconds, pool)-above(before.StorageByteSeconds, pool), 0))
 		}
+		if history && span.StorageAllowance > 0 {
+			h, s := historyOver(upTo.HistoryByteSeconds, upTo.SnapshotByteSeconds, span.StorageAllowance)
+			hBefore, sBefore := historyOver(before.HistoryByteSeconds, before.SnapshotByteSeconds, span.StorageAllowance)
+			historyOverSum = saturatingAdd(historyOverSum, max(h-hBefore, 0))
+			snapshotOverSum = saturatingAdd(snapshotOverSum, max(s-sBefore, 0))
+		}
 		out.allowance, out.storageAllowance = span.Allowance, span.StorageAllowance
 		before = upTo
 	}
@@ -70,6 +86,12 @@ func chargeBySpan(ctx context.Context, usage UsageBeforeReader, subjectID string
 		var millicents int64
 		out.billedStorageByteSeconds, millicents = StorageOverageCharge(saturatingAdd(storageOver, poolByteSeconds(out.storageAllowance, monthSeconds)), out.storageAllowance, month)
 		out.millicents = saturatingAdd(out.millicents, millicents)
+	}
+	if history && out.storageAllowance > 0 {
+		out.history, out.includedHistory = true, api.ManagedPostgresIncludedHistoryBytes(out.storageAllowance)
+		out.billedHistoryByteSeconds, out.billedSnapshotByteSeconds = historyOverSum, snapshotOverSum
+		out.historyMillicents = historyOverageMillicents(historyOverSum, snapshotOverSum)
+		out.millicents = saturatingAdd(out.millicents, out.historyMillicents)
 	}
 	return out, nil
 }
@@ -100,7 +122,8 @@ func (s *PostgresStore) UsageBefore(ctx context.Context, subjectID string, month
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
 	return UsageSnapshot{PeriodStart: start, ComputeUnitSeconds: totals.ComputeUnitSeconds, StorageByteSeconds: totals.StorageByteSeconds,
-		HistoryByteSeconds: totals.HistoryByteSeconds, EgressBytes: totals.EgressBytes, CostMillicents: totals.CostMillicents}, nil
+		HistoryByteSeconds: totals.HistoryByteSeconds, SnapshotByteSeconds: totals.SnapshotByteSeconds, EgressBytes: totals.EgressBytes,
+		CostMillicents: totals.CostMillicents}, nil
 }
 
 // UsageBefore is the subject's usage in month's windows that start before
@@ -128,6 +151,10 @@ func (s *MemoryStore) UsageBefore(_ context.Context, subjectID string, month, be
 			snapshot.ComputeUnitSeconds, err = addUsage(snapshot.ComputeUnitSeconds, record.Quantity)
 		case MeterStorageByteSeconds:
 			snapshot.StorageByteSeconds, err = addUsage(snapshot.StorageByteSeconds, record.Quantity)
+		case MeterHistoryByteSeconds:
+			snapshot.HistoryByteSeconds, err = addUsage(snapshot.HistoryByteSeconds, record.Quantity)
+		case MeterSnapshotByteSeconds:
+			snapshot.SnapshotByteSeconds, err = addUsage(snapshot.SnapshotByteSeconds, record.Quantity)
 		}
 		if err != nil {
 			return UsageSnapshot{}, err

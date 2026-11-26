@@ -251,7 +251,7 @@ the first sync replaces them with your live database contract.
 import { notesClient } from './notes.js'
 
 const notes = notesClient({
-  url: 'https://notes-data.gregale.dev',
+  url: 'https://notes-data.gregale.app',
   subject: session.user.id,
   accessToken: () => session.getAccessToken(),
 })

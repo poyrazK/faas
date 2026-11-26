@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# faas-reload-or-restart UNIT [DAEMON]
+#
+# Apply a converge to a running daemon without cutting its long requests.
+# When it is safe, `systemctl reload` starts a successor on the same sockets
+# and lets the old generation finish its in-flight requests and streams
+# (ADR-1736 two-generation hand-off). Otherwise the unit is restarted, exactly
+# as `systemctl try-restart` would. The safety rules mirror deployctl's
+# handoffBlocker (cmd/deployctl/handoff.go); keep the two in step.
+#
+# A hand-off cannot apply a changed unit, drop-in, environment file or
+# credential source, because the successor inherits its predecessor's process
+# environment. Any such file newer than the unit's start forces a restart.
+#
+# FAAS_RELOAD_DRY_RUN=1 prints the decision and changes nothing.
+# Exit status: 0 reloaded or restarted (or inactive: nothing to do);
+# 1 the new binary failed its pre-traffic check, the old generation still
+# serves and nothing was restarted; 2 usage.
+set -euo pipefail
+
+unit="${1:-}"
+[[ "$unit" == faas-*.service ]] || { echo "usage: $0 faas-<daemon>.service [daemon-binary-name]" >&2; exit 2; }
+daemon="${2:-${unit#faas-}}"
+daemon="${daemon%.service}"
+bin_dir="${FAAS_RELOAD_BIN_DIR:-/opt/faas/current/bin}"
+# Memory wait + ready timeout (pkg/api HandoffMemoryWaitSeconds +
+# HandoffReadyTimeoutSeconds) plus deployctl's 30 s exec/adoption slack.
+wait_bound="${FAAS_RELOAD_WAIT_SECONDS:-210}"
+poll="${FAAS_RELOAD_POLL_SECONDS:-0.25}"
+systemctl="${FAAS_SYSTEMCTL:-systemctl}"
+proc="${FAAS_RELOAD_PROC:-/proc}"
+
+log() { echo "faas-reload-or-restart: $unit: $*"; }
+
+prop() { "$systemctl" show "$unit" --property="$1" --value 2>/dev/null || true; }
+
+restart() {
+  log "restart ($1)"
+  [[ -z "${FAAS_RELOAD_DRY_RUN:-}" ]] || exit 0
+  exec "$systemctl" try-restart "$unit"
+}
+
+[[ "$(prop ActiveState)" == active ]] || { log "not active; nothing to do"; exit 0; }
+
+pid="$(prop MainPID)"
+[[ -n "$pid" && "$pid" != 0 ]] || restart "no main process"
+[[ "$(prop NeedDaemonReload)" == no ]] || restart "unit file changed since the last daemon-reload"
+[[ "$(prop ExecReload)" == *-USR2* ]] || restart "unit has no hand-off ExecReload"
+
+started="$(prop ActiveEnterTimestamp)"
+started_epoch="$(date -d "$started" +%s 2>/dev/null || true)"
+[[ -n "$started_epoch" ]] || restart "unit start time unknown"
+
+inputs=()
+fragment="$(prop FragmentPath)"
+[[ -n "$fragment" ]] && inputs+=("$fragment")
+read -r -a dropins <<<"$(prop DropInPaths)"
+inputs+=("${dropins[@]}")
+# EnvironmentFiles: "/etc/faas/x.env (ignore_errors=yes)", one per line.
+while read -r path _ || [[ -n "${path:-}" ]]; do
+  [[ -n "$path" ]] && inputs+=("$path")
+done < <(prop EnvironmentFiles)
+# LoadCredential: "{ id:/path }" entries.
+while read -r path || [[ -n "${path:-}" ]]; do
+  [[ -n "$path" ]] && inputs+=("$path")
+done < <(prop LoadCredential | grep -oE ':/[^ };]+' | cut -c2- || true)
+
+for path in "${inputs[@]}"; do
+  [[ -e "$path" ]] || continue
+  mtime="$(stat -c %Y "$path" 2>/dev/null || echo 0)"
+  # Whole seconds: a file written in the start's second counts as new.
+  if (( mtime >= started_epoch )); then
+    restart "$path changed since the unit started"
+  fi
+done
+
+"$proc/$pid/exe" -handoff-capable >/dev/null 2>&1 || restart "running binary cannot hand off"
+"$bin_dir/$daemon" -handoff-capable >/dev/null 2>&1 || restart "new binary cannot hand off"
+
+if [[ -n "${FAAS_RELOAD_DRY_RUN:-}" ]]; then
+  log "would reload by hand-off (checked ${#inputs[@]} inputs against start $started)"
+  exit 0
+fi
+old_status="$(prop StatusText)"
+log "reload by hand-off (old generation pid $pid finishes its requests)"
+"$systemctl" reload "$unit"
+
+deadline=$(( $(date +%s) + wait_bound ))
+while (( $(date +%s) < deadline )); do
+  sleep "$poll"
+  now_pid="$(prop MainPID)"
+  if [[ -n "$now_pid" && "$now_pid" != 0 && "$now_pid" != "$pid" && "$(prop ActiveState)" == active ]]; then
+    log "successor pid $now_pid serves"
+    exit 0
+  fi
+  status="$(prop StatusText)"
+  if [[ "$status" != "$old_status" && "$status" == "hand-off failed at"* ]]; then
+    if [[ "$status" == *"rejected by pre-traffic check"* ]]; then
+      # Restarting would put the binary that failed in front of customers.
+      log "new binary failed its pre-traffic check; old generation keeps serving: $status"
+      exit 1
+    fi
+    restart "hand-off failed: $status"
+  fi
+done
+restart "successor did not take over within ${wait_bound} s"

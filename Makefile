@@ -97,6 +97,14 @@ test-data-repair: ## Run strict internal repair PostgreSQL, SDK and isolated ope
 test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit
 	@GO="$(GO)" sh scripts/test-commit.sh
 
+.PHONY: test-commit-load
+test-commit-load: ## Run isolated sustained Commit relay and reconciliation recovery qualification
+	@GO="$(GO)" sh scripts/test-commit-load.sh
+
+.PHONY: test-commit-consumer-load
+test-commit-consumer-load: ## Run sustained Commit producer-to-consumer recovery acceptance
+	@GO="$(GO)" sh scripts/test-commit-consumer-load.sh
+
 .PHONY: test-commit-native
 test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
 	@GO="$(GO)" sh scripts/test-commit-native.sh
@@ -374,8 +382,8 @@ test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^Tes
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
 .PHONY: monetization-sandbox
-monetization-sandbox: ## API monetization end to end against real Stripe/Paddle/Lago sandboxes; keys in GREGALE_SANDBOX_* (docs/ops/api-monetization-release.md)
-	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '^TestMonetizationSandbox' ./pkg/apid/apidserver/
+monetization-sandbox: ## API monetization against real provider sandboxes; RUN narrows the tests; keys in GREGALE_SANDBOX_*
+	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '$(or $(RUN),^TestMonetizationSandbox)' ./pkg/apid/apidserver/
 
 .PHONY: product-control-provider-qualification
 product-control-provider-qualification: ## Qualify Product Control exports against real Stripe test mode, Paddle sandbox and a Lago test org; set FAAS_QUALIFY_* (docs/ops/product-control.md)

@@ -1120,7 +1120,7 @@ import { createDataClient } from '@gregale/data'
 import type { Database } from './database.types.js'
 
 const db = createDataClient<Database>({
-  url: 'https://notes-data.gregale.dev',
+  url: 'https://notes-data.gregale.app',
   accessToken: async () => session.getAccessToken(),
 }).schema('api')
 
@@ -1520,7 +1520,7 @@ and server keys apply as for REST.
    ```ts
    import { createStorageClient } from '@gregale/data'
 
-   const files = createStorageClient({ url: 'https://shop-data.gregale.dev', accessToken: () => session.accessToken }).from('uploads')
+   const files = createStorageClient({ url: 'https://shop-data.gregale.app', accessToken: () => session.accessToken }).from('uploads')
    await files.upload(`${userId}/avatar.png`, file)            // a Blob brings its type
    const image = await (await files.download(`${userId}/avatar.png`)).blob()
    const { url } = await files.signedUrl(`${userId}/avatar.png`) // 60 seconds, no token, for <img src>
@@ -3053,7 +3053,7 @@ import { createDataClient } from '@gregale/data'
 import { schemaFingerprint, type Database } from './database.types.js'
 
 const db = createDataClient<Database>({
-  url: 'https://my-data.gregale.dev',
+  url: 'https://my-data.gregale.app',
   accessToken: () => session.getAccessToken(),
   expectedSchemaFingerprint: schemaFingerprint,
 }).schema('api')
@@ -3174,7 +3174,7 @@ capture IDs without replacing fetch:
 
 ```ts
 const db = createDataClient<Database>({
-  url: 'https://my-data.gregale.dev',
+  url: 'https://my-data.gregale.app',
   accessToken: () => session.getAccessToken(),
   onResponse: ({ requestId, status, durationMs }) => {
     console.info({ requestId, status, durationMs })

@@ -262,6 +262,8 @@ again. Cache import, export, and validation failures fall back to a cold build. 
 dependency cache was restored and the total time until the new version is
 live.
 
+### Common commands
+
 ```sh
 gregale dev --once             # sync once, do not watch
 gregale dev --path apps/api    # select one workspace application
@@ -291,6 +293,8 @@ gregale dev --once --json      # emit mode and edit-to-live NDJSON records
 gregale dev --ttl 72h          # keep the environment 72h after the latest sync
 ```
 
+### Share defaults in gregale.yaml
+
 For a repeatable team setup, put non-secret developer defaults in the
 project's `gregale.yaml`:
 
@@ -309,6 +313,8 @@ created locally, are validated before any remote mutation, and remain excluded
 from the source archive. Explicit CLI flags take precedence over the manifest;
 `gregale dev setup` shows the resulting effective command without starting or
 mutating the environment.
+
+### See environments and sync history
 
 The dashboard at `/dashboard/developers` lists the active environments for
 the signed-in account. It shows each stable URL, runtime, current instance
@@ -329,6 +335,8 @@ and the safe managed PostgreSQL state. It reads
 `GET /v1/dev/sessions/{project}` and, unlike starting `gregale dev`, never
 renews the lease or provisions anything. `--json` emits the session object.
 
+### Trigger invocations, crons and delayed tasks
+
 `gregale dev trigger` exercises request-driven and async paths against the
 developer app without copying its slug. Put `--path` and `--name` (source
 selection) before the verb; everything after the verb belongs to the
@@ -348,6 +356,8 @@ delegated command, so `invoke --path` still means the URL path:
 A stray app slug or `--app` is rejected rather than silently retargeting
 another app. If no environment exists for the source directory (or its lease
 expired), the commands say so and point to `gregale dev`.
+
+### Check setup before the first run
 
 `gregale dev setup` is the first-run preflight. It is local and read-only: it
 uses the same source-shape detector as `gregale dev`, validates
@@ -405,6 +415,8 @@ used when it is taken); `--no-proxy` turns it off. `--once` does not start it.
 With `--json`, its address is a `{"event":"developer_browser_proxy",...}`
 record.
 
+### Sync local env files and service URLs
+
 `--env-file` is explicit and additive/update-only. Each non-empty, non-comment
 `KEY=VALUE` entry is written to the developer app's sealed default secret
 scope; omitted keys are left untouched. The CLI compares and reports key names
@@ -426,6 +438,8 @@ omitted keys. Because `gregale dev` runs remotely, loopback hosts such as
 `localhost` and `127.0.0.1` are rejected; use a reachable development service,
 a tunnel, or `--postgres` instead. `gregale dev setup` performs the same
 validation and includes the option in its copy-paste start command.
+
+### Develop against a PostgreSQL database
 
 `--postgres` provisions one development-class, scale-to-zero PostgreSQL
 database for this local workspace and binds its sealed credential to the
@@ -477,6 +491,8 @@ command waits for the seed, and a failed seed makes it exit non-zero. With `--js
 `{"event":"developer_seed",...}` object containing the database, task ID,
 status and exit code — never the command output or credentials.
 
+### Runtime logs and sync timings
+
 Watch mode attaches one app-level runtime log stream after the first live sync.
 It follows the stable developer URL across later redeploys, prefixes lines with
 their stream (`runtime stdout` or `runtime stderr`), and reconnects after a
@@ -492,6 +508,8 @@ readiness values come from the deployment stage timings. Build output is
 prefixed with `build |` so it stays distinguishable from the app-level
 `runtime |` stream in the same terminal.
 
+### JSON output for scripts and editors
+
 With `--json`, the confirmed session first emits a `developer_mode` NDJSON
 event with `mode` (`watch`, `build`, or `function`), `source`, and the selected
 development `command` when applicable. A server fallback includes `reason` and
@@ -504,6 +522,8 @@ contains the deployment id, total edit-to-live milliseconds, the 15-second
 cached-edit target, a `within_slo` boolean, and the phase timings. Receipts are
 NDJSON so a long-running watcher can be consumed incrementally; no source,
 secret, or runtime-log content is included.
+
+### Live patches instead of rebuilds
 
 Receipts also carry a `dev_patch` object. It reports whether the edit could
 be applied to the running environment as a live source patch instead of a
@@ -553,6 +573,8 @@ build step hears it once per session. Expected cases (the first sync, a running
 version from before live patches) stay quiet. With `--json`, the reason is the
 `dev_patch.reason` field of the `developer_sync` receipt.
 
+### When a sync fails
+
 Failed syncs include a developer diagnostic in the same terminal. Deployment
 stage failures reuse the platform error code and explain the failing phase,
 the next action, and the deployment log command. The runtime stream also
@@ -570,6 +592,8 @@ Recovery log commands explicitly target the developer app and include the
 failed deployment ID when known. Runtime messages without a deployment ID
 select that developer app's runtime logs. In `--all`, records also carry
 `dev_project` and `dev_path` so editor integrations can route the guidance.
+
+### Environment identity, lease and cleanup
 
 The URL is stable for an account, local developer installation, and source
 directory. Teammates and separate clones or worktrees therefore get independent
@@ -707,6 +731,12 @@ CLI flags override the manifest, and the manifest overrides detection. An
 explicit `--watch-command` enables watch mode; it cannot be combined with
 `--watch=false`. Settings are resolved when starting the loop; restart it to
 change the selected mode.
+
+A new watch-mode environment gets 1024 MB of RAM, or your plan's RAM when that
+is smaller: a development server compiles on demand and needs far more memory
+than the production server. Watch mode needs at least 512 MB. An environment
+that already exists keeps its size; run `gregale dev --stop` once to recreate
+it at the watch size.
 
 Detection picks the following commands:
 

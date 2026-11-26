@@ -558,6 +558,12 @@ func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
 		"Stage the unit release on the control plane",
 		`unit_deploy.sh watch-open "$UNIT_PLAN" control-plane`,
 		"Activate the unit release",
+		// A failed activation gate with the release live rolls it back
+		// (2026-11-23: it left apid on the new release).
+		`"$activation_script" || status=$?`,
+		`if [[ "$(scripts/ci/unit_deploy.sh state | jq -r .current)" == "$release_id" ]]; then`,
+		`scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"`,
+		`exit "$status"`,
 		"Hold the units on the SLO gate",
 		"if: failure() && steps.watch_open.outcome == 'success'",
 		"unit_deploy.sh watch-revert control-plane",
@@ -646,11 +652,20 @@ func TestUnitReleaseIsTestedAsShippedAndCapped(t *testing.T) {
 		`python3 "$RUNNER_TEMP/unit-tools/tested_tree.py" --commit "$RELEASE_SHA"`,
 		"Build unit binaries",
 		"Sign unit release with GitHub OIDC",
-		"name: unit-release-sha-${{ steps.detect.outputs.release_sha }}")
+		"name: unit-release-sha-${{ steps.detect.outputs.release_sha }}",
+		// The preflight's base check reads the full release it is built over.
+		"name: unit-release-base-${{ steps.base.outputs.sha }}")
 	for _, required := range []string{
 		`BLAST_CAP: "5"`,
 		"unset DATABASE_URL SPLIT_DATABASE_URL",
 		"export FAAS_SKIP_PG_TESTS=1",
+		// Bounded compiler memory on the control plane's build runner: the
+		// heavy test packages compile as ci-light compiles them.
+		`"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"`,
+		`"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1"`,
+		"GOMEMLIMIT: 4GiB",
+		`go test -p 2 -ldflags=-w -count=1 -timeout=10m "${pkgs[@]}"`,
+		`go test -p 2 -ldflags=-w -count=1 -timeout=8m -run "$run" "$pkg"`,
 	} {
 		if !strings.Contains(build, required) {
 			t.Errorf("release-units build is missing %q", required)

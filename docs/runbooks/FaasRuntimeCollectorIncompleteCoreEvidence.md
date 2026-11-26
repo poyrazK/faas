@@ -1,9 +1,13 @@
 # FaasRuntimeCollectorIncompleteCoreEvidence
 
+## Symptom
+
 An apid has incomplete evidence for at least half of one core group's
 evaluations over 30 minutes, with at least 10 evaluations in that window.
 Both conditions have held for 15 minutes while Prometheus can scrape apid.
 The group identifies identity, readiness, process, or loop health evidence.
+
+## Check
 
 1. Open **Runtime Diagnostics** from the warning to select the affected apid
    and evidence group. Check the evaluation count in **Incomplete report rate
@@ -20,6 +24,8 @@ The group identifies identity, readiness, process, or loop health evidence.
    response errors. When reads succeed, check that the affected targets
    export the expected series and that the observations are fresh for the
    selected profile.
+
+## Verify
 
 Confirm the group returns fresh evidence and its incomplete rate drops below
 50% with at least 10 evaluations in 30 minutes. In the **Runtime collector

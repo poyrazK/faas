@@ -30,3 +30,28 @@ func TestMCPPolicyValidationAndEmptyAllowlists(t *testing.T) {
 		t.Fatal("wrong resource audience accepted")
 	}
 }
+
+// adr: 20261123192254 — an external issuer's declared audience.
+func TestMCPDeclaredAudience(t *testing.T) {
+	p := &MCPResourcePolicy{Resource: "https://tools.example/mcp", Audience: "api://tools"}
+	a := &EdgeRuleJWTAction{Issuer: "https://idp.example/", JWKSURL: "https://idp.example/jwks", Algorithms: []string{"RS256"}, Audience: []string{"api://tools"}, MCP: p}
+	if err := a.Validate(); err != nil {
+		t.Fatalf("declared audience refused: %v", err)
+	}
+	a.Audience = []string{"api://other"}
+	if a.Validate() == nil {
+		t.Fatal("an audience the policy does not declare was accepted")
+	}
+	a.Audience = []string{p.Resource}
+	if err := a.Validate(); err != nil {
+		t.Fatalf("the resource stays a valid audience: %v", err)
+	}
+	for _, bad := range []*MCPResourcePolicy{
+		{Resource: p.Resource, Audience: "api://tools", Credential: MCPCredentialConsumerKey},
+		{Resource: p.Resource, Audience: "api:// tools"},
+	} {
+		if bad.Validate() == nil {
+			t.Fatalf("policy %+v accepted", bad)
+		}
+	}
+}

@@ -66,6 +66,16 @@ type authReceiver struct {
 	// agents answers gateways' agent approval and activity calls; nil
 	// answers Unavailable (ADR-20261111150000).
 	agents AgentRequests
+	// consumers enrolls gateways' verified OAuth callers as API consumers;
+	// nil answers Unavailable (ADR-20261124094745).
+	consumers OAuthConsumers
+	// upgrades mints consumers' upgrade links; nil answers Unavailable.
+	upgrades UpgradeLinks
+	// links links OAuth callers to key consumers; nil answers Unavailable.
+	links OAuthLinks
+	// accountTools answers MCP account tools; nil answers Unavailable and
+	// reports every app's account tools off.
+	accountTools AccountTools
 }
 
 // sessionKeyHolder is a SessionOpener that can derive keys:

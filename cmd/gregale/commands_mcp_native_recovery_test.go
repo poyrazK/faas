@@ -172,6 +172,11 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					}
 					json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "stable", AppID: "web-id", Status: main.StatusLive, TrafficPercent: 100})
 				default:
+					if strings.HasSuffix(r.URL.Path, "/env") {
+						// Runtime variables; the fixture keeps its settings in the manifest.
+						json.NewEncoder(w).Encode(api.AppEnvListResponse{Env: []api.AppEnvResponse{}})
+						return
+					}
 					t.Errorf("unexpected route: %s", r.URL.Path)
 					w.WriteHeader(404)
 				}

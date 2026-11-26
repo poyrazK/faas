@@ -14,7 +14,7 @@ gregale mcp server doctor --url http://127.0.0.1:8080/mcp --legacy
 gregale mcp client call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
 gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
 gregale mcp server deploy --path . --name my-mcp --profile small
-gregale mcp server export --url https://my-mcp.gregale.dev/mcp --name my-mcp
+gregale mcp server export --url https://my-mcp.gregale.app/mcp --name my-mcp
 ```
 
 `gregale-mcp.json` declares the MCP contract. `gregale.yaml` declares ordinary
@@ -32,7 +32,7 @@ The starter explicitly uses public access. Before adding sensitive tools, set:
   "mode": "external-oauth",
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
-  "resource": "https://my-mcp.gregale.dev/mcp",
+  "resource": "https://my-mcp.gregale.app/mcp",
   "scopes": ["mcp:tools"],
   "tool_scopes": {
     "greet": [],
@@ -142,7 +142,12 @@ Keep reader keys until all retained payloads using them have expired.
 `MCP_TASK_NAMESPACE` overrides
 
 Run `npm run tasks:migrate -- apply` with a separate schema-owner binding in
-`MCP_TASK_MIGRATION_DATABASE_URL` before starting the app. This creates or upgrades
+`MCP_TASK_MIGRATION_DATABASE_URL` before starting the app. On Gregale, declare it
+as the web app's release command so it runs before every deploy goes live:
+`release: {command: node tasks-migrate.js apply}` in `gregale.yaml`, with the
+binding from `gregale postgres attach <db> <web-app> --env
+MCP_TASK_MIGRATION_DATABASE_URL --access migration`. Call node directly: the
+shared Node runtime ships no npm. This creates or upgrades
 the Task schema and prepares the namespace. The application binding uses the
 runtime role and needs Task DML and metadata SELECT privileges; startup performs
 read-only checks. The store
@@ -321,6 +326,61 @@ database connection or pooler cannot keep a listener open.
 When the last watched Task expires or becomes inaccessible, its subscription
 slot and database listener are released. A Task-only SSE stream finishes; any
 resource or catalog filters on the same stream continue receiving updates.
+
+### Resume a report with the example supervisor
+
+The [Task supervisor](examples/task-supervisor.mjs) calls the Gregale CLI using
+the credential named by `--token-env`. Use a CLI with receipt-directory status
+and batch watching. Set `GREGALE_BIN` if that CLI is outside your PATH. Keep the
+supervisor's private workspace outside the deployed source directory.
+
+```sh
+node examples/task-supervisor.mjs submit --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work --receipt weekly.json --report weekly
+node examples/task-supervisor.mjs run --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work
+```
+
+The `run` command discovers retained Tasks from `receipts/` and watches active
+work. The example handles the starter report's approval round. When it emits
+`review_required`, open the indicated private file in `reviews/` and review the
+form. To approve the sample report, set its `response` to
+`{"action":"accept","content":{"approved":true}}`, then run the same `run`
+command again. The CLI checks the live Task and form before submitting the
+answer. If a run is interrupted, restart with `run` and the same workspace.
+
+For a submission you may need to retry, save the original Task arguments in a
+private job file outside the deployed source directory. Use the same file for
+`submit` and `recover`.
+
+```sh
+(umask 077; printf '%s\n' '{"report":"weekly","steps":1,"request_approval":true}' > ../weekly-job.json)
+node examples/task-supervisor.mjs submit --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work --receipt weekly.json --job-file ../weekly-job.json
+```
+
+If that submission is interrupted after the receipt is saved, explicitly
+recover the selected receipt with the original caller's credential and the
+same endpoint.
+
+```sh
+node examples/task-supervisor.mjs recover --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work --receipt weekly.json --job-file ../weekly-job.json
+```
+
+This requires a CLI that supports `--retry-submission`. The CLI checks the
+original request and credential before using the saved key within its
+one-minute window. The supervisor then checks for a retained Task, including
+after the window expires or the credential changes. It reports
+`submission_unresolved` if it cannot confirm a Task after a retry and lookup.
+A temporary lookup failure or an interrupted watch reports `retry_status` for
+receipts that need another status check. Review and respond using the same
+`run` flow above.
+
+Completed results are published once to private files in `results/`, using the
+receipt filename. The example checks the saved Task ID on later runs and
+reports `already_saved`. Standard output contains JSON action records with
+filenames for review or result files.
 
 The portable suite exercises the MCP wire with a memory store and checks SQL
 parameters through a fake PostgreSQL pool. The repository's PostgreSQL 16

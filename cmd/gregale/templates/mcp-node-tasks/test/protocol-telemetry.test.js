@@ -26,7 +26,8 @@ test('protocol wire outcomes, bounded labels and safe correlation', async t => {
     logs.length=0;
   }
   await call('tools/call',{name:'greet',arguments:{name:'sensitive-payload'}},'success','greet');
-  await call('tools/call',{name:'add',arguments:{a:'sensitive-payload',b:2}},'tool_error','add');
+  // ADR-20261122194324: arguments that fail the tool's input schema.
+  await call('tools/call',{name:'add',arguments:{a:'sensitive-payload',b:2}},'invalid_params','add');
   await call('resources/read',{uri:'missing://private-resource'},'rpc_error','none');
 });
 

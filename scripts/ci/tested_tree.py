@@ -10,13 +10,16 @@ signs a release of commit T:
            commit T^ in its final head H, H's tree is T's tree, and ci-light
            passed on H. CI's merge ref for H was then H itself, so CI tested
            exactly what ships. Nothing more to run.
-  run      otherwise. The paths CI did not see together are the changes
-           between H and T (other pull requests that landed meanwhile) and
-           T's own change (T^..T); scripts/ci/affected_packages.py selects
-           the packages those changes affect, as ci-light would, and only
-           the ones a shipped daemon builds from are kept (`go list -deps`
-           of their cmd/ packages). The caller runs their tests at T and
-           releases only when they pass.
+  run      otherwise. scripts/ci/affected_packages.py selects packages as
+           ci-light would, and only the ones a shipped daemon builds from
+           are kept (`go list -deps` of their cmd/ packages). The caller
+           runs their tests at T and releases only when they pass.
+           When ci-light passed on H (main moved under the pull request):
+           H tested T's own change (T^..T) over an older main, and main
+           tested the other merges (H..T). A package affected by only one
+           side has inputs CI already saw together, so only packages
+           affected by both (`interaction`) can fail at T alone. Without a
+           green H: every package T's own change or the other merges affect.
 
 Without a pull request (none found, or the API failed) it falls back to
 `run` over T^..T.
@@ -98,13 +101,20 @@ def decide(commit: str, pull: dict | None, light_ok, fetch_head, tree, ancestor,
                 "pull": pull["number"], "head": None, "paths": own}
     up_to_date = ancestor(parent, head)
     same_tree = tree(head) == tree(commit)
-    if up_to_date and same_tree and light_ok(head):
+    light = light_ok(head)
+    if up_to_date and same_tree and light:
         return {"verdict": "tested", "reason": f"ci-light passed on #{pull['number']}'s head {head[:12]}, which held "
                 f"main's previous commit and is the tree that shipped", "pull": pull["number"], "head": head, "paths": []}
+    others = diff(head, commit)
     why = ("its head did not hold main's previous commit" if not up_to_date else
            "its head's tree differs from the merged tree" if not same_tree else "ci-light did not pass on its head")
-    return {"verdict": "run", "reason": f"#{pull['number']}: {why}; testing what CI did not see together",
-            "pull": pull["number"], "head": head, "paths": sorted(set(own) | set(diff(head, commit)))}
+    plan = {"verdict": "run", "pull": pull["number"], "head": head, "paths": sorted(set(own) | set(others))}
+    if light:
+        plan.update(reason=f"#{pull['number']}: {why}; ci-light passed on its head, so testing the packages both "
+                    "its change and the merges since affect", interaction={"own": own, "others": others})
+    else:
+        plan["reason"] = f"#{pull['number']}: {why}; testing what CI did not see together"
+    return plan
 
 
 SHARDS = 3  # ci-light's test shards; every shard's selection is taken
@@ -122,6 +132,15 @@ def affected(paths: list[str], kind: str) -> list[str]:
                              input="\n".join(paths) + "\n", capture_output=True, text=True, check=True)
         found.update(out.stdout.split())
     return sorted(found)
+
+
+def select(plan: dict, kind: str, affected=affected) -> list[str]:
+    """The packages of `kind` a run plan tests: with `interaction`, those
+    both sides affect; otherwise those any of its paths affect."""
+    both = plan.get("interaction")
+    if both:
+        return sorted(set(affected(both["own"], kind)) & set(affected(both["others"], kind)))
+    return affected(plan["paths"], kind)
 
 
 def related_runs(package: str, paths: list[str], base: str) -> list[str]:
@@ -190,8 +209,8 @@ def main(argv: list[str]) -> int:
     selective: list[dict] = []
     if plan["verdict"] == "run":
         closure = shipped_closure([d for d in args.daemons.split(",") if d])
-        packages = sorted(p for p in affected(plan["paths"], "test") if normalise(p) in closure)
-        for pkg in affected(plan["paths"], "selective"):
+        packages = sorted(p for p in select(plan, "test") if normalise(p) in closure)
+        for pkg in select(plan, "selective"):
             if normalise(pkg) in closure:
                 runs = related_runs(pkg, plan["paths"], f"{commit}^")
                 if runs:

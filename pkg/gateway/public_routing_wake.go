@@ -150,8 +150,8 @@ func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Req
 	showPage := acceptsWakePage(r)
 	if showPage && r.Context().Err() == nil && wakeWaitExpired && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 		h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
-		w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
-		writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+		w.Header().Set(canonicalWakeHeader, wire.ColdWakeValue)
+		writeWakePage(w, r.Header.Get("X-Faas-Wake-Id"))
 	} else if trafficRevocationCause(r.Context()) != nil {
 		writeTrafficRevocationError(w, r, trafficRevocationCause(r.Context()))
 	} else if requestBudgetExpired(r.Context()) {

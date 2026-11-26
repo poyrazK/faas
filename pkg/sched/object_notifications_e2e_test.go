@@ -46,10 +46,17 @@ func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore
 	if err != nil {
 		t.Fatal(err)
 	}
-	qb, err := st.CreateQueueBinding(ctx, state.QueueBinding{AccountID: account.ID, AppID: qapp.ID, DeploymentScope: "staging", Name: "storage", QueueName: "storage", Enabled: true, Mode: "pull", WorkloadClass: "worker", MaxConcurrency: 1, RetryPolicyJSON: json.RawMessage(`{"max_attempts":3}`)})
-	if err != nil {
-		t.Fatal(err)
+	queueBinding := func(scope string) state.QueueBinding {
+		binding, e := st.CreateQueueBinding(ctx, state.QueueBinding{AccountID: account.ID, AppID: qapp.ID, DeploymentScope: scope, Name: "storage", QueueName: "storage", Enabled: true, Mode: "pull", WorkloadClass: "worker", MaxConcurrency: 1, RetryPolicyJSON: json.RawMessage(`{"max_attempts":3}`)})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return binding
 	}
+	// Destinations resolve in the bucket's environment (ADR-20261104120000
+	// amendment 2026-11-16). This bucket is production's: the stage's queue
+	// of the same name is never its destination.
+	queueBinding("staging")
 	accountID := uuid.MustParse(account.ID).String()
 	queueARN := "arn:gregale:sqs:us-east-1:" + accountID + ":" + qapp.ID + "/storage"
 	functionARN := "arn:gregale:lambda:us-east-1:" + accountID + ":function:" + fapp.ID
@@ -61,6 +68,10 @@ func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore
 		_, e := c.PutBucketNotificationConfiguration(ctx, &awss3.PutBucketNotificationConfigurationInput{Bucket: aws.String(b.Name), NotificationConfiguration: &n})
 		return e
 	}
+	if putConfig(config) == nil {
+		t.Fatal("production bucket reached a queue that exists only in a stage")
+	}
+	qb := queueBinding("")
 	if err = putConfig(config); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +187,9 @@ func objectNotificationsSDKEndToEnd(t *testing.T, st objectEventIntegrationStore
 			continue
 		}
 		received++
-		if row.QueueBindingID != qb.ID || row.DeploymentScope != "staging" || row.EnvironmentID != "" {
+		// A project app captures production work as "production"
+		// (state.DefaultInvocationDeploymentScope), not the default scope.
+		if row.QueueBindingID != qb.ID || !state.ProductionDeploymentScope(row.DeploymentScope) || row.EnvironmentID != "" {
 			t.Fatal("S3 notification lost captured queue scope", row)
 		}
 		var msg objectNotificationMessage

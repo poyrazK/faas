@@ -104,7 +104,9 @@ type Options struct {
 type management struct {
 	// channelTests holds each notification channel's last test send time,
 	// for gregale_test_notification_channel's rate limit.
-	channelTests     sync.Map
+	channelTests sync.Map
+	// docsCaps caches the capability answer that gates preview docs.
+	docsCaps         docsCapabilities
 	grantLifecycle   *Lifecycle
 	lifecycle        *Lifecycle
 	toolWrites       map[string]bool
@@ -219,6 +221,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	}
 	if opts.docs == nil {
 		opts.docs = newDocsLibrary(docsSiteURL, nil)
+		opts.docs.embedded = embeddedDocsPages
 	}
 	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan), flagPlans: make(map[string]*flagPlan), budgetPlans: make(map[string]*budgetPlan), reviewedPlans: make(map[string]*reviewedPlan), secretRequests: make(map[string]*secretRequest)}
 	if err := m.restorePlans(); err != nil {
@@ -278,6 +281,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerPostgresQueries(s, m)
 	registerAsyncMonitoring(s, m)
 	registerEdgeRules(s, m)
+	registerVerificationContracts(s, m)
 	registerPreviewsObjectsTests(s, m)
 	registerEventsConsumers(s, m)
 	registerAuditBudgets(s, m)
@@ -314,7 +318,7 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 	m.toolWrites[name] = !readOnly
 	destructive := !readOnly
 	handler := toolHandler(m, name, readOnly, handle)
-	tool := &mcp.Tool{Name: name, Description: description, OutputSchema: registeredToolOutputSchema(name), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: toolIdempotent(name, readOnly)}}
+	tool := &mcp.Tool{Name: name, Title: toolTitle(name), Description: description, OutputSchema: registeredToolOutputSchema(name), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: toolIdempotent(name, readOnly)}}
 	m.queueTool(name, description, func() { mcp.AddTool(s, tool, handler) })
 }
 

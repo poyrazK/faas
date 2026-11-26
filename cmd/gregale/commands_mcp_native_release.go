@@ -185,13 +185,6 @@ func mcpNativeFingerprint(p mcpNativeReleasePlan) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func requireMCPNativeNodeWorker(workerPath string) error {
-	info, err := os.Lstat(filepath.Join(workerPath, "tasks-release.js"))
-	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("native MCP Task releases require a Node worker project with tasks-release.js (start from `gregale init mcp-node-tasks`); use a manual rollout for Go/Python workers as described in docs/mcp.md")
-	}
-	return nil
-}
 func loadMCPNativeState(path, fingerprint string) (mcpNativeReleaseState, error) {
 	s := mcpNativeReleaseState{Version: 1, Fingerprint: fingerprint, Stage: "prepared", PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
 	b, err := os.ReadFile(path)
@@ -241,7 +234,13 @@ func cmdMCPTaskRelease(args []string) int {
 		return printErr("MCP release plan", err)
 	}
 	if action != "status" && (action != "recover" || *resume) {
-		if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+		// run and the start/drain adapters it drives work for every Tasks
+		// starter; recovery and retirement still need the Node gate.
+		check := requireMCPNativeNodeWorker
+		if action == "run" || action == "start" || action == "drain" {
+			check = func(path string) error { _, err := mcpNativeWorkerRuntime(path); return err }
+		}
+		if err := check(p.WorkerPath); err != nil {
 			return printErr("MCP release runtime", err)
 		}
 	}
@@ -339,8 +338,12 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 		}
 		return jsonOut(writeJSON(s))
 	}
-	if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+	runtime, err := mcpNativeWorkerRuntime(p.WorkerPath)
+	if err != nil {
 		return printErr("MCP release runtime", err)
+	}
+	if runtime != mcpWorkerRuntimeNode && s.TaskIntentID != "" {
+		return printErr("MCP release runtime", errors.New("hosted Task execution releases need a Node worker (mcp-node-tasks)"))
 	}
 	if err := preflightMCPControlPlaneContext(ctx); err != nil {
 		return printErr("MCP control-plane compatibility", err)
@@ -390,6 +393,10 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 	// Each adapter and each wait has its own deadline; bound the entire invocation too.
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds*5+120)*time.Second)
 	defer cancel()
+	if runtime != mcpWorkerRuntimeNode {
+		return finishMCPNativeRelease(ctx, s, state, quiet, runMCPBuiltinTaskGate(ctx, runtime, p.WorkerPath, s.Fingerprint, state+".gate",
+			time.Duration(p.TimeoutSeconds)*time.Second, gatePlan["start"].([]string), gatePlan["drain"].([]string)), nil)
+	}
 	command := exec.CommandContext(ctx, "node", "tasks-release.js", f.Name())
 	command.Dir = p.WorkerPath
 	if s.TaskIntentID != "" {
@@ -423,24 +430,30 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 			*s.executorSettled = true
 		}
 	}
+	return finishMCPNativeRelease(ctx, s, state, quiet, output, runErr)
+}
+
+// finishMCPNativeRelease records a gate's report, Node's or the built-in one.
+func finishMCPNativeRelease(ctx context.Context, s mcpNativeReleaseState, state string, quiet bool, output []byte, runErr error) int {
 	var report struct {
 		OK     bool   `json:"ok"`
 		Stage  string `json:"stage"`
 		Detail string `json:"detail,omitempty"`
 	}
 	if json.Unmarshal(output, &report) != nil {
-		return printErr("MCP Task release", errors.New("gate failed; check Node dependencies and deployment bindings"))
+		return printErr("MCP Task release", errors.New("gate failed; check the worker's dependencies and deployment bindings"))
 	}
 	if !report.OK {
 		report.Detail = "Inspect the release journal and recorded deployments, then rerun with unchanged sources and plan"
 	}
 	if report.OK {
+		var err error
 		s, err = loadMCPNativeState(state, s.Fingerprint)
 		if err != nil {
 			return printErr("MCP release journal", err)
 		}
 		s.Stage = "complete"
-		if err = saveMCPNativeStateContext(ctx, state, &s); err != nil {
+		if err := saveMCPNativeStateContext(ctx, state, &s); err != nil {
 			return printErr("MCP release journal", err)
 		}
 	}
@@ -463,6 +476,7 @@ func mcpNativeObserverHealthy(ctx context.Context, c *Client, p mcpNativeRelease
 	if err != nil {
 		return err
 	}
+	app = mcpTasksRuntimeApp(ctx, c, app)
 	if !mcpNativeTaskNamespaceMatches(app) {
 		return errors.New("observer must use the release's explicit MCP_TASK_NAMESPACE as a non-secret setting")
 	}
@@ -731,7 +745,7 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 		if e != nil {
 			return e
 		}
-		if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != canonical {
+		if cfg.Auth.Mode != mcphosting.AuthOpen && cfg.Auth.Resource != canonical {
 			return errors.New("promoted OAuth resource differs from canonical endpoint")
 		}
 		preview, e := c.GetDeploymentURL(ctx, s.WebDeployment)
@@ -970,6 +984,11 @@ func checkMCPNativeWorkers(ctx context.Context, c *Client, p mcpNativeReleasePla
 	input, _ := json.Marshal(map[string]any{"replacementWorkerIDs": s.WorkerIDs})
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	if runtime, err := mcpNativeWorkerRuntime(p.WorkerPath); err != nil {
+		return err
+	} else if runtime != mcpWorkerRuntimeNode {
+		return mcpBuiltinReplacementsReady(probeCtx, p.WorkerPath, s.WorkerIDs)
+	}
 	command := exec.CommandContext(probeCtx, "node", "tasks-release-readiness.js")
 	command.Dir = p.WorkerPath
 	env := []string{}

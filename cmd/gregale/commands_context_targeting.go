@@ -55,8 +55,10 @@ func projectTargeting(context localProjectContext, path, configPath string, conn
 			overview.Notes = append(overview.Notes, "The linked environment applies only to environment-aware commands; it does not scope every app read.")
 		}
 	}
-	if connection != nil && strings.HasPrefix(connection.APISource, "env:") {
-		overview.Notes = append(overview.Notes, "FAAS_API overrides the selected profile's API address; the profile still selects its stored credentials.")
+	if connection != nil {
+		if name, ok := strings.CutPrefix(connection.APISource, "env:"); ok {
+			overview.Notes = append(overview.Notes, name+" overrides the selected profile's API address; the profile still selects its stored credentials.")
+		}
 	}
 	return overview
 }

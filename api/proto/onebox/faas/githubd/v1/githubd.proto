@@ -561,6 +561,8 @@ message EnqueueBuildRequest {
   // deployment in it, without the preview-app steps. An older apid never
   // receives one: githubd sends it only after EnsurePullRequestBranch.
   bool environment_branch = 20;
+  // Project-production fan-out ID; unset for independent apps and previews.
+  string project_deploy_group_id = 21;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for

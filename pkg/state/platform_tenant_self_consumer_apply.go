@@ -113,7 +113,7 @@ func (m *MemStore) ApplyPlatformTenantSelfConsumers(_ context.Context, in ApplyP
 		item := PlatformTenantSelfConsumerApplyItem{SurfaceID: surface.id}
 		found := false
 		for _, consumer := range m.apiConsumers {
-			if consumer.AccountID != in.AccountID || consumer.AppID != surface.appID || consumer.ExternalRef != in.ExternalRef {
+			if consumer.AccountID != in.AccountID || consumer.AppID != surface.appID || consumer.ExternalRef != in.ExternalRef || consumer.EnvironmentID != "" {
 				continue
 			}
 			if !samePlatformTenantSelfConsumer(consumer, in.TenantID, in.Name) {

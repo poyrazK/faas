@@ -61,6 +61,14 @@ type mcpCatalog struct {
 
 var mcpRuntimeCatalog = newMCPCatalog()
 
+// hasTool reports whether name is a registered tool.
+func (c *mcpCatalog) hasTool(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.tools[name]
+	return ok
+}
+
 func newMCPCatalog() *mcpCatalog {
 	return &mcpCatalog{
 		tools:       make(map[string]mcpCatalogEntry),

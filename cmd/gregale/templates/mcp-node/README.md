@@ -14,7 +14,7 @@ gregale mcp server doctor --url http://127.0.0.1:8080/mcp --legacy
 gregale mcp client call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
 gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
 gregale mcp server deploy --path . --name my-mcp --profile small
-gregale mcp server export --url https://my-mcp.gregale.dev/mcp --name my-mcp
+gregale mcp server export --url https://my-mcp.gregale.app/mcp --name my-mcp
 ```
 
 `gregale-mcp.json` declares the MCP contract. `gregale.yaml` declares ordinary
@@ -32,7 +32,7 @@ The starter explicitly uses public access. Before adding sensitive tools, set:
   "mode": "external-oauth",
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
-  "resource": "https://my-mcp.gregale.dev/mcp",
+  "resource": "https://my-mcp.gregale.app/mcp",
   "scopes": ["mcp:tools"],
   "tool_scopes": {
     "greet": [],
@@ -210,3 +210,17 @@ every 30 seconds, independent of RPC traffic. Shutdown stops the emitter.
 This is process telemetry, not an MCP readiness check. Set
 `MCP_TELEMETRY_LOSS_ALERT=true` to opt into platform operator alerts for lost
 heartbeats; customer performance webhook settings are separate.
+
+## Deploy a typed application toolkit
+
+Use the Gregale SDK preview to compose query, resource, pipeline, and action
+adapters into a toolkit. Pass it as `toolkit` in the options to `createApp` in `server.js`.
+Toolkits require external OAuth. Select each operation and assign its scopes
+when mounting its adapter. Keep existing tool or resource policies explicitly
+listed in `gregale-mcp.json` when you want them alongside the toolkit. The
+application adapters enforce current business access and any human approvals.
+
+To expose selected pipeline starts as MCP Tasks, configure the SDK pipeline
+Task view and pass `pipelineTasks` with the toolkit. Apply the pipeline Task binding
+schema first and share its database, namespace, and owner key across serving
+replicas. Use `tasks/get` to follow current progress and read the typed result.

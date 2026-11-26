@@ -25,6 +25,6 @@ func renderAppHealthVerification(w io.Writer, slug string, health api.AppHealthR
 	}
 	_, _ = fmt.Fprintln(w, "This read uses recorded evidence and does not wake the app or prove every route and workload is healthy.")
 	if health.Status != "healthy" {
-		_, _ = fmt.Fprintf(w, "Next investigation (POSIX shells):\n  %s inspect %s\n", recoveryCLI(), recoveryArgument(slug))
+		_, _ = fmt.Fprintf(w, "Next investigation (POSIX shells):\n  %s app health %s --explain\n", recoveryCLI(), recoveryArgument(slug))
 	}
 }

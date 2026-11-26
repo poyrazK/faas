@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // A deploy to an app that already exists replaces its running release. When
@@ -72,8 +74,14 @@ func guardUnlinkedExistingApp(ctx context.Context, client *Client, slug, dir str
 	if sourceLinkedTo(dir, slug) {
 		return 0
 	}
-	if _, err := client.GetApp(ctx, slug); err != nil {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
 		return 0 // missing (a create) or unreadable: the deploy path reports it
+	}
+	if app.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
+		// Reserved (`deploy --create-only`) or never deployed: there is no
+		// running release to replace (MCP Tasks prod re-probe 2026-11-23).
+		return 0
 	}
 	// --json keeps stderr to one machine-readable Problem; a prose note
 	// before it broke every JSON deploy error to an unlinked app.

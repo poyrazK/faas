@@ -49,8 +49,8 @@ const (
 	// gateway_platform_errors_total (5xx produced before any guest response
 	// byte) counts against the public figure (production-us hunt #9).
 	statusAPIAvailabilityQuery = `(
-		((1 - (sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))) * 100)
-		and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
+		((1 - (sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)) / (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0)))) * 100)
+		and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0))) > 0
 	) or vector(100)`
 	statusWakeP95Query = `(
 		(histogram_quantile(0.95, sum(rate(gateway_platform_wake_latency_seconds_bucket[30m])) by (le)) * 1000)
@@ -174,6 +174,9 @@ type statusCache struct {
 	client *promql.Client
 	log    *slog.Logger
 	store  state.Store
+	// excludedAccounts returns the operator's status_excluded_account_ids
+	// (nil: count every account).
+	excludedAccounts func() []string
 
 	mu        sync.Mutex
 	lastEval  time.Time
@@ -201,7 +204,7 @@ type statusEvaluation struct {
 }
 
 type deploymentOutcomeCounter interface {
-	CountDeploymentOutcomesSince(context.Context, time.Time) (state.DeploymentOutcomeCounts, error)
+	CountDeploymentOutcomesSince(context.Context, time.Time, ...string) (state.DeploymentOutcomeCounts, error)
 }
 
 const statusDeploymentOutcomeWindow = 24 * time.Hour
@@ -336,7 +339,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	// 1. API availability over last 5m: 2xx / eligible 2xx+5xx outcomes
 	// for resolved apps. Client/application 4xx responses and requests that
 	// never reached a tenant route are not platform failures.
-	if pct, err := c.client.QueryScalar(ctx, statusAPIAvailabilityQuery); err == nil {
+	if pct, err := c.client.QueryScalar(ctx, availabilityQueryExcluding(c.excludedAppIDs(ctx))); err == nil {
 		snap.legacy.APIAvailabilityPct = pct
 		snap.indicatorAvailable["api_availability"] = true
 		okCount++
@@ -377,13 +380,23 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	buildAvailable := false
 	queryPrometheusBuild := true
 	if counter, ok := c.store.(deploymentOutcomeCounter); ok {
-		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow))
+		var excluded []string
+		if c.excludedAccounts != nil {
+			excluded = c.excludedAccounts()
+		}
+		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow), excluded...)
 		switch {
 		case countErr == nil && counts.Succeeded+counts.Failed > 0:
 			queryPrometheusBuild = false
 			buildAvailable = true
 			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(counts.Succeeded+counts.Failed) * 100
 			snap.deploymentFailedAccounts, snap.deploymentTenantsCounted = counts.FailedAccounts, true
+		case countErr == nil && len(excluded) > 0:
+			// An empty window after exclusions means only excluded
+			// accounts deployed. Prometheus cannot filter accounts, so
+			// falling back would let them drive the indicator again; the
+			// indicator is unavailable until a counted deployment lands.
+			queryPrometheusBuild = false
 		case countErr != nil:
 			queryPrometheusBuild = false
 			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)
@@ -459,6 +472,11 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 // remains useful for failures that do not have a public indicator, but it must
 // not leave a component operational while an authoritative indicator is
 // already outside its advertised target.
+//
+// Platform wake p95 measures admission queue, scheduling and VM restore until
+// the first upstream byte, so it belongs to App execution. It used to degrade
+// Networking, which made the public page report a network problem whenever
+// wakes were slow.
 func applyStatusIndicatorBreaches(snap *statusEvaluation) {
 	type indicator struct {
 		available bool
@@ -470,7 +488,7 @@ func applyStatusIndicatorBreaches(snap *statusEvaluation) {
 	}
 	indicators := []indicator{
 		{snap.indicatorAvailable["api_availability"], float64Ptr(snap.legacy.APIAvailabilityPct), api.StatusTargetAPIAvailabilityPct, func(v, target float64) bool { return v < target }, publicstatus.ComponentNetworking, "API availability"},
-		{snap.indicatorAvailable["wake_p95"], snap.legacy.WakeP95MS, api.StatusTargetWakeP95MS, func(v, target float64) bool { return v > target }, publicstatus.ComponentNetworking, "platform wake p95"},
+		{snap.indicatorAvailable["wake_p95"], snap.legacy.WakeP95MS, api.StatusTargetWakeP95MS, func(v, target float64) bool { return v > target }, publicstatus.ComponentAppExecution, "platform wake p95"},
 		{snap.indicatorAvailable["build_success"], float64Ptr(snap.legacy.BuildSuccessPct), api.StatusTargetDeploymentSuccessPct, func(v, target float64) bool { return v < target }, publicstatus.ComponentDeployments, "deployment success"},
 	}
 	for _, current := range indicators {
@@ -636,6 +654,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 			s.log.Warn("status: daily history unavailable", "err", err)
 		}
 	}
+	declared := s.declaredIncidentSpans(r.Context(), startDay, active, now)
 	components := make([]api.PublicStatusComponent, 0, 5)
 	launchAt, launchErr := configuredPublicStatusLaunchAt(os.Getenv)
 	if launchErr != nil {
@@ -660,6 +679,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			observation := publicstatus.SummarizeDay(day, selected, expected)
+			observation = publicstatus.ApplyDeclaredIncidents(observation, component, declared)
 			dailyDomain = append(dailyDomain, observation)
 			status := string(observation.State)
 			if !launchAt.IsZero() && expected == 0 && day.Before(launchAt) {
@@ -881,6 +901,38 @@ func (s *server) runStatusEvaluationOnce(ctx context.Context) {
 	if rollupSucceeded {
 		s.statusMetrics.markRollupSuccess(time.Now())
 	}
+}
+
+// declaredIncidentSpans lists the operator-declared incidents that can touch
+// the public day bars: every incident updated since startDay plus the active
+// ones (an open incident may not have been updated inside the window). It is
+// a separate query so the 200-event cap of the overview list cannot push an
+// older incident off its day.
+func (s *server) declaredIncidentSpans(ctx context.Context, startDay time.Time, active []state.StatusIncident, now time.Time) []publicstatus.DeclaredSpan {
+	incidents := append([]state.StatusIncident{}, active...)
+	if s.store != nil {
+		recent, err := s.store.ListPublicStatusEvents(ctx, state.StatusEventListOptions{Kind: publicstatus.KindIncident, Since: startDay, Limit: 200})
+		if err != nil {
+			s.log.Warn("status: declared incident history unavailable", "err", err)
+		}
+		incidents = append(incidents, recent...)
+	}
+	spans := make([]publicstatus.DeclaredSpan, 0, len(incidents))
+	for _, incident := range incidents {
+		if incident.Kind != publicstatus.KindIncident {
+			continue
+		}
+		start := incident.PostedAt
+		if incident.StartsAt != nil {
+			start = *incident.StartsAt
+		}
+		end := now
+		if incident.ResolvedAt != nil {
+			end = *incident.ResolvedAt
+		}
+		spans = append(spans, publicstatus.DeclaredSpan{Start: start, End: end, Components: incident.Components})
+	}
+	return spans
 }
 
 func statusEventOverlays(events []state.StatusIncident) []publicstatus.Overlay {

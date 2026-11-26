@@ -10,6 +10,7 @@ import type { AppWebhookResponse } from '../models/AppWebhookResponse.js';
 import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
 import type { CreateAccountReleaseWebhookRequest } from '../models/CreateAccountReleaseWebhookRequest.js';
 import type { CreateAppWebhookRequest } from '../models/CreateAppWebhookRequest.js';
+import type { RealtimeChannelWebhookFilter } from '../models/RealtimeChannelWebhookFilter.js';
 import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
 import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
 import type { UpdateAccountReleaseWebhookRequest } from '../models/UpdateAccountReleaseWebhookRequest.js';
@@ -19,6 +20,94 @@ import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class WebhooksService {
   protected static readonly clientConfig?: typeof OpenAPI;
+  /**
+   * Get an exact realtime channel webhook binding
+   * Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+   * @returns RealtimeChannelWebhookFilter Current channel binding
+   * @throws ApiError
+   */
+  public static getRealtimeChannelWebhookFilter({
+    slug,
+    id,
+  }: {
+    /**
+     * Application slug for get an exact realtime channel webhook binding.
+     */
+    slug: string,
+    /**
+     * Realtime endpoint or webhook ID for get an exact realtime channel webhook binding.
+     */
+    id: string,
+  }): CancelablePromise<RealtimeChannelWebhookFilter> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks/{id}/realtime-channel',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Put an exact realtime channel webhook binding
+   * Put an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+   * @returns RealtimeChannelWebhookFilter Put an exact realtime channel webhook binding. Current channel binding
+   * @throws ApiError
+   */
+  public static setRealtimeChannelWebhookFilter({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Application slug for put an exact realtime channel webhook binding.
+     */
+    slug: string,
+    /**
+     * Realtime endpoint or webhook ID for put an exact realtime channel webhook binding.
+     */
+    id: string,
+    requestBody: RealtimeChannelWebhookFilter,
+  }): CancelablePromise<RealtimeChannelWebhookFilter> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/webhooks/{id}/realtime-channel',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Delete an exact realtime channel webhook binding
+   * Delete an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteRealtimeChannelWebhookFilter({
+    slug,
+    id,
+  }: {
+    /**
+     * Application slug for delete an exact realtime channel webhook binding.
+     */
+    slug: string,
+    /**
+     * Realtime endpoint or webhook ID for delete an exact realtime channel webhook binding.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/webhooks/{id}/realtime-channel',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+    });
+  }
   /**
    * List outbound webhook subscriptions for this app.
    * @returns AppWebhookResponse The webhooks.

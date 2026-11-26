@@ -2,18 +2,17 @@ name: Data API acceptance
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
-    # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
-    # pull request; ci.yml runs this suite nightly and on dispatch.
+    # Only code that exists for the Data API. Shared paths (pkg/api,
+    # pkg/state, pkg/apid, pkg/managedpostgres, pkg/gregalemanifest,
+    # migrations, go.mod, cmd/gregale) are covered on pull requests by the
+    # unit shards; ci.yml runs this whole suite nightly and on dispatch.
+    # pkg/managedpostgres alone sent 128 ~50-minute runs here in the week to
+    # 2026-11-22.
     paths:
-      - "pkg/apid/apidserver/managed_postgres_credentials*"
       # The runtime, its starter and the CLI commands this suite drives.
       - "cmd/gregale/templates/data-api/**"
       - "cmd/gregale/templates/data-api-*/**"
       - "cmd/gregale/commands_data_api*.go"
-      - "pkg/managedpostgres/**"
-      - "pkg/state/app_secret_delivery_policy*"
-      - "pkg/gregalemanifest/**"
       - "sdk/data/**"
       - "pkg/dataapi/integration/**"
       - "tests/data-api/**"
@@ -175,8 +174,11 @@ jobs:
           GOGC: 30
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
-        # cmd/gregale outgrew go test's default 10-minute package timeout on
-        # two CPUs (panic at 600 s in run 41003329673; 501 s on a laptop), and
-        # then 25 minutes (1392 s in run 43929299316, the 1500 s panic twice in
-        # 43955956452, 2026-11-16).
-        run: go test -p 1 -timeout=35m ./pkg/managedpostgres/... ./cmd/gregale ./pkg/gregalemanifest -count=1
+        # The whole cmd/gregale package took ~29 minutes here on two CPUs
+        # (1759 s in run 45040197056) and duplicated the "gregale CLI" unit
+        # shards, so this step runs only the Data API and managed PostgreSQL
+        # CLI tests from it.
+        run: |
+          go test -p 1 -timeout=20m ./pkg/managedpostgres/... ./pkg/gregalemanifest -count=1
+          go test -timeout=20m ./cmd/gregale -count=1 \
+            -run 'DataAPI|Postgres|ConnectionBudget|OnboardingRejectsFloatingSDK'

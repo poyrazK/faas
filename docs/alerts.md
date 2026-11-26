@@ -47,7 +47,7 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable stored_workflow_back
 ```
 
 Use `workflow_due_age_seconds` for a custom threshold in seconds. Inspect
-[stored workflow health](stored-workflow-authoring.md#inspect-stored-workflow-health) and run
+[stored workflow health](stored-workflow-operations.md#inspect-stored-workflow-health) and run
 history to find waiting reasons. The preset does not enable itself for
 existing apps; add it to each app that needs it.
 

@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const traceUsage = "usage: gregale debug trace <trace-id> [--watch] [--interval <DURATION>] [--timeout <DURATION>]"
+const traceUsage = "usage: gregale debug trace <trace-id|request-id> [--app <slug>] [--watch] [--interval <DURATION>] [--timeout <DURATION>]"
 
 const (
 	defaultTraceWatchInterval = time.Second
@@ -24,6 +24,9 @@ const (
 )
 
 type traceWatchOptions struct {
+	// app names the app a request id belongs to; request ids are per app,
+	// trace ids are account-wide. Empty falls back to the linked app.
+	app      string
 	watch    bool
 	interval time.Duration
 	timeout  time.Duration
@@ -33,19 +36,34 @@ type traceWatchOptions struct {
 // index. The API joins retained request evidence with all durable invocation
 // lifecycle rows so the CLI can show cross-service propagation without app
 // fan-out.
+//
+// The argument may also be an x-faas-request-id (what a 5xx response and the
+// access log show). Request ids have the same 32-hex shape as trace ids, so a
+// 32-hex argument is looked up as a trace first; when no trace has that id it
+// is resolved as a request of the app (--app, else the linked app) to the
+// request's trace. A request with no trace id, or whose trace is no longer
+// indexed, renders its own evidence instead of failing.
 func cmdTrace(args []string) int {
 	if hasTraceHelp(args) {
 		PrintUsage(osStderr, traceUsage, "trace")
 		return 0
 	}
-	traceID, options, err := parseTraceArgs(args)
+	id, options, err := parseTraceArgs(args)
 	if err != nil {
 		PrintUsage(osStderr, traceUsage, "trace")
 		_, _ = fmt.Fprintf(osStderr, "trace: %s\n", err)
 		return 1
 	}
-	if !validTraceID(traceID) {
-		return printErr("Invalid trace id", fmt.Errorf("trace id must be 32 lowercase hexadecimal characters"))
+	// Prod hunt r39: `trace list` looked up a request named "list" and
+	// answered "request telemetry not found".
+	if id == "list" || id == "ls" {
+		return printErr("trace takes one id", errors.New("`gregale debug trace` looks up one trace or request ID; to find recent requests and their IDs run gregale logs --source http"))
+	}
+	if lower := strings.ToLower(id); validTraceID(lower) {
+		id = lower
+	}
+	if strings.Trim(id, "0") == "" {
+		return printErr("Invalid trace id", errors.New("trace id must be 32 hexadecimal characters and not all zeros"))
 	}
 
 	client, err := authedClient()
@@ -53,14 +71,78 @@ func cmdTrace(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	if options.watch {
-		return watchTrace(ctx, client, traceID, options)
+	if validTraceID(id) {
+		// Without --app a watched id is a trace id; the watch loop owns its
+		// retries and first render.
+		if options.watch && options.app == "" {
+			return watchTrace(ctx, client, id, options)
+		}
+		result, err := client.GetAccountTrace(ctx, id)
+		if apiErrorStatus(err) != 404 {
+			if err != nil {
+				return printErr("Could not look up trace", err)
+			}
+			if options.watch {
+				return watchTrace(ctx, client, id, options)
+			}
+			return renderTraceResult(id, result)
+		}
+		// No such trace: request ids share the 32-hex shape.
+		slug, slugErr := resolveAppFlagOrContext(options.app)
+		if slugErr != nil {
+			return printErr("Trace not found", fmt.Errorf("no retained trace has id %s; if it is a request id, pass --app <slug> or run in a linked directory", id))
+		}
+		ref, evidence, reqErr := resolveTraceRequest(ctx, client, slug, id)
+		if apiErrorStatus(reqErr) == 404 {
+			return printErr("Not found", fmt.Errorf("no retained trace %s, and no retained request %s on %s", id, id, slug))
+		}
+		if reqErr != nil {
+			return printErr("Could not find request "+id+" on "+slug, reqErr)
+		}
+		return traceFromRequest(ctx, client, ref, evidence, options)
 	}
-	result, err := client.GetAccountTrace(ctx, traceID)
+	slug, err := resolveAppFlagOrContext(options.app)
+	if err != nil {
+		return printErr("Request ids belong to one app", fmt.Errorf("pass --app <slug> or run in a linked directory: %w", err))
+	}
+	ref, evidence, err := resolveTraceRequest(ctx, client, slug, id)
+	if err != nil {
+		return printErr("Could not find request "+id+" on "+slug, err)
+	}
+	return traceFromRequest(ctx, client, ref, evidence, options)
+}
+
+// traceFromRequest follows a resolved request to its trace, or shows the
+// request's own evidence when there is no trace to follow. --watch and the
+// exit codes behave as for a trace id.
+func traceFromRequest(ctx context.Context, client *Client, ref traceRequestRef, evidence api.DebugRequestEvidenceResponse, options traceWatchOptions) int {
+	if ref.TraceID == "" {
+		return renderTraceRequestOnly(ref, evidence, "the request carries no trace id")
+	}
+	result, err := client.GetAccountTrace(ctx, ref.TraceID)
+	if apiErrorStatus(err) == 404 {
+		return renderTraceRequestOnly(ref, evidence, "its trace is no longer indexed")
+	}
 	if err != nil {
 		return printErr("Could not look up trace", err)
 	}
-	return renderTraceResult(traceID, result)
+	if !jsonOutput {
+		_, _ = fmt.Fprintf(osStderr, "Request %s on %s belongs to trace %s\n", ref.RequestID, ref.App, ref.TraceID)
+	}
+	if options.watch {
+		return watchTrace(ctx, client, ref.TraceID, options)
+	}
+	if !jsonOutput {
+		return renderTraceResult(ref.TraceID, result)
+	}
+	if code := jsonOut(writeJSON(traceByRequestOutput{ResolvedFrom: &ref, AccountTraceLookupResponse: result})); code != 0 {
+		return code
+	}
+	// Same rule as renderTraceResult's JSON branch.
+	if len(result.Matches) == 0 && len(result.Invocations) == 0 && len(result.Logs) == 0 {
+		return 1
+	}
+	return 0
 }
 
 func hasTraceHelp(args []string) bool {
@@ -83,6 +165,13 @@ func parseTraceArgs(args []string) (string, traceWatchOptions, error) {
 		switch {
 		case arg == "--watch":
 			options.watch = true
+		case arg == "--app" || strings.HasPrefix(arg, "--app="):
+			value, next, err := traceStringFlagValue(args, i, "--app")
+			if err != nil {
+				return "", traceWatchOptions{}, err
+			}
+			i = next
+			options.app = value
 		case arg == "--interval" || strings.HasPrefix(arg, "--interval="):
 			value, next, err := traceFlagValue(args, i, "--interval")
 			if err != nil {
@@ -115,6 +204,87 @@ func parseTraceArgs(args []string) (string, traceWatchOptions, error) {
 		return "", traceWatchOptions{}, fmt.Errorf("trace id is required")
 	}
 	return traceID, options, nil
+}
+
+// traceRequestRef records how a request id was resolved to a trace.
+type traceRequestRef struct {
+	App       string `json:"app"`
+	RequestID string `json:"request_id"`
+	TraceID   string `json:"trace_id,omitempty"`
+}
+
+// traceByRequestOutput is the --json shape when the argument was a request
+// id: the account trace envelope plus how it was found.
+type traceByRequestOutput struct {
+	ResolvedFrom *traceRequestRef `json:"resolved_from,omitempty"`
+	api.AccountTraceLookupResponse
+}
+
+// traceRequestOnlyOutput is the --json shape when a request id has no trace
+// to follow: its retained evidence alone.
+type traceRequestOnlyOutput struct {
+	ResolvedFrom   traceRequestRef               `json:"resolved_from"`
+	Note           string                        `json:"note"`
+	Request        api.DebugTelemetryRequestItem `json:"request"`
+	Spans          []api.DebugTelemetrySpan      `json:"spans"`
+	SpansTruncated bool                          `json:"spans_truncated"`
+}
+
+// resolveTraceRequest maps a request id to its app's retained evidence and
+// the request's trace id, if it has a valid one.
+func resolveTraceRequest(ctx context.Context, client *Client, slug, requestID string) (traceRequestRef, api.DebugRequestEvidenceResponse, error) {
+	evidence, err := client.GetAppDebugRequestEvidence(ctx, slug, requestID)
+	if err != nil {
+		return traceRequestRef{}, api.DebugRequestEvidenceResponse{}, err
+	}
+	ref := traceRequestRef{App: slug, RequestID: requestID, TraceID: strings.ToLower(debugRequestTraceID(evidence.Request))}
+	if evidence.Request.RequestID != "" {
+		ref.RequestID = evidence.Request.RequestID
+	}
+	if !validTraceID(ref.TraceID) {
+		ref.TraceID = ""
+	}
+	return ref, evidence, nil
+}
+
+func renderTraceRequestOnly(ref traceRequestRef, evidence api.DebugRequestEvidenceResponse, why string) int {
+	note := "showing the request's own evidence: " + why
+	if jsonOutput {
+		return jsonOut(writeJSON(traceRequestOnlyOutput{
+			ResolvedFrom:   ref,
+			Note:           note,
+			Request:        evidence.Request,
+			Spans:          evidence.Spans,
+			SpansTruncated: evidence.SpansTruncated,
+		}))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Request %s on %s: %s.\n", ref.RequestID, ref.App, note)
+	renderDebugRequestTrace(osStdout, evidence)
+	_, _ = fmt.Fprintf(osStdout, "Root cause and next steps: %s debug requests explain %s %s\n", recoveryCLI(), ref.App, ref.RequestID)
+	return 0
+}
+
+func apiErrorStatus(err error) int {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Problem.Status
+	}
+	return 0
+}
+
+func traceStringFlagValue(args []string, index int, name string) (string, int, error) {
+	arg := args[index]
+	if strings.HasPrefix(arg, name+"=") {
+		value := strings.TrimPrefix(arg, name+"=")
+		if value == "" {
+			return "", index, fmt.Errorf("%s requires a value", name)
+		}
+		return value, index, nil
+	}
+	if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
+		return "", index, fmt.Errorf("%s requires a value", name)
+	}
+	return args[index+1], index + 1, nil
 }
 
 func traceFlagValue(args []string, index int, name string) (string, int, error) {

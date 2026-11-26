@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,9 @@ type ConsumerPlanPolicy struct {
 	MaxRequestsPerMinute int64
 	MaxUnitsPerMonth     int64
 	RouteWeights         map[string]int64
+	// RouteLimits cap single billing routes, such as one MCP tool, per
+	// consumer (ADR-20261123192254).
+	RouteLimits map[string]api.APIConsumerPlanRouteLimit
 	// AlertThresholdsPercent travel to admission, which records crossings
 	// and enqueues consumer.usage_threshold webhooks (ADR-849).
 	AlertThresholdsPercent []int32
@@ -34,12 +38,25 @@ type ConsumerPlanPolicy struct {
 	OverdueDueAt   time.Time
 }
 
-func (p ConsumerPlanPolicy) limited() bool {
-	return p.MaxRequestsPerMinute > 0 || p.MaxUnitsPerMonth > 0
+// limits reports whether route needs a counter: the plan has a plan-wide
+// limit, or caps this route. A plan that caps only some routes costs other
+// routes one cached lookup and no counter write.
+func (p ConsumerPlanPolicy) limits(route string) bool {
+	if p.MaxRequestsPerMinute > 0 || p.MaxUnitsPerMonth > 0 {
+		return true
+	}
+	_, ok := p.RouteLimits[route]
+	return ok
 }
 
-func (p ConsumerPlanPolicy) units(route string) int64 {
-	if weight, ok := p.RouteWeights[route]; ok && weight > 0 {
+// units is what a request counts toward the monthly cap: its route weight,
+// 1 by default, and 0 for MCP protocol overhead, which is not billed
+// (ADR-20261123192254).
+func (p ConsumerPlanPolicy) units(r *http.Request) int64 {
+	if mcpProtocolOverheadFrom(r) {
+		return 0
+	}
+	if weight, ok := p.RouteWeights[planRouteFrom(r)]; ok && weight > 0 {
 		return weight
 	}
 	return 1
@@ -60,7 +77,7 @@ type ConsumerPlanDecision struct {
 // back to a replica-local allowance.
 type ConsumerPlanStore interface {
 	ConsumerPlanPolicy(ctx context.Context, accountID, appID, consumerID string) (ConsumerPlanPolicy, error)
-	AdmitConsumerPlanRequest(ctx context.Context, accountID, consumerID string, policy ConsumerPlanPolicy, units int64) (ConsumerPlanDecision, error)
+	AdmitConsumerPlanRequest(ctx context.Context, accountID, consumerID string, policy ConsumerPlanPolicy, route string, units int64) (ConsumerPlanDecision, error)
 }
 
 // consumerPlanPolicyTTL bounds how stale a cached policy can be: a plan
@@ -104,8 +121,11 @@ func (h *Handler) consumerPlanPolicy(ctx context.Context, app App, consumerID st
 // unverifiable requests never become billable. Consumers on unlimited plans
 // cost one cached lookup and no counter write.
 func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, deploymentSmoke bool) bool {
-	consumerID := authenticatedFrom(r.Context()).ConsumerID
-	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" || !h.APIMonetizationEnabledFor(app.AccountID) {
+	auth := authenticatedFrom(r.Context())
+	consumerID := auth.ConsumerID
+	// A stage's consumers are not metered against consumer plans
+	// (ADR-20261104120000 amendment 2026-11-22).
+	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" || auth.StageConsumer || !h.APIMonetizationEnabledFor(app.AccountID) {
 		return true
 	}
 	policy, err := h.consumerPlanPolicy(r.Context(), app, consumerID)
@@ -117,12 +137,13 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 		h.denyOverdue(w, r, rec, app, policy)
 		return false
 	}
-	if err == nil && !policy.limited() {
+	route := planRouteFrom(r)
+	if err == nil && !policy.limits(route) {
 		return true
 	}
 	var decision ConsumerPlanDecision
 	if err == nil {
-		decision, err = h.consumerPlanStore.AdmitConsumerPlanRequest(r.Context(), app.AccountID, consumerID, policy, policy.units(billingRouteFrom(r)))
+		decision, err = h.consumerPlanStore.AdmitConsumerPlanRequest(r.Context(), app.AccountID, consumerID, policy, route, policy.units(r))
 	}
 	if err != nil {
 		if h.log != nil {
@@ -139,22 +160,35 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 	}
 	suppressFinancialUsage(r)
 	w.Header().Set("Retry-After", strconv.FormatInt(max(1, decision.RetryAfterSeconds), 10))
-	w.Header().Set("x-faas-rate-limit-scope", "consumer-plan-"+decision.Scope)
-	detail := "the consumer's plan allows " + strconv.FormatInt(decision.Limit, 10) + " requests per minute"
-	if decision.Scope == "month" {
-		detail = "the consumer's plan allows " + strconv.FormatInt(decision.Limit, 10) + " units per month; " +
-			strconv.FormatInt(decision.Observed, 10) + " are used"
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "consumer-plan-"+strings.ReplaceAll(decision.Scope, "_", "-"))
+	problem := api.NewProblem(http.StatusTooManyRequests, api.CodeConsumerPlanLimitExceeded, "Plan limit exceeded", consumerPlanDenialDetail(decision, route))
+	if strings.HasPrefix(decision.Scope, "route_") {
+		problem = problem.WithLimit(decision.Limit, decision.Observed).WithDocs("https://gregale.dev/docs/api-monetization#route-limits")
 	}
-	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeConsumerPlanLimitExceeded, "Plan limit exceeded", detail))
+	problem.UpgradeURL = h.consumerUpgradeURL(r.Context(), app, consumerID)
+	api.WriteProblem(w, problem)
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return false
+}
+
+func consumerPlanDenialDetail(decision ConsumerPlanDecision, route string) string {
+	limit, observed := strconv.FormatInt(decision.Limit, 10), strconv.FormatInt(decision.Observed, 10)
+	switch decision.Scope {
+	case "month":
+		return "the consumer's plan allows " + limit + " units per month; " + observed + " are used"
+	case "route_minute":
+		return "the consumer's plan allows " + limit + " requests per minute on " + route
+	case "route_month":
+		return "the consumer's plan allows " + limit + " requests per month on " + route + "; " + observed + " are used"
+	}
+	return "the consumer's plan allows " + limit + " requests per minute"
 }
 
 // denyOverdue refuses a consumer with an overdue invoice with a 402; the
 // request is never billed.
 func (h *Handler) denyOverdue(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, policy ConsumerPlanPolicy) {
 	suppressFinancialUsage(r)
-	w.Header().Set("x-faas-rate-limit-scope", "consumer-invoice-overdue")
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "consumer-invoice-overdue")
 	detail := "an invoice due " + policy.OverdueDueAt.UTC().Format(time.DateOnly) + " is unpaid; requests resume once it is paid"
 	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeConsumerInvoiceOverdue, "Invoice overdue", detail).
 		WithDocs("https://gregale.dev/docs/api-monetization#overdue-invoices"))
@@ -165,7 +199,7 @@ func (h *Handler) denyOverdue(w http.ResponseWriter, r *http.Request, rec *statu
 // carrying the cap and the amount due; the request is never billed.
 func (h *Handler) denySpendCapped(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, policy ConsumerPlanPolicy) {
 	suppressFinancialUsage(r)
-	w.Header().Set("x-faas-rate-limit-scope", "consumer-spend-cap")
+	w.Header().Set("X-Faas-Rate-Limit-Scope", "consumer-spend-cap")
 	detail := "the consumer's monthly spend cap is " + strconv.FormatInt(policy.SpendCapMillicents, 10) + " " + policy.SpendCurrency +
 		" millicents; " + strconv.FormatInt(policy.SpendDueMillicents, 10) + " are due this month after prepaid credit"
 	api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeConsumerSpendCapReached, "Spend cap reached", detail).

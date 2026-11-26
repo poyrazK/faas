@@ -128,6 +128,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release approve", "approvals approve"},
 	{"release reject", "approvals reject"},
 	{"release freeze", "freeze"},
+	{"release check", "verify"},
 	{"release gate", "release-gates"},
 	{"release schedule", "scheduled-releases"},
 	{"release mirror", "mirror"},
@@ -213,7 +214,15 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag rule delete", "flags rule-rm"},
 	{"flag kill set", "flags kill"},
 	{"flag kill unset", "flags unkill"},
+	// ADR-20261124212701: edge routing.
+	{"flag edge set", "flags edge-set"},
+	{"flag edge delete", "flags edge-rm"},
+	{"flag edge list", "flags edge-list"},
 	{"flag stale list", "flags stale"},
+	// ADR-20261125085913: flag notifications.
+	{"flag notify get", "flags notifications get"},
+	{"flag notify set", "flags notifications set"},
+	{"flag notify clear", "flags notifications clear"},
 	{"flag experiment list", "flags experiments list"},
 	{"flag experiment create", "flags experiments create"},
 	{"flag experiment get", "flags experiments get"},
@@ -239,6 +248,11 @@ var cliTreeAliases = []cliTreeAlias{
 	{"insight cohort get", "insights cohorts get"},
 	{"insight cohort delete", "insights cohorts delete"},
 	{"insight cohort refresh", "insights cohorts refresh"},
+	{"insight saved list", "insights saved list"},
+	{"insight saved create", "insights saved save"},
+	{"insight saved get", "insights saved get"},
+	{"insight saved run", "insights saved run"},
+	{"insight saved delete", "insights saved delete"},
 	{"insight", "insights"},
 
 	// Data.
@@ -384,6 +398,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client watch", "mcp resource-watch"},
 	{"mcp client status", "mcp task-get"},
 	{"mcp client wait", "mcp task-wait"},
+	{"mcp client respond", "mcp task-respond"},
 	{"mcp client cancel", "mcp task-cancel"},
 	// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
 	{"agent run approval list", "agents runs approvals"},
@@ -392,6 +407,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Account.
 	{"account mfa", "mfa"},
+	{"account claim create", "claim"}, // claimable deploys (ADR-20261124080000)
 	{"account", "account"},
 	{"org agent policy", "orgs agent-policy"},
 	{"org support", "orgs support-access"},
@@ -432,6 +448,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api consumer rate-card create", "consumers rate-card-create"},
 	{"api consumer rate-card list", "consumers rate-cards"},
 	{"api consumer plan set", "consumers set-plan"},
+	{"api consumer identity list", "consumers identities"},
+	{"api consumer identity delete", "consumers identity-delete"},
 	{"api consumer signup get", "consumers signup"},
 	{"api consumer signup delete", "consumers signup-delete"},
 	{"api consumer signup set", "consumers signup-set"},
@@ -691,6 +709,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres overage set", "postgres overage"},
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
+	{"postgres suspend-timeout set", "postgres suspend-timeout"},
+	{"postgres app-wake set", "postgres app-wake"},
 	{"postgres resize status", "postgres resize-status"},
 	// ADR-20261102123523: what a database gives PR previews is a setting.
 	{"postgres previews set", "postgres previews"},
@@ -718,6 +738,9 @@ var cliTreeShorts = map[string]string{
 	"mcp server":                  "Scaffold, deploy and check the MCP servers you host",
 	"event backfill":              "Deliver retained events to a subscription again, and track the jobs",
 	"event subscription-capacity": "Set, list and read a subscription's live-delivery limit commands",
+	// Both verbs printed the parent's "Show or change …" (prod hunt r28).
+	"postgres overage get": "Show whether databases keep running past the monthly compute allowance",
+	"postgres overage set": "Turn compute overage on or off (on: databases run up to twice the allowance)",
 }
 
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
@@ -891,6 +914,9 @@ func rewriteTreePath(args []string) ([]string, error) {
 		if hasHelpFlag(args) {
 			return args, nil
 		}
+		if folded, ok := foldValueAsFlag(args, path); ok {
+			return folded, nil
+		}
 		return nil, errFoldFlagRequired{fmt.Errorf("gregale %s needs %s; run 'gregale %s --help' for usage", path, strings.Join(flags, " or "), path)}
 	}
 	alias, used, ok := matchCliTreeAlias(args)
@@ -973,6 +999,13 @@ func rewriteAppPath(args []string) ([]string, error) {
 	// named "show".
 	if verb == "show" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
 		verb = "get"
+	}
+	// Apps are created by deploying. `app create NAME` answered "unexpected
+	// positional argument" (prod hunt r28); a bare `app create` still reads
+	// an app named "create".
+	if verb == "create" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		name := recoveryArgument(args[2])
+		return nil, fmt.Errorf("apps are created by deploying: run %s deploy --name %s from its source directory, or %s deploy --create-only --name %s to reserve the name without a build", recoveryCLI(), name, recoveryCLI(), name)
 	}
 	if verb == "listener" {
 		return rewriteAppListener(args)

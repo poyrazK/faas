@@ -20,7 +20,7 @@ func putMarkedGroup(t *testing.T, cache *storage.LocalCacheBackend, baseKey, bod
 			t.Fatal(err)
 		}
 	}
-	if err := markCachedBaseGeneration(cache, baseKey, baseKey+".digest", generation); err != nil {
+	if err := markCachedBaseGeneration(t.Context(), cache, baseKey, baseKey+".digest", generation); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -104,5 +104,27 @@ func TestSideBySideBaseGenerationsOnOneNode(t *testing.T) {
 	}
 	if got := markerOf(t, legacy, kernel); got != "sha256:kernel" {
 		t.Fatalf("unrelated artifact marker = %q, want kept", got)
+	}
+}
+
+// A node that joins a fleet whose shared store already holds a base group
+// marks it without having read every sidecar first: marking reads the
+// missing ones through (a fresh imaged exited on the digest sidecar).
+func TestMarkCachedBaseGenerationFillsAFreshNodeCache(t *testing.T) {
+	const (
+		baseKey    = "base/base-amd64.ext4"
+		generation = "ghcr.io/example/minimal@sha256:1111"
+	)
+	fleet := newMixedFleet(t)
+	putMarkedGroup(t, fleet.node("first"), baseKey, "group", generation)
+
+	fresh := fleet.node("fresh")
+	if err := markCachedBaseGeneration(t.Context(), fresh, baseKey, baseKey+".digest", generation); err != nil {
+		t.Fatalf("fresh node: %v", err)
+	}
+	for _, key := range []string{baseKey + ".digest", wire.ScanKeyForBaseKey(baseKey), baseKey} {
+		if got := markerOf(t, fresh, key); got != generation {
+			t.Errorf("%s generation = %q, want %q", key, got, generation)
+		}
 	}
 }

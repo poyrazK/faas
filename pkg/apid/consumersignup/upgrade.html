@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Change plan</title>
+<link rel="stylesheet" href="signup.css">
+<script src="upgrade.js" defer></script>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <header>
+    <p class="eyebrow">Change plan</p>
+    <h1 id="title">Loading…</h1>
+    <p id="testmode" class="notice" hidden>Test mode: use a Stripe test card. No real card is saved.</p>
+  </header>
+
+  <section id="form-view" hidden>
+    <form id="upgrade-form" novalidate>
+      <fieldset id="plans">
+        <legend>Plan</legend>
+      </fieldset>
+      <p id="card-note" class="muted" hidden>A paid plan needs a card, saved with Stripe. Nothing is charged now: usage is billed monthly.</p>
+      <button id="submit" type="submit">Change plan</button>
+      <p id="form-error" class="error" role="alert" hidden></p>
+    </form>
+  </section>
+
+  <section id="message-view" hidden>
+    <p id="message"></p>
+  </section>
+</main>
+<footer class="muted">Payments by Stripe · Hosted by Gregale</footer>
+</body>
+</html>

@@ -2592,7 +2592,7 @@ func testCommandBaseEnv() []string {
 	clean := make([]string, 0, len(base))
 	for _, entry := range base {
 		key, _, _ := strings.Cut(entry, "=")
-		if key != "FAAS_TOKEN" && !strings.HasPrefix(key, "GREGALE_TEST_") {
+		if key != tokenEnvVar && key != legacyTokenEnvVar && !strings.HasPrefix(key, "GREGALE_TEST_") {
 			clean = append(clean, entry)
 		}
 	}

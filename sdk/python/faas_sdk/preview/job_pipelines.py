@@ -41,10 +41,12 @@ from .pipeline_gates import (
     run_pipeline_gate,
 )
 from .pipeline_state import (
+    PinnedPipelineSource,
     PipelineError,
     PipelineJobReceipt,
     PipelineJobStore,
     PipelineScope,
+    _parse_pinned_source,
     _parse_pipeline_lineage,
     _parse_pipeline_trigger,
     match_pipeline_job,
@@ -138,6 +140,7 @@ class JobPipelineContext:
         self._blocked = False
         self._input_sha256 = input_sha256
         self._envelope: dict[str, Any] | None = None
+        self.pinned_source: PinnedPipelineSource | None = None
         self._composing = False
 
     def _claim(self) -> None:
@@ -480,6 +483,10 @@ class JobPipeline(Generic[PI, PO]):
             value = contract.input(envelope["input"])
             context = JobPipelineContext(self, wf, envelope["owner_id"], job_value_hash(envelope | {"input": value}))
             context._envelope = envelope | {"input": value}
+            if "pinned_source" in envelope:
+                context.pinned_source = _parse_pinned_source(
+                    envelope["pinned_source"], scope.base_url, scope.app_slug, envelope["owner_id"],
+                )
             output = contract.output(await run(value, context))
             if context._pending_gates:
                 raise PipelineGateError("pending")

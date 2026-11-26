@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.poyrazK/gregale",
+  "title": "Gregale",
+  "description": "Deploy, inspect, diagnose and roll back apps, jobs and Postgres on Gregale from your coding agent.",
+  "websiteUrl": "https://gregale.dev/docs/agents",
+  "repository": {
+    "url": "https://github.com/poyrazK/faas",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.gregale.dev/mcp"
+    }
+  ]
+}

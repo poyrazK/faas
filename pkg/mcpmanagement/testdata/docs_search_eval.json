@@ -49,7 +49,7 @@
     {"query": "preview environment for each pull request", "want": ["preview-environments", "multi-service-apps#pull-request-previews"]},
     {"query": "run my app locally", "want": ["gregale-dev#run-http-apps-locally"]},
     {"query": "where do I store user uploaded files", "want": ["storage"]},
-    {"query": "spend cap", "want": ["billing#spend-cap"]},
+    {"query": "spend cap", "want": ["billing#spend-cap", "cost-controls#set-your-spend-cap"]},
     {"query": "upgrade my plan", "want": ["billing#upgrades", "billing#changing-plan"]},
     {"query": "export my data and delete my account", "want": ["account#export-and-deletion"]},
     {"query": "redirect one path to another at the edge", "want": ["edge-rules#redirect"]},

@@ -22,6 +22,8 @@ type execBody struct {
 	Workdir        string            `json:"workdir,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	TTY            bool              `json:"tty,omitempty"`
+	Rows           uint16            `json:"rows,omitempty"`
+	Cols           uint16            `json:"cols,omitempty"`
 	Background     bool              `json:"background,omitempty"`
 	TimeoutMillis  int64             `json:"timeout_ms,omitempty"`
 	MaxOutputBytes int64             `json:"max_output_bytes,omitempty"`
@@ -82,6 +84,13 @@ func (h *Handler) exec(w http.ResponseWriter, r *http.Request) {
 // execStream answers a foreground command as server-sent events: stdout and
 // stderr as they arrive, then one result event.
 func (h *Handler) execStream(w http.ResponseWriter, r *http.Request, c sandboxtoken.Claims, req sandboxproto.Request) {
+	h.streamCall(w, r, c, req, func(raw json.RawMessage) any { return execResponse(raw, nil, nil) })
+}
+
+// streamCall answers a call as server-sent events: stdout and stderr as
+// they come, then result (final's view of the guest's result) or error.
+func (h *Handler) streamCall(w http.ResponseWriter, r *http.Request, c sandboxtoken.Claims, req sandboxproto.Request,
+	final func(json.RawMessage) any) {
 	flusher, _ := w.(http.Flusher)
 	started := false
 	event := func(name string, v any) error {
@@ -116,7 +125,7 @@ func (h *Handler) execStream(w http.ResponseWriter, r *http.Request, c sandboxto
 	case prob != nil:
 		_ = event("error", prob)
 	default:
-		_ = event("result", execResponse(raw, nil, nil))
+		_ = event("result", final(raw))
 	}
 }
 
@@ -129,9 +138,14 @@ func execRequest(c sandboxtoken.Claims, body execBody) (sandboxproto.Request, *a
 	} else if err := json.Unmarshal(body.Cmd, &req.Argv); err != nil || len(req.Argv) == 0 {
 		return req, api.ErrValidation("cmd must be a command line or a non-empty array of arguments")
 	}
-	if body.TTY {
-		return req, api.ErrSandboxUnsupported("tty", "terminal commands need the session's interactive attach, which is not available yet")
+	// A terminal command runs in the background: its input goes to
+	// POST …/exec/{handle}/input between output polls, since one HTTP call
+	// cannot carry both ways of a foreground terminal.
+	if body.TTY && !body.Background {
+		return req, api.ErrSandboxUnsupported("tty", "a terminal command must run with background: true; send its input to /exec/{handle}/input")
 	}
+	// rows and cols without tty reach the guest, which refuses them.
+	req.TTY, req.Rows, req.Cols = body.TTY, body.Rows, body.Cols
 	req.TimeoutMillis, req.MaxOutputBytes = min(defaultExecTimeoutMillis, c.ExecTimeoutMaxMillis), c.ExecOutputMaxBytes
 	if body.TimeoutMillis > 0 {
 		req.TimeoutMillis = body.TimeoutMillis
@@ -192,6 +206,51 @@ func (h *Handler) execOutput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.run(w, r, c, req)
+}
+
+// inputBody is POST /v1/sandboxes/{id}/exec/{handle}/input. data is
+// base64; rows and cols resize the command's terminal before data is
+// written, and eof ends its input after.
+type inputBody struct {
+	Data []byte `json:"data,omitempty"`
+	EOF  bool   `json:"eof,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
+	Cols uint16 `json:"cols,omitempty"`
+}
+
+// execInput writes to a background command's stdin, resizes its terminal
+// or ends its input, and answers the command.
+func (h *Handler) execInput(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	var body inputBody
+	if !httpkit.DecodeJSONLimit(w, r, &body, inputRequestMaxBytes) {
+		return
+	}
+	h.run(w, r, c, sandboxproto.Request{Op: sandboxproto.OpExecInput, Handle: r.PathValue("handle"), Input: body.Data,
+		CloseInput: body.EOF, Rows: body.Rows, Cols: body.Cols})
+}
+
+// sessionEnvBody is PUT /v1/sandboxes/{id}/env.
+type sessionEnvBody struct {
+	Env map[string]string `json:"env"`
+}
+
+// sessionEnv replaces the session's environment, which every later command
+// gets under its own env (ADR-20261027090013 step 13). The guest keeps it in
+// memory only; the answer names the variables and never echoes values.
+func (h *Handler) sessionEnv(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	var body sessionEnvBody
+	if !httpkit.DecodeJSONLimit(w, r, &body, envRequestMaxBytes) {
+		return
+	}
+	h.run(w, r, c, sandboxproto.Request{Op: sandboxproto.OpSessionEnv, Env: body.Env})
 }
 
 func (h *Handler) execKill(w http.ResponseWriter, r *http.Request) {

@@ -42,11 +42,15 @@ type overageUsageStore struct {
 	used   map[string]int64
 	stored map[string]int64 // storage byte-seconds
 	egress map[string]int64 // one database's egress bytes
+	// history and snapshots are restore history and snapshot storage
+	// byte-seconds (ADR-20261123062111); nil reads as none.
+	history, snapshots map[string]int64
 }
 
 func (s *overageUsageStore) UsageSnapshot(_ context.Context, subjectID string, at time.Time) (UsageSnapshot, error) {
 	key := subjectID + monthStart(at).Format("2006-01")
-	snapshot := UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[key], StorageByteSeconds: s.stored[key], EgressBytes: s.egress[key]}
+	snapshot := UsageSnapshot{PeriodStart: monthStart(at), ComputeUnitSeconds: s.used[key], StorageByteSeconds: s.stored[key], EgressBytes: s.egress[key],
+		HistoryByteSeconds: s.history[key], SnapshotByteSeconds: s.snapshots[key]}
 	if egress := s.egress[key]; egress != 0 {
 		snapshot.DatabaseEgress = map[string]int64{"db": egress}
 	}

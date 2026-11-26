@@ -7372,6 +7372,17 @@ func (v *JailerVMM) NoteWorkloadOOM(instance string, peakMB, planMB int) {
 	}
 }
 
+// StartupOOMKilled reports whether the guest has reported a workload OOM kill
+// (ADR-121) for instance. Read when a wake completes: a kill reported before
+// the wake returns means the app's own memory exhaustion is part of the wake
+// latency, so the gateway keeps that wake out of the platform wake SLO.
+func (v *JailerVMM) StartupOOMKilled(instance string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec := v.recs[instance]
+	return rec != nil && rec.oomKilled
+}
+
 // startupOOMProblem explains a failed startup as app_runtime_oom when the
 // guest reported that the kernel killed a workload process for memory before
 // readiness (ADR-121 amendment). It returns nil when no OOM was reported.
@@ -7563,7 +7574,7 @@ var supervisedWorkloadMarkers = []string{
 const guestCleanExitMarker = " exited cleanly (status 0, policy="
 
 // cleanExitDetail explains a workload that ended on its own with status 0.
-const cleanExitDetail = "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+const cleanExitDetail = "; " + api.StartupCleanExitMarker + ". Keep the server process running in the foreground and listening on $PORT"
 
 // cleanExitHint is cleanExitDetail when guest-init's clean-exit line is among
 // lines.

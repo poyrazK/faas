@@ -32,12 +32,12 @@ func protocolToolLabel(method string, params json.RawMessage) string {
 		Name string `json:"name"`
 	}
 	_ = json.Unmarshal(params, &p)
-	switch p.Name {
-	case "greet", "add", "stream_demo", "build_report":
+	// Only tools this server registered keep their name: a caller cannot
+	// choose telemetry labels by calling tools that do not exist.
+	if mcpRuntimeCatalog.hasTool(p.Name) {
 		return p.Name
-	default:
-		return "other"
 	}
+	return "other"
 }
 
 type protocolObservation struct {
@@ -120,9 +120,15 @@ func (o *protocolObservation) observeRPC(response rpcResponse) {
 	o.outcome = "success"
 	if response.Error != nil {
 		o.outcome = "rpc_error"
+		if response.Error.Code == -32602 && o.method == "tools/call" {
+			o.outcome = "invalid_params"
+		}
 	} else if result, ok := response.Result.(map[string]any); ok {
 		if result["isError"] == true {
 			o.outcome = "tool_error"
+			if o.method == "tools/call" && toolResultText(result) == toolArgumentsMismatch {
+				o.outcome = "invalid_params"
+			}
 		} else if result["resultType"] == "task" {
 			o.outcome = "task_created"
 		}
@@ -218,4 +224,22 @@ func runProtocolHeartbeat(ctx context.Context, emit func()) {
 			emit()
 		}
 	}
+}
+
+// toolArgumentsMismatch is the tool error for arguments that fail the tool's
+// inputSchema; telemetry reports those calls as invalid_params.
+const toolArgumentsMismatch = "tool arguments do not match inputSchema"
+
+func toolResultText(result map[string]any) string {
+	raw, err := json.Marshal(result["content"])
+	if err != nil {
+		return ""
+	}
+	var content []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &content) != nil || len(content) == 0 {
+		return ""
+	}
+	return content[0].Text
 }

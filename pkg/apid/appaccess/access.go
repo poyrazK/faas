@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -45,6 +46,14 @@ type Grant struct {
 	Actor state.Account
 	Owner state.Account
 	Fence state.OrgAccessFence
+}
+
+// WithBindingGrant records that a workload-identity binding token was
+// authorized for app (ADR-20261122191423): the handler acts on app as its
+// resource account owner, exactly as an API key of that account would. The
+// caller app's grants were checked before this is called.
+func WithBindingGrant(ctx context.Context, app state.App, owner state.Account) context.Context {
+	return context.WithValue(ctx, grantKey{}, Grant{App: app, Actor: owner, Owner: owner})
 }
 
 func From(r *http.Request) (Grant, bool) {
@@ -349,6 +358,12 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such trigger"
 	case strings.HasPrefix(path, "/v1/deleted-apps/"):
 		what = "no such deleted app"
+	case strings.HasPrefix(path, "/v1/apps/") && r.PathValue("slug") != "":
+		// Name the app the caller addressed: `bucket upload BUCKET …` read
+		// the bucket as the app and answered only "no such application
+		// resource" (prod hunt r28). Absent and foreign apps still read
+		// alike, so this enumerates nothing.
+		what = "no app named " + strconv.Quote(r.PathValue("slug")) + " in this workspace"
 	}
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what)
 }

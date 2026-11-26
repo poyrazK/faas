@@ -145,6 +145,7 @@ type workloadSeed struct {
 	platformTenantRequired    *bool
 	streaming                 *bool
 	wakeAhead                 *bool
+	access                    string
 	renamedFrom               string
 
 	class     Class

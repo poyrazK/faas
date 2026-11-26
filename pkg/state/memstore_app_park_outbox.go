@@ -182,3 +182,13 @@ func (m *MemStore) clearCurrentAppParkTransitionLocked(appID string) {
 	}
 	delete(m.appParkTransitionByApp, appID)
 }
+
+// CurrentAppParkTransitionID mirrors PgStore.CurrentAppParkTransitionID.
+func (m *MemStore) CurrentAppParkTransitionID(_ context.Context, appID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.apps[appID]; !ok {
+		return "", ErrNotFound
+	}
+	return m.appParkTransitionByApp[appID], nil
+}

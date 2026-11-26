@@ -1033,6 +1033,16 @@ func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []stri
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
 			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, planWorkloadProtocolSuffix(wl), imageSuffix)
+			if wl.ReleaseCommand != "" {
+				// Runs once before each release of this service goes live.
+				source := ""
+				if wl.ReleaseCommandSource != "" {
+					source = "   (" + wl.ReleaseCommandSource + ")"
+				}
+				// A multi-line shell command (command: |) stays on one line.
+				lines := strings.FieldsFunc(wl.ReleaseCommand, func(r rune) bool { return r == '\n' || r == '\r' })
+				fmt.Fprintf(w, "      release: %s%s\n", strings.Join(lines, "; "), source)
+			}
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}

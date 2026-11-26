@@ -15,13 +15,19 @@ func WithRequestCorrelationOutgoing(ctx context.Context) context.Context {
 	if !ok {
 		return ctx
 	}
-	previous, _ := metadata.FromOutgoingContext(ctx)
-	md := previous.Copy()
+	// FromOutgoingContext already returns a fresh copy (grpc-go copies every
+	// value), so it is edited in place and attached once, with the envelope
+	// appended exactly as WithCorrelationOutgoing would append it.
+	md, _ := metadata.FromOutgoingContext(ctx)
+	if md == nil {
+		md = metadata.MD{}
+	}
 	for _, key := range []string{mdKeyRequestID, mdKeyWakeID, mdKeyAppID, mdKeyDeploymentID,
 		mdKeyInstanceID, mdKeyNodeID, mdKeyInvocationID, mdKeyTenantID, mdKeyRegion,
 		mdKeyCommitSHA, mdKeyDeploymentTag, mdKeyDeploymentCreatedAt, mdKeyImageDigest,
 		mdKeyTraceID, mdKeySpanID, mdKeyWakeBootTrigger, mdKeyWakeTriggerClass, mdKeyWakeBootQueued, mdKeyWakeBootConc} {
 		delete(md, key)
 	}
-	return WithCorrelationOutgoing(metadata.NewOutgoingContext(ctx, md), fields)
+	appendMDPairs(md, correlationPairs(fields))
+	return metadata.NewOutgoingContext(ctx, md)
 }

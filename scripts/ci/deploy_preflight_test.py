@@ -36,6 +36,9 @@ class FakeGitHub:
         self.issues = []
         self.unit_runs = [run_obj(ME, 50, sha=SHA)]
         self.active = {"in_progress": [run_obj(ME, 50, sha=SHA)], "queued": [], "waiting": []}
+        # workflow file -> its newest runs (actions/workflows/{file}/runs).
+        self.workflow_runs = {}
+        self.paged = []
         self.jobs = {}
         self.light = []
         self.runs = {}
@@ -44,10 +47,13 @@ class FakeGitHub:
         self.released_by = []
         # run id -> the commit its marker names (actions/runs/{id}/artifacts).
         self.markers = {}
+        # run id -> the full release its base marker names.
+        self.bases = {}
 
     def get(self, path, params=None):
         self.requests.append(path)
         params = params or {}
+        self.paged.append((path, params.get("per_page")))
         if path == "actions/artifacts":
             assert params["name"] == dp.RELEASE_MARKER + SHA
             return {"artifacts": [{"name": params["name"], "workflow_run": {"id": r}} for r in self.released_by]}
@@ -62,10 +68,16 @@ class FakeGitHub:
             assert params["head_sha"] == SHA
             return {"workflow_runs": self.light}
         if path == "actions/runs":
-            return {"workflow_runs": self.active[params["status"]]}
+            runs = self.active[params["status"]]
+            page = params.get("page", 1)
+            return {"workflow_runs": runs[(page - 1) * 100:page * 100], "total_count": len(runs)}
+        if path.startswith("actions/workflows/") and path.endswith("/runs") and path.split("/")[2] in dp.DEPLOY_WORKFLOWS:
+            return {"workflow_runs": self.workflow_runs.get(path.split("/")[2], [])}
         if path.startswith("actions/runs/") and path.endswith("/artifacts"):
-            sha = self.markers.get(int(path.split("/")[2]))
-            return {"artifacts": [{"name": dp.RELEASE_MARKER + sha}] if sha else []}
+            run = int(path.split("/")[2])
+            sha, base = self.markers.get(run), self.bases.get(run)
+            return {"artifacts": ([{"name": dp.RELEASE_MARKER + sha}] if sha else []) +
+                                 ([{"name": dp.BASE_MARKER + base}] if base else [])}
         if path in self.runs:
             return self.runs[path]
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
@@ -228,6 +240,22 @@ class PreflightTest(PreflightCase):
         self.assertIn("idle: 180 s", summary)
         self.assertTrue(any("::notice::" in line and "cd-platform run 200" in line for line in self.logs))
 
+    def test_a_deploy_run_the_status_listing_misses_still_makes_it_wait(self):
+        # 2026-11-25: the repository-wide listing dropped cd-platform run
+        # 45639008753 while it rolled rc.381 out (#8070).
+        self.gh.workflow_runs["cd-platform.yml"] = [
+            run_obj(201, 10, path="cd-platform.yml", name="cd-platform"),
+            run_obj(199, 8, path="cd-platform.yml", name="cd-platform", status="completed")]
+
+        def done(t):
+            if t.clock.t >= 1_800_000_000.0 + 120:
+                t.gh.workflow_runs["cd-platform.yml"][0]["status"] = "completed"
+        self.on_sleep = done
+        code, go, summary = self.run_preflight()
+        self.assertEqual((code, go), (0, True))
+        self.assertIn("cd-platform run 201", summary)
+        self.assertNotIn("run 199", summary)
+
     def test_other_unit_run_deploying_makes_it_wait_but_its_watch_does_not(self):
         self.gh.active["in_progress"].append(run_obj(90, 49, status="in_progress"))
         self.gh.jobs[90] = [job(dp.BUILD_JOB), job(dp.PREFLIGHT_JOB),
@@ -302,10 +330,33 @@ class PreflightTest(PreflightCase):
         self.assertEqual(len(light_reads), 1)
 
     def test_api_requests_per_round_stay_within_the_token_budget(self):
-        self.host = healthy_host(lock="held")
-        self.run_preflight(wait=40 * 60, interval=60)
         # 1,000 requests an hour per repository for the workflow token.
-        self.assertLess(len(self.gh.requests), 400)
+        for name, host in (("lock held", healthy_host(lock="held")),
+                           ("idle but unhealthy", healthy_host(alerts=[alert("ApidDown")]))):
+            with self.subTest(name):
+                self.gh.requests = []
+                self.host = host
+                self.run_preflight(wait=40 * 60, interval=60)
+                self.assertLess(len(self.gh.requests), 400)
+                # The idle confirmation never runs while another check waits.
+                self.assertFalse([p for p in self.gh.requests if p == "actions/workflows/cd-platform.yml/runs"])
+
+    def test_a_busy_repository_listing_is_followed_past_its_first_page(self):
+        noise = [run_obj(1000 + i, 1, path="ci.yml", name="ci") for i in range(150)]
+        self.gh.active["in_progress"] = noise + [run_obj(300, 9, path="cd-platform.yml", name="cd-platform")]
+        pre = dp.Preflight(self.gh, lambda: self.host, ME, SHA, log=self.logs.append)
+        verdict = pre.idle(self.host)
+        self.assertEqual(verdict.state, dp.WAIT)
+        self.assertIn("cd-platform run 300", verdict.detail)
+
+    def test_confirmation_reads_far_enough_back_for_unit_runs_and_ignores_stuck_requested_runs(self):
+        self.gh.workflow_runs["cd-edge-node.yml"] = [
+            run_obj(400, 3, path="cd-edge-node.yml", name="cd-edge-node", status="requested")]
+        pre = dp.Preflight(self.gh, lambda: self.host, ME, SHA, log=self.logs.append)
+        pre.listed_active()
+        self.assertEqual(pre.confirm_idle().state, dp.OK)
+        self.assertIn(("actions/workflows/release-units.yml/runs", 30), [
+            (p, n) for p, n in self.gh.paged if p.endswith("/runs")])
 
 
 class FollowBuildTest(PreflightCase):
@@ -380,10 +431,49 @@ class FollowBuildTest(PreflightCase):
         self.assertEqual(len([p for p in self.gh.requests if p == "issues"]), 6)
 
 
+class BaseTest(PreflightCase):
+    """The control plane must run the full release the unit release is
+    built over; a newer tag not yet deployed stands the lane down."""
+    BASE = "e" * 40
+
+    def built(self, base, host_base):
+        self.gh.jobs[ME] = [job(dp.BUILD_JOB)]
+        self.gh.markers[ME] = SHA
+        if base:
+            self.gh.bases[ME] = base
+        self.host = healthy_host()
+        if host_base is not None:
+            self.host["base"] = host_base
+
+    def test_same_base_goes(self):
+        self.built(self.BASE, self.BASE)
+        code, go, summary = self.run_preflight(follow=True)
+        self.assertEqual((code, go), (0, True))
+        self.assertIn("runs the full release this unit release is built over", summary)
+
+    def test_an_undeployed_newer_tag_stands_down_without_failing(self):
+        self.built(self.BASE, "f" * 40)
+        code, go, summary = self.run_preflight(follow=True)
+        self.assertEqual((code, go), (0, False))
+        self.assertIn("deploy that release with cd-platform first", summary)
+        self.assertIn("Stood down", summary)
+
+    def test_unknown_base_leaves_it_to_the_planner(self):
+        for base, host_base in ((self.BASE, None), (self.BASE, ""), (None, self.BASE)):
+            with self.subTest(base=base, host_base=host_base):
+                self.setUp()
+                self.built(base, host_base)
+                self.assertEqual(self.run_preflight(follow=True)[:2], (0, True))
+
+
 class WatchCapTest(PreflightCase):
     def watched(self, releases, owner="90"):
         self.host = healthy_host()
         self.host["watch"] = {"owner_run": owner, "hosts": {"control-plane": {"releases": releases}}}
+
+    def full(self):
+        """As many unwatched releases as the cap allows (release_units.json)."""
+        return ["abcdef0123456789"[i] * 40 for i in range(dp.MAX_UNWATCHED)]
 
     def test_open_watch_below_the_cap_lets_the_deploy_join_it(self):
         self.watched(["a" * 40])
@@ -392,7 +482,7 @@ class WatchCapTest(PreflightCase):
         self.assertIn("run 90's watch covers the unwatched releases", summary)
 
     def test_at_the_cap_waits_for_the_running_watch(self):
-        self.watched(["a" * 40, "c" * 40])
+        self.watched(self.full())
         self.gh.runs["actions/runs/90"] = {"status": "in_progress", "html_url": "https://r/90"}
 
         def watch_done(t):
@@ -405,14 +495,14 @@ class WatchCapTest(PreflightCase):
         self.assertIn("watch: 600 s", summary)
 
     def test_at_the_cap_with_no_watch_running_fails_and_says_how_to_adopt(self):
-        self.watched(["a" * 40, "c" * 40])
+        self.watched(self.full())
         self.gh.runs["actions/runs/90"] = {"status": "completed", "conclusion": "failure"}
         code, go, summary = self.run_preflight()
         self.assertEqual((code, go), (1, False))
         self.assertIn("adopt=true", summary)
 
     def test_cap_comes_from_the_release_units_config(self):
-        self.assertEqual(dp.MAX_UNWATCHED, 2)
+        self.assertEqual(dp.MAX_UNWATCHED, 4)
 
 
 class MainTest(unittest.TestCase):

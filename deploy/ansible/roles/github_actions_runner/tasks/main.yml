@@ -251,6 +251,15 @@
       The runner registration files are incomplete. Refusing to start a
       partially configured runner; repair it through config.sh remove/config.sh.
 
+- name: github_actions_runner — install the build runner's job cleanup hook
+  ansible.builtin.template:
+    src: faas-build-runner-job-cleanup.sh.j2
+    dest: "{{ faas_runner_job_cleanup_hook }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_runner_kind == 'build'
+
 - name: github_actions_runner — install hardened systemd unit
   ansible.builtin.template:
     src: faas-github-runner.service.j2

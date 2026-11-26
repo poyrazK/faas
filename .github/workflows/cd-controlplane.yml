@@ -2479,9 +2479,24 @@ jobs:
           cat "$activation_script"
           # The SLO gate ignores alerts that were already firing before this.
           echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)" >> "$GITHUB_ENV"
+          status=0
           ROLLOUT_BASELINE_SAMPLE_COUNT=3 \
             scripts/ci/observe_remote_rollout.sh \
-            "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
+            "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script" || status=$?
+          if (( status != 0 )); then
+            # A failed public-path gate after the release went live rolls it
+            # back here, as the smoke checks and the SLO gate do: 2026-11-23's
+            # first unit run failed this gate and left apid on the new
+            # release (ADR-20261122170000 §3a). A refused baseline or a
+            # failed activation script leaves the old release active, and
+            # then there is nothing to roll back.
+            release_id="$(jq -r .release_id "$UNIT_PLAN")"
+            if [[ "$(scripts/ci/unit_deploy.sh state | jq -r .current)" == "$release_id" ]]; then
+              scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"
+              echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the activation gate failed" >&2
+            fi
+            exit "$status"
+          fi
 
       # Critical smoke checks (ADR-20261122170000): the business paths through
       # the public API with the smoke account (account and plan, the smoke

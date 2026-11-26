@@ -72,6 +72,11 @@ on:
         required: false
         default: ""
         type: string
+      compute_lane:
+        description: "This run only: turn the compute lane on (vmmd and the other compute daemons), the owner-watched canary of docs/adr/20261123122457-compute-unit-lane.md. release_units.json compute_lane.enabled turns it on for every run."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -95,7 +100,9 @@ jobs:
     timeout-minutes: 35
     concurrency:
       # Keyed by the deploy target, as the preflight's `if:` decides it.
-      group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}
+      # A compute-lane canary has its own group: the 10-minute schedule or a
+      # merge (lane off) must not cancel the build the owner is watching.
+      group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}${{ inputs.compute_lane && '-compute-canary' || '' }}
       cancel-in-progress: true
     outputs:
       eligible: ${{ steps.detect.outputs.eligible }}
@@ -204,6 +211,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BLAST_CAP: "5"
           UNITS_BIN_DIR: ${{ runner.temp }}/unit-bin
+          COMPUTE_LANE: ${{ inputs.compute_lane && 'on' || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
@@ -216,6 +224,13 @@ jobs:
           # the full analysis of that commit, checked out.
           tools="$RUNNER_TEMP/unit-tools"
           rm -rf "$tools" && cp -R scripts/ci "$tools"
+          # The dispatched compute-lane canary turns the lane on in the copied
+          # table, so the verdict, the build and the release agree on it.
+          if [[ "$COMPUTE_LANE" == on ]]; then
+            jq '.compute_lane.enabled = true' "$tools/release_units.json" > "$tools/release_units.json.new"
+            mv "$tools/release_units.json.new" "$tools/release_units.json"
+            echo "::notice::compute lane on for this run (owner-dispatched canary)" >&2
+          fi
           python3 "$tools/affected_units.py" --base "$BASE" --head HEAD --output "$OUT_DIR/report-main.json"
           target="$(git rev-parse HEAD)" stall=""
           # The whole range's verdict wins: a commit that looks blocked on
@@ -286,7 +301,9 @@ jobs:
             echo "eligible=$eligible"
             echo "deployable=$deployable"
             echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
-            echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+            # The compute lane rides the edge lane's per-node jobs
+            # (docs/adr/20261123122457-compute-unit-lane.md).
+            echo "edge=$(jq -r '.lanes.edge.eligible or (.lanes.compute.eligible // false)' "$OUT_DIR/report.json")"
             # false only when the host view names the control-plane group
             # and no role of it changed since the base full release; an
             # unknown group (no host view) keeps the host-config job.
@@ -365,6 +382,13 @@ jobs:
           RELEASE_SHA: ${{ steps.detect.outputs.release_sha }}
           REPORT: ${{ runner.temp }}/gregale-units/report.json
           PLAN: ${{ runner.temp }}/gregale-units/tested-tree.json
+          # ci-light's bounded-memory compile of the heavy test packages: the
+          # apidserver test compile without it peaked at 6 GB and sat on the
+          # build runner's MemoryHigh (6G) for ten minutes, stalling the
+          # control plane's memory (PSI 22 %, 2026-11-22). With -c=1, no DWARF,
+          # GOMEMLIMIT and two packages at a time it stays near 3 GB.
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 4GiB
         run: |
           set -euo pipefail
           unset DATABASE_URL SPLIT_DATABASE_URL PGHOST PGPASSWORD PGUSER PGDATABASE
@@ -380,12 +404,12 @@ jobs:
           mapfile -t pkgs < <(jq -r '.packages[]' "$PLAN")
           if (( ${#pkgs[@]} )); then
             echo "testing at ${RELEASE_SHA:0:12}: ${pkgs[*]}"
-            go test -count=1 -timeout=10m "${pkgs[@]}" || status=1
+            go test -p 2 -ldflags=-w -count=1 -timeout=10m "${pkgs[@]}" || status=1
           fi
           while IFS=$'\t' read -r pkg run; do
             [[ -n "$pkg" ]] || continue
             echo "testing related tests of $pkg"
-            go test -count=1 -timeout=8m -run "$run" "$pkg" || status=1
+            go test -p 2 -ldflags=-w -count=1 -timeout=8m -run "$run" "$pkg" || status=1
           done < <(jq -r '.selective[] | .package as $p | .runs[] | "\($p)\t\(.)"' "$PLAN")
           if (( status )); then
             echo "::error::the shipped tree fails tests CI never ran on it together; not releasing ${RELEASE_SHA:0:12}" >&2
@@ -457,6 +481,18 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: unit-release-sha-${{ steps.detect.outputs.release_sha }}
+          path: ${{ runner.temp }}/release-sha
+          if-no-files-found: error
+          retention-days: 30
+      # Names the full release this unit release is built over, so the
+      # preflight stands down while production runs another one (a new tag
+      # not yet deployed by cd-platform) instead of the planner refusing the
+      # lane and freezing deploys (deploy_preflight.py `base`).
+      - name: Upload the base marker
+        if: steps.detect.outputs.eligible == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-release-base-${{ steps.base.outputs.sha }}
           path: ${{ runner.temp }}/release-sha
           if-no-files-found: error
           retention-days: 30

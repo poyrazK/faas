@@ -74,6 +74,18 @@ func (m *MemStore) RetryProjectEnvironmentBranchData(_ context.Context, environm
 	return nil
 }
 
+func (m *MemStore) DeferProjectEnvironmentBranchData(_ context.Context, environmentID, leaseToken string, next time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, err := m.leasedBranchLocked(environmentID, leaseToken)
+	if err != nil {
+		return err
+	}
+	b.DataError, b.dataNextAttemptAt, b.DataLeaseToken, b.dataLeaseUntil = "", next, "", time.Time{}
+	m.projectEnvironmentBranches[environmentID] = b
+	return nil
+}
+
 func (m *MemStore) RecordProjectEnvironmentBranchDatabase(_ context.Context, copy ProjectEnvironmentBranchDatabase) (ProjectEnvironmentBranchDatabase, error) {
 	if copy.AccountID == "" || copy.EnvironmentID == "" || copy.SourceDatabaseID == "" || copy.CopyName == "" || copy.PointInTime.IsZero() {
 		return ProjectEnvironmentBranchDatabase{}, ErrInvalidArgument

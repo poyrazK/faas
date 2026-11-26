@@ -4,10 +4,38 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
+
+func TestObservationFresh(t *testing.T) {
+	now := time.Unix(0, 0)
+	for _, tc := range []struct {
+		name           string
+		age            time.Duration
+		pollIntervalMS int32
+		want           bool
+	}{
+		{"default deadline", 5 * time.Minute, 0, true},
+		{"past default deadline", 5*time.Minute + time.Second, 0, false},
+		{"changes due to poll", 10 * time.Minute, 600_000, true},
+		{"changes grace deadline", 15 * time.Minute, 600_000, true},
+		{"changes overdue", 15*time.Minute + time.Second, 600_000, false},
+		{"future clock", -2 * time.Minute, 600_000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checked := now.Add(-tc.age)
+			if got := ObservationFresh(&checked, now, tc.pollIntervalMS); got != tc.want {
+				t.Fatalf("fresh=%t, want %t", got, tc.want)
+			}
+		})
+	}
+	if ObservationFresh(nil, now, 600_000) {
+		t.Fatal("absent observation was treated as fresh")
+	}
+}
 
 func TestPostgresCommitDoctorReadOnly(t *testing.T) {
 	cluster := pgtest.OpenTLSCluster(t)

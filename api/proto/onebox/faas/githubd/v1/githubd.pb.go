@@ -2208,8 +2208,10 @@ type EnqueueBuildRequest struct {
 	// deployment in it, without the preview-app steps. An older apid never
 	// receives one: githubd sends it only after EnsurePullRequestBranch.
 	EnvironmentBranch bool `protobuf:"varint,20,opt,name=environment_branch,json=environmentBranch,proto3" json:"environment_branch,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Project-production fan-out ID; unset for independent apps and previews.
+	ProjectDeployGroupId string `protobuf:"bytes,21,opt,name=project_deploy_group_id,json=projectDeployGroupId,proto3" json:"project_deploy_group_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *EnqueueBuildRequest) Reset() {
@@ -2380,6 +2382,13 @@ func (x *EnqueueBuildRequest) GetEnvironmentBranch() bool {
 		return x.EnvironmentBranch
 	}
 	return false
+}
+
+func (x *EnqueueBuildRequest) GetProjectDeployGroupId() string {
+	if x != nil {
+		return x.ProjectDeployGroupId
+	}
+	return ""
 }
 
 type EnqueueBuildResponse struct {
@@ -4515,7 +4524,7 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x05phase\x18\x03 \x01(\x0e2\".onebox.faas.githubd.v1.CheckPhaseR\x05phase\x12\x19\n" +
 	"\blogs_url\x18\x04 \x01(\tR\alogsUrl\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\"\x14\n" +
-	"\x12WriteCheckResponse\"\x98\a\n" +
+	"\x12WriteCheckResponse\"\xcf\a\n" +
 	"\x13EnqueueBuildRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -4543,7 +4552,8 @@ const file_onebox_faas_githubd_v1_githubd_proto_rawDesc = "" +
 	"\x11github_source_ref\x18\x11 \x01(\tR\x0fgithubSourceRef\x124\n" +
 	"\x16github_installation_id\x18\x12 \x01(\x03R\x14githubInstallationId\x12\x84\x01\n" +
 	"\x19compose_service_addresses\x18\x13 \x03(\v2H.onebox.faas.githubd.v1.EnqueueBuildRequest.ComposeServiceAddressesEntryR\x17composeServiceAddresses\x12-\n" +
-	"\x12environment_branch\x18\x14 \x01(\bR\x11environmentBranch\x1aJ\n" +
+	"\x12environment_branch\x18\x14 \x01(\bR\x11environmentBranch\x125\n" +
+	"\x17project_deploy_group_id\x18\x15 \x01(\tR\x14projectDeployGroupId\x1aJ\n" +
 	"\x1cComposeServiceAddressesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"m\n" +

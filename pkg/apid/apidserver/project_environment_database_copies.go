@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -144,7 +145,7 @@ func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct
 	if err != nil {
 		// Restore persists its intent before provider I/O. Keep that row so a
 		// retry resumes the recorded recovery time and provider identity.
-		return managedpostgres.Database{}, err
+		return managedpostgres.Database{}, projectEnvironmentDatabaseCopyRestoreError(cloned, copy, err)
 	}
 	if created {
 		cloneID := cloned.ID
@@ -153,13 +154,42 @@ func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct
 			return deleteErr
 		})
 	}
-	if cloned.State != managedpostgres.StateReady || cloned.ID == copy.source.ID || cloned.ProviderResourceID == copy.source.ProviderResourceID ||
-		cloned.RestoreSourceDatabaseID != copy.source.ID || cloned.RestoreSourceResourceID != projectEnvironmentDatabaseCopySourceID(copy.source) || cloned.Spec != copy.source.Spec ||
-		cloned.BackendID != copy.source.BackendID || cloned.BackendFingerprint != copy.source.BackendFingerprint ||
-		!cloned.RestorePointInTime.Equal(copy.pointInTime) {
+	if !projectEnvironmentDatabaseCopyMatches(cloned, copy) {
+		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w", managedpostgres.ErrConflict)
+	}
+	// The right copy, still being restored: only its state is not ready yet.
+	if cloned.State == managedpostgres.StateProvisioning {
+		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w%w", errDatabaseCopyInProgress, managedpostgres.ErrConflict)
+	}
+	if cloned.State != managedpostgres.StateReady {
 		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w", managedpostgres.ErrConflict)
 	}
 	return cloned, nil
+}
+
+// errDatabaseCopyInProgress marks a copy the provider is still restoring: a
+// retry adopts it. It also matches managedpostgres.ErrConflict.
+var errDatabaseCopyInProgress = errors.New("database copy is still being restored")
+
+// projectEnvironmentDatabaseCopyRestoreError classifies a failed restore.
+// While the provider is still creating the copy, restore answers with the
+// right row, still provisioning, and its reconcile's conflict: that copy is in
+// progress, not a failed attempt (prod 2026-11-25: two such conflicts backed
+// a branch's data off for 20 s).
+func projectEnvironmentDatabaseCopyRestoreError(cloned managedpostgres.Database, copy projectEnvironmentDatabaseCopy, err error) error {
+	if errors.Is(err, managedpostgres.ErrConflict) && cloned.State == managedpostgres.StateProvisioning && projectEnvironmentDatabaseCopyMatches(cloned, copy) {
+		return fmt.Errorf("isolated PostgreSQL copy is not ready: %w%w", errDatabaseCopyInProgress, err)
+	}
+	return err
+}
+
+// projectEnvironmentDatabaseCopyMatches reports a restore that is this copy:
+// a distinct database restored from the source at the copy's point.
+func projectEnvironmentDatabaseCopyMatches(cloned managedpostgres.Database, copy projectEnvironmentDatabaseCopy) bool {
+	return cloned.ID != "" && cloned.ID != copy.source.ID && cloned.ProviderResourceID != copy.source.ProviderResourceID &&
+		cloned.RestoreSourceDatabaseID == copy.source.ID && cloned.RestoreSourceResourceID == projectEnvironmentDatabaseCopySourceID(copy.source) && cloned.Spec == copy.source.Spec &&
+		cloned.BackendID == copy.source.BackendID && cloned.BackendFingerprint == copy.source.BackendFingerprint &&
+		cloned.RestorePointInTime.Equal(copy.pointInTime)
 }
 
 // Ordinary legacy cloning retains its selector; complete clones require a pin.

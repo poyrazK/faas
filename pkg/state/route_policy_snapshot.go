@@ -107,7 +107,9 @@ func validateDeploymentRoutePolicySnapshot(snap DeploymentRoutePolicySnapshot) e
 	return nil
 }
 
-var regexpDeploymentScope = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+// Scopes are 1-40 characters, like deployments.scope: a one- or two-character
+// project environment (an environment branch "b1") must be able to go live.
+var regexpDeploymentScope = lazyregexp.New(api.EnvScopePattern)
 var regexpDeploymentRoutePolicySHA256 = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 func cloneStringMap(in map[string]string) map[string]string {

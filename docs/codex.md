@@ -15,7 +15,7 @@ gregale login
 `gregale login` opens your browser once; run it yourself, in your own
 terminal. Codex then uses that login for every `gregale` command it runs.
 Where nobody can open a browser, put a scoped key in Codex's environment as
-`FAAS_TOKEN` instead; see
+`GREGALE_TOKEN` instead; see
 [Give the agent its own key](agents.md#give-the-agent-its-own-key).
 
 The CLI needs to reach Gregale over the network. If Codex runs commands in
@@ -65,9 +65,10 @@ gregale --non-interactive --json app health my-api --errors
 gregale logs my-api --since 15m
 ```
 
-A new app can be private: its URL answers `401` until you open it. Ask Codex
-to run `gregale app update my-api --no-require-authn` only if the app should
-be public.
+A new app can be private: its URL answers `401` until you open it. If the app
+should be public, such as a site people open in a browser, ask Codex to add
+`access: public` to its `gregale.yaml`; every deploy, including through the
+MCP server, keeps it public ([declare access](auth.md#declare-access-in-gregaleyaml)).
 
 ## Roll back
 

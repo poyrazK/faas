@@ -83,4 +83,22 @@ func TestServiceRequestRecordsRequestMetrics(t *testing.T) {
 	if got := deploymentSampleCount(t, m, app, "5xx", deployment); got != 2 {
 		t.Fatalf("5xx samples = %d, want 2", got)
 	}
+	// The SLO burn-rate rules and schedd scale-up read gateway_requests_total.
+	for code, want := range map[string]float64{"200": 1, "503": 2} {
+		metric := &dto.Metric{}
+		if err := m.requests.WithLabelValues(app, string(api.PlanScale), code).Write(metric); err != nil {
+			t.Fatalf("write requests counter: %v", err)
+		}
+		if got := metric.GetCounter().GetValue(); got != want {
+			t.Fatalf("gateway_requests_total{code=%q} = %v, want %v", code, got, want)
+		}
+		// The platform availability figure subtracts the service part.
+		service := &dto.Metric{}
+		if err := m.serviceRequests.WithLabelValues(app, code).Write(service); err != nil {
+			t.Fatalf("write service requests counter: %v", err)
+		}
+		if got := service.GetCounter().GetValue(); got != want {
+			t.Fatalf("gateway_service_requests_total{code=%q} = %v, want %v", code, got, want)
+		}
+	}
 }

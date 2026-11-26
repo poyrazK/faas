@@ -11,8 +11,8 @@ import "net/http"
 // (RFC 9213) set to private; Cloudflare honours them and they do not change
 // how the browser caches.
 const (
-	cloudflareCDNCacheControlHeader = "Cloudflare-CDN-Cache-Control"
-	cdnCacheControlHeader           = "CDN-Cache-Control"
+	cloudflareCDNCacheControlHeader = "Cloudflare-Cdn-Cache-Control" // canonical spelling of Cloudflare-CDN-Cache-Control
+	cdnCacheControlHeader           = "Cdn-Cache-Control"            // canonical spelling of CDN-Cache-Control
 )
 
 // keepFromSharedCaches marks the response being written through w as one no

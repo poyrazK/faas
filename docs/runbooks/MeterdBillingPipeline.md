@@ -131,6 +131,22 @@ then never billed (ADR-20261103121407).
    bill it, lift the suspension before the hours expire; otherwise the loss is
    accepted and the alert clears when they leave the lookback.
 
+## FaasMeterdPaidSubjectWithoutIdentity
+
+A subject is on a paid plan (hobby, pro, scale), is not complimentary and is
+neither suspended nor being deleted, but has no complete billing identity
+(customer and subscription) for the configured provider. meterd's hourly pass
+skips it, and the pending replay only lists subjects with a billing identity,
+so its usage is never billed and `FaasMeterdHeldUsageExpiring` never sees it
+(metering review 2026-11-23). Usual causes: an operator or test set the plan
+directly, or checkout was abandoned after the plan changed.
+
+1. `meterd_billing_paid_subjects_without_identity{plan}` counts them; meterd
+   logs `meter: billing identity incomplete` with each account id.
+2. For each one, either grant it complimentary
+   (`POST /v1/admin/ops/accounts/{id}/complimentary`, ADR-20261111140000),
+   return it to Free, or have the customer finish checkout.
+
 ## FaasMeterdQuotaFailing
 
 Three or more quota sweeps failed in 10 minutes. While they fail, Free accounts

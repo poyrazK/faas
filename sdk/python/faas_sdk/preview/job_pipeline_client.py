@@ -8,15 +8,18 @@ from dataclasses import asdict, dataclass
 from typing import Any, Generic, TypeVar
 
 from .._async_request import RequestOptions
+from .._rfc7807 import FaasProblemError
 from .._typed_jobs import JobProgress
 from .._wrapper import FaaSClient
 from ..job_runtime import JobContract, _scope, job_value_hash
 from .live_jobs import LiveJobSnapshot
 from .pipeline_state import (
+    PinnedPipelineSource,
     PipelineError,
     PipelineFailure,
     PipelineScope,
     _hash,
+    _parse_pinned_source,
     _parse_pipeline_lineage,
     _parse_pipeline_trigger,
     _uuid,
@@ -178,8 +181,8 @@ class JobPipelineClient(Generic[I, O]):
             calls = 0
 
             async def request(
-                path: str, method: str = "GET", body: Any = None, key: str | None = None
-            ) -> dict[str, Any]:
+                path: str, method: str = "GET", body: Any = None, key: str | None = None, *, missing_ok: bool = False
+            ) -> dict[str, Any] | None:
                 nonlocal calls
                 check()
                 calls += 1
@@ -188,10 +191,12 @@ class JobPipelineClient(Generic[I, O]):
                 kwargs = {"json": body} if body is not None else {}
                 headers = {"Idempotency-Key": key} if key is not None else {}
 
-                async def send() -> dict[str, Any]:
+                async def send() -> dict[str, Any] | None:
                     async with self._client.async_httpx_client.stream(
                         method, path, headers=headers, **kwargs
                     ) as response:
+                        if missing_ok and response.status_code == 404:
+                            return None
                         response.raise_for_status()
                         data = bytearray()
                         async for chunk in response.aiter_bytes(chunk_size=8192):
@@ -205,7 +210,12 @@ class JobPipelineClient(Generic[I, O]):
                         raise PipelineError("receipt_conflict")
                     return value
 
-                return await self._client.arequest(send, options=RequestOptions(timeout=0, retry=False))
+                try:
+                    return await self._client.arequest(send, options=RequestOptions(timeout=0, retry=False))
+                except FaasProblemError as error:
+                    if missing_ok and error.status == 404:
+                        return None
+                    raise
 
             try:
                 value = await work(request)
@@ -244,6 +254,9 @@ class JobPipelineClient(Generic[I, O]):
             "owner_id": self.owner_id,
             "contract_sha256": self.contract.sha256,
             field: content,
+            **({"pinned_source": _parse_pinned_source(
+                value["pinned_source"], self.scope.base_url, self.scope.app_slug, self.owner_id,
+            )} if field == "input" and "pinned_source" in value else {}),
             **({"lineage": _parse_pipeline_lineage(value["lineage"])} if "lineage" in value else {}),
             **({"trigger": _parse_pipeline_trigger(value["trigger"])} if "trigger" in value else {}),
         }
@@ -302,6 +315,33 @@ class JobPipelineClient(Generic[I, O]):
 
         return await self._operation(timeout, work)
 
+    async def find_tool_start(self, identity: str, *, timeout: float) -> PipelineCheckpoint | None:
+        if not _hash(identity):
+            raise PipelineError("invalid_input")
+
+        async def work(request: Any) -> PipelineCheckpoint | None:
+            await self._verify(request)
+            match = await request(
+                "/v1/apps/" + self.scope.app_slug + "/workflows/run-starts/" + self.contract.spec["name"],
+                key="pipeline-tool:" + identity,
+                missing_ok=True,
+            )
+            if match is None:
+                return None
+            if set(match) != {"run_id"} or not _uuid(match["run_id"]):
+                raise PipelineError("receipt_conflict")
+            run = self._validate(await request("/v1/workflows/runs/" + match["run_id"]))
+            envelope = self._envelope(run["input"])
+            if run["id"] != match["run_id"] or envelope.get("trigger") != {
+                "version": 1,
+                "kind": "tool",
+                "identity": identity,
+            }:
+                raise PipelineError("receipt_conflict")
+            return self._checkpoint(run["id"], envelope)
+
+        return await self._operation(timeout, work)
+
     async def start(
         self,
         value: I,
@@ -310,12 +350,16 @@ class JobPipelineClient(Generic[I, O]):
         idempotency_key: str,
         lineage: dict[str, Any] | None = None,
         trigger: dict[str, Any] | None = None,
+        pinned_source: PinnedPipelineSource | None = None,
     ) -> TypedPipelineRun[O]:
         import re
 
         captured = self.contract.input(value)
         bound_lineage = _parse_pipeline_lineage(lineage) if lineage is not None else None
         bound_trigger = _parse_pipeline_trigger(trigger) if trigger is not None else None
+        pinned = _parse_pinned_source(
+            pinned_source, self.scope.base_url, self.scope.app_slug, self.owner_id,
+        ) if pinned_source is not None else None
         if not isinstance(idempotency_key, str) or re.fullmatch(r"[!-~]{1,128}", idempotency_key) is None:
             raise PipelineError("invalid_input")
 
@@ -327,6 +371,7 @@ class JobPipelineClient(Generic[I, O]):
                 "scope": self.scope.to_dict(),
                 "owner_id": self.owner_id,
                 "input": captured,
+                **({"pinned_source": pinned} if pinned is not None else {}),
                 **({"lineage": bound_lineage} if bound_lineage is not None else {}),
                 **({"trigger": bound_trigger} if bound_trigger is not None else {}),
             }

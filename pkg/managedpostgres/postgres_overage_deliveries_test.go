@@ -184,3 +184,50 @@ func TestPostgresStoreOverageEgress(t *testing.T) {
 		t.Fatalf("delivered = %+v, %v", delivered, err)
 	}
 }
+
+// Restore history and snapshot storage past the included history
+// (ADR-20261123062111) round-trip through the reservation and the delivery.
+func TestPostgresStoreOverageHistory(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	month := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	pending := OveragePendingStep{Provider: "polar", Live: true, Step: OverageChargeStep{SubjectID: accountID, PeriodStart: month,
+		At: month.Add(3 * time.Hour), TargetMillicents: 148_707, UsedHistoryByteSeconds: 7 << 40, UsedSnapshotByteSeconds: 1 << 40,
+		IncludedHistoryBytes: 5 << 30, BilledHistoryByteSeconds: 3 << 40, BilledSnapshotByteSeconds: 1 << 40},
+		Previous: OverageDelivery{Provider: "polar", SubjectID: accountID, PeriodStart: month}}
+	if reserved, err := store.ReserveOverage(ctx, pending); err != nil || !reserved {
+		t.Fatalf("reserve: %v, %v", reserved, err)
+	}
+	if got, found, err := store.OveragePending(ctx, "polar", accountID, month); err != nil || !found || got != pending {
+		t.Fatalf("pending = %+v, %v, %v; want %+v", got, found, err, pending)
+	}
+	if recorded, err := store.CompleteOverage(ctx, pending); err != nil || !recorded {
+		t.Fatalf("complete: %v, %v", recorded, err)
+	}
+	delivered, err := store.OverageDelivered(ctx, "polar", accountID, month)
+	if err != nil || delivered.BilledHistoryByteSeconds != 3<<40 || delivered.BilledSnapshotByteSeconds != 1<<40 || delivered.Millicents != 148_707 {
+		t.Fatalf("delivered = %+v, %v", delivered, err)
+	}
+}
+
+// The usage ledger records snapshot storage as its own meter, and the
+// subject's snapshot sums it apart from restore history (ADR-20261123062111).
+func TestPostgresUsageSnapshotSplitsSnapshotStorage(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	month := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	database := postgresReadyDatabase(t, store, accountID, "orders", month.Add(time.Hour))
+	for meter, quantity := range map[Meter]int64{MeterHistoryByteSeconds: 3 << 40, MeterSnapshotByteSeconds: 1 << 40} {
+		if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_usage (account_id, database_id, backend_id, backend_fingerprint,
+ window_from, window_to, observed_at, meter, quantity, cost_millicents) VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,0)`,
+			accountID, database.ID, database.BackendID, database.BackendFingerprint, month.Add(2*time.Hour), month.Add(3*time.Hour), string(meter), quantity); err != nil {
+			t.Fatalf("insert %s usage: %v", meter, err)
+		}
+	}
+	snapshot, err := store.UsageSnapshot(ctx, accountID, month.Add(4*time.Hour))
+	if err != nil || snapshot.HistoryByteSeconds != 3<<40 || snapshot.SnapshotByteSeconds != 1<<40 {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
+	}
+	before, err := store.UsageBefore(ctx, accountID, month, month.Add(4*time.Hour))
+	if err != nil || before.HistoryByteSeconds != 3<<40 || before.SnapshotByteSeconds != 1<<40 {
+		t.Fatalf("usage before = %+v, %v", before, err)
+	}
+}

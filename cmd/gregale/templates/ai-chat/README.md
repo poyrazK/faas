@@ -100,14 +100,16 @@ gregale deploy
 ## Try it
 
 ```sh
-# Health probe shows which provider is wired up
-curl https://<slug>.gregale.dev/healthz
+# Health probe shows which provider is wired up. Gregale's edge answers a
+# public GET /healthz itself without waking the app, so read the app's own
+# answer with an owner-authorized check of the live deployment:
+gregale release verify <deployment-id> --app <slug> --path /healthz
 # → {"ok":true,"provider":"openai","model":"gpt-4o-mini"}
 
 # A single-turn chat
 curl -X POST -H 'content-type: application/json' \
      -d '{"messages":[{"role":"user","content":"Hello, who are you?"}]}' \
-     https://<slug>.gregale.dev/chat
+     https://<slug>.gregale.app/chat
 
 # A multi-turn chat
 curl -X POST -H 'content-type: application/json' \
@@ -118,7 +120,7 @@ curl -X POST -H 'content-type: application/json' \
          {"role":"user","content":"And 4+4?"}
        ]
      }' \
-     https://<slug>.gregale.dev/chat
+     https://<slug>.gregale.app/chat
 ```
 
 ## Response shape

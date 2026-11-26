@@ -2,12 +2,47 @@ package main_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routeresources"
 )
+
+// `--json route-resources` prints the API response as JSON, with the window
+// passed through (TestJSONOutputHonored requires a JSON test per command).
+func TestRouteResourcesJSON(t *testing.T) {
+	var gotSince string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/shop/analytics/route-resources" {
+			t.Errorf("path = %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		gotSince = r.URL.Query().Get("since")
+		main.WriteJSONTest(w, api.RouteResourcesResponse{Slug: "shop", From: "2026-11-21T00:00:00Z", Until: "2026-11-22T00:00:00Z"})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	out, stderr, restore := main.SwapIO(t)
+	defer restore()
+
+	if code := main.Run([]string{"--json", "route-resources", "shop", "--since", "6h"}); code != 0 {
+		t.Fatalf("exit = %d; stderr=%s", code, stderr())
+	}
+	var got api.RouteResourcesResponse
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil || got.Slug != "shop" {
+		t.Fatalf("output = %q (%v)", out.String(), err)
+	}
+	if gotSince != "6h" {
+		t.Errorf("since = %q, want 6h", gotSince)
+	}
+}
 
 func TestSplitTargetSlug(t *testing.T) {
 	for _, tc := range []struct{ slug, glob, want string }{

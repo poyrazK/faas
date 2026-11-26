@@ -783,7 +783,7 @@ webhook endpoint (ADR-212), then bind it to an operation and the customer that
 owns the resulting work:
 
 ```sh
-curl -X PUT "$GREGALE_API/v1/apps/billing/inbound-webhooks/$ENDPOINT/operation-binding" \
+curl -X PUT "$GREGALE_API_URL/v1/apps/billing/inbound-webhooks/$ENDPOINT/operation-binding" \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"expected_version":0,"operation":"invoice-paid","platform_tenant_id":"'$TENANT'",
        "event_types":["invoice.paid"],"take_over_delivery":true}'
@@ -821,7 +821,7 @@ A binding with `"mode":"signal"` starts nothing. It delivers provider events as
 signals to Operations already waiting on a `wait_for_event` step:
 
 ```sh
-curl -X PUT "$GREGALE_API/v1/apps/shop/inbound-webhooks/$ENDPOINT/operation-binding" \
+curl -X PUT "$GREGALE_API_URL/v1/apps/shop/inbound-webhooks/$ENDPOINT/operation-binding" \
   -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"expected_version":0,"operation":"fulfil","platform_tenant_id":"'$TENANT'",
        "take_over_delivery":true,"mode":"signal",

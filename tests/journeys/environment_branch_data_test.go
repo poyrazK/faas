@@ -61,6 +61,10 @@ func TestEnvironmentBranchData(t *testing.T) {
 		copy.base = branchURL
 		return &copy
 	}
+	// releaseOff records that the target refused the migration release
+	// command: release commands are switched off there
+	// (FAAS_RELEASE_PHASE_ENABLED), so the journey cannot make its table.
+	releaseOff := false
 	deployProject := func(t *testing.T, release string) {
 		t.Helper()
 		dir := t.TempDir()
@@ -75,6 +79,10 @@ func TestEnvironmentBranchData(t *testing.T) {
 		defer func() { <-tg.deploySlots }()
 		res := tg.exec(t, tg.token, t.TempDir(), deployLimit+5*time.Minute, "deploy", "--project",
 			"--project-slug", project, "--path", dir, "--wait", "--timeout", deployLimit.String(), "--yes")
+		if res.exit != 0 && release != "" && releasePhaseRefused(res) {
+			releaseOff = true
+			t.Skipf("release commands are off on this target: %s", tg.redact(tail(res.problem(), 300)))
+		}
 		if res.exit != 0 {
 			t.Fatalf("project deploy failed (exit %d): %s\noutput: %s", res.exit, tg.redact(res.problem()),
 				tg.redact(tail(string(res.stdout), 2000)))
@@ -96,9 +104,12 @@ func TestEnvironmentBranchData(t *testing.T) {
 		// The table comes from a release command over a migration binding,
 		// as docs/postgres.md tells customers.
 		migration := j.bind(t, j.db, "MIGRATION_DATABASE_URL", "--access", "migration")
+		defer j.unbind(t, j.db, migration) // also when the deploy skips
 		deployProject(t, "create")
-		j.unbind(t, j.db, migration)
 	})
+	if releaseOff {
+		t.Skip("release commands are off on this target; the branch's database copy needs the migrated table")
+	}
 	s.step("write_in_production", func(t *testing.T) {
 		j.write(t, "DATABASE_URL", "before-branch")
 		j.expectRows(t, "DATABASE_URL", "before-branch")
@@ -160,4 +171,12 @@ func TestEnvironmentBranchData(t *testing.T) {
 	s.check("production_rows_unchanged", func(t *testing.T) {
 		j.expectRows(t, "DATABASE_URL", "before-branch", "after-branch")
 	})
+}
+
+// releasePhaseRefused reports a deploy refused because the target runs no
+// release commands: apid refuses the upload, or imaged fails the deployment
+// after the build, with release_phase_unavailable.
+func releasePhaseRefused(res cliResult) bool {
+	return res.problemCode() == "release_phase_unavailable" ||
+		strings.Contains(res.problem(), "release_phase_unavailable") || strings.Contains(string(res.stdout), "release_phase_unavailable")
 }

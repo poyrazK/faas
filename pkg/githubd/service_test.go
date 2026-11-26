@@ -527,6 +527,7 @@ type enqueueCall struct {
 	accountID          string
 	appID              string
 	deliveryID         string
+	projectDeployGroup string
 	commitSHA          string
 	sourcePath         string
 	scope              string
@@ -541,6 +542,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, spec BuildSpec) (state.Bu
 		accountID:          spec.App.AccountID,
 		appID:              spec.App.ID,
 		deliveryID:         spec.DeliveryID,
+		projectDeployGroup: spec.ProjectDeployGroupID,
 		commitSHA:          spec.CommitSHA,
 		sourcePath:         spec.SourcePath,
 		scope:              spec.Scope,

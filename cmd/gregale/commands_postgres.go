@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|app-wake|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -52,16 +52,15 @@ func cmdPostgres(args []string) int {
 	case "previews":
 		return cmdPostgresPreviews(args[1:])
 	case "roles":
-		// ADR-20261116213000: dark until released (postgres_custom_roles_cli.go).
-		if !postgresCustomRolesCLI() {
-			printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
-			return unknownSubcommandChoices(os.Stderr, "postgres", nestedCliCommand("postgres"), args[0])
-		}
 		return cmdPostgresRoles(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
 		return cmdPostgresComputePolicyStatus(args[1:])
+	case "app-wake":
+		return cmdPostgresWakeWithApp(args[1:])
+	case "suspend-timeout":
+		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
 		return cmdPostgresResize(args[1:])
 	case "resize-status":
@@ -85,6 +84,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresAttach(args[1:])
 	case "connect":
 		return cmdPostgresConnect(args[1:])
+	case "sql", "query":
+		return cmdPostgresSQL(args[1:])
 	case "live":
 		return cmdPostgresLive(args[1:])
 	default:
@@ -204,17 +205,20 @@ func (a *stringAlias) Set(value string) error {
 // cmdPostgresOverage shows or changes the account's compute overage
 // (ADR-20261025094915): with it on, databases keep running past the monthly
 // allowance until twice it; off, the default, suspends them at the allowance.
+// postgresOverageUsage spells the tree's get/set verbs, which dispatch here.
+const postgresOverageUsage = "usage: gregale postgres overage get | gregale postgres overage set on|off"
+
 func cmdPostgresOverage(args []string) int {
 	fs := newFlagSet("postgres overage", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+		PrintUsage(os.Stderr, postgresOverageUsage, "postgres")
 		return 1
 	}
 	choice := ""
 	if fs.NArg() != 0 {
 		choice = fs.Arg(0)
 		if fs.NArg() != 1 || (choice != "on" && choice != "off") {
-			PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+			PrintUsage(os.Stderr, postgresOverageUsage, "postgres")
 			return 1
 		}
 	}
@@ -279,6 +283,19 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
+	if result.SnapshotByteSeconds > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  snapshot_byte_seconds:        %d (%s)\n", result.SnapshotByteSeconds, formatGiBMonths(result.SnapshotByteSeconds))
+	}
+	if result.IncludedHistoryBytes > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  included_history:             %s per month\n", formatIECBytes(result.IncludedHistoryBytes))
+	}
+	switch result.HistoryState {
+	case "limited":
+		_, _ = fmt.Fprintf(osStdout, "  history_state:                limited (24 h restore window until the 1st; run `gregale postgres overage on` to keep the full window)\n")
+	case "":
+	default:
+		_, _ = fmt.Fprintf(osStdout, "  history_state:                %s\n", result.HistoryState)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	if result.EgressAllowanceBytes > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  egress_allowance:             %.0f GB per database\n", float64(result.EgressAllowanceBytes)/1e9)
@@ -872,6 +889,14 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	_, _ = fmt.Fprintf(w, "  class:            %s\n", database.ServiceClass)
 	_, _ = fmt.Fprintf(w, "  availability:     %s\n", database.Availability)
 	_, _ = fmt.Fprintf(w, "  scale_to_zero:    %t\n", database.ScaleToZero)
+	if database.ScaleToZero && database.SuspendTimeoutSeconds > 0 {
+		source := "default"
+		if database.SuspendTimeoutCustom {
+			source = "set with suspend-timeout"
+		}
+		_, _ = fmt.Fprintf(w, "  suspend_timeout:  %s (%s)\n", time.Duration(database.SuspendTimeoutSeconds)*time.Second, source)
+		_, _ = fmt.Fprintf(w, "  wake_with_app:    %t\n", database.WakeWithApp)
+	}
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)

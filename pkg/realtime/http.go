@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -311,6 +312,9 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (callbackResponse, 
 		path = "/" + path
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + path
+	if !event.Binary && len(event.Data) > 0 && utf8.Valid(event.Data) {
+		event.Text = string(event.Data)
+	}
 	body, err := json.Marshal(event)
 	if err != nil {
 		return callbackResponse{}, fmt.Errorf("realtime: encode callback: %w", err)

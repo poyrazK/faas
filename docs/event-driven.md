@@ -48,6 +48,8 @@ invokes the app's `/generate_report` handler via the existing workflow executor.
 The [example manifest](../examples/scheduled-workflows/gregale.yaml) provides
 this two-step recipe.
 
+### Inspect schedules and runs
+
 Workflow execution is a preview feature and may not be enabled for your
 account. Inspect the configuration and latest scheduling outcome with:
 
@@ -70,6 +72,8 @@ records `armed`, `started`, `skipped_overlap`, or `skipped_quota`;
 `last_scheduled_for` and `last_run_id` connect an admission to its execution.
 This endpoint keeps the latest outcome, not every skipped occurrence.
 
+### Cron syntax and which deployment schedules
+
 Schedules use the same five-field cron grammar and daylight-saving behavior
 as application crons. UTC is the default timezone. Fixed `input` may be any
 JSON value within the ordinary 1 MiB run-input limit and defaults to `{}`.
@@ -89,6 +93,8 @@ continue. Account suspension, abuse holds, Free-plan downgrade, and maintenance
 mode block admission. Tenant-required apps start one run for each active linked
 tenant; their cursors and overlap checks are independent, while the app-wide
 workflow concurrency quota remains shared.
+
+### Let tenants set their own schedule
 
 An app owner can add `tenant_configurable: true` to a schedule trigger to let a
 linked customer manage its own cron expression, timezone, overlap behavior, and
@@ -252,6 +258,8 @@ event cannot run a retry before its configured backoff expires. When a workflow
 has parallel waits and retries, the scheduler wakes it for the earliest due
 step.
 
+### Start and inspect a run
+
 Deploy the manifest, then start a run with:
 
 ```bash
@@ -270,6 +278,8 @@ The equivalent read-only API is
 `GET /v1/workflows/runs/{id}/steps/{step}/attempts`. Attempt history stores
 metadata, not request or response bodies; timer and callback waits do not
 create executor-attempt records.
+
+### Retry a failed step
 
 For a terminal run with one failed or dead HTTP step, retry that step in place:
 
@@ -290,6 +300,8 @@ request another manual attempt. Ordinary HTTP handlers still need their own
 idempotency because delivery remains at least once. The API is
 `POST /v1/workflows/runs/{id}/steps/{step}/retry`.
 
+### Wait for a duration
+
 The timer
 starts only when its dependencies succeed. It is stored in the workflow
 ledger and resumed by the scheduler when due; no application instance is
@@ -298,6 +310,8 @@ Hobby, `90d` on Pro, or `365d` on Scale. `wait_for_event` and
 `wait_for_callback` timeouts use the same per-plan horizon. A timer cannot be
 combined with `run`, `path`,
 `wait_for_event`, `timeout`, `on_timeout`, or `retry` in one step.
+
+### Wait for a callback
 
 For a one-time callback, declare a separate `wait_for_callback: true` step
 with a `timeout` and optionally an `on_timeout` handler:
@@ -322,6 +336,8 @@ starts when the step first becomes runnable, not when the run was created.
 The workflow stays parked between callbacks; no application instance is
 reserved for the wait. The callback ID is not an authentication token:
 both requests need the owning account's API authorization.
+
+### Poll an external condition
 
 If an external system cannot push an event, use a bounded condition checker:
 
@@ -349,6 +365,8 @@ present. Checker calls are at least once and get a per-check
 `Idempotency-Key` (`workflow/<run-id>/<step-name>/<attempt>`), so distinct
 polls remain distinct. A push event or
 callback remains preferable when the external system supports one.
+
+### Wait for an event
 
 For an unsupported external provider, receive and verify its webhook in your own handler,
 then use that authenticated Gregale API to complete the callback. Do not give
@@ -388,11 +406,15 @@ received earlier follows the normal app-delivery path. Use the binding's
 supports Stripe only; other providers still need a verifying application
 handler.
 
+### How workflow handlers run
+
 This is a declarative workflow, not a replayed single function: handlers are
 separate at-least-once invocations and must make external side effects
 idempotent. Gregale does not yet provide `ctx.sleep()` or year-long
 code-as-workflow executions. Its existing short-lived `ctx.waitUntil()`
 post-response tail is separate from durable `wait_for_condition` checks.
+
+### Async invocations, jobs and crons
 
 Each async invocation attempt, including any wake it triggers, must answer
 within 30 seconds (`api.GatewaySynthDispatchTimeout`). A longer attempt is
@@ -424,6 +446,8 @@ least 30 days, unless a record carries its own retention; after that they may
 be deleted. Retry or export dead letters you still need before then.
 
 Keep synchronous endpoints small and return an acknowledgement only after the event is durably accepted. Verify webhook signatures and record the source, schema version, and correlation id in application logs.
+
+### Notify webhooks and set retries for async invocations
 
 Async invocations may name existing app webhook subscriptions as terminal
 destinations. The success destination receives a durable `job.finished` event
@@ -790,3 +814,23 @@ Paid plans support delayed tasks. The per-app pending limits are Hobby 5, Pro
 50, and Scale 1,000,000. A purpose-built API key can use
 `delayed_tasks:write` to create/cancel and `delayed_tasks:read` to list/get;
 existing `deploy:write` and `apps:read` keys remain compatible.
+
+## Object storage uploads
+
+Bucket writes can start work without a client calling your API afterwards. Add
+`triggers` to a bucket entry in `gregale.yaml` to run your app on each upload, or
+set the bucket's notification rules to put a message on a queue. A browser can
+upload through a signed URL and the processing starts on its own. See
+[run code on upload](object-storage.md#run-code-on-upload).
+
+## Realtime
+
+[Managed realtime](realtime.md) (beta) holds WebSocket and SSE client
+connections for your app while the app is parked; your backend publishes to
+channels or sends to one connection. Its retained channels, consumer groups,
+channel occupancy, `kind: realtime` function triggers and the `realtime:`
+section of `gregale.yaml` are a preview that Gregale releases account by
+account. Until your account has
+it, those API routes answer 404, `kind: realtime` is refused as an unknown
+trigger kind, and `gregale.yaml` refuses the `realtime:` key. Ask support to
+join the preview.

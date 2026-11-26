@@ -1712,25 +1712,34 @@ func TestExportBundleV2WireShape(t *testing.T) {
 	}
 }
 
-// The shipped DPA template opens with operator-only notes (rendering rules,
-// placeholder syntax). `gregale account dpa` printed them to customers.
+// The DPA is served from the operator's template (FAAS_DPA_PATH), which may
+// open with operator-only notes (rendering rules, placeholder syntax) in HTML
+// comments. `gregale account dpa` printed them to customers. The shipped
+// docs/DPA.md carries no notes since #7879 (pkg/legal guards that), so the
+// test puts one back above the agreement, where the template had it.
 func TestCustomerDPAMarkdownDropsOperatorNotesAndKeepsTheAgreement(t *testing.T) {
-	template, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "DPA.md"))
+	shipped, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "DPA.md"))
 	if err != nil {
 		t.Fatalf("read shipped DPA template: %v", err)
 	}
-	got := string(customerDPAMarkdown(template))
+	want := string(customerDPAMarkdown(shipped))
+	if !strings.HasPrefix(want, "# Data Processing Addendum (DPA)\n\n") || strings.Contains(want, "\n\n\n") ||
+		strings.Count(want, "{{") != strings.Count(string(shipped), "{{") {
+		t.Errorf("customer DPA heading, spacing or placeholders changed: %q", want[:min(len(want), 120)])
+	}
+	heading, agreement, ok := strings.Cut(string(shipped), "\n\n")
+	if !ok {
+		t.Fatal("shipped DPA has no heading paragraph")
+	}
+	withNotes := heading + "\n\n<!--\n  Operator-facing template notes: rendering rules, {{placeholder}} syntax.\n-->\n\n" + agreement
+	got := string(customerDPAMarkdown([]byte(withNotes)))
 	for _, gone := range []string{"<!--", "-->", "Operator-facing template notes"} {
 		if strings.Contains(got, gone) {
 			t.Errorf("customer DPA still contains %q", gone)
 		}
 	}
-	if !strings.HasPrefix(got, "# Data Processing Addendum (DPA)\n\n") || strings.Contains(got, "\n\n\n") {
-		t.Errorf("customer DPA heading or spacing changed: %q", got[:min(len(got), 120)])
-	}
 	// Only the operator notes go; the agreement text is untouched.
-	withoutNotes := strings.Replace(string(template), string(template[strings.Index(string(template), "<!--"):strings.Index(string(template), "-->")+len("-->")]), "", 1)
-	if strings.Count(got, "{{") != strings.Count(withoutNotes, "{{") {
-		t.Errorf("agreement placeholders changed: got %d, want %d", strings.Count(got, "{{"), strings.Count(withoutNotes, "{{"))
+	if got != want {
+		t.Errorf("customer DPA with operator notes = %q, want the shipped agreement %q", got[:min(len(got), 120)], want[:min(len(want), 120)])
 	}
 }

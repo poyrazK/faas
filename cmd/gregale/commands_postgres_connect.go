@@ -191,6 +191,12 @@ func tunnelEndpoint(addr net.Addr) (string, int) {
 // can see, honoring --app, --env and --access, else the first by
 // postgresConnectAccessOrder.
 func choosePostgresConnectBinding(bindings []api.ManagedPostgresBinding, apps []api.AppResponse, appSlug, envKey, access string) (api.ManagedPostgresBinding, string, error) {
+	return choosePostgresBinding(bindings, apps, appSlug, envKey, access, postgresConnectAccessOrder)
+}
+
+// choosePostgresBinding is choosePostgresConnectBinding with the access
+// preference given: only bindings whose access is in order are considered.
+func choosePostgresBinding(bindings []api.ManagedPostgresBinding, apps []api.AppResponse, appSlug, envKey, access string, order []string) (api.ManagedPostgresBinding, string, error) {
 	slugByID := make(map[string]string, len(apps))
 	for _, app := range apps {
 		slugByID[app.ID] = app.Slug
@@ -202,7 +208,7 @@ func choosePostgresConnectBinding(bindings []api.ManagedPostgresBinding, apps []
 	var candidates []candidate
 	for _, binding := range bindings {
 		slug := slugByID[binding.AppID]
-		if binding.State != "ready" || slug == "" || !slices.Contains(postgresConnectAccessOrder, binding.Access) {
+		if binding.State != "ready" || slug == "" || !slices.Contains(order, binding.Access) {
 			continue
 		}
 		if (appSlug != "" && slug != appSlug) || (envKey != "" && binding.EnvironmentKey != envKey) || (access != "" && binding.Access != access) {
@@ -211,10 +217,10 @@ func choosePostgresConnectBinding(bindings []api.ManagedPostgresBinding, apps []
 		candidates = append(candidates, candidate{binding, slug})
 	}
 	if len(candidates) == 0 {
-		return api.ManagedPostgresBinding{}, "", errors.New("no ready read_write, migration, session or read_only binding matches")
+		return api.ManagedPostgresBinding{}, "", fmt.Errorf("no ready %s binding matches", strings.Join(order, ", "))
 	}
 	slices.SortStableFunc(candidates, func(a, b candidate) int {
-		return slices.Index(postgresConnectAccessOrder, a.binding.Access) - slices.Index(postgresConnectAccessOrder, b.binding.Access)
+		return slices.Index(order, a.binding.Access) - slices.Index(order, b.binding.Access)
 	})
 	return candidates[0].binding, candidates[0].slug, nil
 }

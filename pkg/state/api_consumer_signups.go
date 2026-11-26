@@ -48,8 +48,17 @@ type APIConsumerSignupSettings struct {
 	// and close their account with their own key (ADR-20261021183000).
 	CustomerPlanChanges bool
 	CustomerClosing     bool
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// FreePlanID is an offered plan that charges nothing: joining it skips
+	// Checkout. OAuthConsumers enrolls callers signed in through the app's
+	// MCP oauth-proxy issuer as consumers on it (ADR-20261124094745).
+	FreePlanID     string
+	OAuthConsumers bool
+	// AccountTools adds the account_usage and account_plans tools to the MCP
+	// server for OAuth consumers (ADR-20261125194510); it needs
+	// OAuthConsumers.
+	AccountTools bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // APIConsumerSignupStatus is a sign-up's state: pending until its consumer
@@ -97,6 +106,16 @@ type APIConsumerSignupCompletion struct {
 	SignupID      string
 	EffectiveFrom time.Time
 	TrialDays     int
+	// Free completes a sign-up without a checkout: its plan must be the
+	// app's free plan, and the consumer's external ref is the sign-up
+	// (ADR-20261124094745).
+	Free bool
+}
+
+// apiConsumerFreeSignupRef is the external ref of a consumer that signed up
+// for the free plan without a checkout.
+func apiConsumerFreeSignupRef(signupID string) string {
+	return "signup:" + signupID
 }
 
 // APIConsumerSignupStore persists sign-up settings and sign-ups. Optional,
@@ -145,7 +164,16 @@ func validateAPIConsumerSignupSettings(s APIConsumerSignupSettings) error {
 			return fmt.Errorf("consumer sign-up settings: plan IDs must be UUIDs: %w", err)
 		}
 	}
+	if s.FreePlanID != "" {
+		if _, err := uuid.Parse(s.FreePlanID); err != nil {
+			return fmt.Errorf("consumer sign-up settings: free plan ID must be a UUID: %w", err)
+		}
+	}
 	switch {
+	case s.OAuthConsumers && s.FreePlanID == "":
+		return errors.New("consumer sign-up settings: OAuth consumers need a free plan")
+	case s.AccountTools && !s.OAuthConsumers:
+		return errors.New("consumer sign-up settings: account tools need OAuth consumers")
 	case s.Provider != APIConsumerSignupProviderStripe:
 		return errors.New("consumer sign-up settings: provider must be stripe")
 	case len(s.PlanIDs) > MaxAPIConsumerSignupPlans:
@@ -328,11 +356,16 @@ func (m *MemStore) CompleteAPIConsumerSignup(_ context.Context, in APIConsumerSi
 		}
 		return c, false, nil
 	}
-	if s.ProviderCustomerID == "" {
-		return APIConsumer{}, false, ErrConflict
+	ref := s.ProviderCustomerID
+	if ref == "" {
+		settings, ok := m.apiConsumerSignupSettings[s.AppID]
+		if !in.Free || !ok || s.PlanID == "" || settings.FreePlanID != s.PlanID {
+			return APIConsumer{}, false, ErrConflict
+		}
+		ref = apiConsumerFreeSignupRef(s.ID)
 	}
 	for _, c := range m.apiConsumers {
-		if c.AppID == s.AppID && c.ExternalRef == s.ProviderCustomerID {
+		if c.AppID == s.AppID && c.ExternalRef == ref {
 			return APIConsumer{}, false, ErrConflict
 		}
 	}
@@ -342,7 +375,7 @@ func (m *MemStore) CompleteAPIConsumerSignup(_ context.Context, in APIConsumerSi
 		}
 	}
 	now := time.Now().UTC()
-	c := APIConsumer{ID: uuid.NewString(), AccountID: s.AccountID, AppID: s.AppID, ExternalRef: s.ProviderCustomerID, Name: s.Name,
+	c := APIConsumer{ID: uuid.NewString(), AccountID: s.AccountID, AppID: s.AppID, ExternalRef: ref, Name: s.Name,
 		Status: APIConsumerStatusActive, CreatedAt: now, UpdatedAt: now}
 	m.apiConsumers[c.ID] = c
 	if s.PlanID != "" {

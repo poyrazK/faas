@@ -174,9 +174,9 @@ class CommandTest(unittest.TestCase):
     def test_open_at_the_cap_exits_3_and_keeps_the_record(self):
         for release, expect in ((A, G), (B, A)):
             self.cli("open", "--owner", "10", "--host", "control-plane", "--plan", self.plan_file(plan(release, expect)),
-                     "--live", expect, "--base", BASE, "--now", "100")
+                     "--live", expect, "--base", BASE, "--now", "100", "--max-unwatched", "2")
         code, rec, err = self.cli("open", "--owner", "12", "--host", "control-plane", "--plan", self.plan_file(plan(C, B)),
-                                  "--live", B, "--base", BASE, "--now", "300")
+                                  "--live", B, "--base", BASE, "--now", "300", "--max-unwatched", "2")
         self.assertEqual(code, uwr.CAP_REACHED)
         self.assertIn("wait for the watch to finish", err)
         self.assertEqual(rec["owner_run"], "10")

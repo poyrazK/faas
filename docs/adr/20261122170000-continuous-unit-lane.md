@@ -247,7 +247,12 @@ hand-off, the per-host SLO gate (canary 4 min, followers 90 s), and the
   (`affected_packages.py` test set and the large packages' related tests)
   for what CI did not see together (the other pull requests that landed
   meanwhile, and the commit's own change), limited to packages the shipped
-  daemons build from, at the released commit. The release is built only
+  daemons build from, at the released commit. When ci-light passed on the
+  pull request's head, only packages affected by both sides run: the head
+  tested the commit's own change over an older main, main tested the other
+  merges, so a package only one side affects has inputs CI already saw
+  together (first merge after #7864, 2026-11-22: 710 s on a cold hosted
+  runner, 4 of 5 package runs were of that kind). The release is built only
   when they pass. These tests get no database URL (on the control plane
   it would be production's), so PostgreSQL-backed tests skip there; main's
   light run and the watch still cover them.
@@ -301,6 +306,23 @@ to the production environment: every merge whose commit the lane can
 release deploys the control-plane and edge lanes, behind the existing
 preflight (freeze, newest, current, main's light run, idle, healthy,
 watch) and the 30 min watch with automatic rollback and freeze.
+
+**Watch cap** (owner, 2026-11-23). A deploy joins an open watch, but a host
+may hold only `watch.max_unwatched` releases not yet watched clean; past it
+the preflight waits for the watch (up to 30 min). At 2, a merge burst queued
+its third release behind the watch, past the four-minute target. The cap is
+now 4 and release retention keeps 5 previous releases
+(`releaseretention.DefaultKeepPrevious`, was 3), so a breach still finds the
+known-good release installed; a test keeps the cap below retention. Cost:
+two more releases on disk per host, about 4 GB.
+
+**Base check** (2026-11-23). The build takes the newest tag as the base
+full release, but a tag (rc.374) can exist before cd-platform deploys it.
+The planner then refuses the lane (N±1) and the failed lane freezes
+deploys. The build now also uploads `unit-release-base-<sha>`, the
+preflight reads the full release the control plane runs (`preflight-state`
+`base`), and on a mismatch it stands down green: "deploy that release with
+cd-platform first". Unknown on either side leaves it to the planner.
 
 ### 5. Full releases stay manual
 

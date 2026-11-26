@@ -140,3 +140,42 @@ func TestProtocolHeartbeatIndependentAndCancelled(t *testing.T) {
 		t.Fatalf("heartbeats=%d", count)
 	}
 }
+
+// ADR-20261122194324: a registered tool's schema rejection is reported as
+// invalid_params under the tool's own name.
+func TestProtocolTelemetryArgumentMismatch(t *testing.T) {
+	definition := map[string]any{"name": "lookup_order", "inputSchema": map[string]any{
+		"type": "object", "required": []string{"order"}, "properties": map[string]any{"order": map[string]any{"type": "string"}},
+	}}
+	if err := RegisterMCPTool(definition, func(context.Context, map[string]any, *MCPRequestContext) (map[string]any, error) {
+		return map[string]any{"content": []any{}}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { RemoveMCPTool("lookup_order") })
+	config, err := loadMCPConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Auth = json.RawMessage(`{"mode":"open"}`)
+	auth, err := newAuthenticator(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedWriter, savedFlags := log.Writer(), log.Flags()
+	defer log.SetOutput(savedWriter)
+	defer log.SetFlags(savedFlags)
+	log.SetFlags(0)
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	req := httptest.NewRequest(http.MethodPost, config.Endpoint, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lookup_order","arguments":{"order":7}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	handleHTTP(config, auth, nil, httptest.NewRecorder(), req)
+	var event map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &event); err != nil {
+		t.Fatalf("decode event: %v, logs=%s", err, logs.String())
+	}
+	if event["tool"] != "lookup_order" || event["outcome"] != "invalid_params" {
+		t.Fatalf("event = %v", event)
+	}
+}

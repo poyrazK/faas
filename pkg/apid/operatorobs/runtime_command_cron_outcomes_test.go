@@ -237,6 +237,7 @@ func TestRuntimeCommandCronOutcomesComparisons(t *testing.T) {
 }
 
 func TestRuntimeCommandCronOutcomesProfilesPreviewAndPartialRecovery(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, role := range RuntimeBuildRoles() {
 		f, selected, registry := runtimeFixture(role, now, 1)

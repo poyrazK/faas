@@ -69,6 +69,10 @@ type Service struct {
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
 	maxBranchesPerAccount  func(context.Context, string) (int, error)
 	freePlan               func(context.Context, string) (bool, error)
+
+	// wakeStarter, when running, re-reads its app list after a database
+	// opts in here.
+	wakeStarter *WakeStarter
 }
 
 // Registry is the provider registry the service places databases with; apid
@@ -389,6 +393,13 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
 		return Database{}, false, fmt.Errorf("%w: point in time must be in the past and within the source's %s restore window", ErrInvalid, time.Duration(min(currentRestoreWindow, source.Spec.RestoreWindowSeconds))*time.Second)
 	}
+	// While the subject's restore history is limited (ADR-20261123062111 D2)
+	// the provider keeps only the limited window. Refuse an older point here,
+	// before a target is reserved, and say why.
+	if limited := s.historyLimitedRestoreWindow(ctx, source); limited > 0 && now.Sub(request.PointInTime) > time.Duration(limited)*time.Second {
+		return Database{}, false, fmt.Errorf("%w: point in time is outside the source's %s restore window: restore history this month passed twice the plan's included history with overage off, so older history was dropped; "+
+			"turn overage on (gregale postgres overage on) to keep the full window again from the next sweep", ErrInvalid, time.Duration(limited)*time.Second)
+	}
 	// No database has history from before it existed. The provider rejects
 	// such a point only after the target is reserved, leaving a failed row
 	// on the account's database quota (production-us hunt #9).
@@ -495,6 +506,16 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 		return 0, err
 	}
 	return s.reservationLimit(ctx, accountID)
+}
+
+// historyLimitedRestoreWindow is the limited restore window the source's
+// provider object keeps, or zero (HistoryLimitedRestoreWindow).
+func (s *Service) historyLimitedRestoreWindow(ctx context.Context, source Database) int64 {
+	backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
+	if err != nil {
+		return 0
+	}
+	return HistoryLimitedRestoreWindow(ctx, backend.Provider, source)
 }
 
 func restoreMatchesSourceDefinition(target, source Database) bool {

@@ -110,7 +110,9 @@ def check_deploy(c: Client, app: str, apps_domain: str, token: str, wait: float,
     started, last = now(), ""
     while True:
         try:
-            code, body = c.request("GET", "", auth=False, url=url)
+            # The smoke app stays private (protection by default): the
+            # gateway takes the owning account's API key as its bearer.
+            code, body = c.request("GET", "", auth=True, url=url)
             last = f"HTTP {code}: {body[:120]!r}"
             if code == 200 and want in body:
                 return f"served the new configuration after {now() - started:.0f} s"

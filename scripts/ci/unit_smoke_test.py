@@ -21,6 +21,9 @@ class FakeClient:
     def request(self, method, path, body=None, auth=True, url=None):
         self.calls.append((method, url or path))
         if url:
+            if not auth:
+                # The smoke app is private: the gateway wants the key.
+                return 401, '{"code":"unauthorized"}'
             self.gets += 1
             if self.gets <= self.serve_after:
                 return 503, "waking"

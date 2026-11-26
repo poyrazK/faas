@@ -40,6 +40,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -61,6 +66,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
     """Remove the account's key for one billing provider.
+
+     Pending credit pack purchases prevent removing the Stripe connection.
 
     Args:
         provider (BillingProvider): A billing provider statements export to.
@@ -91,6 +98,8 @@ def sync(
 ) -> Any | Problem | None:
     """Remove the account's key for one billing provider.
 
+     Pending credit pack purchases prevent removing the Stripe connection.
+
     Args:
         provider (BillingProvider): A billing provider statements export to.
 
@@ -114,6 +123,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
     """Remove the account's key for one billing provider.
+
+     Pending credit pack purchases prevent removing the Stripe connection.
 
     Args:
         provider (BillingProvider): A billing provider statements export to.
@@ -141,6 +152,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
     """Remove the account's key for one billing provider.
+
+     Pending credit pack purchases prevent removing the Stripe connection.
 
     Args:
         provider (BillingProvider): A billing provider statements export to.

@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -72,7 +73,28 @@ type authFailure struct {
 	status int
 	error  string
 	scopes []string
+	// description is the challenge's error_description. retryable marks a
+	// failure on this server's side (its signing keys could not be fetched),
+	// answered with Retry-After so a client may send the same token again.
+	description string
+	retryable   bool
 }
+
+// errSigningKeysUnavailable marks a token that could not be checked because
+// the authorization server's JWKS could not be fetched, as opposed to a token
+// that is wrong.
+var errSigningKeysUnavailable = errors.New("signing keys unavailable")
+
+// errSigningKeysRefused marks a token that could not be checked because the
+// JWKS URL demanded credentials (HTTP 401 or 403). That is configuration, not
+// a wrong token: an authorization server behind access protection (on
+// Gregale, any app that requires a key) cannot serve its public keys.
+// Retrying cannot fix it, so it carries no Retry-After.
+var errSigningKeysRefused = errors.New("signing keys refused")
+
+// errUnsafeJWKSRedirect is a configuration error (the JWKS URL redirects to
+// plain HTTP or loops), never a passing failure.
+var errUnsafeJWKSRedirect = errors.New("unsafe JWKS redirect")
 
 type scopePolicy struct {
 	configured bool
@@ -88,6 +110,9 @@ type resourceScopeRule struct {
 }
 
 type authenticator struct {
+	// gatewayOnly marks api-key and oauth-proxy: the server admits only
+	// requests Gregale's gateway marked with gatewayAuthorizedHeader.
+	gatewayOnly    bool
 	mode           string
 	issuer         string
 	resource       string
@@ -147,6 +172,11 @@ func newAuthenticator(config mcpConfig) (*authenticator, error) {
 	var raw rawAuthConfig
 	if err := json.Unmarshal(config.Auth, &raw); err != nil {
 		return nil, errors.New("auth settings are invalid")
+	}
+	if raw.Mode == "api-key" || raw.Mode == "oauth-proxy" {
+		// Gregale's gateway authorizes every request for these modes before
+		// it reaches this server, so the server itself serves them as open.
+		return &authenticator{mode: "open", endpoint: config.Endpoint, gatewayOnly: true}, nil
 	}
 	auth := &authenticator{
 		mode:       raw.Mode,
@@ -362,6 +392,12 @@ func (a *authenticator) authenticate(authorization string) (*authContext, *authF
 		return nil, &authFailure{status: http.StatusUnauthorized, error: "authentication_required", scopes: a.baseScopes}
 	}
 	claims, err := a.keyResolver.verify(match[1], a.issuer, a.resource)
+	if errors.Is(err, errSigningKeysUnavailable) {
+		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes, description: errSigningKeysUnavailable.Error(), retryable: true}
+	}
+	if errors.Is(err, errSigningKeysRefused) {
+		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes, description: errSigningKeysRefused.Error()}
+	}
 	if err != nil {
 		return nil, &authFailure{status: http.StatusUnauthorized, error: "invalid_token", scopes: a.baseScopes}
 	}
@@ -530,10 +566,20 @@ func (a *authenticator) writeFailure(w http.ResponseWriter, failure *authFailure
 		if failure.error != "" && failure.error != "authentication_required" {
 			challenge += fmt.Sprintf(`, error=%q`, failure.error)
 		}
+		if failure.description != "" {
+			challenge += fmt.Sprintf(`, error_description=%q`, failure.description)
+		}
 		w.Header().Set("WWW-Authenticate", challenge)
 	}
+	if failure.retryable {
+		w.Header().Set("Retry-After", "1")
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, failure.status, map[string]string{"error": failure.error})
+	body := map[string]string{"error": failure.error}
+	if failure.description != "" {
+		body["error_description"] = failure.description
+	}
+	writeJSON(w, failure.status, body)
 }
 
 type jwkResolver struct {
@@ -547,7 +593,9 @@ type jwkResolver struct {
 	// backs off briefly: a transient fetch failure (an issuer waking, a
 	// network blip) must not reject every token for the full throttle.
 	lastFailed bool
-	refresh    *jwkRefresh
+	// lastErr is that refresh's error, repeated while it backs off.
+	lastErr error
+	refresh *jwkRefresh
 }
 
 const (
@@ -597,7 +645,7 @@ func newJWKResolver(jwksURL string) *jwkResolver {
 			Timeout:   5 * time.Second,
 			CheckRedirect: func(request *http.Request, via []*http.Request) error {
 				if request.URL.Scheme != "https" || len(via) >= 3 {
-					return errors.New("unsafe JWKS redirect")
+					return errUnsafeJWKSRedirect
 				}
 				return nil
 			},
@@ -735,8 +783,9 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 		if !r.lastRefresh.IsZero() {
 			since := now.Sub(r.lastRefresh)
 			if r.lastFailed && since < jwksFailureBackoff {
+				lastErr := r.lastErr
 				r.mu.Unlock()
-				return nil, errors.New("could not fetch JWKS")
+				return nil, lastErr
 			}
 			if !r.lastFailed && since < jwksUnknownKeyThrottle {
 				r.mu.Unlock()
@@ -751,7 +800,7 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 		keys, err := r.fetch()
 		r.mu.Lock()
 		r.lastRefresh = time.Now()
-		r.lastFailed = err != nil
+		r.lastFailed, r.lastErr = err != nil, err
 		if err == nil {
 			r.keys, r.loadedAt = keys, r.lastRefresh
 		}
@@ -771,16 +820,32 @@ func (r *jwkResolver) fetch() ([]jsonWebKey, error) {
 		return nil, errors.New("could not request JWKS")
 	}
 	request.Header.Set("Accept", "application/json")
+	// Only a failure that can pass (network, timeout, a provider 5xx/429)
+	// is errSigningKeysUnavailable, answered with Retry-After. A 404 or a
+	// bad document is a configuration error that retrying cannot fix.
 	response, err := r.client.Do(request)
 	if err != nil {
-		return nil, errors.New("could not fetch JWKS")
+		var certErr *tls.CertificateVerificationError
+		if errors.Is(err, errUnsafeJWKSRedirect) || errors.As(err, &certErr) {
+			return nil, errors.New("could not fetch JWKS")
+		}
+		return nil, fmt.Errorf("%w: could not fetch JWKS", errSigningKeysUnavailable)
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode >= http.StatusInternalServerError || response.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("%w: JWKS provider answered HTTP %d", errSigningKeysUnavailable, response.StatusCode)
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("%w: JWKS URL answered HTTP %d", errSigningKeysRefused, response.StatusCode)
+	}
 	if response.StatusCode != http.StatusOK || response.Request.URL.Scheme != "https" {
 		return nil, errors.New("could not fetch JWKS")
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxJWKSBytes+1))
-	if err != nil || len(data) > maxJWKSBytes {
+	if err != nil {
+		return nil, fmt.Errorf("%w: could not read JWKS", errSigningKeysUnavailable)
+	}
+	if len(data) > maxJWKSBytes {
 		return nil, errors.New("invalid JWKS response")
 	}
 	var set jsonWebKeySet
@@ -864,3 +929,7 @@ func findJWK(keys []jsonWebKey, kid, algorithm string) (crypto.PublicKey, bool) 
 		return nil, false
 	}
 }
+
+// gatewayAuthorizedHeader is set by Gregale's gateway, which removes any
+// caller-supplied value, only on a request its MCP access policy admitted.
+const gatewayAuthorizedHeader = "Gregale-Mcp-Gateway-Authorized"

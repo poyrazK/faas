@@ -9,6 +9,7 @@ from typing import Any, Generic, Literal, TypeVar
 from ..job_runtime import job_value_hash
 from .pipeline_compensation_state import CompensationError
 from .pipeline_compensations import PipelineCompensation
+from .pipeline_task_manifest import _PipelineContractMetadata
 from .pipeline_tool_mcp import PipelineToolMCP, PipelineToolMCPError
 from .pipeline_tool_state import request_id
 
@@ -49,6 +50,10 @@ class CompensationMCP(Generic[I, O, A]):
             ),
             annotations=dict(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True),
         )
+
+    @property
+    def pipeline_contract(self) -> _PipelineContractMetadata:
+        return self._inner.pipeline_contract
 
     @property
     def tools(self) -> list[dict[str, Any]]:

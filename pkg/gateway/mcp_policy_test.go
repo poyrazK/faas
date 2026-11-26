@@ -35,7 +35,7 @@ func TestMCPGatewayResourceAuthentication(t *testing.T) {
 				exp = time.Now().Add(-time.Second)
 			}
 			h := &Handler{jwtVerifier: &countingJWTVerifier{onVerify: func(_ context.Context, _ string, rule *EdgeRuleJWTResolved) (*JWTClaims, error) {
-				if len(rule.ExtractClaims) != 1 || rule.ExtractClaims[0] != "scope" {
+				if strings.Join(rule.ExtractClaims, ",") != "scope,email" {
 					t.Fatalf("scope not extracted: %+v", rule)
 				}
 				if tc.invalid {
@@ -105,7 +105,7 @@ func TestMCPPolicyUsesJSONRPCBody(t *testing.T) {
 		r := httptest.NewRequest("POST", "/mcp", strings.NewReader(tc.body))
 		r.Header.Set("MCP-Method", "tools/list")
 		r.Header.Set("MCP-Name", "read")
-		status, _ := mcpPolicyRequest(r, p, tc.scope)
+		status, _, _ := mcpPolicyRequest(r, p, tc.scope)
 		if status != tc.status {
 			t.Fatalf("%s status=%d want=%d", tc.body, status, tc.status)
 		}

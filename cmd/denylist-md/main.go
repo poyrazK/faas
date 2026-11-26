@@ -205,7 +205,6 @@ func customerRangeNote(e netns.DenyEntry) string {
 func renderCustomer(ds netns.DenySet, ociOnly []netns.DenyEntry, blockedPorts []int, reason func(int) string) string {
 	var b strings.Builder
 	b.WriteString("# Blocked outbound destinations\n\n")
-	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make denylist-md`. -->\n\n")
 	b.WriteString("Apps can't open connections to the addresses and ports on this page. The\n")
 	b.WriteString("rules apply to every app on every plan, and an egress allowlist entry does not\n")
 	b.WriteString("open them. See [Networking](networking.md#outbound-connections) for what an app\n")

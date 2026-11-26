@@ -82,8 +82,7 @@ attach both bindings before deploying:
 gregale deploy --create-only --template rest-api-postgres --name <slug>
 gregale postgres attach notes <slug> --access read_write --env DATABASE_URL
 gregale postgres attach notes <slug> --access migration --env MIGRATION_DATABASE_URL
-# Pro/Scale: permit PostgreSQL on TCP 5432 when required by your egress policy.
-gregale app <slug> egress-ports add 5432
+# postgres attach opened outbound TCP 5432 for the app; nothing else to do.
 gregale deploy --name <slug>
 ```
 
@@ -151,10 +150,10 @@ both PR CI and full CI run it against TLS/SCRAM PostgreSQL.
 ## Try it
 
 ```sh
-curl https://<slug>.gregale.dev/healthz
+curl https://<slug>.gregale.app/healthz
 curl -X POST -H 'content-type: application/json' -d '{"body":"hello"}' \
-  https://<slug>.gregale.dev/notes
-curl https://<slug>.gregale.dev/notes
+  https://<slug>.gregale.app/notes
+curl https://<slug>.gregale.app/notes
 ```
 
 After edits, deploy from this directory with `gregale deploy --name <slug>`.

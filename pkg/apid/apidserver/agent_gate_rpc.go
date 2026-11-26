@@ -53,6 +53,21 @@ func (a agentRequestsForGateways) DecideAgentRequest(ctx context.Context, accoun
 	return decision.Allow, decision.ApprovalID, decision.Problem, nil
 }
 
+// authOptions are the Auth service's gateway calls every listener shares.
+func (s spansIngest) authOptions() []receivers.AuthOption {
+	return []receivers.AuthOption{receivers.WithAgentRequests(s.agents), receivers.WithOAuthConsumers(s.consumers),
+		receivers.WithUpgradeLinks(s.upgrades), receivers.WithOAuthLinks(s.links), receivers.WithAccountTools(s.accountTools)}
+}
+
+// oauthConsumersForGateways returns nil (Unavailable) when the store cannot
+// hold OAuth identities.
+func (s *server) oauthConsumersForGateways() receivers.OAuthConsumers {
+	if _, ok := s.store.(state.APIConsumerIdentityStore); !ok {
+		return nil
+	}
+	return &s.consumerSignup
+}
+
 // RecordAgentActivity records a row of the account's own key.
 func (a agentRequestsForGateways) RecordAgentActivity(ctx context.Context, row state.AgentActivity) error {
 	key, err := a.store.GetAPIKey(ctx, row.AccountID, row.KeyID)

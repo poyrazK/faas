@@ -121,6 +121,9 @@ func (s *server) branchProjectEnvironment(ctx context.Context, store state.Proje
 		}
 		return api.ProjectEnvironmentResponse{}, api.ErrCapacity("could not publish the branch's workloads; the branch was not created")
 	}
+	if branch.DataState == state.EnvironmentBranchDataPending {
+		s.wakeEnvironmentBranchData()
+	}
 	s.audit.Emit(ctx, "project.environment.branched", &acct.ID, map[string]any{
 		"project_id": project.ID, "project_slug": project.Slug, "environment_id": env.ID, "environment_slug": env.Slug,
 		"parent_slug": branch.ParentSlug, "expires_at": branch.ExpiresAt.Format(time.RFC3339), "workloads": len(workloads),

@@ -225,6 +225,40 @@ func TestPublicOpenAPIFollowsRealtimePreview(t *testing.T) {
 			t.Errorf("%s spec delivery values = %s", name, values)
 		}
 	}
+	// adr: 20261123074615 — principal send is released with core realtime;
+	// its retained delivery value stays the preview's.
+	for schema, byField := range realtimepreview.FieldValues {
+		for field, values := range byField {
+			for _, value := range values {
+				if !propertyEnumHas(full, schema, field, value) {
+					t.Fatalf("embedded spec lacks %s.%s=%s; update realtimepreview.FieldValues", schema, field, value)
+				}
+				if propertyEnumHas(hidden, schema, field, value) {
+					t.Errorf("hidden spec still offers %s.%s=%s", schema, field, value)
+				}
+				if !propertyEnumHas(shown, schema, field, value) {
+					t.Errorf("published spec dropped %s.%s=%s", schema, field, value)
+				}
+			}
+			if !propertyEnumHas(hidden, schema, field, "live") {
+				t.Errorf("hidden spec dropped the released %s.%s values", schema, field)
+			}
+		}
+	}
+}
+
+// propertyEnumHas reports whether a schema property's enum lists value.
+func propertyEnumHas(spec specShape, schema, field, value string) bool {
+	body, _ := spec.Components["schemas"][schema].(map[string]any)
+	properties, _ := body["properties"].(map[string]any)
+	property, _ := properties[field].(map[string]any)
+	values, _ := property["enum"].([]any)
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
 
 func hasProperty(spec specShape, schema, field string) bool {

@@ -388,6 +388,27 @@ func TestBuildArgv(t *testing.T) {
 	}
 }
 
+// ADR-20261124160000: a shared-runtime Node build runs the Next.js
+// standalone helper after prepare, and a failed helper never fails the build.
+func TestBuildArgv_NextStandaloneHelper(t *testing.T) {
+	got := buildArgv(api.BuildManifest{
+		Framework:      api.FrameworkRailpackNode,
+		Workdir:        "/build/src",
+		OutDir:         "/build/out",
+		SharedRuntime:  true,
+		NextStandalone: true,
+		AppLayerMaxMB:  256,
+	})
+	want := "--info-out '/build/railpack-info.json' && { GREGALE_INIT_HELPER=next-standalone /proc/1/exe '/build/railpack-plan.json' '/build/src' 256 || true; } && exec /usr/local/bin/buildctl"
+	if joined := strings.Join(got, " "); !strings.Contains(joined, want) {
+		t.Fatalf("argv = %s\nwant it to contain %s", joined, want)
+	}
+	plain := buildArgv(api.BuildManifest{Framework: api.FrameworkRailpackNode, Workdir: "/build/src", OutDir: "/build/out", SharedRuntime: true})
+	if strings.Contains(strings.Join(plain, " "), nextStandaloneHelperValue) {
+		t.Fatal("helper runs without NextStandalone")
+	}
+}
+
 func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 	got := buildArgv(api.BuildManifest{
 		Framework:    api.FrameworkRailpackNode,
@@ -791,6 +812,40 @@ func TestPrepareRailpackConfig_MarkerlessFunctionUsesCopyOnlyPlan(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(workdir, "start.sh")); !os.IsNotExist(err) {
 		t.Fatalf("generated start script remains: %v", err)
+	}
+}
+
+// Prod hunt r38: a Node function with a package.json and no start script made
+// Railpack print its "No start command" advice and Railway docs into the deploy.
+func TestPrepareRailpackConfig_FunctionGetsPlaceholderStart(t *testing.T) {
+	workdir := t.TempDir()
+	for name, body := range map[string]string{"package.json": `{"name":"fn","type":"module"}`, "handler.js": "export const handler = async () => ({})"} {
+		if err := os.WriteFile(filepath.Join(workdir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restore, err := prepareRailpackConfig(api.BuildManifest{
+		Framework: api.FrameworkRailpackNode, Runtime: "node22",
+		RuntimeBaseRef: "ghcr.io/poyrazk/runner-node22@sha256:" + strings.Repeat("e", 64),
+		Workdir:        workdir, Function: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restore() }()
+	data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config["deploy"].(map[string]any)["startCommand"]; got != "/bin/true" {
+		t.Fatalf("function startCommand = %v, want the /bin/true placeholder", got)
+	}
+	if _, ok := config["provider"]; ok {
+		t.Fatalf("a package.json function kept the Node provider, got provider %v", config["provider"])
 	}
 }
 

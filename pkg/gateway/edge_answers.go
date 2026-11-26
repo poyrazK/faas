@@ -9,7 +9,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // EdgeAnswerKind is the bounded label vocabulary for gateway answers that do
@@ -68,6 +67,8 @@ func (h *Handler) markHealthFailure(appID string, err error) {
 	reason := "wake_failed"
 	if prob := api.AsProblem(err); prob != nil && prob.Code != "" {
 		reason = prob.Code
+	} else if errors.Is(err, ErrAppNotPlaced) {
+		reason = api.CodeNoLiveDeployment
 	} else if errors.Is(err, context.DeadlineExceeded) {
 		reason = "wake_timeout"
 	} else if errors.Is(err, context.Canceled) {
@@ -135,6 +136,13 @@ func (c *edgeHeadHeaderCache) put(appID string, header http.Header) {
 	if c == nil || appID == "" || len(header) == 0 {
 		return
 	}
+	// Every successful live response lands here, and an app's responses
+	// almost always carry the same shareable headers: skip the copy (a new
+	// map and a slice per header) when the cached entry already holds
+	// exactly what this response would store.
+	if c.holds(appID, header) {
+		return
+	}
 	copyHeader := make(http.Header)
 	totalBytes := 0
 	for key, values := range header {
@@ -164,6 +172,37 @@ func (c *edgeHeadHeaderCache) put(appID string, header http.Header) {
 	}
 	c.entries[appID] = copyHeader
 	c.mu.Unlock()
+}
+
+// holds reports whether the entry for appID equals what put would store for
+// header. It answers false whenever a value would be dropped by put's size
+// caps (which depend on map order), so put then builds the entry as before.
+func (c *edgeHeadHeaderCache) holds(appID string, header http.Header) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	existing, ok := c.entries[appID]
+	if !ok {
+		return false
+	}
+	keys, totalBytes := 0, 0
+	for key, values := range header {
+		canonical := http.CanonicalHeaderKey(key)
+		if !edgeHeadHeaderAllowed(canonical) || len(values) == 0 {
+			continue
+		}
+		cached := existing[canonical]
+		if len(cached) != len(values) {
+			return false
+		}
+		for i, value := range values {
+			if len(value) > 8*1024 || totalBytes+len(value) > edgeHeadHeaderMaxBytes || cached[i] != value {
+				return false
+			}
+			totalBytes += len(value)
+		}
+		keys++
+	}
+	return keys == len(existing)
 }
 
 func (c *edgeHeadHeaderCache) get(appID string) (http.Header, bool) {
@@ -215,7 +254,7 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 	}
 	// The generic handler starts with "hot" so early auth and policy exits
 	// expose a bounded wake value. Edge answers do not consult a VM at all.
-	w.Header().Del(wire.WakeHeader)
+	w.Header().Del(canonicalWakeHeader)
 
 	switch r.URL.Path {
 	case "/favicon.ico":

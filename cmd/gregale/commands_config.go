@@ -165,9 +165,9 @@ func configuredJSONPreference() (bool, bool) {
 
 func effectiveConfigEntries(cfg cliConfig) []cliConfigEntry {
 	apiEntry := cliConfigEntry{Key: configKeyAPIBase, Value: defaultAPIBase, Source: "default"}
-	if raw, ok := os.LookupEnv("FAAS_API"); ok && strings.TrimSpace(raw) != "" {
+	if name, raw := envAPIVar(); raw != "" {
 		apiEntry.Value = normalizeAPIBase(raw)
-		apiEntry.Source = "env:FAAS_API"
+		apiEntry.Source = "env:" + name
 	} else if name := selectedProfile(cfg); name != "default" {
 		apiEntry.Value = cfg.Profiles[name].APIBase
 		apiEntry.Source = "profile:" + name
@@ -188,7 +188,7 @@ func effectiveConfigEntries(cfg cliConfig) []cliConfigEntry {
 }
 
 // displayConfigEntries is effectiveConfigEntries for printing: an api-base
-// from FAAS_API loses any embedded credentials.
+// from GREGALE_API_URL or FAAS_API loses any embedded credentials.
 func displayConfigEntries(cfg cliConfig) []cliConfigEntry {
 	entries := effectiveConfigEntries(cfg)
 	for i := range entries {

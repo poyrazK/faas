@@ -161,8 +161,9 @@ def load_config(path=DEFAULT_CONFIG):
     for name, entry in config["binaries"].items():
         if entry.get("lane") not in LANES:
             raise ValueError(f"{path}: binary {name} has unknown lane {entry.get('lane')!r}")
-        if entry.get("services") and entry["lane"] not in DEPLOY_LANES:
-            raise ValueError(f"{path}: only deployable lanes list services ({name})")
+        held = set((config.get("compute_lane") or {}).get("held") or [])
+        if entry.get("services") and (entry["lane"] == "tool" or name in held):
+            raise ValueError(f"{path}: only binaries a lane deploys list services ({name})")
         for service in entry.get("services") or []:
             if service.get("host", "control-plane") not in HOST_ROLES:
                 raise ValueError(f"{path}: {name} service {service.get('name')} has unknown host {service['host']!r}")
@@ -576,10 +577,32 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
     if claimed:
         flags["data"] = {"blocking": False, "count": len(claimed), "paths": step["paths"][:FLAG_PATH_LIMIT]}
 
+    # The compute lane (docs/adr/20261123122457-compute-unit-lane.md): the
+    # shared and compute binaries a lane deploys (not the held ones, which
+    # run on hosts no lane reaches) ride the unit release when a commit of
+    # the range changes code only they read. It lands on compute hosts as
+    # they are, so a compute role change holds it, like every blocking path.
+    compute = compute_lane(config)
+    # Off (compute_lane.enabled), every shared and compute binary stays at
+    # base and a commit that crosses into them blocks, as before the lane.
+    needs = compute_only_commits(commits, closures, config, exists, compute["binaries"]) if compute["enabled"] else {}
+    compute_blockers = sorted({f for f, v in flags.items() if v["blocking"]}
+                              | ({"compute_deploy"} if "compute_deploy" in flags else set()))
+    compute_carried = sorted(n for n in compute["binaries"] if binaries[n]["closure"]) if needs else []
+    compute_ok = bool(compute_carried) and not compute_blockers
+
     crossed = cross_lane_commits(commits, closures, config, exists)
     if crossed:
         paths = sorted({p for sha in crossed for p in crossed[sha]})
-        flags["cross_lane"] = {"blocking": True, "count": len(crossed), "commits": sorted(crossed),
+        # A commit the lanes would split blocks, unless the compute lane
+        # ships its compute half with it. Its paths that only held binaries
+        # read wait for the full release without blocking (owner decision
+        # 2026-11-23).
+        if not compute["enabled"]:
+            split = sorted(crossed)
+        else:
+            split = sorted(sha for sha in crossed if sha in needs) if not compute_ok else []
+        flags["cross_lane"] = {"blocking": bool(split), "count": len(crossed), "commits": sorted(crossed),
                                "paths": paths[:FLAG_PATH_LIMIT]}
 
     blocking = sorted(f for f, v in flags.items() if v["blocking"])
@@ -591,6 +614,12 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         # A lane carries every closure binary, the ones whose code did not
         # change too: a host on an earlier unit release may run other code.
         carried = sorted(n for n, b in binaries.items() if b["closure"] and b["lane"] == lane)
+        if lane == "control-plane" and compute_ok:
+            # Shared daemons' control-plane services (schedd) go with their
+            # compute half, in the control-plane lane's activation.
+            carried = sorted(set(carried) | {n for n in compute_carried if any(
+                s.get("host", "control-plane") == "control-plane"
+                for s in config["binaries"][n].get("services") or [])})
         # The edge lane lands on compute hosts as they are: while it restarts
         # a gateway there, a change to a role or playbook those hosts run
         # waits for the full release that converges it. A lane that only
@@ -612,11 +641,26 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
             reasons.append(f"no {lane} daemon changed since base")
         lanes[lane] = {"changed": changed, "carried": carried, "blocked_by": blocked,
                        "eligible": carries and not blocked, "reasons": reasons}
-    deployable = sorted(n for lane in lanes.values() if lane["eligible"] for n in lane["carried"])
-    pending = {lane: sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
-               for lane in ("shared", "compute", "tool")}
-    for lane, v in lanes.items():
-        pending[lane] = [] if v["eligible"] else v["changed"]
+    if needs:
+        reasons = [f"{f} changed since base ({flags[f]['count']} paths, e.g. {flags[f]['paths'][0]})"
+                   for f in compute_blockers]
+    elif not compute["enabled"]:
+        reasons = ["the compute lane is off (release_units.json compute_lane.enabled)"]
+    else:
+        reasons = ["no commit changed code only compute or shared daemons read"]
+    lanes["compute"] = {
+        "changed": sorted(n for n in compute_carried if binaries[n]["changed"]),
+        "carried": compute_carried,
+        "helpers": sorted(n for n in compute_carried if n in compute["helpers"]),
+        "blocked_by": compute_blockers if needs else [],
+        "eligible": compute_ok,
+        "reasons": reasons,
+    }
+    deployable = sorted({n for lane in lanes.values() if lane["eligible"] for n in lane["carried"]})
+    # Pending: changed binaries no eligible lane ships, by their table lane.
+    pending = {lane: sorted(n for n, b in binaries.items()
+                            if b["changed"] and b["lane"] == lane and n not in deployable)
+               for lane in ("control-plane", "edge", "shared", "compute", "tool")}
     eligible = any(lane["eligible"] for lane in lanes.values())
     del step["paths"]
     return {
@@ -661,6 +705,41 @@ def cross_lane_commits(commits, closures, config, exists):
                 exclusive.append(path)
         if deployable and exclusive:
             out[sha] = sorted(exclusive)
+    return out
+
+
+def compute_lane(config):
+    """{"binaries", "helpers", "held"}: the shared and compute binaries the
+    compute lane deploys (release_units.json compute_lane: every one but
+    the held), its unitless helpers, and the held ones."""
+    cfg = config.get("compute_lane") or {}
+    held = set(cfg.get("held") or [])
+    helpers = set(cfg.get("helpers") or [])
+    names = {n for n, e in config["binaries"].items() if e["lane"] in ("shared", "compute") and n not in held}
+    return {"binaries": sorted(names), "helpers": helpers & names, "held": held,
+            "enabled": cfg.get("enabled") is True}
+
+
+def compute_only_commits(commits, closures, config, exists, names):
+    """{sha: [paths]} for the commits that change an input only compute-lane
+    binaries (names) read, and no control-plane or edge binary: the changes
+    the compute lane exists to ship. An input every lane reads (a shared
+    package, go.mod) is the N±1 state every rollout passes through and does
+    not count, so a control-plane commit never restarts vmmd for it."""
+    global_inputs = set(config.get("global_inputs") or [])
+    lanes = {name: entry["lane"] for name, entry in config["binaries"].items()}
+    names = set(names)
+    out = {}
+    for sha, paths in commits:
+        mine = []
+        for path in paths:
+            if path in global_inputs:
+                continue
+            hit = {n for n, (dirs, files) in closures.items() if n in lanes and hits(path, dirs, files, exists)}
+            if hit & names and not {lanes[n] for n in hit} & set(DEPLOY_LANES):
+                mine.append(path)
+        if mine:
+            out[sha] = sorted(mine)
     return out
 
 

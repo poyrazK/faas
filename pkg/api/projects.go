@@ -41,6 +41,25 @@ type ProjectResponse struct {
 	Exclusions               []string                  `json:"exclusions"`
 	LastReconciliationStatus string                    `json:"last_reconciliation_status,omitempty"`
 	LastBuildStatus          string                    `json:"last_build_status,omitempty"`
+	RollbackBatch            *ProjectRollbackBatch     `json:"rollback_batch,omitempty"`
+}
+
+// ProjectRollbackBatch identifies an exact production fan-out and its recorded lineage.
+type ProjectRollbackBatch struct {
+	ID      string                  `json:"id"`
+	Members []ProjectRollbackMember `json:"members"`
+}
+
+type ProjectRollbackMember struct {
+	Slug                string `json:"slug,omitempty"`
+	DeploymentID        string `json:"deployment_id"`
+	Revision            int    `json:"revision"`
+	Scope               string `json:"scope"`
+	Status              string `json:"status"`
+	PreviouslyServed    bool   `json:"previously_served"`
+	PredecessorID       string `json:"predecessor_id,omitempty"`
+	PredecessorRevision int    `json:"predecessor_revision,omitempty"`
+	Restorable          bool   `json:"-"`
 }
 
 // UpdateProjectRequest changes the customer-managed source binding. Nil fields

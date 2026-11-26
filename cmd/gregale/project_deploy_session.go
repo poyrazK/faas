@@ -221,7 +221,11 @@ func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.App
 		}
 	} else {
 		code = renderProjectApplyResultWithTimeouts(osStdout, plan, apply, timeouts)
-		if session != nil {
+		// Resume reconnects to a deploy still in flight; after every app went
+		// live there is nothing to resume, and the line read as a next step.
+		// --no-wait and a timed-out wait leave deploys in flight: resume is
+		// the next step there.
+		if session != nil && (code != 0 || timedOut || status.waitTimedOut > 0 || !projectBuildsAllLive(apply)) {
 			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, session.resumeCommand())
 		}
 		if receipt.RetryCommand != "" {
@@ -384,4 +388,15 @@ func projectSubmissionFailure(s *savedDeploySession, err error) int {
 // deploy's failed workloads from the current checkout.
 func projectRetryCommand(sessionID string) string {
 	return recoveryCLI() + " release attempt retry " + sessionID + " --yes"
+}
+
+// projectBuildsAllLive reports every workload's deployment live, as a wait
+// recorded it; a deploy not waited on has no status and is still in flight.
+func projectBuildsAllLive(apply api.ApplyResponse) bool {
+	for _, build := range apply.Builds {
+		if build.DeploymentStatus != statusLive {
+			return false
+		}
+	}
+	return true
 }

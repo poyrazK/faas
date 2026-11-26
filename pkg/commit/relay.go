@@ -122,10 +122,17 @@ func (r *Relay) tickRound(ctx context.Context, batch int, lease, delay time.Dura
  AND next_attempt_at <= clock_timestamp()
  AND (lease_until IS NULL OR lease_until <= clock_timestamp())`+headOnly+`
  ORDER BY next_attempt_at,created_at,event_id FOR UPDATE SKIP LOCKED LIMIT $1
- ) UPDATE public.gregale_outbox o SET lease_token=$2::uuid,
+ ), claimed AS (
+ UPDATE public.gregale_outbox o SET lease_token=$2::uuid,
  lease_until=clock_timestamp()+($3::bigint * interval '1 millisecond'), attempts=attempts+1
  FROM candidates c WHERE o.event_id=c.event_id
-	RETURNING o.event_id::text,o.event_type,o.payload,to_jsonb(o)->'routing',COALESCE(to_jsonb(o)->>'schema_version',''),COALESCE(to_jsonb(o)->>'group_key','')`, batch, token, lease.Milliseconds(), source)
+ RETURNING o.event_id,o.event_type,o.payload,to_jsonb(o)->'routing' AS routing,
+ COALESCE(to_jsonb(o)->>'schema_version','') AS schema_version,
+ COALESCE(to_jsonb(o)->>'group_key','') AS group_key,o.next_attempt_at,o.created_at
+ )
+ SELECT event_id::text,event_type,payload,routing,schema_version,group_key
+ FROM claimed
+ ORDER BY claimed.next_attempt_at,claimed.created_at,claimed.event_id`, batch, token, lease.Milliseconds(), source)
 	if err != nil {
 		return 0, 0, fmt.Errorf("commit: claim events: %w", err)
 	}

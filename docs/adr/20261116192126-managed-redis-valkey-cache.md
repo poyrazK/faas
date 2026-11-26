@@ -408,9 +408,45 @@ closed by a later slice:
     rollout aborts and the running VM keeps serving with its data.
   - Its writes stay paused until the handoff's `CLIENT PAUSE` expires, at most
     300 s. They are delayed, not lost.
+- **A handoff cuts over at once, never by canary.** The safe-by-default
+  release policy (ADR-1446) gives a production deploy of an app that already
+  serves a 4-step canary. On prod (2026-11-23, first run with
+  `service_tcp` on) a resize's handoff deployment got one, so the old VM
+  kept serving for 7m40s beside the new one. That outlasts the 300 s write
+  pause, so the old VM could acknowledge writes that were dropped with it. A
+  canary or 5xx rollback has nothing to offer a cache anyway: the old VM's
+  copy goes stale as soon as the handoff starts. `release.ApplyDefault` now
+  leaves every deploy of a cache app immediate (ADR-1446 amendment of
+  2026-11-23), and the prod journey fails a resize whose handoff takes over
+  3 minutes.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
-  and adding it would break customers who deploy Valkey themselves. That is
-  left for an owner decision.
+  and adding it would break customers who deploy Valkey themselves. Owner
+  decision 2026-11-25: it stays off the list; managed Redis is the easy path,
+  not the only one.
+- **Valkey upgrades (2026-11-25):** a cache deployment may run any image in
+  `api.ManagedValkeyImages()`; imaged refuses any other image on a cache app.
+  schedd gives the raw TCP probes to a deployment that runs one of them with
+  the command apid gives a cache (`api.IsManagedValkeyCommand`). A customer's
+  own app on the official Valkey image keeps its own probes. A new Valkey image
+  ships in two releases. The first adds it to the list. The second makes it
+  `api.ManagedValkeyImage`, which apid deploys. A schedd that did not know
+  the image would give the cache the HTTP liveness probe, which kills a cache
+  about 50 s after it starts, so apid must never deploy an image the previous
+  release does not accept. Existing caches keep their image until
+  `gregale redis update` moves them over a handoff; an image leaves the list
+  only once no cache deployment runs it. A cache whose image left the list
+  would get the HTTP liveness probe on its next wake and be killed. Before
+  removing an image, this query on the control-plane database must return no
+  row for it:
+  `SELECT d.image_digest, count(*) FROM managed_valkey_caches c JOIN deployments d ON d.app_id = c.app_id WHERE d.status IN ('imaging', 'live') GROUP BY 1;`
+  First use: 8.1.4 → 8.1.12 (9 live caches on 8.1.4 on 2026-11-25).
+- **Cross-account isolation verified on prod (2026-11-25):** an app in
+  another account cannot reach a cache. Service addresses are indexes within
+  each account, so the proxy resolves a foreign cache's address in the
+  caller's own account and refuses it (`unknown_service`). DNS gives a
+  foreign cache's name and a name that does not exist the same answer, so it
+  does not reveal which caches exist. The authorizer requires the same owner
+  (`servicebinding.NewAuthorizer`) before any cache grant applies.
 
 ## Rejected alternatives
 

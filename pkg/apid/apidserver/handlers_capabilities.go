@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -70,13 +71,20 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
-		case "app-tasks", "tcp-listeners", "udp-listeners", dataAPICapability:
+		case "app-tasks", "tcp-listeners", "udp-listeners", dataAPICapability, api.ManagedValkeyCapability:
 			// Prod findings 2026-11-15 #25: these were listed as available
 			// while their runtime was off and every request was refused.
 			available = s.capabilityRuntimeReady(capabilities.Capabilities[i].Key)
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
+		case "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy",
+			"realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers":
+			// The realtime routes decide by realtime node, preview rollout,
+			// daemon switch and per-feature flag; the registry used to check
+			// only the capability flag, so gregale_context and the CLI
+			// offered features whose routes answered 404 (2026-11-22).
+			available, _ = s.realtime.CapabilityAvailable(r, acct, capabilities.Capabilities[i].Key)
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach
@@ -97,7 +105,8 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}
 	applyParentRuntimeAvailability(capabilities.Capabilities)
-	capabilities.HiddenCapabilities = s.hiddenCapabilities(flagSubject(r, acct))
+	capabilities.HiddenCapabilities = mergeHiddenCapabilities(s.hiddenCapabilities(flagSubject(r, acct)),
+		s.realtime.PreviewHiddenCapabilities(acct.ID))
 	writeJSON(w, http.StatusOK, capabilities)
 }
 
@@ -143,6 +152,17 @@ func (s *server) hiddenCapabilities(subject platformflags.Subject) []string {
 	return hidden
 }
 
+// mergeHiddenCapabilities appends extra to hidden, skipping duplicates, so
+// capabilities hidden by a rollout outside the flag gate are hidden too.
+func mergeHiddenCapabilities(hidden, extra []string) []string {
+	for _, id := range extra {
+		if !slices.Contains(hidden, id) {
+			hidden = append(hidden, id)
+		}
+	}
+	return hidden
+}
+
 // capabilityRuntimeReady reports whether this control plane runs what a
 // capability's requests need: the app-task API gate, tcpd/udpd at the edge,
 // or the managed PostgreSQL bindings the Data API is set up from
@@ -157,6 +177,11 @@ func (s *server) capabilityRuntimeReady(key string) bool {
 		return s.udpListenersEnabled
 	case dataAPICapability:
 		return s.managedPostgres != nil && s.managedPostgresBindings != nil && s.notif != nil
+	case api.ManagedValkeyCapability:
+		// Agent eval 2026-11-23: a release converge dropped the private TCP
+		// listener, yet managed Redis stayed listed and redis create kept
+		// making caches no app could reach.
+		return s.privateServiceTCPEnabled()
 	}
 	return true
 }
@@ -200,5 +225,23 @@ func applyCapabilityRuntimeAvailability(capability *api.CapabilityStatus, availa
 	}
 	capability.Enabled = false
 	capability.UnavailableReason = api.CapabilityUnavailableRuntime
-	capability.UnavailableDetail = "This feature is not available on this Gregale installation right now. Contact support for availability."
+	capability.UnavailableDetail = runtimeUnavailableDetail(capability.Key)
+}
+
+// runtimeUnavailableDetail explains a capability this installation does not
+// run. Public TCP and UDP listeners are easy to confuse with private TCP
+// between a customer's own apps: an agent read "tcp-listeners unavailable"
+// as "private TCP is off", told the user managed Redis could not work and to
+// contact support, while managed Redis was available (agent eval 2026-11-24).
+func runtimeUnavailableDetail(key string) string {
+	switch key {
+	case "tcp-listeners":
+		return "Public TCP ports at the edge are not enabled on this Gregale installation. " +
+			"This is not about private TCP between your own apps (managed Redis, <name>.svc.gregale addresses), which has its own availability: check managed-redis and internal-services. " +
+			"Contact support if you need a public port."
+	case "udp-listeners":
+		return "Public UDP ports at the edge are not enabled on this Gregale installation. " +
+			"This is not about traffic between your own apps. Contact support if you need a public port."
+	}
+	return "This feature is not available on this Gregale installation right now. Contact support for availability."
 }

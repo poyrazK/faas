@@ -91,6 +91,8 @@ import (
 //
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
+	// grants is the store-grants world (StorageGrantsEnv), nil when off.
+	grants     *storageGrants
 	T          *testing.T
 	Pool       *pgxpool.Pool
 	TmpDir     string
@@ -177,6 +179,8 @@ type Harness struct {
 	scheddEnv        []string
 	scheddConfigPath string
 	vmmdLaunchEnv    []string
+	// vmmdConfigPath is the vmmd.toml the harness wrote.
+	vmmdConfigPath string
 	// vmmdJournalDir is vmmd's resource journal directory.
 	vmmdJournalDir string
 	// nativeRuntimeSnapshotRoot is vmmd's private tree for native runtime
@@ -301,6 +305,11 @@ func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv
 	// See e2eMigrationTarget for the head value and the bump rationale.
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
+	if StorageGrantsRequested() {
+		h.startStorageGrants(t, bin, dbURL)
+		t.Cleanup(func() { h.checkStorageGrants(t) })
+	}
+
 	// apid's rollback precheck verifies the signatures schedd does, so it
 	// gets the same key when schedd runs. This only writes the key: schedd
 	// itself still starts after vmmd (TestStart_BootsVMMDBeforeSchedd).
@@ -407,6 +416,7 @@ failure_report_dir = %q
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
+		h.vmmdConfigPath = cfgPath
 		h.vmmdLaunchEnv = append([]string(nil), env...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
 		// vmmd reconciles netns, jails and its journal before it listens;
@@ -428,6 +438,11 @@ failure_report_dir = %q
 			"FAAS_SIGN_PUB="+signPubPath,
 			h.nativeRuntimeSnapshotEnv(tmp),
 		)
+		if h.grants != nil {
+			// The control plane decides the nodes' deferred deletes and
+			// sweeps jobs/ and sources/ (ADR-20261117190000).
+			env = append(env, "FAAS_SCHEDD_OBJECT_GC=1")
+		}
 		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
 		h.scheddEnv = append([]string(nil), env...)
@@ -500,6 +515,7 @@ failure_report_dir = %q
 		if dbr := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF"); dbr != "" {
 			env = append(env, "FAAS_TEST_DEPLOY_BASE_REF="+dbr)
 		}
+		env = append(env, h.StorageGrantsComputeEnv()...)
 		env = append(env, extraEnv...)
 		h.procs = append(h.procs, startProc(t, bin, "builderd", env))
 		h.BuilderdCfg = cfgPath
@@ -852,6 +868,11 @@ const e2eMigrationTarget = 416
 // only needs apid, no schedd/vmmd).
 func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
 	t.Helper()
+	if StorageGrantsRequested() {
+		// Only StartWithAPIDEnv wires the grant world; running keyed here
+		// would pass the storage-grants lane without testing grants.
+		t.Fatalf("e2etest: %s=1 needs a test started with StartWithAPIDEnv (StartWithEnv does not support storage grants)", StorageGrantsEnv)
+	}
 	tmp := harnessTempDir(t)
 	// Shared, built-once daemon binaries — see EnsureSharedBinaries.
 	bin := buildBinaries(t)
@@ -1581,6 +1602,9 @@ func testEnvCommon(dbURL string) []string {
 		"FAAS_PADDLE_WEBHOOK_SECRET=whk_test_e2e_placeholder",
 	}
 	env = append(env, forwardedStorageEnv()...)
+	if currentHarness != nil && currentHarness.grants != nil {
+		env = append(env, currentHarness.grants.controlEnv...)
+	}
 	env = append(env, forwardedLogArchiveEnv()...)
 	// Every artifact consumer, including schedd's layer verifier, must read
 	// the same per-test app store that imaged publishes into.
@@ -1638,6 +1662,9 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	}
 	if scheddSock != "" {
 		env = append(env, "FAAS_VMMD_SCHEDD_TARGET=unix://"+scheddSock)
+	}
+	if currentHarness != nil && currentHarness.grants != nil {
+		env = append(env, currentHarness.grants.computeEnv...)
 	}
 	// Outward NIC for tenant egress NAT. vmmd defaults to "eth0"
 	// (pkg/netns.DefaultHostPolicy.PublicIface) and production overrides it
@@ -2128,6 +2155,11 @@ func childName(cmd *exec.Cmd) string {
 // The method is a small, test-only fault-injection seam; production code
 // continues to supervise schedd through its service manager.
 func (h *Harness) RestartSchedd() error {
+	return h.RestartScheddContext(context.Background())
+}
+
+// RestartScheddContext propagates the caller's context to the database update.
+func (h *Harness) RestartScheddContext(ctx context.Context) error {
 	if h == nil || h.T == nil {
 		return fmt.Errorf("e2etest: nil harness")
 	}
@@ -2152,9 +2184,38 @@ func (h *Harness) RestartSchedd() error {
 	proc := startProc(h.T, h.BinDir, "schedd", append([]string(nil), h.scheddEnv...))
 	h.procs = append(h.procs, proc)
 	waitUnix(h.T, h.ScheddSock, 30*time.Second)
-	setDefaultLocalScheddTarget(h.T, h.Pool, h.ScheddSock, h.VMMDSock)
+	setDefaultLocalScheddTargetContext(h.T, ctx, h.Pool, h.ScheddSock, h.VMMDSock)
 	h.requireDaemonsAlive(h.T)
 	return nil
+}
+
+// StartScheddPeer starts a second scheduler in the same disposable harness.
+// It uses the same database and VMMD, with separate listener addresses.
+func (h *Harness) StartScheddPeer(t *testing.T) string {
+	t.Helper()
+	config, err := os.ReadFile(h.scheddConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(h.SockDir, "schedd-peer.sock")
+	metrics := freeTCPAddr(t)
+	primaryMetrics := strings.TrimSuffix(strings.TrimPrefix(h.ScheddMetricsURL, "http://"), "/metrics")
+	oldSocket := fmt.Sprintf("socket_path = %q", h.ScheddSock)
+	oldMetrics := fmt.Sprintf("metrics_addr = %q", primaryMetrics)
+	if !strings.Contains(string(config), oldSocket) || !strings.Contains(string(config), oldMetrics) {
+		t.Fatal("scheduler peer could not isolate its listeners")
+	}
+	peerConfig := strings.NewReplacer(oldSocket, fmt.Sprintf("socket_path = %q", socket),
+		oldMetrics, fmt.Sprintf("metrics_addr = %q", metrics)).Replace(string(config))
+	path := filepath.Join(t.TempDir(), "schedd-peer.toml")
+	if err := os.WriteFile(path, []byte(peerConfig), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := append(append([]string(nil), h.scheddEnv...), "FAAS_SCHEDD_CONFIG="+path)
+	h.procs = append(h.procs, startProc(t, h.BinDir, "schedd", env))
+	waitUnix(t, socket, 30*time.Second)
+	h.requireDaemonsAlive(t)
+	return "http://" + metrics + "/metrics"
 }
 
 // vmmdExtraConfigEnv carries extra vmmd.toml lines from OverrideVMMDConfig.
@@ -2216,6 +2277,22 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 
 // VMMDResourceJournalDir is the directory vmmd keeps its resource journal in.
 func (h *Harness) VMMDResourceJournalDir() string { return h.vmmdJournalDir }
+
+// VMMDConfigPath is the vmmd.toml the harness's vmmd runs with.
+func (h *Harness) VMMDConfigPath() string { return h.vmmdConfigPath }
+
+// VMMDPID is the live vmmd child's process ID, as a service manager reports
+// its MainPID (the unit lane's adoption proof reads its environment).
+func (h *Harness) VMMDPID() (int, error) {
+	if h != nil {
+		for _, proc := range h.procs {
+			if proc != nil && proc.Process != nil && proc.ProcessState == nil && isVMMDProc(proc) {
+				return proc.Process.Pid, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("e2etest: live vmmd process not found")
+}
 
 // SetVMMDEnv changes one variable of the retained vmmd launch recipe; the
 // next PlannedRestartVMMD starts the successor with it. Launch entries come
@@ -2999,8 +3076,13 @@ func waitTCP(t *testing.T, addr string, d time.Duration) {
 // subtests) both converge on the active socket.
 func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmmdSockPath string) {
 	t.Helper()
+	setDefaultLocalScheddTargetContext(t, context.Background(), pool, sockPath, vmmdSockPath)
+}
+
+func setDefaultLocalScheddTargetContext(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sockPath, vmmdSockPath string) {
+	t.Helper()
 	target := "unix://" + sockPath
-	if _, err := pool.Exec(context.Background(),
+	if _, err := pool.Exec(ctx,
 		`update compute_nodes set schedd_target_url = $1 where name = 'default-local'`,
 		target); err != nil {
 		t.Fatalf("e2etest: set default-local schedd_target_url: %v", err)
@@ -3008,7 +3090,7 @@ func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmm
 	if strings.TrimSpace(vmmdSockPath) == "" {
 		return
 	}
-	if _, err := pool.Exec(context.Background(),
+	if _, err := pool.Exec(ctx,
 		`update compute_nodes set target_url = $1 where name = 'default-local'`,
 		"unix://"+vmmdSockPath); err != nil {
 		t.Fatalf("e2etest: set default-local target_url: %v", err)
@@ -3400,7 +3482,11 @@ func imagedEnv(t *testing.T, dbURL, guestInit, appsRoot, tmp string) []string {
 	// tree vmmd fills, and vmmd writes only under the tmpfs staging root
 	// faas-imaged.service names. The default TMPDIR is outside it, so every
 	// such base failed with "target_dir outside staging root".
-	return append(env, "FAAS_BASE_STAGING_ROOT="+imagedUnitEnv(t, "FAAS_BASE_STAGING_ROOT"))
+	env = append(env, "FAAS_BASE_STAGING_ROOT="+imagedUnitEnv(t, "FAAS_BASE_STAGING_ROOT"))
+	if currentHarness != nil && currentHarness.grants != nil {
+		env = append(env, currentHarness.grants.computeEnv...)
+	}
+	return env
 }
 
 // imagedUnitEnv returns the value faas-imaged.service sets for key.

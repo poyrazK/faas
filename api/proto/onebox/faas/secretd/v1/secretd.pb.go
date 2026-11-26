@@ -1776,6 +1776,118 @@ func (x *GrantPeerResponse) GetExpiresAt() string {
 	return ""
 }
 
+type OpenVerificationSecretsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AppId         string                 `protobuf:"bytes,1,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	DeploymentId  string                 `protobuf:"bytes,2,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	Keys          []string               `protobuf:"bytes,3,rep,name=keys,proto3" json:"keys,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenVerificationSecretsRequest) Reset() {
+	*x = OpenVerificationSecretsRequest{}
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenVerificationSecretsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenVerificationSecretsRequest) ProtoMessage() {}
+
+func (x *OpenVerificationSecretsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenVerificationSecretsRequest.ProtoReflect.Descriptor instead.
+func (*OpenVerificationSecretsRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *OpenVerificationSecretsRequest) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *OpenVerificationSecretsRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *OpenVerificationSecretsRequest) GetKeys() []string {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+type OpenVerificationSecretsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Values        map[string]string      `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Missing       []string               `protobuf:"bytes,2,rep,name=missing,proto3" json:"missing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenVerificationSecretsResponse) Reset() {
+	*x = OpenVerificationSecretsResponse{}
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenVerificationSecretsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenVerificationSecretsResponse) ProtoMessage() {}
+
+func (x *OpenVerificationSecretsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenVerificationSecretsResponse.ProtoReflect.Descriptor instead.
+func (*OpenVerificationSecretsResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *OpenVerificationSecretsResponse) GetValues() map[string]string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *OpenVerificationSecretsResponse) GetMissing() []string {
+	if x != nil {
+		return x.Missing
+	}
+	return nil
+}
+
 var File_onebox_faas_secretd_v1_secretd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
@@ -1927,7 +2039,17 @@ const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"ttlSeconds\"2\n" +
 	"\x11GrantPeerResponse\x12\x1d\n" +
 	"\n" +
-	"expires_at\x18\x01 \x01(\tR\texpiresAt2\xc4\v\n" +
+	"expires_at\x18\x01 \x01(\tR\texpiresAt\"p\n" +
+	"\x1eOpenVerificationSecretsRequest\x12\x15\n" +
+	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12#\n" +
+	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x12\n" +
+	"\x04keys\x18\x03 \x03(\tR\x04keys\"\xd3\x01\n" +
+	"\x1fOpenVerificationSecretsResponse\x12[\n" +
+	"\x06values\x18\x01 \x03(\v2C.onebox.faas.secretd.v1.OpenVerificationSecretsResponse.ValuesEntryR\x06values\x12\x18\n" +
+	"\amissing\x18\x02 \x03(\tR\amissing\x1a9\n" +
+	"\vValuesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\xd1\f\n" +
 	"\aSecretd\x12\x84\x01\n" +
 	"\x15VerifyPostgresCutover\x124.onebox.faas.secretd.v1.VerifyPostgresCutoverRequest\x1a5.onebox.faas.secretd.v1.VerifyPostgresCutoverResponse\x12o\n" +
 	"\x0eOpenAppSecrets\x12-.onebox.faas.secretd.v1.OpenAppSecretsRequest\x1a..onebox.faas.secretd.v1.OpenAppSecretsResponse\x12`\n" +
@@ -1940,7 +2062,8 @@ const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"\rRegistryFetch\x12,.onebox.faas.secretd.v1.RegistryFetchRequest\x1a-.onebox.faas.secretd.v1.RegistryFetchResponse0\x01\x12\x8d\x01\n" +
 	"\x18MintInternalServiceToken\x127.onebox.faas.secretd.v1.MintInternalServiceTokenRequest\x1a8.onebox.faas.secretd.v1.MintInternalServiceTokenResponse\x12\x81\x01\n" +
 	"\x14MintWorkflowIdentity\x123.onebox.faas.secretd.v1.MintWorkflowIdentityRequest\x1a4.onebox.faas.secretd.v1.MintWorkflowIdentityResponse\x12~\n" +
-	"\x13GrantStorageObjects\x122.onebox.faas.secretd.v1.GrantStorageObjectsRequest\x1a3.onebox.faas.secretd.v1.GrantStorageObjectsResponseBHZFgithub.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1;secretdpbb\x06proto3"
+	"\x13GrantStorageObjects\x122.onebox.faas.secretd.v1.GrantStorageObjectsRequest\x1a3.onebox.faas.secretd.v1.GrantStorageObjectsResponse\x12\x8a\x01\n" +
+	"\x17OpenVerificationSecrets\x126.onebox.faas.secretd.v1.OpenVerificationSecretsRequest\x1a7.onebox.faas.secretd.v1.OpenVerificationSecretsResponseBHZFgithub.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1;secretdpbb\x06proto3"
 
 var (
 	file_onebox_faas_secretd_v1_secretd_proto_rawDescOnce sync.Once
@@ -1954,7 +2077,7 @@ func file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_secretd_v1_secretd_proto_rawDescData
 }
 
-var file_onebox_faas_secretd_v1_secretd_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_onebox_faas_secretd_v1_secretd_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_onebox_faas_secretd_v1_secretd_proto_goTypes = []any{
 	(*StorageObjectRequest)(nil),             // 0: onebox.faas.secretd.v1.StorageObjectRequest
 	(*GrantStorageObjectsRequest)(nil),       // 1: onebox.faas.secretd.v1.GrantStorageObjectsRequest
@@ -1985,53 +2108,59 @@ var file_onebox_faas_secretd_v1_secretd_proto_goTypes = []any{
 	(*OpenAppSecretsResponse)(nil),           // 26: onebox.faas.secretd.v1.OpenAppSecretsResponse
 	(*GrantPeerRequest)(nil),                 // 27: onebox.faas.secretd.v1.GrantPeerRequest
 	(*GrantPeerResponse)(nil),                // 28: onebox.faas.secretd.v1.GrantPeerResponse
-	nil,                                      // 29: onebox.faas.secretd.v1.StorageObjectRequest.MetadataEntry
-	nil,                                      // 30: onebox.faas.secretd.v1.StorageObjectGrant.HeadersEntry
-	nil,                                      // 31: onebox.faas.secretd.v1.MintWorkflowIdentityRequest.QueryTemplateEntry
-	nil,                                      // 32: onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
-	nil,                                      // 33: onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
+	(*OpenVerificationSecretsRequest)(nil),   // 29: onebox.faas.secretd.v1.OpenVerificationSecretsRequest
+	(*OpenVerificationSecretsResponse)(nil),  // 30: onebox.faas.secretd.v1.OpenVerificationSecretsResponse
+	nil,                                      // 31: onebox.faas.secretd.v1.StorageObjectRequest.MetadataEntry
+	nil,                                      // 32: onebox.faas.secretd.v1.StorageObjectGrant.HeadersEntry
+	nil,                                      // 33: onebox.faas.secretd.v1.MintWorkflowIdentityRequest.QueryTemplateEntry
+	nil,                                      // 34: onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
+	nil,                                      // 35: onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
+	nil,                                      // 36: onebox.faas.secretd.v1.OpenVerificationSecretsResponse.ValuesEntry
 }
 var file_onebox_faas_secretd_v1_secretd_proto_depIdxs = []int32{
-	29, // 0: onebox.faas.secretd.v1.StorageObjectRequest.metadata:type_name -> onebox.faas.secretd.v1.StorageObjectRequest.MetadataEntry
+	31, // 0: onebox.faas.secretd.v1.StorageObjectRequest.metadata:type_name -> onebox.faas.secretd.v1.StorageObjectRequest.MetadataEntry
 	0,  // 1: onebox.faas.secretd.v1.GrantStorageObjectsRequest.objects:type_name -> onebox.faas.secretd.v1.StorageObjectRequest
-	30, // 2: onebox.faas.secretd.v1.StorageObjectGrant.headers:type_name -> onebox.faas.secretd.v1.StorageObjectGrant.HeadersEntry
+	32, // 2: onebox.faas.secretd.v1.StorageObjectGrant.headers:type_name -> onebox.faas.secretd.v1.StorageObjectGrant.HeadersEntry
 	2,  // 3: onebox.faas.secretd.v1.GrantStorageObjectsResponse.grants:type_name -> onebox.faas.secretd.v1.StorageObjectGrant
-	31, // 4: onebox.faas.secretd.v1.MintWorkflowIdentityRequest.query_template:type_name -> onebox.faas.secretd.v1.MintWorkflowIdentityRequest.QueryTemplateEntry
+	33, // 4: onebox.faas.secretd.v1.MintWorkflowIdentityRequest.query_template:type_name -> onebox.faas.secretd.v1.MintWorkflowIdentityRequest.QueryTemplateEntry
 	10, // 5: onebox.faas.secretd.v1.RegistryFetchRequest.headers:type_name -> onebox.faas.secretd.v1.RegistryHeader
 	10, // 6: onebox.faas.secretd.v1.RegistryFetchHead.headers:type_name -> onebox.faas.secretd.v1.RegistryHeader
 	12, // 7: onebox.faas.secretd.v1.RegistryFetchResponse.head:type_name -> onebox.faas.secretd.v1.RegistryFetchHead
-	32, // 8: onebox.faas.secretd.v1.OpenSidecarEnvResponse.values:type_name -> onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
+	34, // 8: onebox.faas.secretd.v1.OpenSidecarEnvResponse.values:type_name -> onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
 	24, // 9: onebox.faas.secretd.v1.OpenAppSecretsRequest.entries:type_name -> onebox.faas.secretd.v1.SealedEntry
-	33, // 10: onebox.faas.secretd.v1.OpenAppSecretsResponse.values:type_name -> onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
-	8,  // 11: onebox.faas.secretd.v1.Secretd.VerifyPostgresCutover:input_type -> onebox.faas.secretd.v1.VerifyPostgresCutoverRequest
-	25, // 12: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:input_type -> onebox.faas.secretd.v1.OpenAppSecretsRequest
-	27, // 13: onebox.faas.secretd.v1.Secretd.GrantPeer:input_type -> onebox.faas.secretd.v1.GrantPeerRequest
-	22, // 14: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:input_type -> onebox.faas.secretd.v1.OpenCaptureKeyRequest
-	20, // 15: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:input_type -> onebox.faas.secretd.v1.OpenSidecarEnvRequest
-	18, // 16: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:input_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderRequest
-	16, // 17: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:input_type -> onebox.faas.secretd.v1.OpenTriggerConfigRequest
-	14, // 18: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:input_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretRequest
-	11, // 19: onebox.faas.secretd.v1.Secretd.RegistryFetch:input_type -> onebox.faas.secretd.v1.RegistryFetchRequest
-	6,  // 20: onebox.faas.secretd.v1.Secretd.MintInternalServiceToken:input_type -> onebox.faas.secretd.v1.MintInternalServiceTokenRequest
-	4,  // 21: onebox.faas.secretd.v1.Secretd.MintWorkflowIdentity:input_type -> onebox.faas.secretd.v1.MintWorkflowIdentityRequest
-	1,  // 22: onebox.faas.secretd.v1.Secretd.GrantStorageObjects:input_type -> onebox.faas.secretd.v1.GrantStorageObjectsRequest
-	9,  // 23: onebox.faas.secretd.v1.Secretd.VerifyPostgresCutover:output_type -> onebox.faas.secretd.v1.VerifyPostgresCutoverResponse
-	26, // 24: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:output_type -> onebox.faas.secretd.v1.OpenAppSecretsResponse
-	28, // 25: onebox.faas.secretd.v1.Secretd.GrantPeer:output_type -> onebox.faas.secretd.v1.GrantPeerResponse
-	23, // 26: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:output_type -> onebox.faas.secretd.v1.OpenCaptureKeyResponse
-	21, // 27: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:output_type -> onebox.faas.secretd.v1.OpenSidecarEnvResponse
-	19, // 28: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:output_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderResponse
-	17, // 29: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:output_type -> onebox.faas.secretd.v1.OpenTriggerConfigResponse
-	15, // 30: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:output_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretResponse
-	13, // 31: onebox.faas.secretd.v1.Secretd.RegistryFetch:output_type -> onebox.faas.secretd.v1.RegistryFetchResponse
-	7,  // 32: onebox.faas.secretd.v1.Secretd.MintInternalServiceToken:output_type -> onebox.faas.secretd.v1.MintInternalServiceTokenResponse
-	5,  // 33: onebox.faas.secretd.v1.Secretd.MintWorkflowIdentity:output_type -> onebox.faas.secretd.v1.MintWorkflowIdentityResponse
-	3,  // 34: onebox.faas.secretd.v1.Secretd.GrantStorageObjects:output_type -> onebox.faas.secretd.v1.GrantStorageObjectsResponse
-	23, // [23:35] is the sub-list for method output_type
-	11, // [11:23] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	35, // 10: onebox.faas.secretd.v1.OpenAppSecretsResponse.values:type_name -> onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
+	36, // 11: onebox.faas.secretd.v1.OpenVerificationSecretsResponse.values:type_name -> onebox.faas.secretd.v1.OpenVerificationSecretsResponse.ValuesEntry
+	8,  // 12: onebox.faas.secretd.v1.Secretd.VerifyPostgresCutover:input_type -> onebox.faas.secretd.v1.VerifyPostgresCutoverRequest
+	25, // 13: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:input_type -> onebox.faas.secretd.v1.OpenAppSecretsRequest
+	27, // 14: onebox.faas.secretd.v1.Secretd.GrantPeer:input_type -> onebox.faas.secretd.v1.GrantPeerRequest
+	22, // 15: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:input_type -> onebox.faas.secretd.v1.OpenCaptureKeyRequest
+	20, // 16: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:input_type -> onebox.faas.secretd.v1.OpenSidecarEnvRequest
+	18, // 17: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:input_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderRequest
+	16, // 18: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:input_type -> onebox.faas.secretd.v1.OpenTriggerConfigRequest
+	14, // 19: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:input_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretRequest
+	11, // 20: onebox.faas.secretd.v1.Secretd.RegistryFetch:input_type -> onebox.faas.secretd.v1.RegistryFetchRequest
+	6,  // 21: onebox.faas.secretd.v1.Secretd.MintInternalServiceToken:input_type -> onebox.faas.secretd.v1.MintInternalServiceTokenRequest
+	4,  // 22: onebox.faas.secretd.v1.Secretd.MintWorkflowIdentity:input_type -> onebox.faas.secretd.v1.MintWorkflowIdentityRequest
+	1,  // 23: onebox.faas.secretd.v1.Secretd.GrantStorageObjects:input_type -> onebox.faas.secretd.v1.GrantStorageObjectsRequest
+	29, // 24: onebox.faas.secretd.v1.Secretd.OpenVerificationSecrets:input_type -> onebox.faas.secretd.v1.OpenVerificationSecretsRequest
+	9,  // 25: onebox.faas.secretd.v1.Secretd.VerifyPostgresCutover:output_type -> onebox.faas.secretd.v1.VerifyPostgresCutoverResponse
+	26, // 26: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:output_type -> onebox.faas.secretd.v1.OpenAppSecretsResponse
+	28, // 27: onebox.faas.secretd.v1.Secretd.GrantPeer:output_type -> onebox.faas.secretd.v1.GrantPeerResponse
+	23, // 28: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:output_type -> onebox.faas.secretd.v1.OpenCaptureKeyResponse
+	21, // 29: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:output_type -> onebox.faas.secretd.v1.OpenSidecarEnvResponse
+	19, // 30: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:output_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderResponse
+	17, // 31: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:output_type -> onebox.faas.secretd.v1.OpenTriggerConfigResponse
+	15, // 32: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:output_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretResponse
+	13, // 33: onebox.faas.secretd.v1.Secretd.RegistryFetch:output_type -> onebox.faas.secretd.v1.RegistryFetchResponse
+	7,  // 34: onebox.faas.secretd.v1.Secretd.MintInternalServiceToken:output_type -> onebox.faas.secretd.v1.MintInternalServiceTokenResponse
+	5,  // 35: onebox.faas.secretd.v1.Secretd.MintWorkflowIdentity:output_type -> onebox.faas.secretd.v1.MintWorkflowIdentityResponse
+	3,  // 36: onebox.faas.secretd.v1.Secretd.GrantStorageObjects:output_type -> onebox.faas.secretd.v1.GrantStorageObjectsResponse
+	30, // 37: onebox.faas.secretd.v1.Secretd.OpenVerificationSecrets:output_type -> onebox.faas.secretd.v1.OpenVerificationSecretsResponse
+	25, // [25:38] is the sub-list for method output_type
+	12, // [12:25] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_secretd_v1_secretd_proto_init() }
@@ -2049,7 +2178,7 @@ func file_onebox_faas_secretd_v1_secretd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_secretd_v1_secretd_proto_rawDesc), len(file_onebox_faas_secretd_v1_secretd_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   34,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
