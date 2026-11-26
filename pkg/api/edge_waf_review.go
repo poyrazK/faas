@@ -14,13 +14,15 @@ import (
 
 // Assessments of an EdgeWAFReviewGroup.
 const (
-	// EdgeWAFReviewLikelyFalsePositive: a documented false positive, or
-	// many unrelated clients flagged on one path by one CRS rule.
+	// EdgeWAFReviewLikelyFalsePositive: a documented false positive
+	// (api.EdgeWAFKnownFalsePositive). Spread across clients alone is not
+	// enough (ADR-831 amendment 21).
 	EdgeWAFReviewLikelyFalsePositive = "likely_false_positive"
 	// EdgeWAFReviewLikelyAttack: most detections came from clients flagged
 	// on many paths, which is how scanners behave.
 	EdgeWAFReviewLikelyAttack = "likely_attack"
-	// EdgeWAFReviewUndecided: too few clients to tell; read the examples.
+	// EdgeWAFReviewUndecided: everything else, including groups spread
+	// across clients like a false positive; read the examples.
 	EdgeWAFReviewUndecided = "review"
 	// EdgeWAFReviewExcluded: the rule already excludes this CRS rule; the
 	// detections came before the exclusion.
