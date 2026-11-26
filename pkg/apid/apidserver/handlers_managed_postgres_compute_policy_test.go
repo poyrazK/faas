@@ -151,7 +151,7 @@ func TestManagedPostgresCreateWithoutRegionUsesDefault(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	service, _, _ := resizeAPIService(t, (*e.Acct()).ID)
 	(*(*e.S()).ManagedPostgres()) = service
-	rec := e.Do(t, http.MethodPost, "/v1/postgres/databases", map[string]any{"name": "no-region"}, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/postgres/databases", map[string]any{"name": "no-region", "storage_limit_bytes": int64(1) << 30, "restore_window_seconds": 3600}, nil)
 	if rec.Code != http.StatusCreated && rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatal("create without region", rec.Code, rec.Body.String())
 	}
