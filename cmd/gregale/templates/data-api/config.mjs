@@ -9,6 +9,8 @@ export const limits = Object.freeze({ sharedBudgetMs: 1000, sharedBudgetMaxReque
 
 export const relationPart = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/
 
+export const readinessPath = '/__gregale/ready'
+
 // sqlDeadlineExpiry is the expires_at_ms a SQL deadline claim carries for a
 // gateway deadline (ADR-1734 amendment 1). The engine refuses a deadline more
 // than one query budget ahead of the database's clock, so the claim is sent

@@ -29,6 +29,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		Resources:           w.Resources.Clone(),
 		Command:             w.Command,
 		DependsOn:           w.DependsOn,
+		Uses:                w.Uses.Clone(),
 		DependsOnConditions: maps.Clone(w.DependsOnConditions),
 
 		ReleaseCommand:       releaseCommand,

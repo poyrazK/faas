@@ -63,6 +63,8 @@ class BillingRunItemResponse:
     """Why the customer was held, skipped or failed, or why a retry is pending."""
     payment_status: BillingRunItemResponsePaymentStatus | Unset = UNSET
     """Payment status of the invoice exported for the item's statement."""
+    usage_recovered_at: datetime.datetime | Unset = UNSET
+    """When a recheck recovered the held draft."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -112,6 +114,10 @@ class BillingRunItemResponse:
         if not isinstance(self.payment_status, Unset):
             payment_status = self.payment_status
 
+        usage_recovered_at: str | Unset = UNSET
+        if not isinstance(self.usage_recovered_at, Unset):
+            usage_recovered_at = self.usage_recovered_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -146,6 +152,8 @@ class BillingRunItemResponse:
             field_dict["reason"] = reason
         if payment_status is not UNSET:
             field_dict["payment_status"] = payment_status
+        if usage_recovered_at is not UNSET:
+            field_dict["usage_recovered_at"] = usage_recovered_at
 
         return field_dict
 
@@ -216,6 +224,13 @@ class BillingRunItemResponse:
         else:
             payment_status = check_billing_run_item_response_payment_status(_payment_status)
 
+        _usage_recovered_at = d.pop("usage_recovered_at", UNSET)
+        usage_recovered_at: datetime.datetime | Unset
+        if isinstance(_usage_recovered_at, Unset):
+            usage_recovered_at = UNSET
+        else:
+            usage_recovered_at = datetime.datetime.fromisoformat(_usage_recovered_at)
+
         billing_run_item_response = cls(
             source_kind=source_kind,
             external_ref=external_ref,
@@ -234,6 +249,7 @@ class BillingRunItemResponse:
             invoice_id=invoice_id,
             reason=reason,
             payment_status=payment_status,
+            usage_recovered_at=usage_recovered_at,
         )
 
         billing_run_item_response.additional_properties = d

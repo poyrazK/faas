@@ -8,7 +8,7 @@ import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimi
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { openAPI31 } from './openapi31.mjs'
-import { runtimeConfig, servingContracts, limits, enginePool, sqlDeadlineExpiry, UnsafeConfiguration } from './config.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool, sqlDeadlineExpiry, UnsafeConfiguration, readinessPath } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { sharedBudgetConfig, createSharedBudget } from './shared-budget.mjs'
 import { createHealth } from './health.mjs'
@@ -69,7 +69,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       return res.end()
     }
     if (req.url === '/livez' && req.method === 'GET') return healthResponse(res, 200, { version: 1, live: true })
-    if (req.url === '/healthz' && req.method === 'GET') {
+    if ((req.url === '/healthz' || req.url === readinessPath) && req.method === 'GET') {
       const report = await health.snapshot(admitted.snapshot)
       if (!report.ready) markRequest(res, report.checks.refresh === 'unavailable' ? 'data_api_refresh_unavailable' : 'data_api_unavailable')
       return healthResponse(res, report.ready ? 200 : 503, report)

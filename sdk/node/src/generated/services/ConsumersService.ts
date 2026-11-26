@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIConsumerBillingPolicyResponse } from '../models/APIConsumerBillingPolicyResponse.js';
+import type { APIConsumerBillingProgressResponse } from '../models/APIConsumerBillingProgressResponse.js';
 import type { APIConsumerCreditListResponse } from '../models/APIConsumerCreditListResponse.js';
 import type { APIConsumerCreditResponse } from '../models/APIConsumerCreditResponse.js';
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
@@ -23,6 +24,7 @@ import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageRespons
 import type { APIConsumerUsageStatementHandoffResponse } from '../models/APIConsumerUsageStatementHandoffResponse.js';
 import type { APIConsumerUsageStatementListResponse } from '../models/APIConsumerUsageStatementListResponse.js';
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
+import type { APIMonetizationFunnelResponse } from '../models/APIMonetizationFunnelResponse.js';
 import type { AssignAPIConsumerPlanRequest } from '../models/AssignAPIConsumerPlanRequest.js';
 import type { ChangeConsumerBillingPlanRequest } from '../models/ChangeConsumerBillingPlanRequest.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
@@ -835,6 +837,66 @@ export class ConsumersService {
     });
   }
   /**
+   * Read customer monetization milestones for one app.
+   * Counts milestones independently for up to 50 recent app customer registrations in the last 120 days. Completed Stripe test signups and platform-managed customers are excluded.
+   * @returns APIMonetizationFunnelResponse Registration cohort and observed pricing and live Stripe collection milestones.
+   * @throws ApiError
+   */
+  public static getApiMonetizationFunnel({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIMonetizationFunnelResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/monetization-funnel',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read first-invoice progress for one app customer.
+   * Summarizes authoritative usage and pricing, the relevant statement and invoice, and any confirmed live payment.
+   * @returns APIConsumerBillingProgressResponse Billing milestones with timestamps and a bounded recent usage check.
+   * @throws ApiError
+   */
+  public static getApiConsumerBillingProgress({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App customer whose billing setup progress is being checked.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerBillingProgressResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/billing-progress',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Quote one API consumer's priced usage.
    * Applies the app's immutable, versioned request rate cards to durable
    * consumer usage. The result is a deterministic estimate, not an invoice
@@ -1312,6 +1374,76 @@ export class ConsumersService {
         422: `The app consumer statement or customer cannot be invoiced, or the provider rejected the request.`,
         502: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
         503: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export. Sent as 503 by the public edge.`,
+      },
+    });
+  }
+  /**
+   * Export a finalized app consumer statement as a Stripe draft.
+   * Requires a Stripe connection set to draft collection. Refuses an
+   * unfinished export configured to send or charge, including when that
+   * export started concurrently. Requires the same Stripe test or live
+   * mode as the reviewed draft. Uses the verified customer link for that
+   * Stripe account and mode, falling back to a Stripe customer ID in the
+   * consumer's external reference. The export pins the customer for retries.
+   * Repeating the request returns the same draft. Requires a verified
+   * admin session with fresh MFA step-up.
+   *
+   * @returns StatementInvoiceExportResponse The completed Stripe draft export.
+   * @throws ApiError
+   */
+  public static exportApiConsumerUsageStatementStripeDraft({
+    slug,
+    consumerId,
+    statementId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose finalized statement will be exported.
+     */
+    consumerId: string,
+    /**
+     * Finalized statement revision to turn into a Stripe draft.
+     */
+    statementId: string,
+    requestBody: {
+      /**
+       * The Stripe mode reviewed before export.
+       */
+      livemode: boolean;
+    },
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The statement or Stripe customer cannot be invoiced.`,
+        502: `Stripe could not be reached. Retry to resume the same export.`,
       },
     });
   }

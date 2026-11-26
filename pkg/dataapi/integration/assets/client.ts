@@ -1,9 +1,11 @@
 import { createDataClient, type DataClientOptions } from '@gregale/data'
-import type { Database } from './database.types.js'
+import * as contract from './database.types.js'
+
+const numericMode = (contract as typeof contract & { dataAPINumericMode?: DataClientOptions['numericMode'] }).dataAPINumericMode ?? 'number'
 
 /** Pass your application's session token provider; account API keys do not belong here. */
 export function createAppData(options: DataClientOptions) {
-  return createDataClient<Database>(options).schema('api')
+  return createDataClient<contract.Database>({ ...options, numericMode }).schema('api')
 }
 
 export function listNotes(data: ReturnType<typeof createAppData>) {

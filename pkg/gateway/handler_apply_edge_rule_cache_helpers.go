@@ -3,6 +3,7 @@ package gateway
 import (
 	"crypto/sha256"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,40 @@ func hashStable(s string) [32]byte {
 	return out
 }
 
+// dataAPIAllowsCacheLookup restricts cache access to full JSON requests.
+// The runtime separately decides which public schema and relation may be stored.
+func dataAPIAllowsCacheLookup(header http.Header) bool {
+	for _, name := range []string{"Range", "Range-Unit", "Prefer"} {
+		if len(header.Values(name)) > 0 {
+			return false
+		}
+	}
+	if profiles := header.Values("Accept-Profile"); len(profiles) > 0 {
+		if len(profiles) != 1 || strings.TrimSpace(profiles[0]) == "" || strings.Contains(profiles[0], ",") {
+			return false
+		}
+	}
+	accept := header.Values("Accept")
+	if len(accept) == 0 {
+		return true
+	}
+	if len(accept) != 1 {
+		return false
+	}
+	media := strings.TrimSpace(accept[0])
+	return strings.EqualFold(media, "application/json") || media == "*/*"
+}
+
+// cacheVaryOn also partitions old and new Data API entries by adding the
+// representation and profile dimensions. An explicit profile retains its own
+// cached entry only if the runtime made that response public.
+func (r *EdgeRuleCacheResolved) cacheVaryOn() []string {
+	if r.DataAPIPublicRead {
+		return append(slices.Clone(r.VaryOn), "Accept", "Accept-Profile")
+	}
+	return r.VaryOn
+}
+
 // responseCacheKeyForRequest preserves the origin-visible URL. All serve,
 // capture and refresh paths use the same key, including its escaping and
 // query ordering; decoded paths remain available for rule matching and purge.
@@ -90,7 +125,7 @@ func responseCacheKeyForRequest(r *http.Request, appID, deploymentID string, rul
 		RawPath:        r.URL.RawPath,
 		Query:          r.URL.RawQuery,
 		ForceQuery:     r.URL.ForceQuery,
-		VaryHash:       computeVaryHash(r, rule.VaryOn),
+		VaryHash:       computeVaryHash(r, rule.cacheVaryOn()),
 	}
 }
 

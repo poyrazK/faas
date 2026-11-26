@@ -24,6 +24,7 @@ type dataAPIHostedReplayConfig struct {
 	Identities      string   `json:"identities"`
 	Scenarios       []string `json:"scenarios,omitempty"`
 	RefreshTokenEnv string   `json:"refresh_token_env,omitempty"`
+	ReadOnly        bool     `json:"-"`
 	mappings        map[string]string
 }
 type dataAPIHostedReplayOptions struct {
@@ -35,6 +36,7 @@ type dataAPIHostedReplayOptions struct {
 	Fingerprint     string            `json:"fingerprint,omitempty"`
 	RequirePaused   bool              `json:"require_paused,omitempty"`
 	ValidateOnly    bool              `json:"validate_only,omitempty"`
+	ReadOnly        bool              `json:"read_only,omitempty"`
 	JSON            bool              `json:"json"`
 }
 
@@ -101,7 +103,7 @@ func runDataAPIHostedReplay(ctx context.Context, config *dataAPIHostedReplayConf
 	origin := ""
 	if healthURL != "" {
 		u, err := url.Parse(healthURL)
-		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/healthz" {
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != api.DataAPIReadinessPath {
 			return errors.New("invalid hosted replay app URL")
 		}
 		u.Path = "/"
@@ -129,7 +131,7 @@ func runDataAPIHostedReplay(ctx context.Context, config *dataAPIHostedReplayConf
 	if coordinated {
 		refreshEnv = "GREGALE_DATA_API_REFRESH_TOKEN"
 	}
-	options := dataAPIHostedReplayOptions{Collection: config.Collection, Identities: config.mappings, Scenarios: scenarios, RefreshTokenEnv: refreshEnv, URL: origin, Fingerprint: fingerprint, RequirePaused: coordinated, ValidateOnly: validateOnly, JSON: jsonOutput || coordinated}
+	options := dataAPIHostedReplayOptions{Collection: config.Collection, Identities: config.mappings, Scenarios: scenarios, RefreshTokenEnv: refreshEnv, URL: origin, Fingerprint: fingerprint, RequirePaused: coordinated, ValidateOnly: validateOnly, ReadOnly: config.ReadOnly, JSON: jsonOutput || coordinated}
 	content, err := json.Marshal(options)
 	if err != nil {
 		return err
