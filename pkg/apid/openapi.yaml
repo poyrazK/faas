@@ -48325,10 +48325,12 @@ paths:
         (detected, warned and blocked events) and groups
         them by edge rule, CRS rule and path, with id-like path segments read
         as {id}. Each group is assessed: likely_false_positive (a documented
-        false positive, or at least 3 clients flagged on the path with none
-        sending most of the detections), likely_attack (most detections from
+        false positive), likely_attack (most detections from
         clients flagged on 5 or more paths), excluded (the rule already
-        excludes the CRS rule) or review. The newest 5,000 detections of each
+        excludes the CRS rule) or review (including groups flagged from at
+        least 3 clients with none sending most of the detections, which look
+        like a false positive but also like a few addresses probing one
+        endpoint; read the examples). The newest 5,000 detections of each
         outcome are read and at most 50 groups returned, largest first.
         Detections are sampled, so counts are lower bounds. The window
         defaults to 7 days and is clamped to the plan's event window.
