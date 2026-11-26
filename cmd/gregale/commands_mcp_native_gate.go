@@ -111,6 +111,11 @@ func requireMCPWebTaskMigration(webPath, runtime string) error {
 
 // mcpGateView is the gate's view of the Task queue, read through the API.
 type mcpGateView interface {
+	// Baseline is the release start on the observer's clock: when its latest
+	// report was taken, or the zero time when it has published none. Later
+	// checks need a report taken after it, so a skewed local clock can
+	// neither stall a release nor accept a report from before it.
+	Baseline(ctx context.Context) (time.Time, error)
 	// Ready reports whether a report taken after since shows the replacements'
 	// deployment serving every handler version unfinished Tasks need.
 	Ready(ctx context.Context, since time.Time, replacements []string) (bool, error)
@@ -143,7 +148,6 @@ type mcpGate struct {
 	timeout        time.Duration
 	poll           time.Duration
 	checkpointPath string
-	now            func() time.Time
 	migrate        func(ctx context.Context) error
 	start          func(ctx context.Context, input map[string]any) ([]string, error)
 	drain          func(ctx context.Context, input map[string]any) error
@@ -168,11 +172,14 @@ func (g *mcpGate) run(ctx context.Context) mcpGateReport {
 		return report
 	}
 	report.Stage = "candidate_preflight"
-	since := g.now()
+	var since time.Time
 	if checkpoint != nil {
-		if since, err = time.Parse(time.RFC3339Nano, checkpoint.StartedAt); err != nil {
-			return report
-		}
+		since, err = time.Parse(time.RFC3339Nano, checkpoint.StartedAt)
+	} else {
+		since, err = g.view.Baseline(ctx)
+	}
+	if err != nil {
+		return report
 	}
 	// Worker IDs are not visible through the API; the adapter checks previous
 	// generations by deployment, so the checkpoint keeps an empty ID list.
@@ -402,6 +409,17 @@ func (v reportMCPGateView) read(ctx context.Context) (api.MCPTaskCompatibilityRe
 	return report, deployments, err
 }
 
+func (v reportMCPGateView) Baseline(ctx context.Context) (time.Time, error) {
+	report, err := v.report(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !report.Published || report.ObservedAt == nil {
+		return time.Time{}, nil
+	}
+	return *report.ObservedAt, nil
+}
+
 func (v reportMCPGateView) Ready(ctx context.Context, since time.Time, replacements []string) (bool, error) {
 	report, deployments, err := v.read(ctx)
 	if err != nil {
@@ -467,7 +485,7 @@ func runMCPBuiltinTaskGate(ctx context.Context, runtime string, p mcpNativeRelea
 		},
 	}
 	gate := &mcpGate{
-		view: view, namespace: namespace, releaseID: fingerprint, timeout: timeout, poll: 2 * time.Second, checkpointPath: state + ".gate", now: time.Now,
+		view: view, namespace: namespace, releaseID: fingerprint, timeout: timeout, poll: 2 * time.Second, checkpointPath: state + ".gate",
 		migrate: func(context.Context) error { return requireMCPWebTaskMigration(p.WebPath, runtime) },
 		start: func(ctx context.Context, input map[string]any) ([]string, error) {
 			output, err := hook(ctx, start, input)

@@ -947,14 +947,11 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		}
 		return mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state)
 	}
-	// The Node gate migrates before it starts replacements. A Go or Python
-	// release migrates in the web release command, so the staged web deployment
-	// goes first and the candidate worker starts against the migrated schema.
-	steps := []func() error{worker, web}
-	if runtime == mcpWorkerRuntimeGo || runtime == mcpWorkerRuntimePython {
-		steps = []func() error{web, worker}
-	}
-	for _, step := range steps {
+	for _, role := range mcpNativeDeployOrder(runtime) {
+		step := worker
+		if role == "web" {
+			step = web
+		}
 		if err := step(); err != nil {
 			return err
 		}
@@ -978,6 +975,18 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// mcpNativeDeployOrder names the roles a release deploys, in order. The Node
+// gate migrates before it starts replacements. A Go or Python release migrates
+// in the web release command (ADR-20261123160000 amendment 1), so the staged
+// web deployment goes first and the candidate worker starts against the
+// migrated schema.
+func mcpNativeDeployOrder(runtime string) []string {
+	if runtime == mcpWorkerRuntimeGo || runtime == mcpWorkerRuntimePython {
+		return []string{"web", "worker"}
+	}
+	return []string{"worker", "web"}
 }
 
 var mcpNativeCheckWorkers = checkMCPNativeWorkers

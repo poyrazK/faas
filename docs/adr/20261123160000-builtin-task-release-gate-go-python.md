@@ -102,7 +102,10 @@ gate onto the platform rather than open database access. Decision 1 changes:
   worker registry. The observer already publishes, per unfinished
   `(tool, handler_version)`, the live non-draining workers grouped by trusted
   deployment ID. Replacements are ready when a report that is published, not
-  stale, not truncated and observed **after the release started** shows the
+  stale, not truncated and observed **after the release started** (the
+  observer's latest report when the gate began, so both times come from the
+  observer's clock and a skewed operator clock cannot stall or weaken the
+  check) shows the
   candidate deployment with at least as many workers as replacements for every
   listed version. A worker on a deployment outside the candidate and the
   journal's previous deployments fails the release. After the drain the gate

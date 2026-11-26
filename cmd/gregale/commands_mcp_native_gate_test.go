@@ -35,10 +35,11 @@ type fakeGateStack struct {
 	workers     map[string]int64
 	candidate   string
 	unpublished bool
+	frozen      bool // the observer publishes no report after the release starts
 }
 
 func newGateStack() *fakeGateStack {
-	return &fakeGateStack{observedAt: gateStart.Add(time.Second), workers: map[string]int64{gatePreviousDeployment: 1}}
+	return &fakeGateStack{observedAt: gateStart, workers: map[string]int64{gatePreviousDeployment: 1}}
 }
 
 func (s *fakeGateStack) report(context.Context) (api.MCPTaskCompatibilityReportResponse, error) {
@@ -78,7 +79,7 @@ type gateHooks struct {
 
 func (h *gateHooks) run(t *testing.T, stack *fakeGateStack, checkpoint string) main.MCPGateReport {
 	t.Helper()
-	return main.RunMCPGate(t.Context(), stack.report, stack.deployments, "reports", "release-1", checkpoint, gateStart, 200*time.Millisecond,
+	return main.RunMCPGate(t.Context(), stack.report, stack.deployments, "reports", "release-1", checkpoint, 200*time.Millisecond,
 		func(context.Context) error { h.migrated++; return h.migrateErr },
 		func(_ context.Context, input map[string]any) ([]string, error) {
 			h.started++
@@ -88,6 +89,9 @@ func (h *gateHooks) run(t *testing.T, stack *fakeGateStack, checkpoint string) m
 			stack.set(func(s *fakeGateStack) {
 				s.candidate = gateCandidateDeployment
 				s.workers[gateCandidateDeployment] = h.candidateWorkers
+				if !s.frozen {
+					s.observedAt = gateStart.Add(time.Second) // the observer's next cycle
+				}
 			})
 			if h.startIDs != nil {
 				return h.startIDs, nil
@@ -127,6 +131,7 @@ func TestMCPBuiltinGateReleasesWhenReplacementsServePendingTasks(t *testing.T) {
 		StartedAt            string   `json:"startedAt"`
 	}
 	body, err := os.ReadFile(checkpoint)
+	// The release starts at the observer's latest report, on its clock.
 	if err != nil || json.Unmarshal(body, &saved) != nil || !saved.Completed || saved.StartedAt != gateStart.Format(time.RFC3339Nano) {
 		t.Fatalf("checkpoint = %s (%v)", body, err)
 	}
@@ -146,10 +151,7 @@ func TestMCPBuiltinGateRefusesUnsafeReleases(t *testing.T) {
 		drained int
 	}{
 		{"candidate lacks a pending handler version", func(s *fakeGateStack, h *gateHooks) {}, "replacement_readiness", 1, 0},
-		{"report predates the release", func(s *fakeGateStack, h *gateHooks) {
-			h.candidateWorkers = 1
-			s.observedAt = gateStart.Add(-time.Second)
-		}, "replacement_readiness", 1, 0},
+		{"no report taken after the release started", func(s *fakeGateStack, h *gateHooks) { h.candidateWorkers, s.frozen = 1, true }, "replacement_readiness", 1, 0},
 		{"report is stale", func(s *fakeGateStack, h *gateHooks) { h.candidateWorkers, s.stale = 1, true }, "replacement_readiness", 1, 0},
 		{"observer never published", func(s *fakeGateStack, h *gateHooks) { h.candidateWorkers, s.unpublished = 1, true }, "replacement_readiness", 1, 0},
 		{"report is truncated", func(s *fakeGateStack, h *gateHooks) { h.candidateWorkers, s.truncated = 1, true }, "replacement_readiness", 1, 0},
@@ -237,6 +239,14 @@ func TestMCPReportReadinessCountsEveryReplacement(t *testing.T) {
 				t.Fatalf("gone = %v, %v", gone, err)
 			}
 		})
+	}
+}
+
+func TestMCPNativeDeployOrderMigratesBeforeGoAndPythonWorkers(t *testing.T) {
+	for runtime, want := range map[string][]string{"go": {"web", "worker"}, "python": {"web", "worker"}, "node": {"worker", "web"}, "": {"worker", "web"}} {
+		if got := main.MCPNativeDeployOrder(runtime); !slices.Equal(got, want) {
+			t.Errorf("%q: order %v, want %v", runtime, got, want)
+		}
 	}
 }
 

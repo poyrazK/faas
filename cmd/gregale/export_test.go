@@ -3098,14 +3098,16 @@ var (
 )
 
 // RunMCPGate runs the built-in gate against a test compatibility report and
-// hooks, at a fixed release start.
+// hooks.
 func RunMCPGate(ctx context.Context, report func(context.Context) (api.MCPTaskCompatibilityReportResponse, error), deployments func() (MCPGateDeployments, error),
-	namespace, releaseID, checkpointPath string, now time.Time, timeout time.Duration,
+	namespace, releaseID, checkpointPath string, timeout time.Duration,
 	migrate func(context.Context) error, start func(context.Context, map[string]any) ([]string, error), drain func(context.Context, map[string]any) error) MCPGateReport {
 	g := &mcpGate{view: reportMCPGateView{report: report, deployments: deployments}, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
-		checkpointPath: checkpointPath, now: func() time.Time { return now }, migrate: migrate, start: start, drain: drain}
+		checkpointPath: checkpointPath, migrate: migrate, start: start, drain: drain}
 	return g.run(ctx)
 }
+
+var MCPNativeDeployOrder = mcpNativeDeployOrder
 
 // LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
 var LeadingDeploymentID = leadingDeploymentID
