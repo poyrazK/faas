@@ -121,6 +121,21 @@ func managedPostgresPlanAllows(limits api.ManagedPostgresPlanLimits, spec manage
 	return managedpg.PlanAllowsClass(limits, spec.Class)
 }
 
+// decodeManagedPostgresCreate reads a create request. Placement is the
+// operator's choice: a create without a region lands in the platform
+// default, as dev sessions and manifests do.
+func (s *server) decodeManagedPostgresCreate(w http.ResponseWriter, r *http.Request) (api.CreateManagedPostgresDatabaseRequest, bool) {
+	var req api.CreateManagedPostgresDatabaseRequest
+	if err := decodeJSON(r, &req); err != nil {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return req, false
+	}
+	if strings.TrimSpace(req.Region) == "" {
+		req.Region = s.managedPostgres.DefaultRegion()
+	}
+	return req, true
+}
+
 func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest, limits api.ManagedPostgresPlanLimits) (managedpostgres.Spec, error) {
 	class := managedpostgres.ServiceClass(req.ServiceClass)
 	if class == "" {
@@ -490,9 +505,8 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
 		return
 	}
-	var req api.CreateManagedPostgresDatabaseRequest
-	if err := decodeJSON(r, &req); err != nil {
-		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+	req, ok := s.decodeManagedPostgresCreate(w, r)
+	if !ok {
 		return
 	}
 	spec, err := managedPostgresSpecFromRequest(req, limits)

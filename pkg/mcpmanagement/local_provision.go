@@ -63,7 +63,7 @@ type planBucketArgs struct {
 
 type planPostgresArgs struct {
 	App    string `json:"app" jsonschema:"App slug"`
-	Region string `json:"region" jsonschema:"Region for a new database"`
+	Region string `json:"region,omitempty" jsonschema:"Region for a new database; omit it to use the platform default"`
 	Access string `json:"access,omitempty" jsonschema:"read_write (default), read_only or migration"`
 	Reason string `json:"reason" jsonschema:"Why; at most 280 characters"`
 }
@@ -179,23 +179,47 @@ func (m *management) planPostgres(ctx context.Context, args planPostgresArgs) (a
 	if access == "" {
 		access = "read_write"
 	}
-	if !regionName.MatchString(args.Region) || !postgresAccess[access] {
-		return nil, invalid("invalid_argument", "region must be a region name and access must be read_write, read_only or migration")
+	region := strings.TrimSpace(args.Region)
+	if (region != "" && !regionName.MatchString(region)) || !postgresAccess[access] {
+		return nil, invalid("invalid_argument", "region must be a region name (or omitted) and access must be read_write, read_only or migration")
 	}
 	p, err := m.provisionBase(ctx, args.App, args.Reason, "postgres")
 	if err != nil {
 		return nil, err
 	}
 	// Flags precede everything: a bare word after `add postgres` is read as the app.
-	p.Provision.Command = []string{"add", "postgres", "--app", args.App, "--env", api.DefaultEnvScope, "--region", args.Region, "--access", access}
+	p.Provision.Command = []string{"add", "postgres", "--app", args.App, "--env", api.DefaultEnvScope}
+	if region != "" {
+		p.Provision.Command = append(p.Provision.Command, "--region", region)
+	}
+	p.Provision.Command = append(p.Provision.Command, "--access", access)
 	if m.nativeProvisioning() {
-		p.Provision.Native = &nativeProvision{Version: 1, Kind: "postgres", Region: args.Region, Access: access, Phase: "planned"}
+		if region == "" {
+			// The native plan records the placement it reviewed, so resolve
+			// the platform default now rather than at apply time.
+			capabilities, err := m.client.GetManagedPostgresCapabilities(ctx, "")
+			if err != nil {
+				return nil, fmt.Errorf("read default postgres region: %w", err)
+			}
+			switch {
+			case capabilities.Region == "":
+				return nil, invalid("invalid_argument", "the platform reported no default region; pass region")
+			case !regionName.MatchString(capabilities.Region):
+				return nil, invalid("invalid_argument", "the default region "+capabilities.Region+" cannot be reviewed here; pass region")
+			}
+			region = capabilities.Region
+		}
+		p.Provision.Native = &nativeProvision{Version: 1, Kind: "postgres", Region: region, Access: access, Phase: "planned"}
 		p.Provision.Resumable = true
 		if err := m.planNativePostgres(ctx, p); err != nil {
 			return nil, err
 		}
 	}
-	p.TrafficEffect = "Create or reuse " + args.App + "-postgres in " + args.Region + ", bind it as DATABASE_URL and open egress port 5432. Database usage is billed."
+	placement := "the default region"
+	if region != "" {
+		placement = region
+	}
+	p.TrafficEffect = "Create or reuse " + args.App + "-postgres in " + placement + ", bind it as DATABASE_URL and open egress port 5432. Database usage is billed."
 	return m.savePlan(p)
 }
 

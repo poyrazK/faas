@@ -73,8 +73,14 @@ func TestCmdAddPostgresCreatesAndBindsWithoutSecrets(t *testing.T) {
 }
 
 func TestCmdAddPostgresRejectsReplicaOnlyBeforeCreating(t *testing.T) {
-	for _, class := range []string{"development", "production"} {
-		t.Run(class, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, class, region string
+	}{
+		{name: "development", class: "development", region: "eu"},
+		{name: "unreadable explicit region", class: "production", region: "eu"},
+		{name: "unreadable default region", class: "production"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			var creates atomic.Int64
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -95,9 +101,9 @@ func TestCmdAddPostgresRejectsReplicaOnlyBeforeCreating(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
-			args := []string{"add", "postgres", "--app", "api", "--env", "production", "--region", "eu", "--access", "replica_only"}
-			if class == "production" {
-				args = append(args, "--class", class)
+			args := []string{"add", "postgres", "--app", "api", "--env", "production", "--access", "replica_only", "--class", tc.class}
+			if tc.region != "" {
+				args = append(args, "--region", tc.region)
 			}
 			if code := main.Run(args); code == 0 || creates.Load() != 0 {
 				t.Fatalf("exit = %d, create requests = %d; want failure before creation", code, creates.Load())

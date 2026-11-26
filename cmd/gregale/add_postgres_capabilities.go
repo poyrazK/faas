@@ -27,6 +27,9 @@ func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities,
 	}
 	region = strings.TrimSpace(region)
 	if region == "" {
+		if replicaOnlyCreate {
+			return fmt.Errorf("could not verify --access replica_only for the default region")
+		}
 		return nil
 	}
 	capabilities, err := client.GetManagedPostgresCapabilities(ctx, region)
@@ -43,6 +46,24 @@ func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities,
 		return fmt.Errorf("--availability %s is not available in region %s; available: %s", availability, region, strings.Join(capabilities.Availability, ", "))
 	}
 	return nil
+}
+
+// defaultPostgresRegion returns region, or the platform's default placement
+// when it is empty. Placement is the operator's choice, so commands that
+// create a database never ask for a region; --region stays for the day more
+// than one is offered. Resolving here keeps the CLI working against servers
+// that still require the field. It is best effort: when capabilities cannot
+// be read (a postgres:manage key without postgres:read), it returns "" and
+// apid fills in the default.
+func defaultPostgresRegion(ctx context.Context, client addPostgresCapabilities, region string) string {
+	if region = strings.TrimSpace(region); region != "" {
+		return region
+	}
+	capabilities, err := client.GetManagedPostgresCapabilities(ctx, "")
+	if err != nil {
+		return ""
+	}
+	return capabilities.Region
 }
 
 // printAddPostgresMigrationHint tells a developer who just bound a runtime
