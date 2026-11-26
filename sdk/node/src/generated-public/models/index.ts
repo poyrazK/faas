@@ -658,6 +658,8 @@ export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js
 export type { ManagedPostgresCapabilities } from './ManagedPostgresCapabilities.js';
 export type { ManagedPostgresComputePolicyChange } from './ManagedPostgresComputePolicyChange.js';
 export type { ManagedPostgresConnectionBudget } from './ManagedPostgresConnectionBudget.js';
+export type { ManagedPostgresCustomRole } from './ManagedPostgresCustomRole.js';
+export type { ManagedPostgresCustomRoleList } from './ManagedPostgresCustomRoleList.js';
 export type { ManagedPostgresDatabase } from './ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresDatabaseUsage } from './ManagedPostgresDatabaseUsage.js';
@@ -1217,6 +1219,7 @@ export type { PutAppRegistryCredentialRequest } from './PutAppRegistryCredential
 export type { PutAppSecretReferenceRequest } from './PutAppSecretReferenceRequest.js';
 export type { PutAppSecretRequest } from './PutAppSecretRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
+export type { PutManagedPostgresCustomRoleRequest } from './PutManagedPostgresCustomRoleRequest.js';
 export type { PutOutboundBindingAIBudgetRequest } from './PutOutboundBindingAIBudgetRequest.js';
 export type { PutOutboundBindingDailyRequestBudgetRequest } from './PutOutboundBindingDailyRequestBudgetRequest.js';
 export type { PutOutboundCredentialRequest } from './PutOutboundCredentialRequest.js';

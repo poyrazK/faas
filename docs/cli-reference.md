@@ -5009,24 +5009,79 @@ gregale postgres recover orders
 
 Works until the database&#39;s restorable_until, 7 days after the delete; a purged database is gone.
 
-### postgres activity
+### postgres roles
 
-Show what kept a database awake: starts, causes and what to do
+Manage custom roles your logins can SET ROLE to (preview)
 
-`gregale postgres activity [--since <PERIOD>] <database>`
+#### postgres roles list
+
+List a database&#39;s custom roles
+
+`gregale postgres roles list <database>`
+
+#### postgres roles create
+
+Create or replace a NOLOGIN custom role
+
+`gregale postgres roles create [--bypass-rls] [--grant-to <MODES>] [--member-of <ROLES>] [--default-for <MODES>] <database> <role>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--since <PERIOD>` | period: a duration such as 24h or 7d, or an RFC 3339 time (default 24h) |  |
+| `--bypass-rls` | the role bypasses row-level security (refused with Data API or Auth) |  |
+| `--grant-to <MODES>` | access modes whose logins may SET ROLE to it (default migration,read_write) |  |
+| `--member-of <ROLES>` | custom roles of the database it is a member of |  |
+| `--default-for <MODES>` | access modes whose logins start every session as it: read_write, read_only (empty clears) |  |
 
 Examples:
 
 ```sh
-gregale postgres activity orders-db
-gregale postgres activity orders-db --since 7d
+gregale postgres roles create windmill-db windmill_user
+gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user --default-for read_write
 ```
 
-Causes are best guesses from timing: wake-with-app, a cron, a request, an app connecting at start, a running app, or a client outside Gregale. Starts are kept 30 days.
+Gregale creates the role; no login gets admin rights. Logins switch to it with SET ROLE, which is how tools such as Windmill use their roles.
+
+--default-for makes logins start as the role, for tools whose own connection must act as it (Windmill&#39;s windmill_admin). Poolers refuse a role set in the connection string. A login starts as at most one role.
+
+Names are lowercase letters, digits and underscores; names starting with gregale, pg_, neon and other provider prefixes are reserved. A database holds at most 16 custom roles; Hobby and above.
+
+#### postgres roles grant
+
+Let more logins SET ROLE to a custom role
+
+`gregale postgres roles grant --to <MODES> [--default] <database> <role>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to <MODES>` | access modes: migration, read_write, read_only | required |
+| `--default` | logins of these access modes also start every session as it (read_write, read_only) |  |
+
+Examples:
+
+```sh
+gregale postgres roles grant windmill-db windmill_user --to read_only
+gregale postgres roles grant windmill-db windmill_admin --to read_write --default
+```
+
+#### postgres roles revoke
+
+Stop logins of access modes from using a custom role
+
+`gregale postgres roles revoke --from <MODES> <database> <role>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <MODES>` | access modes: migration, read_write, read_only | required |
+
+#### postgres roles delete
+
+Drop a custom role; what it owns goes to the schema owner
+
+`gregale postgres roles delete [--yes] <database> <role>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation |  |
 
 ### postgres restore
 

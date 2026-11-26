@@ -5849,6 +5849,24 @@ $$;
 
 
 --
+-- Name: assign_consumer_key_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assign_consumer_key_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.consumer_id IS NULL THEN
+    NEW.environment_id := NULL;
+  ELSE
+    SELECT c.environment_id INTO NEW.environment_id FROM api_consumers c WHERE c.id = NEW.consumer_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: authorize_binding_release_deactivation(uuid, text, uuid, text, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15032,6 +15050,27 @@ BEGIN
     END IF;
     RETURN OLD;
 END $$;
+
+
+--
+-- Name: guard_api_consumer_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_api_consumer_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.environment_id IS DISTINCT FROM OLD.environment_id THEN
+    RAISE EXCEPTION 'an API consumer keeps its environment' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+      WHERE a.id = NEW.app_id AND e.id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'an API consumer environment belongs to its app''s project' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
 
 
 --
@@ -33552,6 +33591,7 @@ CREATE TABLE public.api_consumers (
     revoked_at timestamp with time zone,
     platform_tenant_id uuid,
     platform_tenant_managed boolean DEFAULT false NOT NULL,
+    environment_id uuid,
     CONSTRAINT api_consumers_external_ref_len_chk CHECK (((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256))),
     CONSTRAINT api_consumers_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 128))),
     CONSTRAINT api_consumers_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
@@ -37640,6 +37680,7 @@ CREATE TABLE public.consumer_keys (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     consumer_id uuid,
+    environment_id uuid,
     CONSTRAINT consumer_keys_expires_after_created_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
     CONSTRAINT consumer_keys_hashed_secret_credhash_chk CHECK ((octet_length(hashed_secret) = ANY (ARRAY[32, 33]))),
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
@@ -80948,10 +80989,24 @@ CREATE INDEX api_consumers_account_app_idx ON public.api_consumers USING btree (
 
 
 --
+-- Name: api_consumers_app_environment_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumers_app_environment_external_ref_uniq ON public.api_consumers USING btree (app_id, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid), external_ref);
+
+
+--
 -- Name: api_consumers_app_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX api_consumers_app_external_ref_uniq ON public.api_consumers USING btree (app_id, external_ref);
+
+
+--
+-- Name: api_consumers_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumers_environment_idx ON public.api_consumers USING btree (environment_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -82566,6 +82621,20 @@ CREATE INDEX compute_nodes_lifecycle_idx ON public.compute_nodes USING btree (na
 --
 
 CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (region, zone) WHERE active;
+
+
+--
+-- Name: consumer_keys_app_environment_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_app_environment_name_idx ON public.consumer_keys USING btree (account_id, app_id, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid), name);
+
+
+--
+-- Name: consumer_keys_app_environment_prefix_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_app_environment_prefix_idx ON public.consumer_keys USING btree (app_id, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid), prefix);
 
 
 --
@@ -92765,6 +92834,13 @@ CREATE TRIGGER alert_rules_keep_episodes BEFORE DELETE ON public.alert_rules FOR
 
 
 --
+-- Name: api_consumers api_consumer_environment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_consumer_environment_guard BEFORE INSERT OR UPDATE ON public.api_consumers FOR EACH ROW EXECUTE FUNCTION public.guard_api_consumer_environment();
+
+
+--
 -- Name: api_consumers api_consumers_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -94900,6 +94976,13 @@ CREATE TRIGGER compute_nodes_release_activation_insert AFTER INSERT ON public.co
 --
 
 CREATE TRIGGER compute_nodes_release_activation_update AFTER UPDATE OF release_id ON public.compute_nodes FOR EACH ROW WHEN (((new.release_id IS NOT NULL) AND (new.release_id <> ''::text) AND (old.release_id IS DISTINCT FROM new.release_id))) EXECUTE FUNCTION public.record_compute_release_activation();
+
+
+--
+-- Name: consumer_keys consumer_key_environment; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER consumer_key_environment BEFORE INSERT OR UPDATE OF consumer_id, environment_id ON public.consumer_keys FOR EACH ROW EXECUTE FUNCTION public.assign_consumer_key_environment();
 
 
 --
@@ -101344,6 +101427,14 @@ ALTER TABLE ONLY public.api_consumers
 
 
 --
+-- Name: api_consumers api_consumers_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
+
+
+--
 -- Name: api_consumers api_consumers_platform_tenant_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103821,6 +103912,14 @@ ALTER TABLE ONLY public.consumer_keys
 
 ALTER TABLE ONLY public.consumer_keys
     ADD CONSTRAINT consumer_keys_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
 
 
 --

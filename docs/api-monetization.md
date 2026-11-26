@@ -907,6 +907,14 @@ gregale consumers signup-set my-api --display-name "Weather API" --plans free,pr
   and opens only that customer's plan change. A customer without a card
   cannot switch to a paid plan with its key
   (`409 consumer_self_service_unavailable`).
+- **In MCP clients.** An MCP client cannot read a 429 body, so a refused
+  MCP request gets an answer the client understands instead (HTTP 200).
+  A client that supports URL elicitation shows the person the upgrade page
+  (JSON-RPC error `-32042`). Other clients get a tool error, or a JSON-RPC
+  error for methods other than `tools/call`, whose text names the limit,
+  when a per-minute limit clears and the upgrade link, so the agent can
+  tell the person. The answer carries `X-Faas-Error-Code:
+  consumer_plan_limit_exceeded` and `Retry-After`.
 
 ### MCP callers become customers
 

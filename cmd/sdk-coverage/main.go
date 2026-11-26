@@ -267,11 +267,6 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases, behind the preview-databases
 	// capability until launch.
 	"PUT /v1/postgres/databases/{id}/previews": true,
-	// ADR-20261116213000 custom Postgres roles, behind the
-	// postgres_custom_roles flag until launch.
-	"GET /v1/postgres/databases/{id}/roles":           true,
-	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
-	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -1832,6 +1827,9 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/bindings":                                        "ListManagedPostgresBindings",
+	"GET /v1/postgres/databases/{id}/roles":                                           "ListManagedPostgresCustomRoles",  // ADR-20261116213000
+	"PUT /v1/postgres/databases/{id}/roles/{name}":                                    "PutManagedPostgresCustomRole",    // ADR-20261116213000
+	"DELETE /v1/postgres/databases/{id}/roles/{name}":                                 "DeleteManagedPostgresCustomRole", // ADR-20261116213000
 	"POST /v1/postgres/databases/{id}/bindings":                                       "CreateManagedPostgresBinding",
 	"GET /v1/postgres/bindings/{id}":                                                  "GetManagedPostgresBinding",
 	"DELETE /v1/postgres/bindings/{id}":                                               "DeleteManagedPostgresBinding",

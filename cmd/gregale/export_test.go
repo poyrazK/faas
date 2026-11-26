@@ -1903,6 +1903,13 @@ var ResolveSimpleAppPlan = resolveSimpleAppPlan
 var ResolveTestLoadConfig = resolveTestLoadConfig
 var ResolveTestLoadRecovery = resolveTestLoadRecovery
 var ResolveWorkspaceContext = resolveWorkspaceContext
+
+// ResolveWorkspaceContextReason decides from the tree a deploy would ship:
+// the working tree with worktree, committed HEAD with head.
+func ResolveWorkspaceContextReason(repoRoot, sourceDir string, worktree, head bool) (string, string, bool, string, error) {
+	return resolveWorkspaceContextReason(repoRoot, sourceDir, deployContextTree(repoRoot, sourceDir, worktree, head))
+}
+
 var ResolvedTempDir = resolvedTempDir
 var ResponseActionID = responseActionID
 var RestartAuthApp = restartAuthApp
