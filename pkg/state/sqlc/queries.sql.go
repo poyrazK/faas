@@ -78400,6 +78400,35 @@ func (q *Queries) ObjectWorkloadCredentialListLiveForApp(ctx context.Context, db
 	return items, nil
 }
 
+const objectWorkloadCredentialRegrant = `-- name: ObjectWorkloadCredentialRegrant :execrows
+UPDATE object_storage_workload_credentials
+SET permission = $1, key_prefix = $2
+WHERE caller_app_id = $3 AND id = ANY($4::uuid[])
+`
+
+type ObjectWorkloadCredentialRegrantParams struct {
+	Permission  string
+	KeyPrefix   pgtype.Text
+	CallerAppID pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+// A grant whose access or prefix changed moves the caller's live credentials
+// for that bucket to the new scope, so a guest's (and its SDK's) cached key
+// keeps working within what uses: still allows and loses the rest at once.
+func (q *Queries) ObjectWorkloadCredentialRegrant(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialRegrantParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialRegrant,
+		arg.Permission,
+		arg.KeyPrefix,
+		arg.CallerAppID,
+		arg.Ids,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectWorkloadCredentialResolve = `-- name: ObjectWorkloadCredentialResolve :one
 SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
        c.created_at, c.expires_at,
@@ -78448,7 +78477,8 @@ type ObjectWorkloadCredentialResolveRow struct {
 // still exists, the instance it was issued to still holds a VM, its bucket is
 // ready and the bucket's resource owner may use object storage: the same
 // owner rule object_storage_credential_live applies to compute keys. A grant
-// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
+// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete);
+// one whose access or prefix changed is rescoped (ObjectWorkloadCredentialRegrant).
 func (q *Queries) ObjectWorkloadCredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectWorkloadCredentialResolveRow, error) {
 	row := db.QueryRow(ctx, objectWorkloadCredentialResolve, accessKeyID)
 	var i ObjectWorkloadCredentialResolveRow

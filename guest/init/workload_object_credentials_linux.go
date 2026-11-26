@@ -88,6 +88,7 @@ type cachedObjectCredential struct {
 	body       []byte
 	status     int
 	code       string
+	detail     string
 	expiration time.Time
 }
 
@@ -95,6 +96,7 @@ type objectCredentialResult struct {
 	body   []byte
 	status int
 	code   string
+	detail string
 }
 
 // newWorkloadObjectCredentials serves credentials through client (nil: a
@@ -127,13 +129,12 @@ func (c *workloadObjectCredentials) ServeHTTP(w http.ResponseWriter, r *http.Req
 			if result, ok := c.cached(bucket); ok {
 				return result, nil
 			}
-			body, status, code := c.fetch(r, bucket)
-			return objectCredentialResult{body: body, status: status, code: code}, nil
+			return c.fetch(r, bucket), nil
 		})
 		result = v.(objectCredentialResult)
 	}
 	if result.code != "" {
-		writeIdentityGuestError(w, result.status, result.code)
+		writeObjectCredentialError(w, result)
 		return
 	}
 	writeObjectCredential(w, result.body)
@@ -158,7 +159,7 @@ func (c *workloadObjectCredentials) cached(bucket string) (objectCredentialResul
 		if !c.now().Before(cached.expiration) {
 			return objectCredentialResult{}, false
 		}
-		return objectCredentialResult{status: cached.status, code: cached.code}, true
+		return objectCredentialResult{status: cached.status, code: cached.code, detail: cached.detail}, true
 	}
 	if !c.now().Add(workloadObjectCredentialsMargin).Before(cached.expiration) {
 		return objectCredentialResult{}, false
@@ -173,56 +174,85 @@ func (c *workloadObjectCredentials) store(bucket string, entry cachedObjectCrede
 }
 
 // refuse caches apid's refusal of bucket and returns it.
-func (c *workloadObjectCredentials) refuse(bucket string, status int, code string) ([]byte, int, string) {
-	c.store(bucket, cachedObjectCredential{status: status, code: code, expiration: c.now().Add(workloadObjectCredentialsRefusalTTL)})
-	return nil, status, code
+func (c *workloadObjectCredentials) refuse(bucket string, status int, body []byte) objectCredentialResult {
+	code, detail := objectCredentialRefusal(status, body)
+	c.store(bucket, cachedObjectCredential{status: status, code: code, detail: detail, expiration: c.now().Add(workloadObjectCredentialsRefusalTTL)})
+	return objectCredentialResult{status: status, code: code, detail: detail}
+}
+
+func objectCredentialUnavailable(code string) objectCredentialResult {
+	return objectCredentialResult{status: http.StatusServiceUnavailable, code: code}
 }
 
 // fetch exchanges a bindings token for a credential at apid.
-func (c *workloadObjectCredentials) fetch(r *http.Request, bucket string) ([]byte, int, string) {
+func (c *workloadObjectCredentials) fetch(r *http.Request, bucket string) objectCredentialResult {
 	token, err := c.identity(workloadBindingsAudience)
 	if err != nil || token.AccessToken == "" {
-		return nil, http.StatusServiceUnavailable, "identity_unavailable"
+		return objectCredentialUnavailable("identity_unavailable")
 	}
 	reqBody, _ := json.Marshal(api.ObjectWorkloadCredentialRequest{Bucket: bucket})
 	req, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, currentWorkloadAPIURL()+"/v1/workload/object-storage/credentials", bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
+		return objectCredentialUnavailable("credentials_unavailable")
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
+		return objectCredentialUnavailable("credentials_unavailable")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, workloadObjectCredentialsMaxBytes))
 	if err != nil {
-		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
+		return objectCredentialUnavailable("credentials_unavailable")
 	}
 	switch {
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest:
-		return c.refuse(bucket, resp.StatusCode, objectCredentialRefusalCode(body))
+		return c.refuse(bucket, resp.StatusCode, body)
 	case resp.StatusCode != http.StatusOK:
-		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
+		return objectCredentialUnavailable("credentials_unavailable")
 	}
 	var parsed api.ObjectWorkloadCredentialResponse
 	if json.Unmarshal(body, &parsed) != nil || parsed.AccessKeyID == "" || parsed.SecretAccessKey == "" || parsed.Expiration.IsZero() {
-		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
+		return objectCredentialUnavailable("credentials_unavailable")
 	}
 	c.store(bucket, cachedObjectCredential{body: body, expiration: parsed.Expiration})
-	return body, 0, ""
+	return objectCredentialResult{body: body}
 }
 
-// objectCredentialRefusalCode names apid's refusal for the SDK: a caller
-// that may not use bindings at all (api.CodeForbidden, e.g. a stage
-// instance) is told so instead of being told the bucket is not granted.
-func objectCredentialRefusalCode(body []byte) string {
+// objectCredentialRefusal names apid's refusal for the app and passes on
+// apid's explanation, so a developer reading the SDK's error learns what to
+// change: bindings off for the account (the route answers as missing), a
+// caller that may not use bindings (a stage instance), several bucket grants
+// and no bucket named, a granted bucket that does not exist, or a bucket the
+// app's uses: does not name.
+func objectCredentialRefusal(status int, body []byte) (code, detail string) {
 	var problem api.Problem
-	if json.Unmarshal(body, &problem) == nil && problem.Code == api.CodeForbidden {
-		return "binding_not_allowed"
+	_ = json.Unmarshal(body, &problem)
+	detail = problem.Detail
+	switch {
+	case problem.Code == api.CodeForbidden:
+		return "binding_not_allowed", detail
+	case problem.Code == api.CodeWorkloadBucketRequired:
+		return "bucket_required", detail
+	case problem.Code == api.CodeWorkloadBucketNotFound:
+		return "bucket_not_found", detail
+	case status == http.StatusNotFound:
+		return "bindings_disabled", "cross-app bindings are not enabled for this account"
+	default:
+		return "bucket_not_granted", detail
 	}
-	return "bucket_not_granted"
+}
+
+// writeObjectCredentialError answers with the refusal code and, when apid
+// gave one, its explanation.
+func writeObjectCredentialError(w http.ResponseWriter, result objectCredentialResult) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(result.status)
+	_ = json.NewEncoder(w).Encode(struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail,omitempty"`
+	}{result.code, result.detail})
 }
 
 func writeObjectCredential(w http.ResponseWriter, body []byte) {

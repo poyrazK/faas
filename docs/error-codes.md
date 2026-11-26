@@ -4176,6 +4176,10 @@ See [CLI guide](cli-setup.md).
 
 HTTP 404 Not Found · Granted bucket not found
 
+### `workload_bucket_required`
+
+HTTP 400 Bad Request · Bucket required
+
 ### `workload_credential_limit`
 
 HTTP 429 Too Many Requests · Too many workload credentials
