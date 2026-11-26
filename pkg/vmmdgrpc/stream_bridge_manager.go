@@ -21,6 +21,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/instancebridge"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/sdunit"
 	"golang.org/x/net/http2"
@@ -48,7 +49,10 @@ type streamBridgeEntry struct {
 	stderr   *bytes.Buffer
 	// unit is set instead of cmd when the bridge runs as a systemd unit
 	// (bridge_unit.go).
-	unit      *bridgeUnit
+	unit *bridgeUnit
+	// control is the bridge unit's control connection (bridge_control.go);
+	// nil without FAAS_INSTANCE_BRIDGE_CONTROL. Guarded by the manager's mu.
+	control   *instancebridge.ControlClient
 	client    *http.Client
 	transport *http2.Transport
 	waitDone  chan struct{}
@@ -705,6 +709,7 @@ func (m *streamBridgeManager) closeEntry(ctx context.Context, entry *streamBridg
 	if entry == nil {
 		return
 	}
+	m.closeControl(entry)
 	if entry.transport != nil {
 		entry.transport.CloseIdleConnections()
 	}
