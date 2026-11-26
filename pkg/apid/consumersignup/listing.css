@@ -1,0 +1,34 @@
+.card.listing { max-width: 640px; }
+.listing h2 { margin-top: 24px; }
+
+a.button {
+  display: inline-block;
+  margin: 4px 8px 4px 0;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+pre {
+  overflow-x: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+
+ul.plans, ul.tools { list-style: none; padding: 0; margin: 0; }
+ul.plans li, ul.tools li {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+ul.plans li strong, ul.tools li code { display: block; margin-bottom: 4px; }
+ul.tools li code { font-weight: 600; overflow-wrap: anywhere; }
+ul.plans li span, ul.tools li span { display: block; color: var(--muted); font-size: 14px; }

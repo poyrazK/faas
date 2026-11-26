@@ -2876,6 +2876,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-signups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.List))))
 	// ADR-20261126082046: a sold MCP server's seller stats.
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMCPSellerStats))))
+	// MCP listing (ADR-20261126175800): the seller publishes a public page.
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMCPListing))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putMCPListing))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteMCPListing))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-identities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.ListIdentities))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-identities/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteIdentity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
@@ -6251,6 +6255,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/page", s.consumerSignup.Page)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.js", s.consumerSignup.Script)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.css", s.consumerSignup.Style)
+	// A published MCP listing (ADR-20261126175800): no credential.
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing", s.consumerSignup.Listing)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing/page", s.consumerSignup.ListingPage)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing.js", s.consumerSignup.ListingScript)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing.css", s.consumerSignup.ListingStyle)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/server.json", s.consumerSignup.ServerJSON)
 	// Upgrade links (ADR-20261124094745): the link's signed token is the
 	// only credential, and opens only the consumer's plan change.
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade", s.consumerSignup.UpgradePage)

@@ -12700,6 +12700,23 @@
     "kind": "operational"
   },
   {
+    "table": "mcp_listings",
+    "columns": [
+      "account_id",
+      "app_id",
+      "endpoint",
+      "published_at",
+      "registry_name",
+      "show_usage",
+      "summary",
+      "title",
+      "tools",
+      "updated_at",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "mcp_oauth_retirements",
     "columns": [
       "account_id",

@@ -1342,6 +1342,7 @@ type Querier interface {
 	DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuardedCronParams) error
 	DeleteLegacyStaticEgressProvisioning(ctx context.Context, db DBTX) error
 	DeleteLogArchiveErasure(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	DeleteMCPListing(ctx context.Context, db DBTX, arg DeleteMCPListingParams) (int64, error)
 	DeleteManagedPostgresBindingSecrets(ctx context.Context, db DBTX, bindingID string) (int64, error)
 	DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error)
 	// Operator-driven revoke path (PR-C). Returns 0 rows on miss;
@@ -2683,6 +2684,8 @@ type Querier interface {
 	GetLatestScopedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestScopedBuildExportPublicationParams) (BuildExportPublication, error)
 	GetMCPAdmissionReceipt(ctx context.Context, db DBTX, arg GetMCPAdmissionReceiptParams) ([]byte, error)
 	GetMCPCatalogMonitor(ctx context.Context, db DBTX, arg GetMCPCatalogMonitorParams) ([]byte, error)
+	// ADR-20261126175800: a sold MCP server's public listing.
+	GetMCPListing(ctx context.Context, db DBTX, arg GetMCPListingParams) (McpListing, error)
 	GetMCPOAuthRetirementApp(ctx context.Context, db DBTX, arg GetMCPOAuthRetirementAppParams) (string, error)
 	// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
@@ -6619,6 +6622,7 @@ type Querier interface {
 	PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error)
 	PutMCPCatalogMonitor(ctx context.Context, db DBTX, arg PutMCPCatalogMonitorParams) (int64, error)
+	PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingParams) (McpListing, error)
 	PutMCPOAuthRetirement(ctx context.Context, db DBTX, arg PutMCPOAuthRetirementParams) (int64, error)
 	PutPlanFitNotice(ctx context.Context, db DBTX, arg PutPlanFitNoticeParams) error
 	// ADR 20261028161502 amendment 1: a runtime secret envelope's writer
