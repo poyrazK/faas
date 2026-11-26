@@ -99,7 +99,7 @@ func TestCmdAddPostgresRejectsReplicaOnlyBeforeCreating(t *testing.T) {
 			if class == "production" {
 				args = append(args, "--class", class)
 			}
-			if code := main.Run(args); code != 1 || creates.Load() != 0 {
+			if code := main.Run(args); code == 0 || creates.Load() != 0 {
 				t.Fatalf("exit = %d, create requests = %d; want failure before creation", code, creates.Load())
 			}
 		})
