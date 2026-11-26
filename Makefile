@@ -1873,13 +1873,16 @@ auth-staging-check: ## Application Auth canary harness contracts without provide
 auth-staging-canary: ## Opt-in application Auth native acceptance through Gregale's remote builder (ADR-1190)
 	@bash scripts/ci/run-auth-staging-canary.sh
 
-.PHONY: data-api-staging-check data-api-staging-canary
+.PHONY: data-api-staging-check data-api-staging-canary data-api-staging-smoke
 data-api-staging-check: ## Staging canary harness contracts without provider calls
 	@npm run build --prefix sdk/data
 	@node --test tests/data-api/staging/*.test.mjs
 
 data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
 	@bash scripts/ci/run-data-api-staging-canary.sh
+
+data-api-staging-smoke: ## Opt-in Data API staging check for candidate readiness, schema sync and SDK behavior
+	@bash scripts/ci/run-data-api-staging-canary.sh --mode smoke
 
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml

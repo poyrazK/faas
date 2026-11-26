@@ -949,8 +949,10 @@ from .create_consumer_signup_response import CreateConsumerSignupResponse
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_api_contract_task_output import CreateDataAPIContractTaskOutput
 from .create_data_api_contract_task_request import CreateDataAPIContractTaskRequest
 from .create_data_api_contract_task_request_kind import CreateDataAPIContractTaskRequestKind
+from .create_data_api_inspection_request import CreateDataAPIInspectionRequest
 from .create_data_connection_request import CreateDataConnectionRequest
 from .create_data_pipeline_request import CreateDataPipelineRequest
 from .create_database_switch_request import CreateDatabaseSwitchRequest
@@ -1190,6 +1192,11 @@ from .data_api_change_hook_status_publishing import DataAPIChangeHookStatusPubli
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
+from .data_api_inspection_response import DataAPIInspectionResponse
+from .data_api_inspection_response_binding_identity import DataAPIInspectionResponseBindingIdentity
+from .data_api_inspection_response_binding_identity_status import DataAPIInspectionResponseBindingIdentityStatus
+from .data_api_inspection_response_observation import DataAPIInspectionResponseObservation
+from .data_api_inspection_response_task_status import DataAPIInspectionResponseTaskStatus
 from .data_api_runtime import DataAPIRuntime
 from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
@@ -2478,6 +2485,7 @@ from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
 from .get_custom_metric_series_range import GetCustomMetricSeriesRange
+from .get_data_api_contract_task_output import GetDataAPIContractTaskOutput
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
@@ -8291,8 +8299,10 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataAPIContractTaskOutput",
     "CreateDataAPIContractTaskRequest",
     "CreateDataAPIContractTaskRequestKind",
+    "CreateDataAPIInspectionRequest",
     "CreateDatabaseSwitchRequest",
     "CreateDataConnectionRequest",
     "CreateDataPipelineRequest",
@@ -8512,6 +8522,11 @@ __all__ = (
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
+    "DataAPIInspectionResponse",
+    "DataAPIInspectionResponseBindingIdentity",
+    "DataAPIInspectionResponseBindingIdentityStatus",
+    "DataAPIInspectionResponseObservation",
+    "DataAPIInspectionResponseTaskStatus",
     "DataAPIRuntime",
     "DataAPIRuntimeConnectionReport",
     "DataAPIRuntimeConnectionReportRuntimeModel",
@@ -9760,6 +9775,7 @@ __all__ = (
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
     "GetCustomMetricSeriesRange",
+    "GetDataAPIContractTaskOutput",
     "GetDeploymentOpenAPIDocResponse200",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",

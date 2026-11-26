@@ -512,6 +512,7 @@ export type { CreateCorsPresetRequest } from './CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './CreateCustomDomainRequest.js';
 export type { CreateDataAPIContractTaskRequest } from './CreateDataAPIContractTaskRequest.js';
+export type { CreateDataAPIInspectionRequest } from './CreateDataAPIInspectionRequest.js';
 export type { CreateDataConnectionRequest } from './CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './CreateDataPipelineRequest.js';
 export type { CreateDatabaseSwitchRequest } from './CreateDatabaseSwitchRequest.js';
@@ -625,6 +626,7 @@ export type { DataAPIChangeEventBatchResponse } from './DataAPIChangeEventBatchR
 export type { DataAPIChangeHookReport } from './DataAPIChangeHookReport.js';
 export type { DataAPIChangeHookStatus } from './DataAPIChangeHookStatus.js';
 export type { DataAPIConnectionBudgets } from './DataAPIConnectionBudgets.js';
+export type { DataAPIInspectionResponse } from './DataAPIInspectionResponse.js';
 export type { DataAPIRuntime } from './DataAPIRuntime.js';
 export type { DataAPIRuntimeConnectionReport } from './DataAPIRuntimeConnectionReport.js';
 export type { DataAPIServerKey } from './DataAPIServerKey.js';

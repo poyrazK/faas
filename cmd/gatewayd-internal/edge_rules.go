@@ -2404,6 +2404,7 @@ func compileCacheRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleCacheReso
 		}
 		out = append(out, gateway.EdgeRuleCacheResolved{
 			ID:                          r.ID,
+			DataAPIPublicRead:           r.Name == api.DataAPIPublicReadCacheRule,
 			EdgeRuleCondition:           compileEdgeRuleCondition(r.ID, r.AppID, r.Mode, r.Match, r.MatchLists),
 			AccountID:                   r.AccountID,
 			AppID:                       r.AppID,

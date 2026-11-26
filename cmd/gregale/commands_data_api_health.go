@@ -100,7 +100,7 @@ func cmdDataAPIHealth(args []string) int {
 	current := make(chan string, 1)
 	go func() { current <- currentDataAPIRuntimeVersion(ctx, client, fs.Arg(0)) }()
 	go func() {
-		live <- probeDataAPIHealth(ctx, public, strings.TrimSuffix(endpoint, "/healthz")+"/livez", true)
+		live <- probeDataAPIHealth(ctx, public, strings.TrimSuffix(endpoint, api.DataAPIReadinessPath)+api.DataAPILivenessPath, true)
 	}()
 	readiness := probeDataAPIHealth(ctx, public, endpoint, false)
 	liveness := <-live
@@ -155,6 +155,9 @@ func cmdDataAPIHealth(args []string) int {
 		}
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "%s: %s\nLiveness: %s; readiness: %s\n", report.App, report.Status, report.Liveness.State, report.Readiness.State)
+		if report.Readiness.State == "edge_answered" {
+			_, _ = fmt.Fprintf(osStdout, "Upgrade the runtime readiness endpoint with gregale data-api deploy %s\n", report.App)
+		}
 		if checks := report.Readiness.Checks; checks != nil {
 			_, _ = fmt.Fprintf(osStdout, "Engine: %s; SQL: %s; database connectivity: %s; refresh: %s\n", checks.Engine, checks.SQL, checks.Database, checks.Refresh)
 		}
@@ -186,14 +189,16 @@ func probeDataAPIHealth(ctx context.Context, client *http.Client, address string
 	if err != nil {
 		return result
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Cache-Control", "no-cache")
-	response, err := client.Do(req)
+	response, err := doDataAPIHealth(client, req)
 	if err != nil {
 		return result
 	}
 	defer func() { _ = response.Body.Close() }()
 	result.HTTP = response.StatusCode
+	if response.Header.Get(dataAPIHealthSourceHeader) == "edge" {
+		result.State = "edge_answered"
+		return result
+	}
 	result.State = "rejected"
 	if response.StatusCode == http.StatusNotFound {
 		result.State = "unsupported"

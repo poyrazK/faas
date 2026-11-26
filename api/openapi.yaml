@@ -11063,6 +11063,33 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/data-api-catalog-preview:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      tags: [managed_postgres]
+      operationId: previewManagedPostgresDataAPICatalog
+      summary: Inspect public-schema metadata for a Data API connection.
+      description: |
+        Requires data:read (or admin) and MFA. Runs a fixed catalog-only
+        statement as the provider-managed read-only query identity, in a
+        bounded read-only transaction. No request body, customer table rows,
+        SQL expressions or credentials are returned. The query identity may
+        be created or refreshed and a suspended database can wake. Results
+        describe that identity, not a future Data API binding. At most 1000
+        rows and 1 MiB of values are returned; truncated marks partial results.
+        Cache-Control no-store.
+      responses:
+        '200':
+          description: Bounded public-schema catalog metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresQueryResponse' }
+        default:
+          description: Invalid request, unavailable database, insufficient access, unsupported backend or rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/undelete:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -11632,13 +11659,18 @@ paths:
         Runs one fixed schema inspection inside a fresh task VM from the app's
         live deployment: `types` renders the TypeScript contract, `validators`
         the table and RPC input validators, and `schema` the JSON contract
-        snapshot. The receipt is an ordinary app task receipt and the output
-        arrives in `stdout_tail`. Belongs to the Data API, so it works without
-        the general app-task API.
+        snapshot. By default the output arrives in `stdout_tail`. With
+        `output=artifact`, the receipt omits the generated output and the
+        owner can download up to 8 MiB while the task's deployment is live.
+        Belongs to the Data API, so it works without the general app-task API.
       tags: [managed_postgres]
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: output
+          in: query
+          description: Request a downloadable result and the larger export limit.
+          schema: { type: string, enum: [artifact] }
       requestBody:
         required: true
         content:
@@ -11665,18 +11697,33 @@ paths:
     get:
       operationId: getDataAPIContractTask
       summary: Get one Data API contract inspection
-      description: Current or terminal receipt of a contract inspection. Any other app task is not found here.
+      description: Reads the task receipt or downloads a completed artifact for the current serving deployment.
       tags: [managed_postgres]
       security: [{ bearerAuth: [] }]
+      parameters:
+        - name: output
+          in: query
+          description: Download the artifact from a task created with the same option.
+          schema: { type: string, enum: [artifact] }
       responses:
         '200':
-          description: Current or terminal contract inspection receipt.
+          description: Current or terminal contract inspection receipt, or an artifact download.
+          headers:
+            X-Gregale-Artifact-Sha256:
+              description: Hex SHA-256 of the artifact bytes, present only for downloads.
+              schema: { type: string, pattern: '^[a-f0-9]{64}$' }
+            X-Gregale-Deployment-ID:
+              description: The serving deployment that produced the artifact, present only for downloads.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppTaskResponse' }
+            application/octet-stream:
+              schema: { type: string, format: binary }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
@@ -16194,6 +16241,62 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/data-api-inspections:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [runs]
+      operationId: createDataAPIInspection
+      summary: Inspect a managed Data API binding from its app deployment.
+      description: |
+        Admits a read-only task pinned to the selected binding and a single
+        current deployment. Requires deployment write and managed PostgreSQL
+        read access. Binding identity stays unknown until evidence is checked.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDataAPIInspectionRequest' }
+      responses:
+        '202':
+          description: Inspection admitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIInspectionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/data-api-inspections/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: getDataAPIInspection
+      summary: Get a point-in-time Data API binding inspection.
+      description: |
+        A verified identity matches the provider's expected target and CA
+        trust at inspection time. It does not establish row authorization.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current inspection status and binding identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIInspectionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -134867,6 +134970,37 @@ components:
         offset: { type: integer, minimum: 0 }
         next_offset: { type: integer, description: "Next offset, or -1 at the end of the result set." }
 
+    CreateDataAPIInspectionRequest:
+      description: Identifies the database binding and table to inspect.
+      type: object
+      additionalProperties: false
+      required: [database_id, binding_id, table]
+      properties:
+        database_id: { type: string, format: uuid }
+        binding_id: { type: string, format: uuid }
+        table: { type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,62}$' }
+    DataAPIInspectionResponse:
+      description: Reports the status and verified identity of a Data API inspection.
+      type: object
+      required: [task_id, app_id, deployment_id, database_id, binding_id, credential_generation, task_status, binding_identity]
+      properties:
+        task_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        database_id: { type: string, format: uuid }
+        binding_id: { type: string, format: uuid }
+        credential_generation: { type: integer, format: int64, minimum: 1 }
+        task_status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, cancelled] }
+        binding_identity:
+          type: object
+          required: [status, reason]
+          properties:
+            status: { type: string, enum: [verified, mismatch, unknown] }
+            reason: { type: string }
+        observation:
+          type: object
+          description: Bounded catalog metadata, present only when execution and TLS trust were verified.
+          additionalProperties: true
     CreateAppTaskRequest:
       description: |
         One manual command to execute against the app's live deployment.
