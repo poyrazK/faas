@@ -80,7 +80,7 @@ func TestPgStatementInvoicePaymentLifecycle(t *testing.T) {
 	if rest, err := store.ListStatementInvoices(ctx, accountID, "", paidAt, state.InvoiceCursor(page[0]), 10); err != nil || len(rest) != 0 {
 		t.Fatalf("page after the only invoice = %+v, %v", rest, err)
 	}
-	if err := store.DeferStatementInvoiceSync(ctx, uuid.NewString(), now); err == nil {
+	if err := store.SetStatementInvoiceNextSync(ctx, uuid.NewString(), &now); err == nil {
 		t.Fatal("deferring an unknown export succeeded")
 	}
 }

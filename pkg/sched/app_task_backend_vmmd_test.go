@@ -45,6 +45,70 @@ func (r *recordingRoutedAppTaskVMM) Destroy(_ context.Context, nodeID, _ string)
 	return nil
 }
 
+func TestRoutedVmmdAppTaskUsesDataAPIInspectionProtocol(t *testing.T) {
+	router := &recordingRoutedAppTaskVMM{}
+	session := &routedVmmdAppTaskSession{router: router, nodeID: "node", instance: "task"}
+	outcome, err := session.Execute(t.Context(), AppTaskExecuteRequest{Command: []string{api.AppTaskDataAPIWriteInspectionCommand, "notes", strings.Repeat("a", 64)}, Timeout: time.Second, MaxOutputBytes: 4096})
+	if err != nil || router.executeRequest.Version != apptaskproto.DataAPIInspectionVersion || outcome.DataAPIInspectionProtocol != apptaskproto.DataAPIInspectionVersion {
+		t.Fatalf("inspection protocol = %d, evidence = %d, error = %v", router.executeRequest.Version, outcome.DataAPIInspectionProtocol, err)
+	}
+	ordinary, err := session.Execute(t.Context(), AppTaskExecuteRequest{Command: []string{"echo", "hello"}, Timeout: time.Second, MaxOutputBytes: 4096})
+	if err != nil || ordinary.DataAPIInspectionProtocol != 0 {
+		t.Fatalf("ordinary task evidence = %d, error = %v", ordinary.DataAPIInspectionProtocol, err)
+	}
+	zero := 0
+	truncated := normalizeAppTaskOutcome(AppTaskOutcome{Status: state.AppTaskSucceeded, ExitCode: &zero, StdoutTail: strings.Repeat("x", 5000), DataAPIInspectionProtocol: apptaskproto.DataAPIInspectionVersion}, 4096)
+	if !truncated.OutputTruncated || truncated.DataAPIInspectionProtocol != 0 {
+		t.Fatalf("truncated outcome retains evidence: %+v", truncated)
+	}
+}
+
+type inspectionOutcomeVMM struct {
+	recordingRoutedAppTaskVMM
+	result apptaskproto.Result
+	err    error
+}
+
+func (v *inspectionOutcomeVMM) ExecuteAppTask(_ context.Context, _, _ string, _ apptaskproto.Request) (apptaskproto.Result, error) {
+	return v.result, v.err
+}
+
+func (v *inspectionOutcomeVMM) ExecuteAppTaskWithOutput(ctx context.Context, node, instance string, request apptaskproto.Request, _ apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	return v.ExecuteAppTask(ctx, node, instance, request)
+}
+
+func TestDataAPIInspectionSchedulerEvidenceRequiresSuccessfulExchange(t *testing.T) {
+	zero, failure := 0, 1
+	for _, tc := range []struct {
+		name       string
+		result     apptaskproto.Result
+		err        error
+		wantProof  bool
+		wantFailed bool
+	}{
+		{"success", apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &zero, Stdout: []byte("result")}, nil, true, false},
+		{"failed", apptaskproto.Result{Status: apptaskproto.StatusFailed, ExitCode: &failure}, nil, false, false},
+		{"truncated", apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &zero, OutputTruncated: true}, nil, false, false},
+		{"nonzero", apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &failure}, nil, false, false},
+		{"missing exit", apptaskproto.Result{Status: apptaskproto.StatusSucceeded}, nil, false, false},
+		{"older guest rejects protocol", apptaskproto.Result{}, errors.New("unsupported protocol"), false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &inspectionOutcomeVMM{result: tc.result, err: tc.err}
+			session := &routedVmmdAppTaskSession{router: router, nodeID: "node", instance: "task"}
+			outcome, err := session.Execute(t.Context(), AppTaskExecuteRequest{Command: []string{api.AppTaskDataAPIWriteInspectionCommand, "notes", strings.Repeat("a", 64)}, Timeout: time.Second, MaxOutputBytes: 4096})
+			if (err != nil) != tc.wantFailed || (outcome.DataAPIInspectionProtocol == apptaskproto.DataAPIInspectionVersion) != tc.wantProof {
+				t.Fatalf("outcome=%+v error=%v", outcome, err)
+			}
+		})
+	}
+	lease := "lease"
+	params := appTaskCompletionParams(state.AppTask{Kind: state.AppTaskKindManual, LeaseToken: &lease}, AppTaskOutcome{Status: state.AppTaskSucceeded, ExitCode: &zero, DataAPIInspectionProtocol: apptaskproto.DataAPIInspectionVersion}, time.Now())
+	if params.DataAPIInspectionProtocol != 0 {
+		t.Fatal("empty output retained inspection execution evidence")
+	}
+}
+
 func TestContainedCommandBackendRequiresNetworkPublicationBeforeDispatch(t *testing.T) {
 	for _, mode := range []string{"complete", "held-budget", "missing-publisher", "failed-publication"} {
 		t.Run(mode, func(t *testing.T) {

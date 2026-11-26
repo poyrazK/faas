@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -39,20 +40,26 @@ type APIConsumerUsageCompleteness struct {
 	MissingRequests       int64
 	HoursChecked          int
 	HoursWithoutTelemetry int
+	GapHours              []state.BillingRunUsageGapHour
+}
+
+// APIConsumerLedgerRequestsByHour counts successful ledger requests by UTC hour.
+func APIConsumerLedgerRequestsByHour(usage []state.APIConsumerUsageBucket, from, until time.Time) map[int64]int64 {
+	ledger := map[int64]int64{}
+	for _, bucket := range usage {
+		minute := bucket.WindowStart.UTC()
+		if !minute.Before(from) && minute.Before(until) {
+			ledger[minute.Truncate(time.Hour).Unix()] += bucket.RequestCount - bucket.ErrorCount
+		}
+	}
+	return ledger
 }
 
 // CheckAPIConsumerUsageCompleteness evaluates [from, until), which callers
 // align to whole UTC hours that telemetry has had time to settle.
 func CheckAPIConsumerUsageCompleteness(usage []state.APIConsumerUsageBucket, telemetry []state.APIConsumerTelemetryHour, from, until time.Time) APIConsumerUsageCompleteness {
 	result := APIConsumerUsageCompleteness{CheckedFrom: from, CheckedUntil: until}
-	ledger := map[int64]int64{}
-	for _, bucket := range usage {
-		minute := bucket.WindowStart.UTC()
-		if minute.Before(from) || !minute.Before(until) {
-			continue
-		}
-		ledger[minute.Truncate(time.Hour).Unix()] += bucket.RequestCount - bucket.ErrorCount
-	}
+	ledger := APIConsumerLedgerRequestsByHour(usage, from, until)
 	observed := map[int64]int64{}
 	for _, hour := range telemetry {
 		at := hour.Hour.UTC().Truncate(time.Hour)
@@ -75,10 +82,16 @@ func CheckAPIConsumerUsageCompleteness(usage []state.APIConsumerUsageBucket, tel
 		result.TelemetryRequests += seen
 		result.ConfirmedRequests += min(billed, seen)
 		result.MissingRequests += max(0, seen-billed)
+		if seen > billed {
+			result.GapHours = append(result.GapHours, state.BillingRunUsageGapHour{
+				Hour: time.Unix(h, 0).UTC(), LedgerRequests: billed, TelemetryRequests: seen, RequiredRequests: seen,
+			})
+		}
 		if billed > 0 && seen == 0 {
 			result.HoursWithoutTelemetry++
 		}
 	}
+	slices.SortFunc(result.GapHours, func(a, b state.BillingRunUsageGapHour) int { return a.Hour.Compare(b.Hour) })
 	switch {
 	case result.MissingRequests > 0:
 		result.Status = CompletenessGapsDetected

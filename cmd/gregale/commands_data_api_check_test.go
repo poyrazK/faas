@@ -84,7 +84,7 @@ func TestDataAPICheckOfflineReportsCompatibilityAndExactTypeFreshness(t *testing
 			case "body-edited":
 				original = bytes.Replace(original, []byte(`"body": string`), []byte(`"body": number`), 1)
 			case "oversized":
-				original = bytes.Repeat([]byte("x"), api.AppTaskDefaultMaxOutputBytes+1)
+				original = bytes.Repeat([]byte("x"), api.DataAPIContractArtifactBytes+1)
 			}
 			if scenario == "missing-types" {
 				if err := os.Remove(types); err != nil {

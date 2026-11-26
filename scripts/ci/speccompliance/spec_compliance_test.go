@@ -869,6 +869,7 @@ var dtoExclude = map[string]bool{
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
+	"DataAPIInspectionIdentity":      true, // Nested inline in DataAPIInspectionResponse.
 	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
 	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
@@ -1818,6 +1819,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "data_api_change_events.go"),       // ADR-20261022121642 runtime change hook publications.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
+		filepath.Join(root, "pkg", "api", "data_api_inspection.go"),          // Data API inspection request and response.
 		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "data_api_runtime.go"),             // ADR-20261031095954 runtime served by apid.
 		filepath.Join(root, "pkg", "api", "data_api_status.go"),              // ADR-20261022121642 amd 1: Data API status and change hook reports.
@@ -2227,8 +2229,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1502, ADR-1507 statement invoice exports
 		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1503 month-end billing runs
-		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1506 consumer billing self-service
-		filepath.Join(root, "pkg", "api", "consumer_signup.go"),       // ADR-20261021143000 consumer self-service sign-up
+		filepath.Join(root, "pkg", "api", "billing_run_draft_exports.go"),
+		filepath.Join(root, "pkg", "api", "billing_run_collections.go"),
+		filepath.Join(root, "pkg", "api", "consumer_billing.go"), // ADR-1506 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "consumer_billing_progress.go"),
+		filepath.Join(root, "pkg", "apid", "apidserver", "handlers_api_monetization_funnel.go"),
+		filepath.Join(root, "pkg", "api", "consumer_signup.go"), // ADR-20261021143000 consumer self-service sign-up
 		filepath.Join(root, "pkg", "api", "consumer_credit_packs.go"),
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans

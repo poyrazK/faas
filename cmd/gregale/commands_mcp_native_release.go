@@ -394,8 +394,8 @@ func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s m
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds*5+120)*time.Second)
 	defer cancel()
 	if runtime != mcpWorkerRuntimeNode {
-		return finishMCPNativeRelease(ctx, s, state, quiet, runMCPBuiltinTaskGate(ctx, runtime, p.WorkerPath, s.Fingerprint, state+".gate",
-			time.Duration(p.TimeoutSeconds)*time.Second, gatePlan["start"].([]string), gatePlan["drain"].([]string)), nil)
+		return finishMCPNativeRelease(ctx, s, state, quiet, runMCPBuiltinTaskGate(ctx, runtime, p, state, s.Fingerprint,
+			gatePlan["start"].([]string), gatePlan["drain"].([]string)), nil)
 	}
 	command := exec.CommandContext(ctx, "node", "tasks-release.js", f.Name())
 	command.Dir = p.WorkerPath
@@ -856,7 +856,9 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		return err
 	}
 	if !isWorkerApp(candidate) || candidate.Manifest.WorkerReplicas == nil || candidate.Manifest.WorkerReplicas.Min < 1 {
-		return errors.New("candidate must be a worker app with at least one replica")
+		// A candidate created with `deploy --create-only` has no replica
+		// setting until its first deploy; the operator sets it explicitly.
+		return fmt.Errorf("candidate must be a worker app with at least one replica; run `gregale workers scale %s --min 1` before the release", p.WorkerApp)
 	}
 	if !s.ServingCaptured {
 		instances, err := c.ListInstances(ctx, p.WorkerApp)
@@ -928,19 +930,31 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			return err
 		}
 	}
-	s.Stage = "deploying_worker"
-	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
-		return err
+	// The gate already required a starter worker; an unknown one keeps the
+	// Node order.
+	runtime, _ := mcpNativeWorkerRuntime(p.WorkerPath)
+	worker := func() error {
+		s.Stage = "deploying_worker"
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
+			return err
+		}
+		return mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state)
 	}
-	if err := mcpNativeDeploy(ctx, c, p.WorkerPath, p.WorkerApp, false, s, state); err != nil {
-		return err
+	web := func() error {
+		s.Stage = "deploying_web"
+		if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
+			return err
+		}
+		return mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state)
 	}
-	s.Stage = "deploying_web"
-	if err := saveMCPNativeStateContext(ctx, state, s); err != nil {
-		return err
-	}
-	if err := mcpNativeDeploy(ctx, c, p.WebPath, p.WebApp, true, s, state); err != nil {
-		return err
+	for _, role := range mcpNativeDeployOrder(runtime) {
+		step := worker
+		if role == "web" {
+			step = web
+		}
+		if err := step(); err != nil {
+			return err
+		}
 	}
 	if err := mcpNativeVerifyEndpoint(ctx, c, p, s); err != nil {
 		return err
@@ -961,6 +975,18 @@ func startMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// mcpNativeDeployOrder names the roles a release deploys, in order. The Node
+// gate migrates before it starts replacements. A Go or Python release migrates
+// in the web release command (ADR-20261123160000 amendment 1), so the staged
+// web deployment goes first and the candidate worker starts against the
+// migrated schema.
+func mcpNativeDeployOrder(runtime string) []string {
+	if runtime == mcpWorkerRuntimeGo || runtime == mcpWorkerRuntimePython {
+		return []string{"web", "worker"}
+	}
+	return []string{"worker", "web"}
 }
 
 var mcpNativeCheckWorkers = checkMCPNativeWorkers
@@ -987,7 +1013,7 @@ func checkMCPNativeWorkers(ctx context.Context, c *Client, p mcpNativeReleasePla
 	if runtime, err := mcpNativeWorkerRuntime(p.WorkerPath); err != nil {
 		return err
 	} else if runtime != mcpWorkerRuntimeNode {
-		return mcpBuiltinReplacementsReady(probeCtx, p.WorkerPath, s.WorkerIDs)
+		return mcpBuiltinReplacementsReady(probeCtx, c, p, s)
 	}
 	command := exec.CommandContext(probeCtx, "node", "tasks-release-readiness.js")
 	command.Dir = p.WorkerPath

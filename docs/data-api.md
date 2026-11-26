@@ -20,8 +20,12 @@ dashboard) runs as a contract task: one fixed command inside a fresh VM from
 the app's live deployment, through `POST /v1/apps/{slug}/data-api/contract-tasks`
 with `{"kind": "types" | "validators" | "schema"}` and
 `GET /v1/apps/{slug}/data-api/contract-tasks/{id}`. These routes belong to the
-Data API, so they do not need the general app-task API released to the account;
-the receipt is an ordinary app task receipt with the output in `stdout_tail`.
+Data API, so they do not need the general app-task API released to the account. The current CLI requests
+`?output=artifact` on creation and reads the ordinary task receipt to track completion.
+It then downloads the artifact from the same task URL with `?output=artifact`,
+verifies its SHA-256 and matches the deployment ID in the response. Downloads are
+limited to 8 MiB and require the task's deployment to still be live. Older
+management APIs return the inline `stdout_tail` result with the 1 MiB limit.
 
 For a complete application starting point, run
 `gregale init --template data-api-starter --path notes`. The
@@ -971,7 +975,7 @@ the runtime route makes the CLI fall back to the runtime it carries, and it says
 so. Any other download failure stops the deploy.
 
 A running API reports the version it was built from as `runtime_version` on
-`/healthz`. `gregale data-api health NAME` compares it with the version the
+`/__gregale/ready`. `gregale data-api health NAME` compares it with the version the
 control plane serves. A different version, or a runtime old enough to report
 none, is listed as `runtime_not_current`. The finding leaves the health status
 unchanged, because the old runtime still serves requests. To upgrade the
@@ -1268,20 +1272,20 @@ off the last of public reads and public RPCs.
 The rule covers the whole path, but only responses the runtime marks as
 `Cache-Control: public` are stored. Those are successful (`200`) anonymous
 reads of relations and public RPC calls in the default schema, using the default JSON
-representation: no `Range`, `Range-Unit`, `Prefer`, `Cookie` or other-schema
-`Accept-Profile` header, and an `Accept` of `application/json`, `text/plain` or
-`*/*`. Every other response stays `no-store`. Signed-in and server-key requests
-always bypass the edge cache, because they carry `Authorization`.
+representation. Requests with `Range`, `Range-Unit`, `Prefer`, `Cookie` or
+`Authorization` bypass the cache. An explicit `Accept` must be
+`application/json` or `*/*`. The runtime only marks JSON from the default
+schema as public.
 
 A cached response is shared across origins, so with caching on, anonymous
 responses send `Access-Control-Allow-Origin: *` instead of varying on `Origin`.
 Any website can then read your public rows, which anyone could already fetch
 directly. Rate limits apply only to requests that reach the API.
 
-The cache key is the method, host, path and query string. A client that sends a
-representation header for a URL that is already cached gets the cached JSON
-instead. Page with `limit` and `offset` query parameters, and keep exact counts,
-CSV and other schemas on signed-in requests.
+The cache key includes the method, host, path, query string, `Accept` and
+`Accept-Profile`. Requests for CSV, ranges or exact counts reach the Data API
+and follow its normal authorization and response rules, including when the
+same URL already has a cached JSON response.
 
 Changes appear once the max age passes. To show them sooner, purge by tag. Each
 cached response is tagged `data-api` plus `data-api:SCHEMA.RELATION` for every
@@ -1858,10 +1862,10 @@ gregale data-api types notes-data --output src/database.types.ts
 
 Refresh requests the existing fresh app restart, which rebuilds the schema
 cache. It may interrupt in-flight requests. With `--wait`, success requires the
-accepted restart to complete and the Data API's public HTTPS `/healthz` to return
-`{"ready":true}`. The CLI uses the app's canonical URL, falling back to its
-platform URL, and sends no account credentials to the health endpoint. Your
-ingress settings must allow the CLI to reach it.
+accepted restart to complete and the Data API's public HTTPS
+`/__gregale/ready` to return `{"ready":true}`. The CLI uses the app's canonical
+URL when available and sends no account credentials to the readiness endpoint.
+Your ingress settings must allow the CLI to reach it.
 
 One deadline covers app lookup, restart admission, completion and readiness.
 It defaults to five minutes; `--timeout` accepts a positive duration up to one
@@ -2177,9 +2181,10 @@ problem responses and `X-Request-Id`. Database errors retain PostgREST's error
 format. RPC routes advertise POST only. Refresh the running app after migrations
 to update this contract, as with generated types and the serving fingerprint.
 
-Authenticated `/openapi.json` describes the generated API; `/healthz` reports
-engine readiness. Browser origins must be explicitly allowed. The service
-rejects missing, expired, wrong-audience and invalid tokens with HTTP 401.
+Authenticated `/openapi.json` describes the generated API.
+`/__gregale/ready` reports engine readiness. Browser origins must be explicitly
+allowed. The service rejects missing, expired, wrong-audience and invalid
+tokens with HTTP 401.
 
 V1 bounds each instance to two database connections, 1,000 returned rows,
 1 MiB request bodies, 16 MiB normal REST/RPC response bodies and a 15-second
@@ -2431,7 +2436,7 @@ RLS-filtered rows and exact count. Allowed origins can read `Content-Range` and
 `Preference-Applied`; an expired JWT returns a readable 401. A blocked origin
 produces status 0, which browsers also use for network failures. CORS governs
 browser access; JWT verification and database RLS enforce authorization.
-`/healthz` requires no application token and returns no application data.
+`/__gregale/ready` requires no application token and returns no application data.
 
 Run `make data-api-browser-acceptance` with `DATA_API_CHROMIUM_BIN` pointing to
 Chromium, plus the disposable PostgreSQL URL and pinned PostgREST executable
@@ -2982,8 +2987,8 @@ when grants are missing; use `--apply` to complete grant setup.
 The runtime's authenticated `GET /__gregale/schema` returns only
 `{"ready":true,"version":1,"fingerprint":"<64 lowercase hex characters>"}`.
 It uses the same application JWT verification as data requests and requires
-PostgREST readiness. Responses are not cached. `/healthz` remains an
-unauthenticated readiness probe and exposes no fingerprint or schema details.
+PostgREST readiness. Responses are not cached. The unauthenticated
+`/__gregale/ready` probe exposes no fingerprint or schema details.
 
 The fingerprint uses the same normalized catalog as type generation and is
 captured once at runtime startup, alongside the RPC allowlist. It is never
@@ -3861,15 +3866,17 @@ JWT. The default recent window is 15 minutes; one 30-second deadline covers the
 report (`--timeout` accepts up to one hour). Individual public probes have a
 five-second deadline. Probing may wake a parked app through normal routing.
 
-`/livez` returns `200 {"version":1,"live":true}` when the gateway can handle the
-request. It performs no engine, JWT or database work. `/healthz` retains engine
-SQL readiness and returns HTTP 200 or 503 with `ready`, `live`, `version: 1`,
-safe `checks` and an `admission` snapshot. Both bypass request admission and use
-`Cache-Control: no-store`. Liveness does not prove startup completion or database
-availability; startup failures and engine exit still stop the production runtime.
-Keep deployment health checks on `/healthz`.
+`/livez` returns `200 {"version":1,"live":true}` when the runtime process can
+handle the request. It performs no engine, JWT or database work. The CLI reads
+engine and SQL readiness from `/__gregale/ready`, which returns HTTP 200 or 503
+with `ready`, `live`, `version: 1`, safe `checks` and an `admission` snapshot.
+These probes bypass request admission and use `Cache-Control: no-store`.
+Use `/healthz` for deployment health checks. On public ingress the edge can
+answer that path from instance state. The CLI tries `/healthz` when an older
+runtime returns 404 on `/__gregale/ready`. If the edge answers the fallback,
+run `gregale data-api deploy NAME` to add the runtime readiness endpoint.
 
-A ready `/healthz` answer is reused for up to 5 seconds, so polling a healthy API
+A ready runtime observation is reused for up to 5 seconds, so polling a healthy API
 reaches the database at most once per interval; concurrent checks share one run.
 An unready answer is never reused, and an engine restart, schema reload, snapshot
 or restore forgets the cached answer, so readiness never describes an engine that

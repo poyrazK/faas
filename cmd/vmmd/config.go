@@ -302,6 +302,9 @@ type Config struct {
 	// for opt-in HTTPS calls to <service>.internal. Empty disables guest
 	// staging and the :443 netns admission rule.
 	ServiceProxyCAPath string `toml:"service_proxy_ca_path"`
+	// DataAPIInspectionCAPath names operator-owned public CA certificates for
+	// the native PostgreSQL inspection; empty leaves the probe unavailable.
+	DataAPIInspectionCAPath string `toml:"data_api_inspection_ca_path"`
 
 	// ScheddClientTLS is the client mTLS material vmmd uses to dial
 	// schedd for the capacity publisher (ADR-052 / issue #95 slice 2).

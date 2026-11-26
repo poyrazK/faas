@@ -58,6 +58,14 @@ func appTaskResponse(row state.AppTask) api.AppTaskResponse {
 		CreatedAt:           row.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:           row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	// Artifacts and inspection metadata have dedicated, scoped readers even
+	// though the app-task transport carries their output.
+	if api.IsDataAPIContractArtifactTask(row.Command, row.CommandShell) || api.IsDataAPIWriteInspectionCommand(row.Command, row.CommandShell) {
+		resp.StdoutTail = ""
+	}
+	if api.IsDataAPIWriteInspectionCommand(row.Command, row.CommandShell) {
+		resp.StderrTail = ""
+	}
 	if row.ExitCode != nil {
 		value := *row.ExitCode
 		resp.ExitCode = &value

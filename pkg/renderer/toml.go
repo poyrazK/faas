@@ -271,6 +271,8 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		return dc.ServiceProxyHTTPSListen, nil
 	case "service_proxy_ca_path":
 		return dc.ServiceProxyCAPath, nil
+	case "data_api_inspection_ca_path":
+		return dc.DataAPIInspectionCAPath, nil
 	case "service_proxy_tls_cert_path", "service_proxy_tls_key_path", "service_proxy_tls_ca_path":
 		return tlsMaterialValue(dc.ServiceProxyTLS, key, "service_proxy_tls_"), nil
 	case "schedd_tls_cert_path", "schedd_tls_key_path", "schedd_tls_ca_path":

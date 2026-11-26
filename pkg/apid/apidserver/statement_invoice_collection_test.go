@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,6 +27,53 @@ func finalizedMonthStatement(t *testing.T, f billingRunFixture, slug, consumerID
 		t.Fatalf("finalize: %d %s", res.Code, res.Body)
 	}
 	return statements + "/" + statement.ID + "/invoice"
+}
+
+func TestStripeMonetizationSetup(t *testing.T) {
+	f := newBillingRunFixture(t)
+	const connection = "/v1/account/billing-connections/stripe"
+	const setup = connection + "/setup"
+	if res := f.e.Do(t, http.MethodDelete, connection, nil, nil); res.Code != http.StatusNoContent {
+		t.Fatalf("delete fixture key: %d %s", res.Code, res.Body)
+	}
+	connect := func(req api.PutStripeSetupRequest, want int) api.BillingConnectionResponse {
+		t.Helper()
+		res := f.e.Do(t, http.MethodPut, setup, req, nil)
+		if res.Code != want || strings.Contains(res.Body.String(), req.SecretKey) {
+			t.Fatalf("setup: %d %s, want %d and no plaintext key", res.Code, res.Body, want)
+		}
+		var conn api.BillingConnectionResponse
+		if want == http.StatusOK {
+			if err := json.Unmarshal(res.Body.Bytes(), &conn); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return conn
+	}
+	connect(api.PutStripeSetupRequest{SecretKey: "sk_test_fullAccess"}, http.StatusUnprocessableEntity)
+	created := connect(api.PutStripeSetupRequest{SecretKey: "rk_test_51abcdWXYZ"}, http.StatusOK)
+	if created.Livemode || created.Collection != "none" || created.KeyLast4 != "WXYZ" || created.UpdatedAt.IsZero() {
+		t.Fatalf("new connection = %+v", created)
+	}
+	connect(api.PutStripeSetupRequest{SecretKey: "rk_test_51abcdNEXT"}, http.StatusConflict)
+	res := f.e.Do(t, http.MethodPut, connection, api.PutBillingConnectionRequest{
+		SecretKey: "rk_test_51abcdSEND", Collection: "send", DaysUntilDue: 14, AutomaticTax: true,
+	}, nil)
+	var before api.BillingConnectionResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &before); err != nil || res.Code != http.StatusOK {
+		t.Fatalf("set collection: %d %s", res.Code, res.Body)
+	}
+	connect(api.PutStripeSetupRequest{SecretKey: "rk_test_51abcdNEXT", ExpectedUpdatedAt: &created.UpdatedAt}, http.StatusConflict)
+	connect(api.PutStripeSetupRequest{SecretKey: "rk_live_51abcdLIVE", ExpectedUpdatedAt: &before.UpdatedAt}, http.StatusUnprocessableEntity)
+	rotated := connect(api.PutStripeSetupRequest{SecretKey: "rk_test_51abcdNEXT", ExpectedUpdatedAt: &before.UpdatedAt}, http.StatusOK)
+	if rotated.KeyLast4 != "NEXT" || rotated.Collection != "send" || rotated.DaysUntilDue != 14 ||
+		!rotated.AutomaticTax || rotated.Livemode || !rotated.UpdatedAt.After(before.UpdatedAt) {
+		t.Fatalf("rotated connection = %+v", rotated)
+	}
+	connect(api.PutStripeSetupRequest{SecretKey: "rk_test_51abcdLATE", ExpectedUpdatedAt: &before.UpdatedAt}, http.StatusConflict)
+	if servedPaths(t, f.e)[setup] {
+		t.Fatal("Stripe setup escaped the internal OpenAPI filter")
+	}
 }
 
 // adr: 1311 — a connection set to collect has Stripe finalize each export so
@@ -102,5 +150,56 @@ func TestStatementInvoiceCollection(t *testing.T) {
 	created := lago.invoices[0].body["invoice"].(map[string]any)
 	if lagoExport.Collection != "charge" || created["skip_psp"] != false {
 		t.Fatalf("lago export = %+v, invoice = %v", lagoExport, created)
+	}
+}
+
+func TestStatementInvoiceDraftExport(t *testing.T) {
+	f := newBillingRunFixture(t)
+	f.stripe.trackDrafts = true
+	connect := func(collection string) {
+		t.Helper()
+		res := f.e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe",
+			api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ", Collection: collection}, nil)
+		if res.Code != http.StatusOK {
+			t.Fatalf("connect %s: %d %s", collection, res.Code, res.Body)
+		}
+	}
+	apidserver.MustSeedApp(t, f.e, "draft-review")
+	if res := f.e.Do(t, http.MethodPost, "/v1/apps/draft-review/rate-cards", api.CreateAPIConsumerRateCardRequest{
+		Currency: "USD", PriceMillicentsPerUnit: 1250, EffectiveFrom: &f.month,
+	}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("rate card: %d %s", res.Code, res.Body)
+	}
+	collect := f.consumer(t, "draft-review", "cus_COLLECT1", 300, "")
+	collectPath := finalizedMonthStatement(t, f, "draft-review", collect.ID)
+	testMode := map[string]bool{"livemode": false}
+	connect("charge")
+	exportStatement(t, f, collectPath+"/draft", testMode, http.StatusConflict)
+	if f.stripe.invoices != 0 {
+		t.Fatal("draft path created an invoice while charge collection was active")
+	}
+
+	// A regular export that stopped before finalizing retains its original
+	// collection mode even after an operator changes the connection.
+	f.stripe.failNextFinalize = true
+	exportStatement(t, f, collectPath, api.CreateStatementInvoiceRequest{}, http.StatusBadGateway)
+	connect("none")
+	exportStatement(t, f, collectPath+"/draft", testMode, http.StatusConflict)
+	if f.stripe.invoices != 1 || f.stripe.finalized["in_1"] == "true" {
+		t.Fatal("draft path resumed the collecting export")
+	}
+
+	consumer := f.consumer(t, "draft-review", "cus_DRAFT1", 300, "")
+	path := finalizedMonthStatement(t, f, "draft-review", consumer.ID)
+	exportStatement(t, f, path+"/draft", map[string]bool{}, http.StatusBadRequest)
+	exportStatement(t, f, path+"/draft", map[string]bool{"livemode": true}, http.StatusConflict)
+	if f.stripe.invoices != 1 {
+		t.Fatal("draft path created an invoice in a different Stripe mode")
+	}
+	first := exportStatement(t, f, path+"/draft", testMode, http.StatusOK)
+	retry := exportStatement(t, f, path+"/draft", testMode, http.StatusOK)
+	if first.Collection != "none" || first.InvoiceID != "in_2" || retry.InvoiceID != first.InvoiceID ||
+		f.stripe.invoices != 2 || f.stripe.finalized["in_2"] == "true" {
+		t.Fatalf("draft exports = %+v and %+v, invoices = %d, finalized = %v", first, retry, f.stripe.invoices, f.stripe.finalized)
 	}
 }

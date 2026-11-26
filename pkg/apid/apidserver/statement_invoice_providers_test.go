@@ -285,12 +285,12 @@ func (f *fakeLago) invoiceJSON(i int) string {
 		i+1, inv.status, inv.paymentStatus, fees, fees, paid, fees-paid, i+1, metadata)
 }
 
-func exportStatement(t *testing.T, f billingRunFixture, path string, req api.CreateStatementInvoiceRequest, want int) api.StatementInvoiceExportResponse {
+func exportStatement(t *testing.T, f billingRunFixture, path string, req any, want int) api.StatementInvoiceExportResponse {
 	t.Helper()
 	res := f.e.Do(t, http.MethodPost, path, req, nil)
 	var out api.StatementInvoiceExportResponse
 	if res.Code != want || (want == http.StatusOK && json.Unmarshal(res.Body.Bytes(), &out) != nil) {
-		t.Fatalf("export %s via %s: %d %s, want %d", path, req.Provider, res.Code, res.Body, want)
+		t.Fatalf("export %s: %d %s, want %d", path, res.Code, res.Body, want)
 	}
 	return out
 }

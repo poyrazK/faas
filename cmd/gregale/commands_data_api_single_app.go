@@ -188,7 +188,7 @@ func deploySingleAppDataAPI(ctx context.Context, client *api.Client, slug, scope
 }
 
 // deployDataAPIArchive writes the source archive and deploys it to the app.
-func deployDataAPIArchive(ctx context.Context, slug, scope, timeout string, write func(dest string) error) int {
+func deployDataAPIArchive(ctx context.Context, slug, scope, timeout string, write func(dest string) error, onQueued ...func(api.DeploymentResponse)) int {
 	dir, err := os.MkdirTemp("", "gregale-data-api-*")
 	if err != nil {
 		return printErr("Could not prepare the Data API archive", err)
@@ -208,7 +208,11 @@ func deployDataAPIArchive(ctx context.Context, slug, scope, timeout string, writ
 	// Startup readiness stays on /healthz (SQL ready); liveness checks only
 	// that the gateway process answers, so a saturated pool or a database
 	// blip never gets a healthy runtime destroyed.
-	return cmdDeployTarballToExisting(ctx, deployArgs, true, deployExecution{livenessProbe: &api.DeploymentLivenessProbe{Path: api.DataAPILivenessPath}})
+	execution := deployExecution{livenessProbe: &api.DeploymentLivenessProbe{Path: api.DataAPILivenessPath}}
+	if len(onQueued) > 0 {
+		execution.onQueued = onQueued[0]
+	}
+	return cmdDeployTarballToExisting(ctx, deployArgs, true, execution)
 }
 
 func cmdDataAPIDeploy(args []string) int {
