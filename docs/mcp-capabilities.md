@@ -18,6 +18,8 @@ Current protocol: `2026-07-28`. Legacy protocol: `2025-11-25`. Legacy protocol c
 | Browser CORS preflight and protocol header exposure | supported | supported | supported |
 | Encrypted PostgreSQL Tasks and separate web/worker/observer roles | opt-in; Tasks use modern protocol | opt-in; Tasks use modern protocol | opt-in; Tasks use modern protocol |
 | Durable task form input and resume | opt-in; requires client form support | opt-in; requires client form support | opt-in; requires client form support |
+| Caller-scoped retained Task inbox | modern external OAuth; requires inbox index | modern external OAuth; requires inbox index | modern external OAuth; requires inbox index |
+| Reviewed Task form input by Task ID | modern external OAuth | modern external OAuth | modern external OAuth |
 | Task/resource updates and catalog list-change subscriptions | modern protocol | modern protocol | modern protocol |
 | Runtime catalog revision, digest and expected-digest readiness gate | supported; process-local catalog | supported; process-local catalog | supported; process-local catalog |
 | Updates across web replicas for application-owned resources | requires application-supplied shared adapter | requires application-supplied shared adapter | requires application-supplied shared adapter |
