@@ -123,8 +123,6 @@ type wafReviewAcc struct {
 	group   api.EdgeWAFReviewGroup
 	clients map[string]int
 	scanner int
-	// multi counts detections that also scored on another CRS rule.
-	multi int
 }
 
 // WAFReview groups detections by edge rule, CRS rule and review path and
@@ -142,16 +140,14 @@ func WAFReview(since time.Time, events []state.EdgeRuleEvent, rules []state.Edge
 	for _, e := range events {
 		path := reviewPath(e.Path)
 		scanner := e.ClientIP != "" && breadth[e.ClientIP] >= api.EdgeWAFReviewScannerPaths
-		crsIDs := slices.Compact(slices.Sorted(slices.Values(e.WAFRuleIDs)))
-		multi := len(crsIDs) > 1
-		for _, crs := range crsIDs {
+		for _, crs := range slices.Compact(slices.Sorted(slices.Values(e.WAFRuleIDs))) {
 			k := wafReviewKey{rule: e.RuleID, crs: crs, path: path}
 			acc := groups[k]
 			if acc == nil {
 				acc = newWAFReviewAcc(k, byID[e.RuleID])
 				groups[k] = acc
 			}
-			acc.add(e, scanner, multi)
+			acc.add(e, scanner)
 		}
 	}
 	out := api.EdgeWAFReviewResponse{Since: since, Scanned: len(events), Truncated: truncated, Groups: make([]api.EdgeWAFReviewGroup, 0, len(groups))}
@@ -169,11 +165,13 @@ func WAFReview(since time.Time, events []state.EdgeRuleEvent, rules []state.Edge
 }
 
 // clientPathBreadth counts the distinct review paths each client was
-// flagged on.
+// flagged on by a CRS rule. Oversized detections (uninspected headers or
+// URI, ADR-831 amendments 20 and 21) carry no CRS rule and do not count: a
+// client that sends long queries to many paths is not scanning.
 func clientPathBreadth(events []state.EdgeRuleEvent) map[string]int {
 	paths := map[string]map[string]bool{}
 	for _, e := range events {
-		if e.ClientIP == "" {
+		if e.ClientIP == "" || len(e.WAFRuleIDs) == 0 {
 			continue
 		}
 		if paths[e.ClientIP] == nil {
@@ -202,10 +200,7 @@ func newWAFReviewAcc(k wafReviewKey, rule state.EdgeRule) *wafReviewAcc {
 }
 
 // add counts one detection; events arrive newest first.
-func (a *wafReviewAcc) add(e state.EdgeRuleEvent, scanner, multi bool) {
-	if multi {
-		a.multi++
-	}
+func (a *wafReviewAcc) add(e state.EdgeRuleEvent, scanner bool) {
 	g := &a.group
 	g.Events++
 	switch e.Outcome {
@@ -240,34 +235,30 @@ func (a *wafReviewAcc) finish() api.EdgeWAFReviewGroup {
 	}
 	g.TopClientPercent = top * 100 / g.Events
 	g.ScannerPercent = a.scanner * 100 / g.Events
-	g.Assessment, g.Reason = assessWAFReviewGroup(g, a.multi*100/g.Events)
+	g.Assessment, g.Reason = assessWAFReviewGroup(g)
 	return g
 }
 
 // assessWAFReviewGroup labels a group. Scanning beats the catalog: a
 // scanner that trips a rule legitimate traffic also trips is still an
-// attack. Spread across clients alone is not enough to call a group a false
-// positive: three addresses probing one endpoint look the same (ADR-831
-// amendment 21). Benign requests that score usually trip one rule, while
-// crafted payloads usually trip several, so a group whose detections also
-// scored on other rules stays for review, even for a catalogued rule.
-func assessWAFReviewGroup(g api.EdgeWAFReviewGroup, multiPercent int) (string, string) {
-	spread := g.Clients >= api.EdgeWAFReviewMinClients && g.TopClientPercent <= 50
-	crafted := multiPercent > api.EdgeWAFReviewMaxMultiRulePercent
+// attack. Only the catalog makes a likely false positive: spread across
+// clients is what a false positive looks like, but a few addresses probing
+// one endpoint look the same, and the review must not steer a customer into
+// excluding a signature an attacker is hitting (ADR-831 amendment 21). A
+// spread group stays for review, and its reason says it is spread.
+func assessWAFReviewGroup(g api.EdgeWAFReviewGroup) (string, string) {
 	switch {
 	case g.Excluded:
 		return api.EdgeWAFReviewExcluded, fmt.Sprintf("the rule excludes CRS %d now; these detections came before the exclusion", g.CRSRuleID)
 	case g.ScannerPercent >= 50:
 		return api.EdgeWAFReviewLikelyAttack, fmt.Sprintf("%d%% of these detections came from clients flagged on %d or more paths, as scanners are",
 			g.ScannerPercent, api.EdgeWAFReviewScannerPaths)
-	case crafted && (spread || g.KnownFalsePositive != ""):
-		return api.EdgeWAFReviewUndecided, fmt.Sprintf("%d%% of these detections also tripped other CRS rules, as crafted payloads do, "+
-			"while false positives usually trip one; open the example requests before excluding it", multiPercent)
 	case g.KnownFalsePositive != "":
 		return api.EdgeWAFReviewLikelyFalsePositive, "a documented false positive: " + g.KnownFalsePositive
-	case spread:
-		return api.EdgeWAFReviewLikelyFalsePositive, fmt.Sprintf("%d clients were flagged on this path, none sent most of the detections, "+
-			"and the requests tripped only this CRS rule; attacks usually come from a few clients across many paths", g.Clients)
+	case g.Clients >= api.EdgeWAFReviewMinClients && g.TopClientPercent <= 50:
+		return api.EdgeWAFReviewUndecided, fmt.Sprintf("%d clients were flagged on this path and none sent most of the detections, "+
+			"as with a false positive, but a few addresses probing one endpoint look the same; "+
+			"open the example requests before excluding it", g.Clients)
 	}
 	return api.EdgeWAFReviewUndecided, "too few clients to tell; open the example requests"
 }

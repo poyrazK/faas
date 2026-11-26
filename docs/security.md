@@ -289,9 +289,13 @@ OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
 remote file inclusion, command injection, PHP, Node.js and Java injection
 (Log4Shell, Spring4Shell), prototype pollution, SSRF, session fixation,
 disallowed methods, scanners, and header injection. In `warn` and `block`
-these check the URL, query and headers on every request; protocol
-enforcement (malformed requests) is checked only on sampled requests, since
-the edge itself refuses most malformed requests. It works the same on
+these check the URL, query and headers on every request. Protocol
+enforcement (malformed requests) runs only on sampled requests, which under
+`warn` and `block` means requests with a body or whose in-path check was
+skipped, since the edge itself refuses most malformed requests. Methods other
+than GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE (WebDAV's `PROPFIND`,
+`PURGE`, `QUERY`) score as rule 911100, which `block` refuses: exclude 911100
+on rules for apps that use them. It works the same on
 `*.gregale.dev` and on your custom domains. `observe`, `warn` and `block` at
 paranoia level 1 are generally available; paranoia level 2 is in preview and
 runs in `observe` only. Warn and block reach accounts one by one as they
@@ -366,11 +370,12 @@ gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rul
 `edge-rules waf-review` groups the last 7 days of detections (your plan's
 event window caps it) by WAF rule, CRS rule and path, with IDs in paths
 grouped together (`/orders/{id}`). Each group says `likely_false_positive`
-(a known false positive from the table below, or several unrelated clients
-flagged on one path by requests that tripped only that CRS rule),
-`likely_attack` (clients flagged across many paths, as scanners are),
-`excluded`, or `review` (too few clients to tell, or requests that also
-tripped other CRS rules, as crafted payloads do, even from many clients), with an
+(a known false positive from the table below), `likely_attack` (clients
+flagged across many paths, as scanners are), `excluded`, or `review`. A
+`review` group's reason says when several unrelated clients were flagged on
+one path, which is how a false positive usually looks, but a few addresses
+probing one endpoint look the same, so open its example requests before
+excluding the rule. Each group comes with an
 example request ID to look up. The dashboard's Edge rules page shows the same
 review with an Exclude button. `edge-rules waf-exclude` adds or removes CRS
 rule IDs and keeps the rest of the rule; `edge-rules update --kind waf`
@@ -399,8 +404,9 @@ Exclude these rule IDs on rules that match such routes, or narrow the rule's
 | Content that is SQL, HTML or code: a docs search, a CMS editor, a snippet tool | 942100, 941160 | URL and body |
 
 The WAF accepts any `Content-Type`, or none, and the methods GET, HEAD,
-POST, OPTIONS, PUT, PATCH and DELETE; other methods are reported (rule
-911100).
+POST, OPTIONS, PUT, PATCH and DELETE; other methods score as rule 911100,
+which `warn` and `block` check in-path (exclude it if your app serves
+WebDAV or other methods).
 
 `warn` and `block` run at paranoia level 1. Level 2 detects more and
 produces more false positives; it is available in `observe` only. The

@@ -296,4 +296,9 @@ func TestBoundURI(t *testing.T) {
 	if !utf8.ValidString(got) {
 		t.Fatal("a cut URI is not valid UTF-8")
 	}
+	// Bytes are scored as sent: a NUL is not rewritten.
+	raw := "/q?x=%00\x00" + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes)
+	if got := boundURI(raw); !strings.HasPrefix(got, "/q?x=%00\x00") || len(got) != api.EdgeWAFMaxInspectURIBytes {
+		t.Fatalf("a cut URI changed its bytes: %q...", got[:12])
+	}
 }

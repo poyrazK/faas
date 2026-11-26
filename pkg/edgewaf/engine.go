@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
@@ -187,12 +188,17 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 // api.EdgeWAFMaxInspectURIBytes, cut on a character boundary (ADR-831
 // amendment 21). The gateway refuses a longer URI under warn and block before
 // any check runs; a sampled check scores the prefix, like a body past its
-// inspection limit.
+// inspection limit. The bytes are kept as sent (no safetext.Clean), so rules
+// that look for NUL or invalid encodings still see them.
 func boundURI(uri string) string {
 	if len(uri) <= api.EdgeWAFMaxInspectURIBytes {
 		return uri
 	}
-	return safetext.Truncate(uri, api.EdgeWAFMaxInspectURIBytes)
+	cut := api.EdgeWAFMaxInspectURIBytes
+	for back := 0; back < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(uri[cut]); back++ {
+		cut--
+	}
+	return uri[:cut]
 }
 
 // boundHeaders returns the headers a check scores: each value cut to

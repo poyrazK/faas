@@ -10316,14 +10316,10 @@ const (
 	EdgeWAFReviewMaxGroups = 50
 	// EdgeWAFReviewMinClients is how many distinct clients one CRS rule
 	// must flag on one path, none of them sending most of the detections,
-	// before the review calls it a likely false positive.
+	// before the review says the group is spread like a false positive. It
+	// stays `review`: a few addresses probing one endpoint look the same
+	// (ADR-831 amendment 21).
 	EdgeWAFReviewMinClients = 3
-	// EdgeWAFReviewMaxMultiRulePercent is the largest share of a group's
-	// detections that may also have scored on another CRS rule for the
-	// review to still call the group a likely false positive on client
-	// spread (ADR-831 amendment 21): crafted payloads usually trip several
-	// rules, benign false positives one.
-	EdgeWAFReviewMaxMultiRulePercent = 10
 	// EdgeWAFReviewScannerPaths is how many distinct paths a client must be
 	// flagged on in the window before the review treats it as a scanner.
 	EdgeWAFReviewScannerPaths = 5

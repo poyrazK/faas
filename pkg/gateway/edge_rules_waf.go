@@ -202,7 +202,13 @@ func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, a
 			// The header names the edge rule, not the CRS rule, so the
 			// response does not teach a caller which signature fired.
 			rec.installHeaderOps([]EdgeRuleHeaderOp{{Action: "set", Name: "X-WAF-Warning", Value: rule.ID}})
-			return false, nil
+			if !res.Oversized {
+				return false, nil
+			}
+			// An oversized detection scored nothing, and the request still
+			// reaches the app: sample it, so padding the query or headers
+			// cannot hide a body payload from the report (amendment 21).
+			return false, h.sampleEdgeRuleWAF(r, rule, sample)
 		}
 		// The in-path check has scored the headers and URI. Without a body,
 		// an off-path sample would only add the rule families the in-path

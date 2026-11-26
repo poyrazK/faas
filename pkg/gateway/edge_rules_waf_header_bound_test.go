@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,5 +102,29 @@ func TestWAFURIPastTheInspectionBoundIsADetection(t *testing.T) {
 				t.Fatal("an over-bound URI boxed the client")
 			}
 		})
+	}
+}
+
+// ADR-831 amendment 21: under warn, an oversized request still reaches the
+// app, so it is sampled: padding the query cannot hide a body payload from
+// the report.
+func TestWAFWarnOversizedRequestIsStillSampled(t *testing.T) {
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	rule := &EdgeRuleWAFResolved{ID: "rule-1", AccountID: "acct-1", ParanoiaLevel: 1, AnomalyThreshold: 5, Mode: api.EdgeWAFModeWarn}
+	inspector := &recordingWAFInspector{}
+	h := &Handler{edgeRules: wafRuleMatcher{rule: rule}, wafInspector: inspector,
+		wafInline: &fakeWAFInline{result: WAFInlineResult{Outcome: WAFInlineClean}}}
+	uri := "/api/comments?pad=" + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes)
+	r := httptest.NewRequest(http.MethodPost, "http://shop.example.test"+uri, strings.NewReader(`{"q":"' OR 1=1--"}`))
+	w := httptest.NewRecorder()
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
+	handled, submit := h.applyEdgeRuleWAF(rec, r, app, rec)
+	if handled || submit == nil {
+		t.Fatalf("handled=%v submit=%v, want the request passed and sampled", handled, submit != nil)
+	}
+	_, _ = io.ReadAll(r.Body)
+	submit()
+	if len(inspector.samples) != 1 || !strings.Contains(string(inspector.samples[0].Body), "OR 1=1") {
+		t.Fatalf("samples = %d, want one carrying the body", len(inspector.samples))
 	}
 }

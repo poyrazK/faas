@@ -1461,13 +1461,22 @@ its docs said.
 3. **The review could be steered.** Amendment 13 called a group a likely
    false positive when three or more clients were flagged on one path and
    none sent most of the detections, and the dashboard offered Exclude.
-   Three attacker addresses probing one endpoint met that bar, and so did
-   attacks on a rule in the false-positive catalog. A group now needs its
-   detections to have tripped only that CRS rule (at most
-   `api.EdgeWAFReviewMaxMultiRulePercent`, 10%, also tripped another) to be
-   called a likely false positive by spread or by the catalog: benign
-   requests that score usually trip one rule, crafted payloads several.
-   Otherwise it is `review`, with a reason saying so.
+   Three attacker addresses probing one endpoint met that bar. Counting how
+   many CRS rules each detection tripped does not separate the two: above
+   the default anomaly threshold every detection trips several rules, and
+   catalogued content (SQL, HTML) trips several of its family. So spread
+   alone now yields `review`, with a reason that says the group is spread
+   like a false positive and asks for the example requests to be read
+   first; only the catalog still yields `likely_false_positive`. Oversized
+   detections (amendments 20 and 21) carry no CRS rule and no longer count
+   toward a client's path breadth, so a client sending long queries to many
+   paths is not taken for a scanner.
+4. **Under `warn`, an oversized request was not sampled.** The request still
+   reaches the app, so padding the query past the bound would have hidden a
+   body payload from the report. Such a request is now sampled (its first
+   8 KiB of URI and its body prefix). `boundURI` cuts on bytes without
+   `safetext.Clean`, so rules that look for NUL or invalid encodings still
+   see them.
 
 Request bodies are still never blocked (amendment 4); the docs now say so
 first, not last, and point to `kind=validate` and the app's own handling.
@@ -1476,6 +1485,7 @@ domain is on the Public Suffix List (ADR-20261026100000 amendment 1).
 
 Tests: `TestCheckInline` (the added families and DELETE allowed),
 `TestBoundURI`, `TestWAFURIPastTheInspectionBoundIsADetection`,
-`TestWAFReviewSpreadAttackIsNotAFalsePositive`, and `TestBenignCorpus`,
+`TestWAFWarnOversizedRequestIsStillSampled`,
+`TestWAFReviewSpreadIsNotAFalsePositive`, and `TestBenignCorpus`,
 `TestCRSRegressionCorpus` and `TestInlineRuleSetCost` with
 `FAAS_WAF_FTW_DIR` set.
