@@ -432,7 +432,7 @@
     {{if .Data.WAFReview.Show}}
     <section class="card" id="waf-review" aria-labelledby="waf-review-heading">
       <h2 id="waf-review-heading">WAF review</h2>
-      <p class="muted">WAF detections grouped by CRS rule and path. Many unrelated clients flagged on one path usually means legitimate traffic; clients flagged across many paths are usually scanning. Excluding a CRS rule stops it counting on that WAF rule only. Detections are sampled, so counts are lower bounds.</p>
+      <p class="muted">WAF detections grouped by CRS rule and path. Only documented false positives are marked likely false positives. Many clients flagged on one path can be legitimate traffic or a few addresses probing it, so read the example requests before excluding; clients flagged across many paths are usually scanning. Excluding a CRS rule stops it counting on that WAF rule only. Detections are sampled, so counts are lower bounds.</p>
       {{if .Data.WAFReview.ErrorMessage}}<div class="flash error" role="alert">{{.Data.WAFReview.ErrorMessage}}</div>
       {{else if .Data.WAFReview.Groups}}
         <table aria-label="WAF review">

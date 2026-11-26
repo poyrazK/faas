@@ -20,7 +20,9 @@ package e2e_test
 // FAAS_E2E_WAF_LOAD_GATE=1 turns the report into the edge-waf-blocking
 // release gate (ADR-20261024082000): at 100-500 req/s each rate fails unless
 // the in-path check's p95 is at most 2 ms and at most 0.1% of checks were
-// skipped.
+// skipped. FAAS_E2E_WAF_LOAD_STRICT=1 also releases
+// edge_waf_strict_inspection, so the wider in-path rule set of ADR-831
+// amendment 21 is measured instead of the baseline set.
 
 import (
 	"bufio"
@@ -46,6 +48,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -111,6 +114,10 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 	}
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd, nil)
 	releaseEdgeFeatures(t, pool)
+	strict := os.Getenv("FAAS_E2E_WAF_LOAD_STRICT") == "1"
+	if strict {
+		releasePlatformFlags(t, pool, []string{platformflags.EdgeWAFStrictInspection}, "waf load e2e")
+	}
 	key := h.SeedAccount(ctx, api.PlanPro)
 	hosts := seedWAFLoadApps(t, h, pool, key, apps, mode)
 	resetEdgeRuleCache(t, h)
@@ -130,8 +137,8 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 			mode, got.attacksWarned, got.attacks, got.benignWarned, got.statuses)
 	}
 	gatewayPID := childPID(t, "gatewayd-internal")
-	t.Logf("in-path WAF load: %d apps, WAF mode %s, %ds per rate, gatewayd-internal pid %d, test GOMAXPROCS %d",
-		apps, mode, seconds, gatewayPID, runtime.GOMAXPROCS(0))
+	t.Logf("in-path WAF load: %d apps, WAF mode %s, strict inspection %v, %ds per rate, gatewayd-internal pid %d, test GOMAXPROCS %d",
+		apps, mode, strict, seconds, gatewayPID, runtime.GOMAXPROCS(0))
 	for _, rate := range rates {
 		before, cpuBefore := scrapeWAFInline(t, h), processCPUSeconds(gatewayPID)
 		got := driveWAFLoad(t, client, h.EdgeURL(), hosts, benign, attacks, rate, time.Duration(seconds)*time.Second)

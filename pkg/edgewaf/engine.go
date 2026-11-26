@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
@@ -50,6 +51,9 @@ type Result struct {
 	// name or value: a page on another host of a shared apps domain can plant
 	// such a cookie in a visitor's browser (ADR-831 amendment 18).
 	CookiesOnly bool
+	// Oversized is true when the URI was longer than a check scores
+	// (api.EdgeWAFURIExceedsInspection, ADR-831 amendment 21).
+	Oversized bool
 }
 
 // CRS assumes a website; platformPolicy and platformOverrides adapt it to a
@@ -161,7 +165,7 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 	defer func() { _ = tx.Close() }()
 	tx.ProcessConnection(s.ClientIP, 0, "", 0)
 	tx.SetServerName(s.Host)
-	tx.ProcessURI(s.URI, s.Method, s.Proto)
+	tx.ProcessURI(boundURI(s.URI), s.Method, s.Proto)
 	tx.AddRequestHeader("Host", s.Host)
 	for name, values := range boundHeaders(s.Header) {
 		for _, v := range values {
@@ -179,8 +183,45 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 	}
 	res := score(tx.MatchedRules(), s.ExcludeRuleIDs)
 	res.Detected = res.Score >= s.AnomalyThreshold
+	if s.Strict && api.EdgeWAFURIExceedsInspection(s.URI) {
+		// Only the prefix was scored. Report it as warn and block would
+		// treat it, so observe shows what block would refuse and a payload
+		// past the cut does not go unreported (ADR-831 amendment 21).
+		res.Detected, res.Oversized, res.CookiesOnly = true, true, false
+		if !slices.Contains(res.Categories, api.EdgeWAFCategoryUninspectedURI) {
+			res.Categories = append(res.Categories, api.EdgeWAFCategoryUninspectedURI)
+			slices.Sort(res.Categories)
+		}
+	}
 	tx.ProcessLogging()
 	return res, nil
+}
+
+// boundURI returns the URI a check scores: at most its first
+// api.EdgeWAFMaxInspectURIBytes (ADR-831 amendment 21), cut neither inside a
+// UTF-8 sequence nor inside a %XX escape, so the check never scores an
+// encoding the client did not send. The gateway refuses a longer URI under
+// warn and block before any check runs; a sampled check scores the prefix
+// and reports the URI as uninspected (evaluate). The bytes are kept as sent
+// (no safetext.Clean), so rules that look for NUL or invalid encodings still
+// see them. A path alone past the bound leaves no query to score.
+func boundURI(uri string) string {
+	if len(uri) <= api.EdgeWAFMaxInspectURIBytes {
+		return uri
+	}
+	cut := api.EdgeWAFMaxInspectURIBytes
+	for back := 0; back < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(uri[cut]); back++ {
+		cut--
+	}
+	// uri[cut] starts the dropped part; a '%' in the two bytes before it
+	// starts an escape the cut would split.
+	for _, back := range []int{1, 2} {
+		if cut-back >= 0 && uri[cut-back] == '%' {
+			cut -= back
+			break
+		}
+	}
+	return uri[:cut]
 }
 
 // boundHeaders returns the headers a check scores: each value cut to
