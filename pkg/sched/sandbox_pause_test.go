@@ -141,9 +141,11 @@ func TestVMMClientRelaysAPauseAndEndsCleanly(t *testing.T) {
 }
 
 // adr: 20261122132055 §2 — a capture only its node holds resumes there or
-// not at all: schedd answers no capacity, and agentd tries again.
+// not at all: schedd answers no capacity before it records a placement, and
+// agentd tries again. A node that is draining or restarting still holds the
+// capture, so the resume waits for it; only a node that is gone is given up.
 func TestSandboxRunnerResumeRequiresTheCapturesNode(t *testing.T) {
-	runner, router, ledger, full := sandboxRunnerPoolFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
+	runner, router, ledger, full, store := sandboxRunnerPoolStoreFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
 	// The capture's node has no room left.
 	if err := ledger.Admit(sched.Request{Instance: "filler", NodeID: full, NodeCeilingMB: 47600, Plan: api.PlanScale, RAMMB: 47000}); err != nil {
 		t.Fatal(err)
@@ -152,17 +154,32 @@ func TestSandboxRunnerResumeRequiresTheCapturesNode(t *testing.T) {
 	a.Persistent = true
 	a.Resume = &sched.SandboxResume{NodeID: full, RequireNode: true,
 		Snapshot: sched.AgentRunSnapshot{StorageKey: sessionCapture, FCVersion: "1.10.0", MemBytes: 1}}
-	err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil)
+	placedOn := ""
+	placed := func(p sched.AgentRunPlacement) error { placedOn = p.NodeID; return nil }
+	err := runner.RunSandbox(context.Background(), a, placed, sched.SandboxHooks{}, nil)
 	var problem *api.Problem
 	if !errors.As(err, &problem) || problem.Code != api.CodeCapacity {
 		t.Fatalf("resume away from its capture's node = %v, want a capacity refusal", err)
 	}
-	if ledger.ResidentFor(sched.SandboxInstanceID(a.SandboxID)) {
-		t.Fatal("a refused resume kept its reservation")
+	if ledger.ResidentFor(sched.SandboxInstanceID(a.SandboxID)) || placedOn != "" {
+		t.Fatalf("a refused resume kept its reservation or recorded node %q", placedOn)
+	}
+	// The capture's node is draining: the resume waits rather than restore
+	// nothing elsewhere.
+	if err := store.SetComputeNodeActive(context.Background(), full, false); err != nil {
+		t.Fatal(err)
+	}
+	ledger.Release("filler")
+	// A placement here would boot and hold the session until ctx ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = runner.RunSandbox(ctx, a, placed, sched.SandboxHooks{}, nil)
+	if !errors.As(err, &problem) || problem.Code != api.CodeCapacity || placedOn != "" || router.nodeID != "" {
+		t.Fatalf("resume while its capture's node is inactive = %v, placed %q, ran on %q", err, placedOn, router.nodeID)
 	}
 	// A node that left the pool holds nothing: the resume goes anywhere.
 	a.Resume.NodeID = "a-node-that-is-gone"
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel = context.WithCancel(context.Background())
 	booted := func(context.Context, sched.SandboxBooted) error { cancel(); return nil }
 	_ = runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{Booted: booted}, nil)
 	if router.nodeID == "" || router.nodeID == full || router.spec.Snapshot == nil {

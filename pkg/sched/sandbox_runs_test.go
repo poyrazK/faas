@@ -53,6 +53,14 @@ func sandboxRunnerFixture(t *testing.T, layer string) (*sched.AgentRunner, *sand
 // compute node; it returns the last pool node's ID.
 func sandboxRunnerPoolFixture(t *testing.T, layer string, pool ...string) (*sched.AgentRunner, *sandboxRouter, *sched.NodeLedger, string) {
 	t.Helper()
+	runner, router, ledger, node, _ := sandboxRunnerPoolStoreFixture(t, layer, pool...)
+	return runner, router, ledger, node
+}
+
+// sandboxRunnerPoolStoreFixture is sandboxRunnerPoolFixture with its store,
+// for a test that changes a node.
+func sandboxRunnerPoolStoreFixture(t *testing.T, layer string, pool ...string) (*sched.AgentRunner, *sandboxRouter, *sched.NodeLedger, string, *state.MemStore) {
+	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
 	var agentNode string
@@ -75,7 +83,7 @@ func sandboxRunnerPoolFixture(t *testing.T, layer string, pool ...string) (*sche
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runner, router, ledger, agentNode
+	return runner, router, ledger, agentNode, store
 }
 
 func sandboxAdmission() sched.SandboxAdmission {

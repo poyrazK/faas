@@ -132,6 +132,56 @@ func TestPersistentSandboxPausesAtItsRunLimitAfterARefusal(t *testing.T) {
 	}
 }
 
+// A pause vmmd answers after agentd stopped waiting is still taken: the
+// session went back to ready, asks no other pause meanwhile, and pauses
+// with the late capture rather than failing as a lost VM.
+func TestPersistentSandboxTakesALateCapture(t *testing.T) {
+	_, store := openStore(t)
+	ctx := context.Background()
+	id := queuePersistent(t, store, time.Hour)
+	fake := &fakeSandboxSchedd{scripts: map[string]string{}, lateBy: 900 * time.Millisecond}
+	fake.scripts[id] = "pause-late"
+	sbx := newSandboxes(t, store, fake, agentd.SandboxConfig{Tick: 50 * time.Millisecond, PauseTimeout: 400 * time.Millisecond})
+	done := holdSandbox(t, sbx)
+	waitFor(t, "ready", func() bool { return sandboxState(t, store, id).State == agentstore.SandboxReady })
+	if _, err := store.PauseSandbox(ctx, account, id); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "back to ready after the pause timed out", func() bool {
+		fake.mu.Lock()
+		asked := len(fake.pauses)
+		fake.mu.Unlock()
+		return asked == 1 && sandboxState(t, store, id).State == agentstore.SandboxReady
+	})
+	if !<-done {
+		t.Fatal("nothing was claimed")
+	}
+	sb := sandboxState(t, store, id)
+	if sb.State != agentstore.SandboxPaused || sb.ClosedAt != nil || len(fake.pauses) != 1 {
+		t.Fatalf("session = %+v after pauses %v", sb, fake.pauses)
+	}
+}
+
+// A persistent session whose every pause is refused ends a while past its
+// run limit, as an ephemeral one ends at its lifetime, rather than run on.
+func TestPersistentSandboxEndsWhenItCannotPause(t *testing.T) {
+	_, store := openStore(t)
+	id := queuePersistent(t, store, 400*time.Millisecond)
+	fake := &fakeSandboxSchedd{scripts: map[string]string{}}
+	fake.scripts[id] = "pause-refused"
+	done := holdSandbox(t, newSandboxes(t, store, fake, agentd.SandboxConfig{PersistentOverrun: 300 * time.Millisecond}))
+	if !<-done {
+		t.Fatal("nothing was claimed")
+	}
+	sb := sandboxState(t, store, id)
+	if sb.State != agentstore.SandboxExpired || sb.OutcomeCode != "lifetime" || len(fake.pauses) == 0 {
+		t.Fatalf("session = %+v after pauses %v", sb, fake.pauses)
+	}
+	if _, _, closes := fake.counts(); closes != 1 {
+		t.Fatalf("%d closes, want the VM closed", closes)
+	}
+}
+
 func TestPersistentSandboxResumesColdWhenTheRestoreFails(t *testing.T) {
 	_, store := openStore(t)
 	ctx := context.Background()
@@ -190,8 +240,20 @@ func TestPausedSandboxClosedWithoutAVM(t *testing.T) {
 	if sb.State != agentstore.SandboxClosed || sb.OutcomeCode != "closed" || sb.ClosedAt == nil {
 		t.Fatalf("closed paused session = %+v", sb)
 	}
-	if _, ok := blobs.blob[mem]; ok {
-		t.Fatal("a closed session's capture was kept")
+	// The node is still uploading the capture: deleting the part that landed
+	// would let the rest land after it with no row to sweep it.
+	if _, ok := blobs.blob[mem]; !ok {
+		t.Fatal("a capture still uploading was deleted")
+	}
+	snap := state.Snapshot{StorageKey: mem}
+	for _, key := range []string{state.SnapshotVMStateKey(snap), state.SnapshotDriveKey(snap)} {
+		blobs.blob[key] = []byte("x")
+	}
+	if err := sbx.SweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(blobs.blob) != 0 {
+		t.Fatalf("a closed session's uploaded capture was kept: %v", blobs.blob)
 	}
 	if _, _, closes := fake.counts(); closes != 0 {
 		t.Fatalf("a paused session has no VM to close, got %d closes", closes)

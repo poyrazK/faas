@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -131,13 +132,34 @@ func (m *Manager) PublishSandboxCapture(ctx context.Context, memKey string) erro
 	return errors.Join(errs...)
 }
 
+// UnpinSandboxCapture leaves a pause capture whose upload was given up to
+// the node cache's eviction (ADR-20261122132055 §2): agentd no longer waits
+// for it, and a pinned copy would hold the node's disk for good.
+func (m *Manager) UnpinSandboxCapture(memKey string) error {
+	if m == nil || m.storage == nil {
+		return nil
+	}
+	var errs []error
+	for _, key := range sandboxCaptureKeys(memKey) {
+		if key == "" {
+			continue
+		}
+		if err := storage.UnpinLocal(m.storage, key); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // PublishPendingSandboxCaptures uploads every pause capture object this
-// node still holds alone, after a restart cut an upload short.
-func (m *Manager) PublishPendingSandboxCaptures(ctx context.Context) (int, error) {
+// node still holds alone, after a restart cut an upload short. An object
+// written more than maxAge ago is past its upload's window and is unpinned
+// instead.
+func (m *Manager) PublishPendingSandboxCaptures(ctx context.Context, maxAge time.Duration) (int, error) {
 	if m == nil || m.storage == nil {
 		return 0, nil
 	}
-	return storage.PublishLocalPrefix(ctx, m.storage, "snap/"+storagekey.SandboxSessionSnapshotNamespace(""))
+	return storage.PublishLocalPrefix(ctx, m.storage, "snap/"+storagekey.SandboxSessionSnapshotNamespace(""), maxAge)
 }
 
 // sandboxLive reports whether instance is still a live VM of sandboxID.

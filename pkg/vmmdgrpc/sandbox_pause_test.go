@@ -64,7 +64,11 @@ func (v *pausingVMM) PublishSandboxCapture(_ context.Context, memKey string) err
 	return nil
 }
 
-func (v *pausingVMM) PublishPendingSandboxCaptures(context.Context) (int, error) { return 0, nil }
+func (v *pausingVMM) UnpinSandboxCapture(string) error { return nil }
+
+func (v *pausingVMM) PublishPendingSandboxCaptures(context.Context, time.Duration) (int, error) {
+	return 0, nil
+}
 
 func (v *pausingVMM) uploads() []string {
 	v.mu.Lock()

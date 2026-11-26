@@ -81,6 +81,11 @@ func (h *Handler) admission(ctx context.Context, acct state.Account, body create
 		if in.LifetimeS != 0 {
 			return a, api.ErrValidation("a persistent session has no lifetime_s; it pauses after SandboxPersistentRunMaxSec of running")
 		}
+		// Nor an idle timeout: it pauses after the plan's
+		// SandboxPersistentIdlePauseSec without calls.
+		if in.IdleTimeoutS != 0 {
+			return a, api.ErrValidation("a persistent session has no idle_timeout_s; it pauses after SandboxPersistentIdlePauseSec without calls")
+		}
 		in.LifetimeS = api.SandboxPersistentRunMaxSec[idx]
 	}
 	idle, lifetime, prob := bounds(acct.Plan, in.IdleTimeoutS, in.LifetimeS, a.Kind == api.SandboxKindPersistent)
@@ -320,6 +325,12 @@ func bounds(plan api.Plan, idle, lifetime int, persistent bool) (int, int, *api.
 // timeouts applies a change request to a session: the lifetime counts from
 // the session's creation and must still end after now.
 func (h *Handler) timeouts(acct state.Account, sb agentstore.Sandbox, body api.UpdateSandboxRequest) (int, time.Time, *api.Problem) {
+	if sb.Kind == api.SandboxKindPersistent {
+		// Its expires_at is its next pause or the end of its retention, and
+		// its idle pause is the plan's (ADR-20261122132055 §1): neither is
+		// the session's to change.
+		return 0, time.Time{}, api.ErrValidation("a persistent session has no idle_timeout_s or lifetime_s to change; pause or close it instead")
+	}
 	idle, expires := sb.IdleTimeoutSec, sb.ExpiresAt
 	lifetime := int(sb.ExpiresAt.Sub(sb.CreatedAt) / time.Second)
 	if body.IdleTimeoutS != nil {

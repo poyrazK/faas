@@ -5,7 +5,9 @@ package storage
 // waits for no upload, and is uploaded to the parent in the background. Until
 // then the entry is local-only: a ".local" sidecar marks it, eviction never
 // takes it (nothing else holds its bytes), and PublishLocal clears the mark
-// once the parent holds a copy.
+// once the parent holds a copy. An upload given up on clears it too
+// (UnpinLocal): the entry stays in the cache as an ordinary, evictable one,
+// so a capture nobody could upload does not hold the node's disk for good.
 
 import (
 	"context"
@@ -16,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // localOnlySuffix names the sidecar of a local-only cache entry. It holds
@@ -120,6 +123,32 @@ func (c *LocalCacheBackend) PublishLocal(ctx context.Context, key string) (bool,
 	return true, nil
 }
 
+// UnpinLocal clears key's local-only mark without uploading it: the entry
+// is left to the cache's eviction. A key that is not local-only is left
+// alone.
+func (c *LocalCacheBackend) UnpinLocal(key string) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	path, _ := c.cacheFileFor(key)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := os.Remove(path + localOnlySuffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("storage: cache: unpin local %q: %w", key, err)
+	}
+	return nil
+}
+
+// localOnlyAge is how long ago key's local-only entry was written.
+func (c *LocalCacheBackend) localOnlyAge(key string) (time.Duration, error) {
+	path, _ := c.cacheFileFor(key)
+	info, err := os.Stat(path + localOnlySuffix)
+	if err != nil {
+		return 0, err
+	}
+	return time.Since(info.ModTime()), nil
+}
+
 // LocalOnlyKeys lists the local-only entries whose keys start with prefix,
 // so a restarted process can finish their uploads.
 func (c *LocalCacheBackend) LocalOnlyKeys(prefix string) ([]string, error) {
@@ -190,6 +219,15 @@ func PublishLocal(ctx context.Context, root StorageBackend, key string) (bool, e
 	return cache.PublishLocal(ctx, rel)
 }
 
+// UnpinLocal clears root's local-only mark of key, if it has one.
+func UnpinLocal(root StorageBackend, key string) error {
+	cache, rel, err := CacheBackendForKey(root, key)
+	if err != nil || cache == nil {
+		return err
+	}
+	return cache.UnpinLocal(rel)
+}
+
 // LocalOnly reports whether root keeps key only in this node's cache.
 func LocalOnly(root StorageBackend, key string) bool {
 	cache, rel, err := CacheBackendForKey(root, key)
@@ -199,8 +237,9 @@ func LocalOnly(root StorageBackend, key string) bool {
 // PublishLocalPrefix uploads every local-only entry of root under prefix
 // (a key prefix ending in a partial path segment, such as
 // "snap/sandbox-session-"), for a restarted process. It reports how many it
-// uploaded.
-func PublishLocalPrefix(ctx context.Context, root StorageBackend, prefix string) (int, error) {
+// uploaded. An entry written more than maxAge ago is past its upload's
+// window and is unpinned instead (maxAge 0 uploads every entry).
+func PublishLocalPrefix(ctx context.Context, root StorageBackend, prefix string, maxAge time.Duration) (int, error) {
 	const probe = "probe"
 	cache, rel, err := CacheBackendForKey(root, prefix+probe)
 	if err != nil || cache == nil {
@@ -213,6 +252,14 @@ func PublishLocalPrefix(ctx context.Context, root StorageBackend, prefix string)
 	var published int
 	var errs []error
 	for _, key := range keys {
+		if maxAge > 0 {
+			if age, err := cache.localOnlyAge(key); err == nil && age > maxAge {
+				if err := cache.UnpinLocal(key); err != nil {
+					errs = append(errs, err)
+				}
+				continue
+			}
+		}
 		ok, err := cache.PublishLocal(ctx, key)
 		if err != nil {
 			errs = append(errs, err)

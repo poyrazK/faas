@@ -37,8 +37,10 @@ type fakeSandboxSchedd struct {
 	// actions are the browser actions the "actions" script was sent.
 	actions []*scheddpb.SandboxRunAction
 	// pauses are the capture IDs pauses named; the "pause-busy" script
-	// refuses the first.
+	// refuses the first, "pause-refused" every one, and "pause-late"
+	// answers the first only after lateBy.
 	pauses []string
+	lateBy time.Duration
 }
 
 func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
@@ -136,8 +138,13 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			id := frame.GetPause().GetCaptureId()
 			f.mu.Lock()
 			f.pauses = append(f.pauses, id)
-			refuse := script == "pause-busy" && len(f.pauses) == 1
+			refuse := script == "pause-busy" && len(f.pauses) == 1 || script == "pause-refused"
+			lateBy := f.lateBy
 			f.mu.Unlock()
+			if script == "pause-late" {
+				// vmmd captures inline: it reads no frame until it answers.
+				time.Sleep(lateBy)
+			}
 			if refuse {
 				_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: "busy"}}})
 				continue

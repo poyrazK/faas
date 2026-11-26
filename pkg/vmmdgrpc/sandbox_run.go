@@ -415,13 +415,16 @@ type sandboxPauser interface {
 // shared store (ADR-20261122132055 §2); *fcvm.Manager implements it.
 type sandboxCapturePublisher interface {
 	PublishSandboxCapture(ctx context.Context, memKey string) error
-	PublishPendingSandboxCaptures(ctx context.Context) (int, error)
+	UnpinSandboxCapture(memKey string) error
+	PublishPendingSandboxCaptures(ctx context.Context, maxAge time.Duration) (int, error)
 }
 
 const (
 	// sandboxPublishFirstRetry and sandboxPublishMaxRetry pace a failed
 	// capture upload's retries; sandboxPublishGiveUp ends them, leaving the
-	// capture on its node (durability node) until vmmd restarts.
+	// capture on its node as an ordinary cache entry. agentd's sweep waits
+	// out this window (sandboxCaptureUploadWindow) before it deletes a used
+	// capture, so keep the two in step.
 	sandboxPublishFirstRetry = 2 * time.Second
 	sandboxPublishMaxRetry   = 5 * time.Minute
 	sandboxPublishGiveUp     = 24 * time.Hour
@@ -451,7 +454,10 @@ func (s *Server) publishSandboxCapture(ctx context.Context, memKey string) {
 			s.log.Warn("sandbox: capture upload failed; retrying", "storage_key", memKey, "retry_in", wait, "err", err)
 			select {
 			case <-ctx.Done():
-				s.log.Warn("sandbox: capture upload gave up; it stays on this node", "storage_key", memKey)
+				s.log.Warn("sandbox: capture upload gave up; it stays on this node until evicted", "storage_key", memKey)
+				if err := pub.UnpinSandboxCapture(memKey); err != nil {
+					s.log.Warn("sandbox: unpin a given-up capture failed", "storage_key", memKey, "err", err)
+				}
 				return
 			case <-time.After(wait):
 			}
@@ -467,7 +473,7 @@ func (s *Server) PublishPendingSandboxCaptures(ctx context.Context) {
 	if !ok {
 		return
 	}
-	n, err := pub.PublishPendingSandboxCaptures(ctx)
+	n, err := pub.PublishPendingSandboxCaptures(ctx, sandboxPublishGiveUp)
 	if err != nil {
 		s.log.Warn("sandbox: pending capture uploads failed", "uploaded", n, "err", err)
 		return

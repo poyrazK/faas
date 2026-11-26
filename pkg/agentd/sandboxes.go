@@ -81,6 +81,16 @@ type SandboxConfig struct {
 	// IdleFreeze is how long a session goes without calls before its VM is
 	// frozen; SandboxIdleFreezeSec unless set.
 	IdleFreeze time.Duration
+	// PauseTimeout bounds a pause vmmd never answers (a capture of the
+	// largest shape takes minutes, not this long); 10 minutes unless set.
+	// A capture that lands later is still taken for 3× as long: vmmd
+	// answers a pause before it reads the next frame, so no other pause is
+	// asked meanwhile.
+	PauseTimeout time.Duration
+	// PersistentOverrun is how long a persistent session keeps running past
+	// its run limit while its pauses are refused before it ends like an
+	// ephemeral one at its lifetime; 30 minutes unless set.
+	PersistentOverrun time.Duration
 	// Workspaces is the artifact store persisted workspaces are kept in
 	// (ADR-20261027090013 step 7); the sweep deletes their archives from
 	// it. Without it sessions persist nothing.
@@ -96,6 +106,12 @@ func (c SandboxConfig) withDefaults() SandboxConfig {
 	}
 	if c.IdleFreeze <= 0 {
 		c.IdleFreeze = api.SandboxIdleFreezeSec * time.Second
+	}
+	if c.PauseTimeout <= 0 {
+		c.PauseTimeout = 10 * time.Minute
+	}
+	if c.PersistentOverrun <= 0 {
+		c.PersistentOverrun = 30 * time.Minute
 	}
 	return c
 }
@@ -128,12 +144,15 @@ const (
 	// sandboxPauseRetry is how long a refused pause waits before the next
 	// try (ADR-20261122132055 §1).
 	sandboxPauseRetry = 5 * time.Second
-	// sandboxPauseTimeout bounds a pause vmmd never answers: a capture of
-	// the largest shape takes minutes, not this long.
-	sandboxPauseTimeout = 10 * time.Minute
 	// sandboxCaptureSweepBatch bounds the consumed captures one sweep
 	// deletes.
 	sandboxCaptureSweepBatch = 100
+	// sandboxCaptureUploadWindow is how long a capture's node may still be
+	// uploading it: vmmd gives up after 24 hours (sandboxPublishGiveUp) and
+	// then keeps its copy as an ordinary, evictable cache entry. A consumed
+	// capture's objects are deleted only once the shared store holds all of
+	// them or this has passed, so no late upload outlives its row.
+	sandboxCaptureUploadWindow = 25 * time.Hour
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -267,6 +286,11 @@ type session struct {
 	pauseAsked   time.Time
 	paused       bool
 	pauseRetryAt time.Time
+	// lateCaptureID is a pause agentd stopped waiting for: vmmd may still
+	// capture it, so its Paused is taken until 3× PauseTimeout after
+	// lateAsked.
+	lateCaptureID string
+	lateAsked     time.Time
 	// placedNode is where schedd placed the VM.
 	placedNode string
 }
@@ -569,18 +593,27 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 		ready, frozen, freezing, lease := ss.ready, ss.frozen, ss.freezing, ss.lease
 		pausing := ss.pausing || ss.paused
 		freeze := ready && !frozen && !freezing && !pausing && idle >= s.scfg.IdleFreeze
-		if freeze {
-			ss.freezing = true
-		}
 		ss.mu.Unlock()
+		sendFreeze := func() {
+			ss.mu.Lock()
+			ss.freezing = true
+			ss.mu.Unlock()
+			_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Freeze{Freeze: &scheddpb.SandboxRunFreeze{}}})
+		}
 		if ss.claim.Kind == agentstore.SandboxPersistent {
 			if pausing {
 				// A vmmd from before pauses never answers one; the VM runs on.
 				ss.mu.Lock()
-				stuck := ss.pausing && now.Sub(ss.pauseAsked) > sandboxPauseTimeout
+				stuck := ss.pausing && now.Sub(ss.pauseAsked) > s.scfg.PauseTimeout
 				ss.mu.Unlock()
 				if stuck {
-					s.pauseRefused(ctx, ss, "timeout")
+					s.pauseTimedOut(ctx, ss)
+				}
+				continue
+			}
+			if s.overran(ss, now) {
+				if ss.decide(agentstore.SandboxExpired, sandboxOutcomeLifetime, "the session ran past its run limit and could not be paused") {
+					closeVM()
 				}
 				continue
 			}
@@ -589,7 +622,7 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 				continue
 			}
 			if freeze {
-				_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Freeze{Freeze: &scheddpb.SandboxRunFreeze{}}})
+				sendFreeze()
 			}
 			continue
 		}
@@ -603,9 +636,22 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 				closeVM()
 			}
 		case freeze:
-			_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Freeze{Freeze: &scheddpb.SandboxRunFreeze{}}})
+			sendFreeze()
 		}
 	}
+}
+
+// overran reports a running persistent session PersistentOverrun past its
+// run limit with no capture outstanding: every pause was refused,
+// so it ends rather than run and bill on.
+func (s *Sandboxes) overran(ss *session, now time.Time) bool {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if ss.lateCaptureID != "" && now.Sub(ss.lateAsked) > 3*s.scfg.PauseTimeout {
+		s.log.Warn("agentd: gave up on a late sandbox capture", "sandbox_id", ss.claim.ID, "capture_id", ss.lateCaptureID)
+		ss.lateCaptureID = ""
+	}
+	return ss.ready && !ss.pausing && ss.lateCaptureID == "" && !now.Before(ss.lease.ExpiresAt.Add(s.scfg.PersistentOverrun))
 }
 
 // pauseDue reports why a running persistent session pauses now, or "": apid
@@ -614,7 +660,7 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 func (s *Sandboxes) pauseDue(ss *session, now time.Time, idle time.Duration) string {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	if !ss.ready || ss.end != nil || now.Before(ss.pauseRetryAt) {
+	if !ss.ready || ss.end != nil || now.Before(ss.pauseRetryAt) || ss.lateCaptureID != "" {
 		return ""
 	}
 	plan := api.Plan(ss.claim.Plan)
@@ -653,9 +699,20 @@ func (s *Sandboxes) pause(ctx context.Context, ss *session, why string, send fun
 func (s *Sandboxes) markPaused(ctx context.Context, ss *session, p *scheddpb.SandboxRunPaused) error {
 	ss.mu.Lock()
 	captureID, node, asked := ss.captureID, ss.placedNode, ss.pauseAsked
+	late := captureID == "" && ss.lateCaptureID != ""
+	if late {
+		captureID, asked = ss.lateCaptureID, ss.lateAsked
+	}
 	ss.mu.Unlock()
 	if captureID == "" {
 		return status.Error(codes.Internal, "vmmd paused a session agentd did not pause")
+	}
+	if late {
+		// The pause agentd stopped waiting for landed after all: the row went
+		// back to ready, so it pauses again to take the capture.
+		if err := s.store.BeginSandboxPause(context.WithoutCancel(ctx), ss.claim.ID, ss.claim.LeaseToken); err != nil {
+			return err
+		}
 	}
 	plan := api.Plan(ss.claim.Plan)
 	retention := time.Duration(api.SandboxPausedRetentionDays[plan.PlanIndex()]) * 24 * time.Hour
@@ -666,7 +723,7 @@ func (s *Sandboxes) markPaused(ctx context.Context, ss *session, p *scheddpb.San
 	}
 	s.actions.remove(ss.claim.ID)
 	ss.mu.Lock()
-	ss.paused, ss.pausing = true, false
+	ss.paused, ss.pausing, ss.lateCaptureID = true, false, ""
 	ss.mu.Unlock()
 	s.metrics.sandboxPausedIn(s.now().Sub(asked))
 	s.log.Info("agentd: sandbox paused", "sandbox_id", ss.claim.ID, "node", node, "capture_id", captureID,
@@ -678,8 +735,17 @@ func (s *Sandboxes) markPaused(ctx context.Context, ss *session, p *scheddpb.San
 // waits sandboxPauseRetry.
 func (s *Sandboxes) pauseRefused(ctx context.Context, ss *session, reason string) {
 	ss.mu.Lock()
-	frozen := ss.frozen
+	frozen, pausing := ss.frozen, ss.pausing
+	if !pausing {
+		// vmmd's answer to the pause agentd stopped waiting for.
+		ss.lateCaptureID = ""
+		ss.pauseRetryAt = s.now().Add(sandboxPauseRetry)
+	}
 	ss.mu.Unlock()
+	if !pausing {
+		s.log.Info("agentd: late sandbox pause refused", "sandbox_id", ss.claim.ID, "reason", reason)
+		return
+	}
 	if err := s.store.CancelSandboxPause(ctx, ss.claim.ID, ss.claim.LeaseToken, frozen); err != nil {
 		s.log.Warn("agentd: cancel sandbox pause failed", "sandbox_id", ss.claim.ID, "err", err)
 	}
@@ -688,6 +754,16 @@ func (s *Sandboxes) pauseRefused(ctx context.Context, ss *session, reason string
 	ss.pauseRetryAt = s.now().Add(sandboxPauseRetry)
 	ss.mu.Unlock()
 	s.log.Info("agentd: sandbox pause refused", "sandbox_id", ss.claim.ID, "reason", reason)
+}
+
+// pauseTimedOut stops waiting for a pause vmmd has not answered: the VM runs
+// on, and the capture, should vmmd still finish it, is taken late.
+func (s *Sandboxes) pauseTimedOut(ctx context.Context, ss *session) {
+	// Recorded first, so a Paused that lands meanwhile is still taken.
+	ss.mu.Lock()
+	ss.lateCaptureID, ss.lateAsked = ss.captureID, ss.pauseAsked
+	ss.mu.Unlock()
+	s.pauseRefused(ctx, ss, "timeout")
 }
 
 // markResumed records a resumed session on its new VM: restored from its
@@ -722,7 +798,9 @@ func (s *Sandboxes) markResumed(ctx context.Context, ss *session, placed *schedd
 const vmmdWakeRestore = "WAKE_RESTORE"
 
 // sweepCaptures deletes the objects of consumed pause captures, then their
-// rows (ADR-20261122132055 §2: a capture restores once).
+// rows (ADR-20261122132055 §2: a capture restores once). A capture whose
+// node may still be uploading it waits: an upload that landed after the
+// delete would leave objects no row names.
 func (s *Sandboxes) sweepCaptures(ctx context.Context) error {
 	if s.scfg.Workspaces == nil {
 		return nil
@@ -734,6 +812,20 @@ func (s *Sandboxes) sweepCaptures(ctx context.Context) error {
 	var errs []error
 	for _, c := range captures {
 		snap := state.Snapshot{StorageKey: c.StorageKey}
+		if s.now().Sub(c.CreatedAt) < sandboxCaptureUploadWindow {
+			uploaded := []string{c.StorageKey, c.VMStateStorageKey, state.SnapshotDriveKey(snap)}
+			if c.HasBacking {
+				uploaded = append(uploaded, state.SnapshotBackingKey(snap))
+			}
+			held, err := s.storeHoldsAll(ctx, uploaded)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("check capture %s: %w", c.ID, err))
+				continue
+			}
+			if !held {
+				continue
+			}
+		}
 		var failed bool
 		for _, key := range []string{c.StorageKey, c.VMStateStorageKey, state.SnapshotDriveKey(snap), state.SnapshotBackingKey(snap)} {
 			if key == "" {

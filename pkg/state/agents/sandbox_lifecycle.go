@@ -80,6 +80,8 @@ type SandboxCapture struct {
 	Remote bool
 	// SessionID is the capture's session, in a durability check.
 	SessionID string
+	// CreatedAt is when the capture was recorded, in the consumed sweep.
+	CreatedAt time.Time
 }
 
 // SandboxLease is what a renewal reports: the fields apid may change while
@@ -226,7 +228,8 @@ func (s *Store) ConsumedSandboxCaptures(ctx context.Context, limit int) ([]Sandb
 	}
 	out := make([]SandboxCapture, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, SandboxCapture{ID: r.ID, StorageKey: r.StorageKey, VMStateStorageKey: r.VmstateStorageKey})
+		out = append(out, SandboxCapture{ID: r.ID, StorageKey: r.StorageKey, VMStateStorageKey: r.VmstateStorageKey,
+			HasBacking: r.HasBacking, CreatedAt: r.CreatedAt.Time.UTC()})
 	}
 	return out, nil
 }

@@ -49,6 +49,7 @@ func TestCreatePersistent(t *testing.T) {
 		code   string
 	}{
 		"a lifetime":                {`{"preset":"codex","kind":"persistent","lifetime_s":60}`, http.StatusBadRequest, api.CodeValidation},
+		"an idle timeout":           {`{"preset":"codex","kind":"persistent","idle_timeout_s":60}`, http.StatusBadRequest, api.CodeValidation},
 		"RAM over the plan":         {`{"preset":"codex","kind":"persistent","ram_mb":16384}`, http.StatusForbidden, api.CodeAgentLimit},
 		"vCPUs over the plan":       {`{"preset":"codex","kind":"persistent","vcpu":5}`, http.StatusForbidden, api.CodeAgentLimit},
 		"a volume over the plan":    {`{"preset":"codex","kind":"persistent","volume_gb":51}`, http.StatusForbidden, api.CodeAgentLimit},
@@ -72,6 +73,21 @@ func TestCreatePersistent(t *testing.T) {
 	if code := f.call(t, f.h.Create, hobby, http.MethodPost, "/v1/sandboxes", `{"preset":"codex","kind":"persistent"}`, "", &p); code != http.StatusForbidden ||
 		p.Code != api.CodeAgentLimit {
 		t.Fatalf("over SandboxPersistentMax = %d %+v", code, p)
+	}
+}
+
+// A persistent session's expires_at is its next pause or the end of its
+// retention, and its idle pause is the plan's: a change request refuses
+// both fields rather than measuring them against a lifetime it lacks.
+func TestUpdatePersistentRefusesTimeouts(t *testing.T) {
+	f := newFixture(t)
+	f.h.Persistent = true
+	sb, _ := f.create(t, pro(), `{"preset":"codex","kind":"persistent"}`)
+	for _, body := range []string{`{"idle_timeout_s":600}`, `{"lifetime_s":3600}`} {
+		var p api.Problem
+		if code := f.call(t, f.h.Update, pro(), http.MethodPatch, "", body, sb.ID, &p); code != http.StatusBadRequest || p.Code != api.CodeValidation {
+			t.Errorf("PATCH %s = %d %+v", body, code, p)
+		}
 	}
 }
 

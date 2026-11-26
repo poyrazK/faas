@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -42,7 +43,7 @@ func TestLocalOnlyEntriesStayUntilPublished(t *testing.T) {
 		t.Fatalf("local-only keys = %v, %v", keys, err)
 	}
 	// A restarted process finishes the uploads it finds.
-	if n, err := storage.PublishLocalPrefix(ctx, cache, "snap/sandbox-session-"); err != nil || n != 1 {
+	if n, err := storage.PublishLocalPrefix(ctx, cache, "snap/sandbox-session-", time.Hour); err != nil || n != 1 {
 		t.Fatalf("publish the prefix = %d, %v", n, err)
 	}
 	if cache.LocalOnly(mem) {
@@ -56,6 +57,45 @@ func TestLocalOnlyEntriesStayUntilPublished(t *testing.T) {
 	}
 	if keys, _ := cache.LocalOnlyKeys(""); len(keys) != 0 {
 		t.Fatalf("local-only keys after the upload = %v", keys)
+	}
+}
+
+// An upload given up on, or one a restart finds past its window, leaves
+// the entry to eviction rather than pinned for good, and uploads nothing.
+func TestLocalOnlyEntriesPastTheirUploadAreUnpinned(t *testing.T) {
+	parent := newFakeBackend()
+	root := filepath.Join(t.TempDir(), "cache")
+	cache, err := storage.NewLocalCacheBackend(parent, root, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	const stale, given = "snap/sandbox-session-acct/captures/c3/v2/mem", "snap/sandbox-session-acct/captures/c4/v2/mem"
+	for _, key := range []string{stale, given} {
+		if err := cache.PutLocal(ctx, key, strings.NewReader("memory")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := storage.UnpinLocal(cache, given); err != nil || cache.LocalOnly(given) {
+		t.Fatalf("unpin = %v, still local-only %v", err, cache.LocalOnly(given))
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err == nil && strings.HasSuffix(path, ".local") {
+			return os.Chtimes(path, old, old)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := storage.PublishLocalPrefix(ctx, cache, "snap/sandbox-session-", 24*time.Hour); err != nil || n != 0 {
+		t.Fatalf("publish past the window = %d, %v", n, err)
+	}
+	if cache.LocalOnly(stale) || parent.puts.Load() != 0 {
+		t.Fatalf("a stale entry is still local-only (%v) or was uploaded (%d puts)", cache.LocalOnly(stale), parent.puts.Load())
+	}
+	if got, err := readAll(ctx, cache, stale); err != nil || got != "memory" {
+		t.Fatalf("an unpinned entry stays cached until evicted: %q, %v", got, err)
 	}
 }
 

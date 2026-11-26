@@ -15,6 +15,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -315,15 +316,32 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		// The capture's node has it in its cache; any node restores it from
 		// the shared store (ADR-20261122132055 §2).
 		req.PreferredNodeIDs = []string{a.Resume.NodeID}
-		if a.Resume.RequireNode && !r.poolNodeActive(ctx, a.Resume.NodeID) {
-			resume := *a.Resume
-			resume.RequireNode = false
-			a.Resume = &resume
+		if a.Resume.RequireNode {
+			switch known, active := r.poolNodeState(ctx, a.Resume.NodeID); {
+			case !known:
+				// The node is gone and its capture with it: the session
+				// resumes cold wherever there is room.
+				resume := *a.Resume
+				resume.RequireNode = false
+				a.Resume = &resume
+			case !active:
+				// A drain or a vmmd restart: the capture is still there,
+				// so the resume waits for the node rather than resume cold
+				// and drop it.
+				return errCaptureNodeUnavailable(a.Resume.NodeID)
+			}
 		}
 	}
 	placement, release, err := r.admit(ctx, req)
 	if err != nil {
 		return err
+	}
+	if a.Resume != nil && a.Resume.RequireNode && placement.NodeID != a.Resume.NodeID {
+		// Only that node holds the capture until its upload lands
+		// (ADR-20261122132055 §2); refused before placed records a node
+		// that will never run the session.
+		release()
+		return errCaptureNodeUnavailable(a.Resume.NodeID)
 	}
 	capturing := false
 	defer func() {
@@ -347,12 +365,6 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		Browser: a.Browser, Task: a.Task,
 		EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny, WebDomainLog: a.WebDomainLog}
 	if a.Resume != nil {
-		if a.Resume.RequireNode && placement.NodeID != a.Resume.NodeID {
-			// Only that node holds the capture until its upload lands
-			// (ADR-20261122132055 §2).
-			return api.NewProblem(503, api.CodeCapacity, "Capture node busy",
-				"the paused session's capture is only on node "+a.Resume.NodeID+", which has no room now")
-		}
 		snap := a.Resume.Snapshot
 		spec.Snapshot, spec.SessionCapture = &snap, true
 		// A resumed session is never a warm capture's proof, and its capture
@@ -656,8 +668,26 @@ func sandboxTaskToProto(t *SandboxTask) *vmmdpb.RunSandboxTask {
 		MaxOutputBytes: t.MaxOutputBytes}
 }
 
-// poolNodeActive reports whether nodeID is an active node of the agent pool.
-func (r *AgentRunner) poolNodeActive(ctx context.Context, nodeID string) bool {
+// poolNodeState reports whether the node is still one of this pool's, and
+// whether it takes work now. A node the store cannot read now counts as
+// known and inactive: only a node that is gone is given up on.
+func (r *AgentRunner) poolNodeState(ctx context.Context, nodeID string) (known, active bool) {
 	n, ok := r.engine.breakerNode(ctx, nodeID)
-	return ok && n.Active && (r.pool[n.ID] || r.pool[n.Name])
+	if !ok {
+		if _, err := r.engine.store.ComputeNodeByID(ctx, nodeID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return true, false
+		}
+		return false, false
+	}
+	if !r.pool[n.ID] && !r.pool[n.Name] {
+		return false, false
+	}
+	return true, n.Active
+}
+
+// errCaptureNodeUnavailable refuses a resume whose capture only its node
+// holds while that node cannot take it; the resume is retried.
+func errCaptureNodeUnavailable(nodeID string) error {
+	return api.NewProblem(503, api.CodeCapacity, "Capture node busy",
+		"the paused session's capture is only on node "+nodeID+", which cannot take it now")
 }
