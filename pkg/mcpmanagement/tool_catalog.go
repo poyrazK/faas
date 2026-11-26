@@ -154,7 +154,7 @@ func (m *management) publishCatalog(s *mcp.Server) {
 		m.toolNames[findToolsName] = true
 		m.toolWrites[findToolsName] = false
 		destructive := false
-		mcp.AddTool(s, &mcp.Tool{Name: findToolsName, Title: toolTitle(findToolsName), Description: "Find Gregale tools that are not listed yet and add them to this connection's tool list. This server lists core tools first because the full catalog is larger than many clients accept. Search by task words (for example: postgres schema, cron, domain, rollout, flags, budget); call the returned tools after your client refreshes its tool list.", OutputSchema: registeredToolOutputSchema(findToolsName), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &destructive, IdempotentHint: true, OpenWorldHint: toolOpenWorld(findToolsName)}},
+		mcp.AddTool(s, &mcp.Tool{Name: findToolsName, Title: toolTitle(findToolsName), Description: "Find Gregale tools that are not listed yet and add them to this connection's tool list. This server lists core tools first because the full catalog is larger than many clients accept. Search by task words (for example: postgres schema, cron, domain, rollout, flags, budget); call the returned tools after your client refreshes its tool list.", OutputSchema: registeredToolOutputSchema(findToolsName), Annotations: &mcp.ToolAnnotations{Title: toolTitle(findToolsName), ReadOnlyHint: true, DestructiveHint: &destructive, IdempotentHint: true, OpenWorldHint: toolOpenWorld(findToolsName)}},
 			toolHandler(m, findToolsName, true, func(ctx context.Context, a findToolsArgs) (any, error) { return m.findTools(ctx, s, a) }))
 	}
 	if c.deferring || len(c.gated) > 0 {
