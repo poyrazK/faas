@@ -65,7 +65,7 @@ func TestMCPTaskGroupStatusUsesRenewedReceiptKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dir := t.TempDir()
+	dir := privateMCPTaskGroupTestDir(t)
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(server.URL+"/")))
 	requestDigest, proof := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	writeMCPTaskGroupTestFile(t, dir, "group.json", fmt.Sprintf(`{"version":3,"id":%q,"endpointSha256":%q,"ownerBinding":%q,"members":[{"submissionKey":%q,"requestSha256":%q},{"submissionKey":%q,"requestSha256":%q},{"submissionKey":%q,"requestSha256":%q}]}`,
@@ -112,7 +112,7 @@ func TestMCPTaskGroupStatusRejectsMismatchedEndpointBeforeRequests(t *testing.T)
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer server.Close()
-	dir := t.TempDir()
+	dir := privateMCPTaskGroupTestDir(t)
 	digest := strings.Repeat("a", 64)
 	writeMCPTaskGroupTestFile(t, dir, "group.json", fmt.Sprintf(`{"version":1,"id":%q,"endpointSha256":%q,"members":[{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abc"}]}`, digest, digest))
 	stderr, restore := main.CaptureStderr(t)
@@ -122,6 +122,15 @@ func TestMCPTaskGroupStatusRejectsMismatchedEndpointBeforeRequests(t *testing.T)
 	if exit == 0 || !strings.Contains(stderr.String(), "does not match the selected endpoint") {
 		t.Fatalf("group mismatch exit=%d stderr=%s", exit, stderr.String())
 	}
+}
+
+func privateMCPTaskGroupTestDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp(t.TempDir(), "private-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func writeMCPTaskGroupTestFile(t *testing.T, dir, name, body string) {

@@ -18,7 +18,7 @@ import (
 )
 
 func TestMCPTaskGroupStopReconcilesUncertainCancellation(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateMCPTaskGroupTestDir(t)
 	groupID := strings.Repeat("a", 64)
 	t.Setenv("GREGALE_TEST_GROUP_TOKEN", "current-token")
 	var reads, cancels, lookups atomic.Int32
@@ -98,7 +98,7 @@ func TestMCPTaskGroupStopReconcilesUncertainCancellation(t *testing.T) {
 }
 
 func TestMCPTaskGroupStopRejectsConflictingMarkerBeforeRequests(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateMCPTaskGroupTestDir(t)
 	groupID := strings.Repeat("a", 64)
 	marker := strings.Repeat("b", 64)
 	t.Setenv("GREGALE_TEST_GROUP_TOKEN", "current-token")

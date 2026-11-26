@@ -21,7 +21,7 @@ func TestMCPTaskGroupSubmitKeepsRecordedKeyAfterUncertainReply(t *testing.T) {
 	const fingerprint = "c53b021fd462b9015b17f7e86f3332fe923248cb8d04744b04946e9f4a2a2130"
 	const plan = `[{"toolName":"build_report","arguments":{"report":"<>&\u2028-\\u2028","steps":2,"nested":{"\ue000":2.1,"😀":-0}},"deferFormInput":true}]`
 	t.Setenv("GREGALE_TEST_GROUP_TOKEN", "current-token")
-	dir := t.TempDir()
+	dir := privateMCPTaskGroupTestDir(t)
 	planPath := filepath.Join(t.TempDir(), "plan.json")
 	groupID, binding := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	stamp := fmt.Sprintf("%012x", time.Now().Add(-2*time.Minute).UnixMilli())

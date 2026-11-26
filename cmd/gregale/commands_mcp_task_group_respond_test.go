@@ -75,7 +75,7 @@ func TestMCPTaskGroupRespondAppliesOnlyAuthorizedUniqueSelections(t *testing.T) 
 	}))
 	defer server.Close()
 
-	group, reviews := t.TempDir(), t.TempDir()
+	group, reviews := privateMCPTaskGroupTestDir(t), t.TempDir()
 	endpoint := server.URL + "/mcp"
 	endpointSHA := sha256.Sum256([]byte(endpoint))
 	writeMCPTaskGroupTestFile(t, group, "group.json", fmt.Sprintf(

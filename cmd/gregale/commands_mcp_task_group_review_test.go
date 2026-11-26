@@ -53,7 +53,7 @@ func TestMCPTaskGroupReviewExportsPrivateTemplateAndPreservesConflict(t *testing
 	}))
 	defer server.Close()
 
-	group, output := t.TempDir(), t.TempDir()
+	group, output := privateMCPTaskGroupTestDir(t), privateMCPTaskGroupTestDir(t)
 	endpoint := server.URL + "/mcp"
 	writeMCPTaskGroupTestFile(t, group, "group.json", fmt.Sprintf(
 		`{"version":1,"id":%q,"endpointSha256":"%x","members":[{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abc","taskId":"paused-task"},{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abd","taskId":"conflict-task"},{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abe","taskId":"unavailable-task"}]}`,

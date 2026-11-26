@@ -65,7 +65,7 @@ func TestMCPTaskGroupWatchPollsAfterSubscriptionRefusal(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	dir := t.TempDir()
+	dir := privateMCPTaskGroupTestDir(t)
 	endpoint := server.URL + "/mcp"
 	writeMCPTaskGroupTestFile(t, dir, "group.json", fmt.Sprintf(
 		`{"version":1,"id":%q,"endpointSha256":"%x","members":[{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abc","taskId":%s}]}`,

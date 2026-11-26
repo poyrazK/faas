@@ -11,7 +11,7 @@ import (
 )
 
 func TestMCPTaskGroupAckPersistsPrivateMarker(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateMCPTaskGroupTestDir(t)
 	id, groupID := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	writeMCPTaskGroupTestFile(t, dir, "group.json", fmt.Sprintf(
 		`{"version":1,"id":%q,"endpointSha256":%q,"members":[{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abc"}]}`,
