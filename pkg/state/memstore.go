@@ -659,6 +659,7 @@ type MemStore struct {
 	flagNotificationSettings             map[string]FlagNotificationSettings // ADR-20261125085913, by environment ID, lazily made
 	flagNotifications                    []FlagNotification                  // ADR-20261125085913
 	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
+	routeSplits                          map[string]RouteSplit               // ADR-20261121170000 amendment 2, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken

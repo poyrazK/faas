@@ -582,6 +582,7 @@ export type { CreateQueueBindingCanaryRequest } from './CreateQueueBindingCanary
 export type { CreateQueueBindingRequest } from './CreateQueueBindingRequest.js';
 export type { CreateReleaseFreezeRequest } from './CreateReleaseFreezeRequest.js';
 export type { CreateReleaseGateRequest } from './CreateReleaseGateRequest.js';
+export type { CreateRouteSplitRequest } from './CreateRouteSplitRequest.js';
 export type { CreateSLORequest } from './CreateSLORequest.js';
 export type { CreateScenarioObjectsRequest } from './CreateScenarioObjectsRequest.js';
 export type { CreateScenarioPostgresRequest } from './CreateScenarioPostgresRequest.js';
@@ -3304,6 +3305,8 @@ export type { RouteResourceAttribution } from './RouteResourceAttribution.js';
 export type { RouteResourceSplit } from './RouteResourceSplit.js';
 export type { RouteResourcesResponse } from './RouteResourcesResponse.js';
 export type { RouteRow } from './RouteRow.js';
+export type { RouteSplit } from './RouteSplit.js';
+export type { RouteSplitsResponse } from './RouteSplitsResponse.js';
 export type { RouteThrottleRequirement } from './RouteThrottleRequirement.js';
 export type { RunArtifactDelivery } from './RunArtifactDelivery.js';
 export type { RunArtifactObject } from './RunArtifactObject.js';

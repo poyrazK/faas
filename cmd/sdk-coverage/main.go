@@ -2891,6 +2891,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/analytics/timeseries":      "GetAppRequestAnalyticsTimeseries",
 	"GET /v1/apps/{slug}/analytics/route-customers": "GetAppRouteCustomerUsage",
 	"GET /v1/apps/{slug}/analytics/route-resources": "GetAppRouteResources",
+	"POST /v1/apps/{slug}/route-splits":             "CreateAppRouteSplit",
+	"GET /v1/apps/{slug}/route-splits":              "ListAppRouteSplits",
+	"GET /v1/apps/{slug}/route-splits/{id}":         "GetAppRouteSplit",
+	"DELETE /v1/apps/{slug}/route-splits/{id}":      "UndoAppRouteSplit",
 	"GET /v1/apps/{slug}/mcp-tool-insights":         "GetMCPToolInsights",
 
 	// ADR-127 / PR-A — production debugger data plane. The

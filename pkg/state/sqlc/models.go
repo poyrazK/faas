@@ -16046,6 +16046,30 @@ type RouteRemovalPolicyHistory struct {
 	Policy    []byte
 }
 
+type RouteSplit struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	SourceAppID        pgtype.UUID
+	TargetSlug         string
+	TargetAppID        pgtype.UUID
+	TargetDeploymentID pgtype.UUID
+	Kind               string
+	Route              string
+	Method             string
+	PathGlob           string
+	RouteRamMb         int32
+	MainRamMb          int32
+	PreviousRamMb      int32
+	MainResized        bool
+	EdgeRuleIds        []pgtype.UUID
+	Phase              string
+	Warning            string
+	Error              string
+	LeaseUntil         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type RuntimeArtifactBinding struct {
 	AccountID pgtype.UUID
 	RootfsKey string
