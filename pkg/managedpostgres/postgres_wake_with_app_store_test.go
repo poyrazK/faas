@@ -95,6 +95,12 @@ func TestWakeWithAppPGClaimsOncePerGap(t *testing.T) {
 	if n := claim(); n != 0 {
 		t.Fatalf("an old claim's defer released the new claim: %d", n)
 	}
+	// Each claim is kept for the activity read, except the deferred one.
+	var history, deferred int
+	if err := pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE claimed_at=$2) FROM managed_postgres_app_wake_starts WHERE database_id=$1`,
+		database.ID, stale.ClaimedAt).Scan(&history, &deferred); err != nil || history != 2 || deferred != 0 {
+		t.Fatalf("claim history %d (deferred %d), %v; want the two claims that started", history, deferred, err)
+	}
 	// Another app's wake claims nothing.
 	if claims, err := s.ClaimWakeStarts(ctx, uuid.NewString(), WakeStartGap); err != nil || len(claims) != 0 {
 		t.Fatalf("other app claims = %v, %v", claims, err)

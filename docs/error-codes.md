@@ -1344,6 +1344,12 @@ See [Application companions](companions.md), [Networking](networking.md).
 
 HTTP 500 Internal Server Error or 503 Service Unavailable · Many operations send this code; the response's `title` and `detail` name the failure.
 
+### `invalid_activity_since`
+
+HTTP 422 Unprocessable Entity · Invalid activity period
+
+See [Managed PostgreSQL](postgres.md#why-is-my-database-awake).
+
 ### `invalid_autoscale_target_cpu_pct`
 
 HTTP 422 Unprocessable Entity · Invalid autoscale target CPU%

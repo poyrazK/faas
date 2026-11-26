@@ -5085,6 +5085,25 @@ Drop a custom role; what it owns goes to the schema owner
 |---|---|---|
 | `--yes` | skip the typed confirmation |  |
 
+### postgres activity
+
+Show what kept a database awake: starts, causes and what to do
+
+`gregale postgres activity [--since <PERIOD>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <PERIOD>` | period: a duration such as 24h or 7d, or an RFC 3339 time (default 24h) |  |
+
+Examples:
+
+```sh
+gregale postgres activity orders-db
+gregale postgres activity orders-db --since 7d
+```
+
+Causes are best guesses from timing: wake-with-app, a cron, a request, an app connecting at start, a running app, or a client outside Gregale. Starts are kept 30 days.
+
 ### postgres restore
 
 Restore a database to a new database

@@ -222,6 +222,7 @@ var toolsetOf = map[string]string{
 	"gregale_get_incident":                     ToolsetDiagnose,
 	"gregale_get_postgres_schema":              ToolsetDiagnose,
 	"gregale_query_postgres":                   ToolsetDiagnose,
+	"gregale_get_postgres_activity":            ToolsetDiagnose,
 	"gregale_list_edge_rules":                  ToolsetDiagnose,
 	"gregale_get_edge_activity":                ToolsetDiagnose,
 	"gregale_list_objects":                     ToolsetDiagnose,
