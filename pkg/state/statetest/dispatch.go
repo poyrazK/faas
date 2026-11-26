@@ -27,6 +27,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"AlertDeferredFireRecipients":            true,
 	"UpdateAlertDeliveryStatus":              true,
 	"ClaimAlertFire":                         true,
 	"ListDeploymentPromotions":               true,

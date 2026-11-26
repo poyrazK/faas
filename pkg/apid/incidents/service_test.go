@@ -184,14 +184,14 @@ func TestDetailCarriesFiresLogContextAndChanges(t *testing.T) {
 	f := newFixture(t)
 	opened := f.now.Add(-20 * time.Minute)
 	f.fire(t, opened.Add(-time.Hour), `{"event":"alert.fired"}`) // an earlier episode's fire
-	f.setState(t, state.AlertStateFiring, opened)
+	f.setState(t, state.AlertStateOk, opened.Add(-30*time.Minute))
 	f.fire(t, opened, `{"event":"alert.fired"}`)
 	f.fire(t, opened.Add(10*time.Minute), `{"event":"alert.fired","log_context":{"window":"15m","errors":4}}`)
 	f.setState(t, state.AlertStateOk, opened.Add(15*time.Minute))
 
 	var list api.IncidentsResponse
 	get(t, f.svc.List, f.acct, "/v1/incidents", "", &list)
-	if len(list.Incidents) != 1 {
+	if len(list.Incidents) != 2 || !list.Incidents[0].OpenedAt.Equal(opened) {
 		t.Fatalf("list = %+v", list)
 	}
 	var detail api.IncidentDetail
