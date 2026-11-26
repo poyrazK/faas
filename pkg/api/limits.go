@@ -19216,6 +19216,12 @@ const (
 	AlertChannelResolveRetryBatch      = 100
 )
 
+// PublicSourceFetchesPerHour caps the reads of public GitHub repositories one
+// account makes without an installation, scans and deploys together
+// (ADR-20261126164847). Every account shares githubd's one public-read token,
+// 5,000 GitHub calls an hour, so no plan raises it. Counted per apid process.
+const PublicSourceFetchesPerHour = 30
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.

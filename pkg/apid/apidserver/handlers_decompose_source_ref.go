@@ -31,11 +31,14 @@ func (s *server) scanProjectSourceRef(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	installID, problem := s.projectScanInstallation(r, installOwner, req)
+	// A chosen installation is never swapped for a public read
+	// (ADR-20261126164847).
+	access, problem := s.sourceRefAccessFor(acct, installID, problem, req.InstallID == 0)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	scanRequest, cleanup, problem := s.projectSourceRefMultipart(r, acct, installOwner, req, installID)
+	scanRequest, cleanup, problem := s.projectSourceRefMultipart(r, acct, installOwner, req, access)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -98,10 +101,10 @@ func (s *server) projectScanInstallation(r *http.Request, installOwner string, r
 	return s.resolveRepositoryInstallation(r.Context(), installOwner, req.Repo)
 }
 
-func (s *server) projectSourceRefMultipart(r *http.Request, acct state.Account, installOwner string, req api.ProjectSourceRefScanRequest, installID int64) (*http.Request, func(), *api.Problem) {
+func (s *server) projectSourceRefMultipart(r *http.Request, acct state.Account, installOwner string, req api.ProjectSourceRefScanRequest, access sourceRefAccess) (*http.Request, func(), *api.Problem) {
 	limits := api.MustLimitsFor(acct.Plan)
 	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
-	stream, problem := s.streamSourceTarball(r.Context(), installOwner, installID, req.Repo, req.Ref, maxBytes)
+	stream, problem := s.streamSourceRefArchive(r.Context(), installOwner, access, req.Repo, req.Ref, maxBytes)
 	if problem != nil {
 		return nil, func() {}, problem
 	}
@@ -120,7 +123,12 @@ func (s *server) projectSourceRefMultipart(r *http.Request, acct state.Account, 
 		cleanup()
 		return nil, func() {}, problem
 	}
-	if err = writeProjectSourceRefFields(writer, req, installID); err == nil {
+	if access.public {
+		// No installation, so no repository binding: the plan deploys the
+		// scanned commit without push-to-deploy (ADR-20261126164847).
+		req.RepoFullName = ""
+	}
+	if err = writeProjectSourceRefFields(writer, req, access.installID); err == nil {
 		err = writer.Close()
 	}
 	if err == nil {

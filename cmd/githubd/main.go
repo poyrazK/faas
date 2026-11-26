@@ -440,6 +440,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				auditFn := newGithubdAuditFn(log)
 				realSvc = githubd.NewRealService(auth, tokens, checks, storeAdapter, installsAdapter, recipient, identity, auditFn).
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
+				// ADR-20261126164847: public repositories deploy without an
+				// installation, read with a public-only token (or anonymously).
+				realSvc.PublicStreamer = newPublicSourceRefStreamer(os.Getenv(publicReadTokenEnv), nil, log)
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				realSvc.CIPullRequests = githubd.NewHTTPCIPullRequests(tokens, deps.httpClient())
 				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient(), checks.AppID)
