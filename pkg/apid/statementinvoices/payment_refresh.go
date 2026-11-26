@@ -135,7 +135,7 @@ func (s *Service) refreshInvoicePayment(parent context.Context, exports state.St
 	}
 
 	observedAt := s.now()
-	payment, known, err := lookupInvoicePayment(ctx, p, conn, claimed)
+	payment, known, err := lookupInvoicePayment(ctx, p, conn, claimed, observedAt)
 	if err != nil || !known {
 		// Keep the short claim after a provider failure to coalesce retries.
 		release = false

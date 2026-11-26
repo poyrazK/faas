@@ -62,7 +62,7 @@ type provider interface {
 	dashboardURL(livemode bool, invoiceID string) string
 }
 
-func lookupInvoicePayment(ctx context.Context, p provider, conn connection, export state.StatementInvoiceExport) (state.StatementInvoicePayment, bool, error) {
+func lookupInvoicePayment(ctx context.Context, p provider, conn connection, export state.StatementInvoiceExport, observedAt time.Time) (state.StatementInvoicePayment, bool, error) {
 	payment, known, err := p.payment(ctx, conn, export.ProviderInvoiceID)
 	if err != nil || payment.Status != state.InvoicePaymentDeleted {
 		return payment, known, err
@@ -73,6 +73,19 @@ func lookupInvoicePayment(ctx context.Context, p provider, conn connection, expo
 	if export.PaymentStatus == state.InvoicePaymentDraft && export.StatusSyncedAt != nil &&
 		!conn.updatedAt.After(*export.StatusSyncedAt) {
 		return payment, known, nil
+	}
+	// A draft deleted before its first successful read has no observation
+	// timestamp. A matching Stripe event proves deletion without treating a
+	// bare 404 from the wrong account as a payment state.
+	if stripe, ok := p.(stripeProvider); ok && (export.PaymentStatus == state.InvoicePaymentDraft || export.PaymentStatus == "") {
+		from := export.CreatedAt
+		if earliest := observedAt.Add(-stripeinvoice.InvoiceSendEventLookback); from.Before(earliest) {
+			from = earliest
+		}
+		deleted, err := stripe.client.HasInvoiceDeletionEvent(ctx, conn.key, export.ProviderInvoiceID, export.Livemode, from, observedAt)
+		if err == nil && deleted {
+			return payment, known, nil
+		}
 	}
 	return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
 }

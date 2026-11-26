@@ -147,7 +147,7 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 		return deferSync(api.StatementInvoiceSyncRetry)
 	}
 	observedAt := s.now()
-	payment, known, err := lookupInvoicePayment(ctx, p, *conn, export)
+	payment, known, err := lookupInvoicePayment(ctx, p, *conn, export, observedAt)
 	if errors.Is(err, errKeyRejected) {
 		cached.conn = nil
 		conns[cacheKey] = cached

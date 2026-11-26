@@ -24,7 +24,16 @@ type InvoiceSendEvent struct {
 // FindInvoiceSendEvent looks for an invoice.sent event while bounding the
 // number and size of provider reads. An empty ID means no matching event.
 func (c *Client) FindInvoiceSendEvent(ctx context.Context, key, invoiceID string, live bool, from, until time.Time) (InvoiceSendEvent, error) {
-	const eventType = "invoice.sent"
+	return c.findInvoiceEvent(ctx, key, "invoice.sent", invoiceID, live, from, until)
+}
+
+// HasInvoiceDeletionEvent verifies that Stripe deleted the draft.
+func (c *Client) HasInvoiceDeletionEvent(ctx context.Context, key, invoiceID string, live bool, from, until time.Time) (bool, error) {
+	event, err := c.findInvoiceEvent(ctx, key, "invoice.deleted", invoiceID, live, from, until)
+	return event.ID != "", err
+}
+
+func (c *Client) findInvoiceEvent(ctx context.Context, key, eventType, invoiceID string, live bool, from, until time.Time) (InvoiceSendEvent, error) {
 	params := url.Values{
 		"type": {eventType}, "limit": {"25"},
 		"created[gte]": {strconv.FormatInt(from.Unix(), 10)},

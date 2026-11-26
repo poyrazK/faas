@@ -71,6 +71,23 @@ func (i paddleInvoiceIssue) transaction(ctx context.Context) (paddleinvoice.Tran
 	return txn, nil
 }
 
+func (i paddleInvoiceIssue) claim(ctx context.Context) (func(), *api.Problem) {
+	token := uuid.NewString()
+	account, id := i.export.AccountID, i.export.ID
+	_, err := i.exports.ClaimStatementInvoiceExport(ctx, account, id, token, time.Now().Add(api.StatementInvoiceExportClaimTTL))
+	if errors.Is(err, state.ErrStatementInvoiceExportInProgress) {
+		return nil, exportInProgress()
+	}
+	if err != nil {
+		return nil, api.ErrInternal("could not claim the Paddle invoice")
+	}
+	return func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = i.exports.ReleaseStatementInvoiceExport(cleanup, account, id, token)
+	}, nil
+}
+
 func (s *Service) ReviewProductPaddleInvoiceIssue(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
 	documentID string) (ProductPaddleInvoiceIssueReview, *api.Problem) {
 	var empty ProductPaddleInvoiceIssueReview
@@ -82,6 +99,11 @@ func (s *Service) ReviewProductPaddleInvoiceIssue(ctx context.Context, acct stat
 	if problem != nil {
 		return empty, problem
 	}
+	release, problem := issue.claim(ctx)
+	if problem != nil {
+		return empty, problem
+	}
+	defer release()
 	observedAt := s.now()
 	txn, problem := issue.transaction(ctx)
 	if problem != nil {
@@ -93,23 +115,31 @@ func (s *Service) ReviewProductPaddleInvoiceIssue(ctx context.Context, acct stat
 		}
 		return empty, exportConflict("Paddle has already issued this invoice. Its payment status has been refreshed.")
 	}
-	review, _, _, problem := issue.review(ctx, scope, txn)
-	return review, problem
+	if txn.Status != "draft" && txn.Status != "ready" {
+		return empty, exportConflict("Only a Paddle draft or ready transaction can be issued.")
+	}
+	address, business, problem := issue.provider.billingDetails(ctx, issue.conn, issue.export.Customer)
+	if problem != nil {
+		return empty, problem
+	}
+	if err := issue.provider.client.PrepareTransactionBilling(ctx, issue.conn.key, txn.ID, address.ID, business.ID); err != nil {
+		return empty, paddleIssueCallProblem(err)
+	}
+	txn, problem = issue.transaction(ctx)
+	if problem != nil {
+		return empty, problem
+	}
+	return issue.review(scope, txn, address, business)
 }
 
-func (i paddleInvoiceIssue) review(ctx context.Context, scope state.ProductBillingScope, txn paddleinvoice.TransactionState) (
-	ProductPaddleInvoiceIssueReview, paddleinvoice.Address, paddleinvoice.Business, *api.Problem,
-) {
+func (i paddleInvoiceIssue) review(scope state.ProductBillingScope, txn paddleinvoice.TransactionState,
+	address paddleinvoice.Address, business paddleinvoice.Business) (ProductPaddleInvoiceIssueReview, *api.Problem) {
 	var review ProductPaddleInvoiceIssueReview
-	if txn.Status != "draft" && txn.Status != "ready" {
-		return review, paddleinvoice.Address{}, paddleinvoice.Business{}, exportConflict("Only a Paddle draft or ready transaction can be issued.")
+	if txn.Status != "ready" || txn.AddressID != address.ID || txn.BusinessID != business.ID {
+		return review, paddleIssueReviewChanged()
 	}
 	if !txn.GrandTotalKnown || txn.GrandTotal < 0 || txn.PaymentTermsFrequency < 1 || !paddleInvoiceTermsSupported(txn.PaymentTermsInterval) {
-		return review, paddleinvoice.Address{}, paddleinvoice.Business{}, exportConflict("The Paddle draft needs a valid total and payment terms. Check the invoice in Paddle and review again.")
-	}
-	address, business, problem := i.provider.billingDetails(ctx, i.conn, i.export.Customer)
-	if problem != nil {
-		return review, address, business, problem
+		return review, exportConflict("The Paddle draft needs a valid total and payment terms. Check the invoice in Paddle and review again.")
 	}
 	review = ProductPaddleInvoiceIssueReview{
 		InvoiceID: txn.ID, Customer: txn.CustomerID, Currency: txn.Currency, AmountMinor: txn.GrandTotal,
@@ -125,7 +155,7 @@ func (i paddleInvoiceIssue) review(ctx context.Context, scope state.ProductBilli
 	}{scope, i.export.ID, txn.Status, txn.UpdatedAt.UTC(), i.conn.updatedAt.UTC(), address, business, review})
 	digest := sha256.Sum256(raw)
 	review.Hash = hex.EncodeToString(digest[:])
-	return review, address, business, nil
+	return review, nil
 }
 
 func (s *Service) IssueProductPaddleInvoice(ctx context.Context, acct state.Account, scope state.ProductBillingScope,
@@ -143,18 +173,11 @@ func (s *Service) IssueProductPaddleInvoice(ctx context.Context, acct state.Acco
 	if problem != nil {
 		return empty, problem
 	}
-	exports := issue.exports
-	token := uuid.NewString()
-	_, err := exports.ClaimStatementInvoiceExport(ctx, acct.ID, issue.export.ID, token, time.Now().Add(api.StatementInvoiceExportClaimTTL))
-	if errors.Is(err, state.ErrStatementInvoiceExportInProgress) {
-		return empty, exportInProgress()
+	release, problem := issue.claim(ctx)
+	if problem != nil {
+		return empty, problem
 	}
-	if err != nil {
-		return empty, api.ErrInternal("could not claim the Paddle invoice")
-	}
-	defer func() {
-		_ = exports.ReleaseStatementInvoiceExport(context.WithoutCancel(ctx), acct.ID, issue.export.ID, token)
-	}()
+	defer release()
 	return s.issueReviewedPaddleInvoice(ctx, scope, issue, payments, expected)
 }
 
@@ -170,14 +193,18 @@ func (s *Service) issueReviewedPaddleInvoice(ctx context.Context, scope state.Pr
 		// A prior request may have issued the invoice and lost its response.
 		return s.recordPaddleIssue(ctx, payments, issue, txn, observedAt)
 	}
-	review, address, business, problem := issue.review(ctx, scope, txn)
+	address, business, problem := issue.provider.billingDetails(ctx, issue.conn, issue.export.Customer)
+	if problem != nil {
+		return empty, problem
+	}
+	review, problem := issue.review(scope, txn, address, business)
 	if problem != nil {
 		return empty, problem
 	}
 	if review.Hash != expected {
 		return empty, paddleIssueReviewChanged()
 	}
-	if err := issue.provider.client.BillTransaction(ctx, issue.conn.key, txn.ID, address.ID, business.ID); err != nil {
+	if err := issue.provider.client.IssuePreparedTransaction(ctx, issue.conn.key, txn.ID); err != nil {
 		return empty, paddleIssueCallProblem(err)
 	}
 	observedAt = s.now()

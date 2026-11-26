@@ -18,6 +18,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 )
 
+type fakePaddleDraftBilling struct {
+	address, business string
+	updatedAt         time.Time
+}
+
 // fakePaddle keeps transactions, and customers' addresses and businesses,
 // like Paddle Billing would.
 type fakePaddle struct {
@@ -27,13 +32,16 @@ type fakePaddle struct {
 	// addresses are customers' active addresses; billed records the
 	// address each transaction was billed with (ADR-20261019100333), and
 	// billedBusiness its business (ADR-20261020120000).
-	addresses      map[string]string
-	billed         map[string]string
-	billedBusiness map[string]string
-	billedAt       *time.Time
-	totalMinor     string
-	billAttempts   int
-	loseBillReply  bool
+	addresses       map[string]string
+	billed          map[string]string
+	billedBusiness  map[string]string
+	billedAt        *time.Time
+	totalMinor      string
+	prepared        map[string]fakePaddleDraftBilling
+	totalByAddress  map[string]string
+	prepareAttempts int
+	billAttempts    int
+	loseBillReply   bool
 	// entities holds addresses and businesses written through the API by
 	// "customer/kind"; writes counts POSTs and PATCHes.
 	entities map[string][]map[string]any
@@ -145,9 +153,30 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Status     string `json:"status"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.Status != "billed" || body.AddressID == "" {
+		if body.Status == "" && body.AddressID != "" {
+			if f.prepared == nil {
+				f.prepared = map[string]fakePaddleDraftBilling{}
+			}
+			f.prepareAttempts++
+			f.prepared[id] = fakePaddleDraftBilling{
+				address: body.AddressID, business: body.BusinessID,
+				updatedAt: time.Date(2026, 11, 1, 0, 0, f.prepareAttempts, 0, time.UTC),
+			}
+			response, _ := f.transaction(id)
+			_, _ = fmt.Fprint(w, response)
+			return
+		}
+		if body.Status != "billed" || (f.totalByAddress != nil && (body.AddressID != "" || body.BusinessID != "")) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
+		}
+		if body.AddressID == "" {
+			prepared := f.prepared[id]
+			if prepared.address == "" || body.BusinessID != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			body.AddressID, body.BusinessID = prepared.address, prepared.business
 		}
 		if f.billed == nil {
 			f.billed = map[string]string{}
@@ -176,7 +205,11 @@ func (f *fakePaddle) transaction(id string) (string, bool) {
 		if fmt.Sprintf("txn_%d", i+1) != id {
 			continue
 		}
-		total := f.totalMinor
+		prepared := f.prepared[id]
+		total := f.totalByAddress[prepared.address]
+		if total == "" {
+			total = f.totalMinor
+		}
 		if total == "" {
 			total = "0"
 		}
@@ -185,6 +218,10 @@ func (f *fakePaddle) transaction(id string) (string, bool) {
 			"customer_id": created["customer_id"], "collection_mode": created["collection_mode"],
 			"custom_data": created["custom_data"], "billing_details": created["billing_details"],
 			"details": map[string]any{"totals": map[string]string{"grand_total": total, "balance": total}},
+		}
+		if prepared.address != "" {
+			data["status"], data["address_id"], data["business_id"] = "ready", prepared.address, prepared.business
+			data["updated_at"] = prepared.updatedAt
 		}
 		if _, billed := f.billed[id]; billed {
 			data["status"], data["billed_at"] = "billed", f.billedAt

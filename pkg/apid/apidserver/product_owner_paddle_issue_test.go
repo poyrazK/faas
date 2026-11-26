@@ -86,6 +86,7 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 		apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*time.Minute, "").WithProductControlEnabled(true)
 	paddle := &fakePaddle{
 		addresses: map[string]string{}, totalMinor: "900", billedAt: &issuedAt,
+		totalByAddress: map[string]string{"add_first": "1080", "add_changed": "1170"},
 	}
 	paddleServer := httptest.NewServer(paddle)
 	t.Cleanup(paddleServer.Close)
@@ -161,7 +162,7 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 	paddle.addresses[customer] = "add_first"
 	paddle.mu.Unlock()
 	body = call(base+"/review", reviewForm, http.StatusOK)
-	expect(body, "Issue and send invoice", customer, "EUR 9.00", "Due 30 days after issuance", "Test")
+	expect(body, "Issue and send invoice", customer, "EUR 10.80", "Due 30 days after issuance", "Test")
 	checkProvider(0, "")
 	confirm := ownerConsoleForm(t, body, "confirm")
 	paddle.mu.Lock()
@@ -172,6 +173,7 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 	checkProvider(0, "")
 
 	body = call(base+"/review", reviewForm, http.StatusOK)
+	expect(body, "Invoice total", "EUR 11.70")
 	confirm = ownerConsoleForm(t, body, "confirm")
 	paddle.mu.Lock()
 	paddle.loseBillReply = true
@@ -191,7 +193,7 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 	synced, err := store.GetStatementInvoiceExport(ctx, acct.ID, state.StatementSourceProductControl, doc.ID)
 	if err != nil || synced.PaymentStatus != state.InvoicePaymentOpen || synced.StatusSyncedAt == nil ||
 		synced.DueAt == nil || !synced.DueAt.Equal(issuedAt.AddDate(0, 0, 30)) ||
-		synced.AmountRemainingMinor == nil || *synced.AmountRemainingMinor != 900 ||
+		synced.AmountRemainingMinor == nil || *synced.AmountRemainingMinor != 1170 ||
 		synced.ProviderInvoiceID != export.InvoiceID {
 		t.Fatalf("issued payment status = %+v, %v", synced, err)
 	}
@@ -201,6 +203,12 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 		t.Fatalf("older draft observation returned %v", err)
 	}
 	page = call(base, nil, http.StatusOK)
+	paddle.mu.Lock()
+	preparations := paddle.prepareAttempts
+	paddle.mu.Unlock()
+	if preparations != 2 {
+		t.Fatalf("Paddle prepared %d drafts, want two reviews", preparations)
+	}
 	if strings.Contains(page, "Review and issue") || strings.Contains(page, "Draft to issue") {
 		t.Fatal("issued invoice remained in the draft queue")
 	}

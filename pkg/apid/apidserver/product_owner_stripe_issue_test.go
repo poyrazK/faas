@@ -23,19 +23,19 @@ import (
 )
 
 type stripeDraftSend struct {
-	mu                                            sync.Mutex
-	invoiceID, customer, statement, export, email string
-	status, collection, marker                    string
-	dueAt                                         *int64
-	prepares, finalizes, emails                   int
-	sendKeys                                      []string
-	sendAt, checkAt                               time.Time
-	eventReads                                    int
-	eventsForbidden, matchEvent                   bool
-	loseFinalizeReply, loseSendReply              bool
-	amountRemaining                               int64
-	loseReminderReply                             bool
-	unexpectedWrites                              int
+	mu                                                 sync.Mutex
+	invoiceID, customer, statement, export, email      string
+	status, collection, marker                         string
+	dueAt                                              *int64
+	prepares, finalizes, emails                        int
+	sendKeys                                           []string
+	sendAt, checkAt                                    time.Time
+	eventReads                                         int
+	eventsForbidden, matchEvent                        bool
+	losePrepareReply, loseFinalizeReply, loseSendReply bool
+	amountRemaining                                    int64
+	loseReminderReply                                  bool
+	unexpectedWrites                                   int
 }
 
 func (f *stripeDraftSend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,9 +43,12 @@ func (f *stripeDraftSend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 
 	invoicePath := "/v1/invoices/" + f.invoiceID
+	authorization := r.Header.Get("Authorization")
 	switch {
-	case r.Header.Get("Authorization") != "Bearer rk_test_stripe_reviewed":
+	case authorization != "Bearer rk_test_stripe_reviewed" && authorization != "Bearer rk_test_stripe_rotated":
 		w.WriteHeader(http.StatusUnauthorized)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/account":
+		_, _ = io.WriteString(w, `{"id":"acct_reviewed"}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/invoices":
 		_, _ = io.WriteString(w, `{"data":[]}`)
 	case r.Method == http.MethodGet && r.URL.Path == invoicePath:
@@ -63,6 +66,11 @@ func (f *stripeDraftSend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.listSendEvents(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == invoicePath:
 		f.prepares++
+		if f.losePrepareReply {
+			f.losePrepareReply = false
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
 		due, err := strconv.ParseInt(r.FormValue("due_date"), 10, 64)
 		if err != nil || f.status != "draft" || r.FormValue("auto_advance") != "false" ||
 			r.FormValue("collection_method") != "send_invoice" ||
@@ -344,6 +352,27 @@ func (f *stripeDraftSend) assertWrites(t *testing.T, prepares, finalizes, sends,
 	}
 }
 
+func TestProductControlOwnerStripeSendRecoversPreparationAfterKeyRotation(t *testing.T) {
+	fixture := newStripeOwnerFixture(t)
+	_, stripe := fixture.draft(t, "Stripe workspace", "cus_reviewed", "in_reviewed", "first@example.com", fixture.month)
+	stripe.losePrepareReply = true
+	dashboard := fixture.dashboard(t, stripe)
+	page := dashboard.call(t, "", nil, http.StatusOK, "Review and send")
+	form := ownerConsoleForm(t, page, "send_stripe_invoice")
+	body := dashboard.call(t, "/review", form, http.StatusOK, "first@example.com", "EUR 9.00")
+	confirm := ownerConsoleForm(t, body, "confirm")
+	dashboard.call(t, "/confirm", confirm, http.StatusBadGateway, "Retry send")
+	stripe.assertWrites(t, 1, 0, 0, 0)
+
+	dashboard.connectStripe(t, fixture.owner, "rk_test_stripe_rotated")
+	page = dashboard.call(t, "", nil, http.StatusOK, "Stripe send pending")
+	form = ownerConsoleForm(t, page, "send_stripe_invoice")
+	body = dashboard.call(t, "/review", form, http.StatusOK, "first@example.com", "EUR 9.00")
+	confirm = ownerConsoleForm(t, body, "confirm")
+	dashboard.call(t, "/confirm", confirm, http.StatusOK, "Stripe accepted the send for invoice in_reviewed")
+	stripe.assertWrites(t, 2, 1, 1, 1)
+}
+
 func testProductControlOwnerStripeSend(t *testing.T, recoverExpired bool) {
 	t.Helper()
 	fixture := newStripeOwnerFixture(t)
@@ -352,6 +381,15 @@ func testProductControlOwnerStripeSend(t *testing.T, recoverExpired bool) {
 	dashboard := fixture.dashboard(t, stripe)
 	now, checkAt, store := fixture.now, stripe.checkAt, fixture.store
 	ctx := t.Context()
+	connection, err := store.GetBillingConnection(ctx, fixture.acct.ID, state.BillingProviderStripe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection.StripeAccountID = "acct_reviewed"
+	connection, err = store.PutBillingConnection(ctx, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
 	call := func(path string, form url.Values, status int, wanted ...string) string {
 		t.Helper()
 		return dashboard.call(t, path, form, status, wanted...)
@@ -376,6 +414,11 @@ func testProductControlOwnerStripeSend(t *testing.T, recoverExpired bool) {
 	confirm = ownerConsoleForm(t, body, "confirm")
 	call("/confirm", confirm, http.StatusBadGateway, "Retry send")
 	checkProvider(1, 1, 0, 0)
+	dashboard.connectStripe(t, fixture.owner, "rk_test_stripe_rotated")
+	rotated, err := store.GetBillingConnection(ctx, fixture.acct.ID, state.BillingProviderStripe)
+	if err != nil || rotated.StripeAccountID != connection.StripeAccountID || !rotated.UpdatedAt.After(connection.UpdatedAt) {
+		t.Fatalf("expected a rotated key for the same Stripe account, got %+v, %v", rotated, err)
+	}
 	call("/confirm", confirm, http.StatusBadGateway, "Retry send")
 	checkProvider(1, 1, 1, 1)
 

@@ -30,12 +30,12 @@ func (s *Service) reviewOwnerIssue(r *http.Request, c *ownerContext, action *own
 	}
 	confirmation := c.data.Confirmation
 	confirmation.Title = "Issue Paddle invoice"
-	confirmation.Description = "Paddle will issue and email this invoice using the customer's current billing details. Paddle determines the final tax."
+	confirmation.Description = "Paddle will issue and email this invoice using the reviewed total and billing details."
 	confirmation.SubmitLabel = "Issue and send invoice"
 	confirmation.Details = []dashboard.ProductControlComparison{
 		{Feature: "Paddle transaction", After: review.InvoiceID},
 		{Feature: "Paddle customer", After: review.Customer},
-		{Feature: "Draft total", After: ownerMinor(review.Currency, review.AmountMinor)},
+		{Feature: "Invoice total", After: ownerMinor(review.Currency, review.AmountMinor)},
 		{Feature: "Payment terms", After: "Due " + strconv.Itoa(review.PaymentTermsFrequency) + " " + unit + " after issuance"},
 		{Feature: "Mode", After: ownerInvoiceMode(review.Livemode)},
 	}
