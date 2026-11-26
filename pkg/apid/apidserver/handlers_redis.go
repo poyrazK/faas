@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -252,10 +253,41 @@ func (s *server) deleteRedisCache(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
+	if problem := s.redisCacheStillBound(r.Context(), app); problem != nil {
+		s.refuseRedisChange(w, app, problem, nil)
+		return
+	}
 	// The ordinary app delete tears down the VM and its snapshots; the
 	// marker row goes with the app (ON DELETE CASCADE at purge).
 	r.SetPathValue("slug", app.Slug)
 	s.deleteApp(w, r, acct)
+}
+
+// redisCacheStillBound refuses to delete a cache live apps are bound to.
+// Deleting it left each app's connection variable pointing at a cache that
+// answers every command "ERR cache unavailable, retry the command" (prod
+// hunt r50); managed Postgres refuses the same way while apps are attached.
+func (s *server) redisCacheStillBound(ctx context.Context, cacheApp state.App) *api.Problem {
+	grants, ok := s.store.(state.ManagedValkeyGrantStore)
+	if !ok {
+		return nil
+	}
+	bound, err := grants.ListManagedValkeyCacheGrantees(ctx, cacheApp.ID)
+	if err != nil {
+		s.log.WarnContext(ctx, "apid: list managed cache bindings", "cache_app_id", cacheApp.ID, "err", err)
+		return api.ErrCapacity("could not check the cache's bindings; retry the delete")
+	}
+	if len(bound) == 0 {
+		return nil
+	}
+	steps := make([]string, 0, len(bound))
+	for _, app := range bound {
+		steps = append(steps, fmt.Sprintf("gregale redis unbind %s --app %s", cacheApp.Slug, app))
+	}
+	return api.NewProblem(http.StatusConflict, "redis_cache_bound", "Cache is still bound",
+		fmt.Sprintf("%s is bound to %s; deleting it would leave their connection variable pointing at a deleted cache",
+			cacheApp.Slug, strings.Join(bound, ", "))).
+		WithHint("Unbind each app (" + strings.Join(steps, "; ") + "), unset its connection variable with gregale env unset, then delete the cache.")
 }
 
 // updateRedisCache resizes a cache or changes its eviction policy through the

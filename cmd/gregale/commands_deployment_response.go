@@ -26,8 +26,11 @@ func cmdDeploymentCheckResponse(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	// In the app's checkout --app defaults to the linked app (prod hunt
+	// r53: the check every deploy prints printed usage there without it).
+	fillLinkedApp(app)
 	if fs.NArg() != 1 || !api.ValidDeploymentResponseCheckID(fs.Arg(0)) || !api.ValidAppSlug(*app) {
-		PrintUsage(osStderr, "usage: gregale release verify <deployment-uuid> --app SLUG [--path /] [--project-id UUID --environment-id UUID]", "deployment")
+		PrintUsage(osStderr, "usage: gregale release verify <deployment-uuid> [--app SLUG] [--path /] [--project-id UUID --environment-id UUID]", "deployment")
 		return 1
 	}
 	if !api.ValidDeploymentResponseCheckPath(*path) {

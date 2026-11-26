@@ -3210,6 +3210,10 @@ HTTP 403 Forbidden · Sign in again
 
 See [Authentication](auth.md), [Account and organization management](account.md).
 
+### `redis_cache_bound`
+
+HTTP 409 Conflict · Cache is still bound
+
 ### `registry_credential_not_found`
 
 HTTP 400 Bad Request · Registry credential not set

@@ -41,8 +41,11 @@ func cmdPostgresSuspendTimeout(args []string) int {
 	}
 	seconds, ok := parsePostgresSuspendTimeout(fs.Arg(1))
 	if !ok {
+		// Usage alone did not say that `30s` or `2h` was the problem (prod
+		// hunt r52).
 		PrintUsage(os.Stderr, postgresSuspendTimeoutUsage, "postgres")
-		return 1
+		return printErr("Invalid suspend timeout", fmt.Errorf("%q is not a whole-second duration from %s to %s, or default",
+			fs.Arg(1), time.Duration(api.ManagedPostgresSuspendTimeoutMinSeconds)*time.Second, time.Duration(api.ManagedPostgresSuspendTimeoutMaxSeconds)*time.Second))
 	}
 	client, err := authedClient()
 	if err != nil {

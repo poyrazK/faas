@@ -582,7 +582,7 @@ invocation, with an S3-style body:
 - Delivery is at least once. The `x-gregale-event-id` header stays the same
   across retries, so record it before applying side effects. Failed deliveries
   follow the async retry policy and end in the app's dead-letter queue
-  (`gregale dlq my-api`).
+  (`gregale dlq list my-api`).
 - The trigger always calls the app that owns the bucket. Leaving out `triggers`
   keeps the current rules; `triggers: []` removes the ones the manifest created.
   Rules you set by hand with `gregale bucket notifications` are kept, and a
