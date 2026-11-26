@@ -66,7 +66,9 @@ type listedStore struct {
 	items []Database
 }
 
-func (s *listedStore) ListCustomerDatabases(context.Context, string) ([]Database, error) { return s.items, nil }
+func (s *listedStore) ListCustomerDatabases(context.Context, string) ([]Database, error) {
+	return s.items, nil
+}
 
 // Commands name the database by name unless another database the account
 // lists (a deleted one kept for recovery, say) shares it, then by ID: the CLI
