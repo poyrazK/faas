@@ -3933,3 +3933,10 @@ Use `watch_work_inbox` to follow one owned business record over a private
 realtime subscription. See [watcher setup](../../docs/sdk-live-work-inbox.md).
 Use `resolve_work_inbox_follow_up` to get the current review or tool call for an entry.
 See [typed inbox follow-ups](../../docs/sdk-work-inbox-follow-ups.md).
+
+## Starters, Deploy button & Community
+
+- [Gregale Templates & Starters](https://gregale.dev/templates) — browse all 11 official starters, including [fastapi-postgres-jobs](https://github.com/gregale-dev/fastapi-postgres-jobs) and [mcp-server-python](https://github.com/gregale-dev/mcp-server-python).
+- [One-click Deploy on Gregale](https://gregale.dev/deploy) — launch any public GitHub repository (`https://gregale.dev/deploy?repo=https://github.com/OWNER/REPO`) or grab a README badge.
+- [Gregale SDK docs](https://gregale.dev/docs/sdks#python) — installation, async usage, and client configuration guides.
+- [Community Discussions](https://github.com/gregale-dev/community/discussions) — ask questions, share workflows, and troubleshoot with other developers.
