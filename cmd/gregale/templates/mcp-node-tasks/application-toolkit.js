@@ -217,6 +217,13 @@ export function applicationToolkitRegistration(
       subscribePipelineTasks,
       supportsTaskSubmission: native?.supportsTaskSubmission?.bind(native),
       getBySubmissionKey: native?.getBySubmissionKey?.bind(native),
+      supportsTaskGroupOwnerBinding: native?.supportsTaskGroupOwnerBinding?.bind(native),
+      taskGroupOwnerBinding: native?.taskGroupOwnerBinding?.bind(native),
+      supportsTaskInbox: native?.supportsTaskInbox?.bind(native),
+      inbox: native?.inbox?.bind(native),
+      supportsReviewedInput: native?.supportsReviewedInput?.bind(native),
+      inputReview: native?.inputReview?.bind(native),
+      reviewedResponse: native?.reviewedResponse?.bind(native),
       canCreate(name) {
         return pipelineTasks.canCreate(name) || !!native?.canCreate?.(name);
       },

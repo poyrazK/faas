@@ -336,6 +336,15 @@ func publishCustomerOperationReceipt(path string, body []byte) error {
 		return err
 	}
 	defer func() { _ = root.Close() }()
+	if err := linkPrivateReceiptAt(root, filepath.Base(path), body); err != nil {
+		return err
+	}
+	return syncPrivateReceiptDirectory(root)
+}
+
+// Write a complete file before making the final name visible. A competing
+// writer sees os.ErrExist without replacing the winner's bytes.
+func linkPrivateReceiptAt(root *os.Root, target string, body []byte) error {
 	name := customerOperationReceiptTempPrefix + uuid.NewString()
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -351,9 +360,10 @@ func publishCustomerOperationReceipt(path string, body []byte) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := root.Link(name, filepath.Base(path)); err != nil {
-		return err
-	}
+	return root.Link(name, target)
+}
+
+func syncPrivateReceiptDirectory(root *os.Root) error {
 	directory, err := root.Open(".")
 	if err != nil {
 		return err

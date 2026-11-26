@@ -242,6 +242,11 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 	if method == "" {
 		return http.StatusBadRequest, "A single JSON-RPC method is required", mcpCall{}
 	}
+	if method == "gregale/tasks/submit-bound" {
+		// Apply tool policy and accounting here. The guest still needs the
+		// original envelope to verify the group owner before dispatching it.
+		method = "tools/call"
+	}
 	var params map[string]json.RawMessage
 	if raw := envelope["params"]; len(raw) != 0 && json.Unmarshal(raw, &params) != nil {
 		return http.StatusBadRequest, "MCP params must be an object", mcpCall{}
