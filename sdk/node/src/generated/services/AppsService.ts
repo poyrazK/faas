@@ -61,6 +61,7 @@ import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssue
 import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
 import type { CreateProfileCaptureRequest } from '../models/CreateProfileCaptureRequest.js';
 import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
+import type { CreateRouteSplitRequest } from '../models/CreateRouteSplitRequest.js';
 import type { CreateSLORequest } from '../models/CreateSLORequest.js';
 import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
@@ -203,6 +204,8 @@ import type { RouteRemovalCheck } from '../models/RouteRemovalCheck.js';
 import type { RouteRemovalPolicy } from '../models/RouteRemovalPolicy.js';
 import type { RouteRequirementsCheck } from '../models/RouteRequirementsCheck.js';
 import type { RouteResourcesResponse } from '../models/RouteResourcesResponse.js';
+import type { RouteSplit } from '../models/RouteSplit.js';
+import type { RouteSplitsResponse } from '../models/RouteSplitsResponse.js';
 import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
@@ -3898,6 +3901,184 @@ export class AppsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Apply the suggested route split.
+   * Moves one heavy route to its own app. The body repeats the split the
+   * route-resources read suggested; Gregale recomputes it over the same
+   * window and answers route_split_changed when it moved. It then creates
+   * the route's app from the app's live build with its variables, secrets
+   * and runtime and security settings, and in the background routes the
+   * path to it with an edge rule once it is live and, for a memory split,
+   * sizes the app down. A split that fails before traffic moves deletes
+   * the route's app and ends rolled_back. Apps in a project, previews,
+   * apps with managed or service bindings, apps with their own edge rules
+   * and apps with a static egress IP are refused with
+   * route_split_unsupported. Available only where route resource peaks
+   * are enabled for the account.
+   *
+   * @returns RouteSplit The split started; follow its phase.
+   * @throws ApiError
+   */
+  public static createAppRouteSplit({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateRouteSplitRequest,
+  }): CancelablePromise<RouteSplit> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-splits',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The suggestion changed (route_split_changed), a split is in flight (route_split_in_flight), or the app has no live build.`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * The app's route splits, newest first.
+   * @returns RouteSplitsResponse The app's route splits.
+   * @throws ApiError
+   */
+  public static listAppRouteSplits({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteSplitsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-splits',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * One route split.
+   * @returns RouteSplit The split.
+   * @throws ApiError
+   */
+  public static getAppRouteSplit({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The route split's ID.
+     */
+    id: string,
+  }): CancelablePromise<RouteSplit> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-splits/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Reverse a finished route split.
+   * Gives the app its previous size back, removes the split's edge rules
+   * and deletes the route's app. A split that is still in flight is
+   * refused with route_split_in_flight; a rolled-back or undone split is
+   * returned as it is.
+   *
+   * @returns RouteSplit The undone split.
+   * @throws ApiError
+   */
+  public static undoAppRouteSplit({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The route split's ID.
+     */
+    id: string,
+  }): CancelablePromise<RouteSplit> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/route-splits/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The split is still in flight (route_split_in_flight).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

@@ -27898,6 +27898,108 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-splits:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: createAppRouteSplit
+      summary: Apply the suggested route split.
+      description: |
+        Moves one heavy route to its own app. The body repeats the split the
+        route-resources read suggested; Gregale recomputes it over the same
+        window and answers route_split_changed when it moved. It then creates
+        the route's app from the app's live build with its variables, secrets
+        and runtime and security settings, and in the background routes the
+        path to it with an edge rule once it is live and, for a memory split,
+        sizes the app down. A split that fails before traffic moves deletes
+        the route's app and ends rolled_back. Apps in a project, previews,
+        apps with managed or service bindings, apps with their own edge rules
+        and apps with a static egress IP are refused with
+        route_split_unsupported. Available only where route resource peaks
+        are enabled for the account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRouteSplitRequest' }
+      responses:
+        '202':
+          description: The split started; follow its phase.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteSplit' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The suggestion changed (route_split_changed), a split is in flight (route_split_in_flight), or the app has no live build.
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [apps]
+      operationId: listAppRouteSplits
+      summary: The app's route splits, newest first.
+      responses:
+        '200':
+          description: The app's route splits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteSplitsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/route-splits/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The route split's ID.
+        schema: { type: string }
+    get:
+      tags: [apps]
+      operationId: getAppRouteSplit
+      summary: One route split.
+      responses:
+        '200':
+          description: The split.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteSplit' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: undoAppRouteSplit
+      summary: Reverse a finished route split.
+      description: |
+        Gives the app its previous size back, removes the split's edge rules
+        and deletes the route's app. A split that is still in flight is
+        refused with route_split_in_flight; a rolled-back or undone split is
+        returned as it is.
+      responses:
+        '200':
+          description: The undone split.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteSplit' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The split is still in flight (route_split_in_flight).
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/mcp-tool-insights:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -132762,11 +132864,51 @@ components:
           items: { $ref: '#/components/schemas/RouteResourceAttribution' }
         routes_omitted: { type: integer, description: "Routes past the 50 reported." }
         split: { $ref: '#/components/schemas/RouteResourceSplit' }
+    CreateRouteSplitRequest:
+      type: object
+      description: "The split the route-resources read suggested, repeated so a split that changed since is refused."
+      required: [kind, route, route_ram_mb, main_ram_mb]
+      properties:
+        kind: { type: string, enum: [memory, cpu] }
+        route: { type: string }
+        method: { type: string }
+        route_ram_mb: { type: integer }
+        main_ram_mb: { type: integer }
+        since: { type: string, description: "The analysed window, as for the route-resources read (default 24h)." }
+    RouteSplit:
+      type: object
+      description: "An applied route split and where it is."
+      required: [id, slug, target_slug, kind, route, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, created_at, updated_at]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        target_slug: { type: string, description: "The route's app." }
+        kind: { type: string, enum: [memory, cpu] }
+        route: { type: string }
+        method: { type: string }
+        path_glob: { type: string }
+        route_ram_mb: { type: integer }
+        main_ram_mb: { type: integer }
+        previous_ram_mb: { type: integer, description: "The app's size before the split; undo restores it." }
+        main_resized: { type: boolean }
+        edge_rule_ids: { type: array, items: { type: string } }
+        phase: { type: string, enum: [creating, deploying, rule_live, done, rolled_back, undone] }
+        warning: { type: string }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RouteSplitsResponse:
+      description: An app's route splits, newest first.
+      type: object
+      required: [splits]
+      properties:
+        splits: { type: array, items: { $ref: '#/components/schemas/RouteSplit' } }
     RouteResourceSplit:
       type: object
-      description: "Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down."
-      required: [route, path_glob, route_ram_mb, current_ram_mb, main_ram_mb, high_memory_share, presence_share, high_memory_minutes, reason]
+      description: "Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down (kind memory). When no memory split qualifies, the same rule over CPU peaks suggests moving the route for isolation; both apps keep the current size (kind cpu)."
+      required: [kind, route, path_glob, route_ram_mb, current_ram_mb, main_ram_mb, high_memory_share, presence_share, high_memory_minutes, reason]
       properties:
+        kind: { type: string, enum: [memory, cpu], description: "memory sizes both apps for what they need; cpu isolates a route whose CPU bursts slow the app's other routes." }
         route: { type: string }
         method: { type: string }
         path_glob: { type: string, description: "Edge-rule path match for the route; path parameters become one-segment wildcards." }
@@ -132777,6 +132919,8 @@ components:
         high_memory_share: { type: number }
         presence_share: { type: number }
         high_memory_minutes: { type: integer }
+        high_cpu_share: { type: number, description: "Share of attributed CPU peaks the route was in flight for; set on cpu splits." }
+        high_cpu_minutes: { type: integer, description: "CPU peaks the route was in flight for; set on cpu splits." }
         reason: { type: string }
     RouteResourceAttribution:
       type: object

@@ -266,6 +266,9 @@ func (s *PgStore) CreateDeploymentForEnvironmentBranch(ctx context.Context, acco
 // created for the app.
 func prepareBranchDeploymentTx(ctx context.Context, tx pgx.Tx, d Deployment) (Deployment, *Deployment, string, error) {
 	input := d.branchInput
+	if input.RouteSplit != nil {
+		return prepareRouteSplitDeploymentTx(ctx, tx, d)
+	}
 	if input.Seed != nil {
 		return prepareSeedDeploymentTx(ctx, tx, d)
 	}
@@ -318,6 +321,9 @@ func prepareBranchDeploymentTx(ctx context.Context, tx pgx.Tx, d Deployment) (De
 // lineage on the inserted row and moves it to snapshotting, where schedd's
 // prime activates it without a boot.
 func attachBranchDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnvironmentBranchDeploymentInput, sourceID string, d Deployment, created *Deployment) error {
+	if input.RouteSplit != nil {
+		return attachRouteSplitDeploymentTx(ctx, tx, sourceID, d, created)
+	}
 	if input.Seed != nil {
 		return attachSeedDeploymentTx(ctx, tx, input, sourceID, d, created)
 	}
