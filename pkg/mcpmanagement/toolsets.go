@@ -240,6 +240,7 @@ var toolsetOf = map[string]string{
 	"gregale_list_audit_events":                ToolsetDiagnose,
 	"gregale_plan_event_change":                ToolsetOperate,
 	"gregale_list_api_consumers":               ToolsetOperate,
+	"gregale_get_mcp_seller_stats":             ToolsetOperate,
 	"gregale_get_api_consumer":                 ToolsetOperate,
 	"gregale_plan_api_consumer_change":         ToolsetOperate,
 	"gregale_get_spend_forecast":               ToolsetOperate,
