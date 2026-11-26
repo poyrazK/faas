@@ -1511,6 +1511,9 @@ type APIConsumerResponse struct {
 	UpdatedAt               time.Time  `json:"updated_at"`
 	RevokedAt               *time.Time `json:"revoked_at,omitempty"`
 	ManagedByPlatformTenant bool       `json:"managed_by_platform_tenant,omitempty"`
+	// EnvironmentID is the project environment the consumer belongs to;
+	// omitted for production.
+	EnvironmentID string `json:"environment_id,omitempty"`
 }
 
 // CreateConsumerKeyRequest creates a credential for an API consumer.

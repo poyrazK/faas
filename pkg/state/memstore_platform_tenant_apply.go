@@ -79,7 +79,7 @@ func (m *MemStore) planPlatformTenantApplyLocked(ctx context.Context, in ApplyPl
 		}
 		var current APIConsumer
 		for _, consumer := range m.apiConsumers {
-			if consumer.AppID == wanted.AppID && consumer.ExternalRef == wanted.ExternalRef {
+			if consumer.AppID == wanted.AppID && consumer.ExternalRef == wanted.ExternalRef && consumer.EnvironmentID == "" {
 				current = consumer
 				break
 			}
