@@ -20,13 +20,15 @@ type ProductControlAttention struct {
 }
 type ProductControlRun struct {
 	ID, Feature, AdmittedAt, State, Price, Credited, URL string
-	CanWaive, CanCredit                                  bool
+	Age, ExecutionURL                                    string
+	CanWaive, CanCredit, Active                          bool
 }
 type ProductControlDocument struct {
 	ID, Kind, Amount, CreatedAt, Reference, OperationID, StatementID, Reason string
 	// Exported statements show their provider invoice and payment status
 	// instead of the manual handoff form (ADR-20261018212918).
-	Exported                          bool
+	Exported, CanReviewExport         bool
+	ExportProvider, ExportCustomer    string
 	Invoice, InvoiceURL, DashboardURL string
 }
 type ProductControlComparison struct{ Feature, Before, After string }
@@ -46,16 +48,28 @@ type ProductControlData struct {
 	LatestRevision, Error, Notice, ReviewToken                        string
 	Main                                                              bool
 	Customer                                                          *api.ProductCustomer
+	PlanSchedule                                                      *api.ProductPlanSchedule
 	Customers                                                         []ProductControlCustomer
 	Plans                                                             []ProductControlPlan
 	Features                                                          []ProductControlFeature
 	LatestFeatures                                                    []ProductControlFeature
+	BillingQueue                                                      *ProductControlBillingQueue
+	BillingBatch                                                      *ProductControlBillingBatch
+	InvoiceBatch                                                      *ProductControlInvoiceBatch
+	StripeSendBatch                                                   *ProductControlStripeSendBatch
+	OutstandingBalances                                               *ProductControlOutstandingBalances
+	BalancesReturnURL                                                 string
+	PaymentQueue                                                      *ProductControlPaymentQueue
 	Attention                                                         []ProductControlAttention
 	Runs                                                              []ProductControlRun
 	Documents                                                         []ProductControlDocument
 	Billing                                                           *api.ProductBillingReview
 	BillingAmount                                                     string
 	NextCustomersURL, NextAttentionURL, NextRunsURL, NextDocumentsURL string
+	PaymentQueueURL                                                   string
+	InvoiceQueueURL                                                   string
+	ReviewRunsURL, AllRunsURL                                         string
+	ReviewRuns                                                        bool
 	Confirmation                                                      *ProductControlConfirmation
 	Explanation                                                       *api.ProductOperationExplanation
 	NextExecutionURL                                                  string
@@ -67,6 +81,7 @@ type ProductControlData struct {
 	OnboardingStatus                                                  *api.ProductOnboardingStatus
 	Access                                                            *ProductControlAccess
 	PlanPolicy                                                        *ProductControlPlanPolicy
+	BulkPlans                                                         *ProductControlBulkPlans
 	TeamPolicy                                                        *ProductControlTeamPolicy
 	Help                                                              *ProductControlHelp
 	Email                                                             *ProductControlEmail
@@ -76,6 +91,109 @@ type ProductControlData struct {
 	Overdue                                                           *ProductControlOverdue
 	// CustomerHold explains an overdue-invoice hold, separate from Suspended.
 	CustomerHold string
+}
+
+type ProductControlBillingQueue struct {
+	Period, LatestPeriod, NextURL string
+	Items                         []ProductControlBillingQueueItem
+	CanReviewBatch                bool
+	Invoices                      *ProductControlInvoiceQueue
+}
+
+type ProductControlBillingQueueItem struct {
+	TenantID, Name, PlanFee, RunCharges, URL string
+	Unresolved                               int64
+}
+
+type ProductControlBillingBatch struct {
+	Period, QueueURL, InvoiceURL, Payload, Token string
+	Rows                                         []ProductControlBillingBatchRow
+	Ready                                        int
+	Confirmed                                    bool
+}
+
+type ProductControlBillingBatchRow struct {
+	TenantID, Name, PlanFee, RunCharges, Total, Status, URL string
+}
+
+type ProductControlStripeSendBatch struct {
+	Period, Mode, QueueURL, Payload, Token, Error string
+	Rows                                          []ProductControlStripeSendBatchRow
+	Ready                                         int
+	Confirmed                                     bool
+}
+
+type ProductControlStripeSendBatchRow struct {
+	Name, TenantID, DocumentID, URL, InvoiceID, Recipient, Amount, DueAt, Status string
+}
+
+type ProductControlOutstandingBalances struct {
+	Mode, Currency, Bucket, Cursor      string
+	LiveURL, TestURL, SummaryURL, Group string
+	RefreshPayload, RefreshToken        string
+	RefreshLimit                        int
+	RefreshResults                      []ProductControlBalanceRefreshResult
+	BucketLabels                        []string
+	Currencies                          []ProductControlBalanceCurrency
+	Invoices                            *ProductControlPaymentQueue
+}
+
+type ProductControlBalanceRefreshResult struct {
+	DocumentID, TenantID, Name, URL, InvoiceID, Status, Balance, Detail string
+	NeedsRefresh                                                        bool
+}
+
+type ProductControlBalanceCurrency struct {
+	Currency, Total            string
+	InvoiceCount, UnknownCount int64
+	Buckets                    []ProductControlBalanceBucket
+}
+
+type ProductControlBalanceBucket struct {
+	URL, Balance                             string
+	InvoiceCount, RefreshCount, UnknownCount int64
+}
+
+type ProductControlPaymentQueue struct {
+	StripeBatchMonths              []string
+	StripeBatchMax                 int
+	Items                          []ProductControlPaymentQueueItem
+	Cursor, NextURL, Notice, Error string
+}
+
+type ProductControlPaymentQueueItem struct {
+	Name, TenantID, Period, DocumentID, Action, Remaining, DueAt, LastSync, DocumentURL, HostedURL string
+	NeedsRefresh                                                                                   bool
+	StripeReminderStatus                                                                           string
+	CanSendStripeReminder                                                                          bool
+	StripeDashboardURL                                                                             string
+	CanIssue, CanRefresh, CanSendStripe, CanCheckStripeSend, CanBatchSendStripe                    bool
+}
+
+type ProductControlInvoiceQueue struct {
+	DraftProviders []ProductControlInvoiceProvider
+	Items          []ProductControlInvoiceQueueItem
+	NextURL        string
+}
+
+type ProductControlInvoiceQueueItem struct {
+	TenantID, DocumentID, Name, Amount, Provider, DocumentURL, ExportURL, HandoffURL string
+}
+
+type ProductControlInvoiceProvider struct {
+	ID, Name string
+}
+
+type ProductControlInvoiceBatch struct {
+	Period, Provider, QueueURL, PaymentURL, Payload, Token string
+	Rows                                                   []ProductControlInvoiceBatchRow
+	Ready                                                  int
+	Confirmed                                              bool
+}
+
+type ProductControlInvoiceBatchRow struct {
+	TenantID, DocumentID, Name, Customer, Subtotal, Mode, Status, URL, InvoiceID string
+	AutomaticTax                                                                 bool
 }
 
 type ProductControlEmail struct {
@@ -159,8 +277,28 @@ type ProductControlOnboarding struct {
 
 type ProductControlConfirmation struct {
 	Title, Description, Payload, Token string
+	SubmitLabel                        string
 	ActionURL                          string
 	Details                            []ProductControlComparison
+}
+
+type ProductControlBulkPlans struct {
+	Plan, Source, Target, NextURL, Payload, Token string
+	MaxCustomers                                  int
+	Groups                                        []ProductControlBulkPlanGroup
+	Reviews, Results                              []ProductControlBulkPlanRow
+	ConfirmCount                                  int
+}
+
+type ProductControlBulkPlanGroup struct {
+	Plan, Label, Source string
+	Customers           []ProductControlCustomer
+}
+
+type ProductControlBulkPlanRow struct {
+	TenantID, Name, Message, ReceiptID, EffectiveAt string
+	Details                                         []ProductControlComparison
+	Warnings                                        []string
 }
 
 type ProductControlSetup struct {

@@ -81,6 +81,7 @@ func (m *MemStore) SetProductCustomerPaymentMethod(_ context.Context, account, a
 func (m *MemStore) ResolveProductTrials(_ context.Context, now time.Time) ([]ProductTrialResolution, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.resolveProductPlanSchedulesLocked(now)
 	d := m.productLocked()
 	type candidate struct {
 		key      string
@@ -115,6 +116,7 @@ func (m *MemStore) ResolveProductTrials(_ context.Context, now time.Time) ([]Pro
 			changedAfter = changedAfter || e.at.After(ended)
 		}
 		if r.FallbackPlan = productTrialFallback(r, customer.PaymentMethodAt != nil, changedAfter, plan.FallbackPlan); r.FallbackPlan != "" {
+			m.invalidateProductPlanScheduleLocked(c.key)
 			customer.Plan = r.FallbackPlan
 			d.planHistory[c.key] = append(d.planHistory[c.key], productMemoryPlanEntry{account: r.AccountID, revision: customer.Revision, plan: r.FallbackPlan, at: ended})
 		}

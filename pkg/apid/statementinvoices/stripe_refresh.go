@@ -46,7 +46,7 @@ func (s *Service) RefreshStripePayment(w http.ResponseWriter, r *http.Request, a
 			api.WriteProblem(w, problem)
 			return
 		}
-		httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(refreshed))
+		httpkit.WriteJSON(w, http.StatusOK, s.statementInvoiceExportResponse(refreshed))
 	}
 }
 

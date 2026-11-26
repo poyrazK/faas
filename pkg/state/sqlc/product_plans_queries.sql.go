@@ -120,22 +120,27 @@ func (q *Queries) ProductPlanListChanges(ctx context.Context, db DBTX, arg Produ
 }
 
 const productPlanStarts = `-- name: ProductPlanStarts :many
-SELECT feature,count(*)::bigint AS starts FROM product_control_receipts
+SELECT feature,count(*)::bigint AS starts,
+  count(*) FILTER (WHERE admitted_at >= $5::timestamptz AND admitted_at < $6::timestamptz)::bigint AS trial_starts
+FROM product_control_receipts
 WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 AND period=$4
-AND feature=ANY($5::text[]) GROUP BY feature ORDER BY feature
+AND feature=ANY($7::text[]) GROUP BY feature ORDER BY feature
 `
 
 type ProductPlanStartsParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	TenantID  pgtype.UUID
-	Period    string
-	Features  []string
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	TenantID   pgtype.UUID
+	Period     string
+	TrialFrom  pgtype.Timestamptz
+	TrialUntil pgtype.Timestamptz
+	Features   []string
 }
 
 type ProductPlanStartsRow struct {
-	Feature string
-	Starts  int64
+	Feature     string
+	Starts      int64
+	TrialStarts int64
 }
 
 func (q *Queries) ProductPlanStarts(ctx context.Context, db DBTX, arg ProductPlanStartsParams) ([]ProductPlanStartsRow, error) {
@@ -144,6 +149,8 @@ func (q *Queries) ProductPlanStarts(ctx context.Context, db DBTX, arg ProductPla
 		arg.AppID,
 		arg.TenantID,
 		arg.Period,
+		arg.TrialFrom,
+		arg.TrialUntil,
 		arg.Features,
 	)
 	if err != nil {
@@ -153,7 +160,7 @@ func (q *Queries) ProductPlanStarts(ctx context.Context, db DBTX, arg ProductPla
 	items := []ProductPlanStartsRow{}
 	for rows.Next() {
 		var i ProductPlanStartsRow
-		if err := rows.Scan(&i.Feature, &i.Starts); err != nil {
+		if err := rows.Scan(&i.Feature, &i.Starts, &i.TrialStarts); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

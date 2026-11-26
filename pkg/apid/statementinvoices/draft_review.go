@@ -27,7 +27,7 @@ func (s *Service) ReviewAppConsumerDraft(ctx context.Context, acct state.Account
 		if prior.Provider != state.BillingProviderStripe || prior.Collection != "none" {
 			return "", nil, exportConflict("this statement already has an invoice")
 		}
-		export := statementInvoiceExportResponse(prior)
+		export := s.statementInvoiceExportResponse(prior)
 		return prior.Customer, &export, nil
 	}
 	if conn.Provider == "" {
@@ -179,5 +179,5 @@ func (s *Service) ExportReviewedAppConsumerDraft(ctx context.Context, acct state
 	if problem != nil {
 		return api.StatementInvoiceExportResponse{}, problem
 	}
-	return statementInvoiceExportResponse(export), nil
+	return s.statementInvoiceExportResponse(export), nil
 }

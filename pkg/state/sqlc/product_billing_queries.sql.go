@@ -119,6 +119,24 @@ func (q *Queries) ProductBillingDocuments(ctx context.Context, db DBTX, arg Prod
 	return items, nil
 }
 
+const productBillingExportInvoice = `-- name: ProductBillingExportInvoice :one
+SELECT COALESCE(provider_invoice_id,'')::text AS invoice_id
+FROM usage_statement_invoice_exports
+WHERE account_id=$1 AND statement_id=$2 AND source_kind='product_control'
+`
+
+type ProductBillingExportInvoiceParams struct {
+	AccountID   pgtype.UUID
+	StatementID pgtype.UUID
+}
+
+func (q *Queries) ProductBillingExportInvoice(ctx context.Context, db DBTX, arg ProductBillingExportInvoiceParams) (string, error) {
+	row := db.QueryRow(ctx, productBillingExportInvoice, arg.AccountID, arg.StatementID)
+	var invoice_id string
+	err := row.Scan(&invoice_id)
+	return invoice_id, err
+}
+
 const productBillingGetHandoff = `-- name: ProductBillingGetHandoff :one
 SELECT h.document_id,h.external_invoice_id,d.currency,d.amount_millicents,h.created_at
 FROM product_control_invoice_handoffs h JOIN product_control_billing_documents d ON d.id=h.document_id

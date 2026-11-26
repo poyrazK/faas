@@ -15,7 +15,7 @@ import (
 // file (ADR-20261022180921). The portal's card pages record whether one is on
 // file, and a background step resolves each ended trial once.
 
-// StartTrialResolution resolves ended trials every
+// StartTrialResolution applies due plan changes and resolves ended trials every
 // api.ProductControlTrialResolutionInterval.
 func (s *Service) StartTrialResolution(ctx context.Context, log *slog.Logger) {
 	if _, ok := s.Host.Store().(state.ProductTrialConversionStore); !ok {
@@ -47,6 +47,11 @@ func (s *Service) ResolveTrialsOnce(ctx context.Context) error {
 	now := time.Now()
 	if s.Now != nil {
 		now = s.Now()
+	}
+	if schedules, ok := s.Host.Store().(state.ProductPlanScheduleStore); ok {
+		if err := schedules.ResolveProductPlanSchedules(ctx, now); err != nil {
+			return fmt.Errorf("resolve scheduled product plans: %w", err)
+		}
 	}
 	resolved, err := store.ResolveProductTrials(ctx, now)
 	if err != nil {

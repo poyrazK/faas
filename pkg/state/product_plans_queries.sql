@@ -13,6 +13,8 @@ AND (sqlc.arg(after_id)::text='' OR (created_at,id) < (sqlc.arg(after_at)::times
 ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit);
 
 -- name: ProductPlanStarts :many
-SELECT feature,count(*)::bigint AS starts FROM product_control_receipts
+SELECT feature,count(*)::bigint AS starts,
+  count(*) FILTER (WHERE admitted_at >= sqlc.narg(trial_from)::timestamptz AND admitted_at < sqlc.narg(trial_until)::timestamptz)::bigint AS trial_starts
+FROM product_control_receipts
 WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 AND period=$4
 AND feature=ANY(sqlc.arg(features)::text[]) GROUP BY feature ORDER BY feature;

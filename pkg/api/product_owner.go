@@ -2,22 +2,30 @@ package api
 
 import "time"
 
-// Customer changes affect future admissions immediately. Identity mappings are
-// preserved for existing assignments; accepted work keeps its original terms.
+// Customer changes affect future admissions from their effective time. Existing
+// identity mappings are preserved, and accepted work keeps its original terms.
 type ProductCustomerChangePreview struct {
-	Before        *ProductCustomer `json:"before,omitempty"`
-	After         ProductCustomer  `json:"after"`
-	BeforeCatalog *ProductCatalog  `json:"before_catalog,omitempty"`
-	Catalog       ProductCatalog   `json:"catalog"`
-	HeadRevision  string           `json:"head_revision"`
-	Period        string           `json:"period"`
-	Hash          string           `json:"hash"`
+	Before            *ProductCustomer    `json:"before,omitempty"`
+	After             ProductCustomer     `json:"after"`
+	BeforeCatalog     *ProductCatalog     `json:"before_catalog,omitempty"`
+	Catalog           ProductCatalog      `json:"catalog"`
+	HeadRevision      string              `json:"head_revision"`
+	Period            string              `json:"period"`
+	Hash              string              `json:"hash"`
+	Pricing           *ProductPlanPricing `json:"pricing,omitempty"`
+	StartsNextMonthAt *time.Time          `json:"starts_next_month_at,omitempty"`
 }
 
 type ProductCustomerChangeRequest struct {
 	ID           string          `json:"id"`
 	ExpectedHash string          `json:"expected_hash"`
 	Customer     ProductCustomer `json:"customer"`
+	NextMonth    bool            `json:"next_month,omitempty"`
+}
+
+type ProductPlanSchedule struct {
+	ProductCustomerChangeReceipt
+	Status string `json:"status"`
 }
 
 type ProductCustomerChangeReceipt struct {

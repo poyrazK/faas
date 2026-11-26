@@ -585,7 +585,9 @@ func (q *Queries) ProductControlResolveTrial(ctx context.Context, db DBTX, arg P
 }
 
 const productControlSetCustomer = `-- name: ProductControlSetCustomer :exec
-WITH prior AS (
+WITH timing AS (
+  SELECT COALESCE($6::timestamptz, now()) AS at
+), prior AS (
   SELECT c.revision, c.plan FROM product_control_customers c
   WHERE c.app_id=$2::uuid AND c.tenant_id=$3::uuid
 ), offer AS (
@@ -594,16 +596,17 @@ WITH prior AS (
 ), assigned AS (
   INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at)
   SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,
-    $6::boolean,$7::uuid,
-    CASE WHEN o.days > 0 THEN now() END, CASE WHEN o.days > 0 THEN now() + make_interval(days => o.days) END
-  FROM (SELECT 1) AS one LEFT JOIN offer o ON true
+    $7::boolean,$8::uuid,
+    CASE WHEN o.days > 0 THEN t.at END, CASE WHEN o.days > 0 THEN t.at + make_interval(hours => 24 * o.days) END
+  FROM timing t LEFT JOIN offer o ON true
   ON CONFLICT(app_id,tenant_id) DO UPDATE
   SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id,
     trial_starts_at=COALESCE(product_control_customers.trial_starts_at,EXCLUDED.trial_starts_at),
     trial_ends_at=CASE WHEN product_control_customers.trial_starts_at IS NULL THEN EXCLUDED.trial_ends_at ELSE product_control_customers.trial_ends_at END
 )
-INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment)
-SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,NOT EXISTS(SELECT 1 FROM prior)
+INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment,effective_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,NOT EXISTS(SELECT 1 FROM prior),t.at
+FROM timing t
 WHERE NOT EXISTS(SELECT 1 FROM prior p WHERE p.revision=$4::text AND p.plan=$5::text)
 `
 
@@ -613,6 +616,7 @@ type ProductControlSetCustomerParams struct {
 	TenantID           pgtype.UUID
 	Revision           string
 	Plan               string
+	EffectiveAt        pgtype.Timestamptz
 	Suspended          bool
 	AuthOrganizationID pgtype.UUID
 }
@@ -621,6 +625,7 @@ type ProductControlSetCustomerParams struct {
 // statement, so every writer records it (ADR-20261021154511). A customer
 // without a trial starts one when assigned a plan offering it, and keeps
 // any trial they had (ADR-20261021195901).
+// Reviewed assignments use the same effective time as their fee projection.
 func (q *Queries) ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error {
 	_, err := db.Exec(ctx, productControlSetCustomer,
 		arg.AccountID,
@@ -628,6 +633,7 @@ func (q *Queries) ProductControlSetCustomer(ctx context.Context, db DBTX, arg Pr
 		arg.TenantID,
 		arg.Revision,
 		arg.Plan,
+		arg.EffectiveAt,
 		arg.Suspended,
 		arg.AuthOrganizationID,
 	)
@@ -773,6 +779,9 @@ FROM product_control_customers c
 JOIN product_control_revisions v ON v.app_id=c.app_id AND v.revision=c.revision
 JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.trial_ends_at IS NOT NULL AND c.trial_resolved_at IS NULL AND c.trial_ends_at <= $1::timestamptz AND a.status<>'deleted'
+AND NOT EXISTS (SELECT FROM product_control_customer_changes s
+    WHERE s.account_id=c.account_id AND s.app_id=c.app_id AND s.tenant_id=c.tenant_id
+      AND s.schedule_status='pending' AND s.scheduled_for < c.trial_ends_at)
 ORDER BY c.trial_ends_at, c.tenant_id
 LIMIT $2::int
 FOR UPDATE OF c SKIP LOCKED
