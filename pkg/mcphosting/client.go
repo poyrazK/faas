@@ -323,7 +323,7 @@ func consumeSSE(r io.Reader, id int, x *Exchange, start time.Time) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read MCP SSE: %w", err)
 	}
-	return fmt.Errorf("MCP SSE ended before its final result")
+	return fmt.Errorf("MCP SSE ended before its final result: %w", io.ErrUnexpectedEOF)
 }
 
 func (c *Client) Initialize(ctx context.Context) error {

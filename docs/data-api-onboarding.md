@@ -424,7 +424,7 @@ A successful local command is not evidence of a separate staging run.
 To inspect one existing managed database table before considering writes:
 
 ```sh
-gregale --json data-api write-readiness --database notes-db --table notes \
+gregale --json data-api write readiness --database notes-db --table notes \
   --operations insert,update,delete
 ```
 
@@ -440,7 +440,7 @@ For an **existing** writable `data_api` binding on a deployed Data API, inspect
 the task's actual database role and `api` table metadata instead:
 
 ```sh
-gregale --json data-api write-readiness --database notes-db --app notes-data \
+gregale --json data-api write readiness --database notes-db --app notes-data \
   --binding BINDING_ID --schema api --table notes \
   --operations insert,update,delete
 ```
@@ -485,7 +485,7 @@ subjects must also appear in the read baseline. All mutation checks must target
 the selected table and requested operations.
 
 ```sh
-gregale --json data-api write-check --directory ./local-data-api \
+gregale --json data-api write check --directory ./local-data-api \
   --schema api --table notes --operations insert,update,delete \
   --access-checks data-api.mutations.json --fixture fixture.sql
 ```
