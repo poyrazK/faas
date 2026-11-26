@@ -340,6 +340,13 @@ func mcpCLICommand() cliCommand {
 			{Name: "out-dir", Short: "private directory for new reviewed-input templates", Value: "DIR", Req: true},
 			{Name: "timeout", Short: "total group review deadline (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp client group review --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --out-dir ./reviews"}},
+		{Name: "task-group-respond", Short: "Apply selected reviewed inputs to Tasks in a saved group", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL used to save the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private interoperable Task group directory", Value: "DIR", Req: true},
+			{Name: "reviewed-input-file", Short: "private completed review file (repeatable)", Value: "FILE", Req: true, Repeatable: true},
+			{Name: "timeout", Short: "total group response deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group respond --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --reviewed-input-file ./reviews/member-0-input.json --reviewed-input-file ./reviews/member-2-input.json"}},
 		{Name: "task-inbox", Short: "List your retained Task metadata on a server", Flags: taskInboxFlags, Examples: []string{"gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required", "gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required --watch"}},
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},

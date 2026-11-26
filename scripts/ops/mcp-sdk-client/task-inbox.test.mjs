@@ -119,7 +119,21 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     }
     return result;
   };
-  let taskWatch, groupRequests;
+  let taskWatch, groupRequests, reviewReplyProbe;
+  const reviewedResponse = runtime.reviewedResponse.bind(runtime);
+  runtime.reviewedResponse = async (params, authInfo, authMode, canAccessTool, apply) => {
+    const probe = reviewReplyProbe;
+    const reply = probe?.response;
+    const result = await reviewedResponse(params, authInfo, authMode, canAccessTool, apply);
+    if (probe?.taskId !== params.taskId) return result;
+    if (!apply) probe.checks++;
+    if (apply && reply && probe.dropped === 0) {
+      assert.equal(result.outcome, 'applied');
+      probe.dropped++;
+      reply.destroy();
+    }
+    return result;
+  };
   const server = createServer((req, res) => {
     const method = req.headers['mcp-method'];
     if (groupRequests) {
@@ -128,6 +142,9 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       }
       if (method === 'gregale/tasks/input-review') groupRequests.reviews++;
       if (method === 'gregale/tasks/respond-reviewed') groupRequests.responses++;
+    }
+    if (reviewReplyProbe && method === 'gregale/tasks/respond-reviewed') {
+      reviewReplyProbe.response = res;
     }
     if (stopProbe?.hold && method === 'gregale/tasks/lookup') {
       void stopProbe.release.promise.then(() => { if (!res.destroyed) app(req, res); });
@@ -944,7 +961,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       const cliPlan = join(groupRoot, 'cli-submission.json');
       const submissions = ['one', 'two', 'three'].map(name => ({
         toolName: 'build_report', arguments: { report: 'CLI Task group ' + name, steps: 1 },
-        deferFormInput: name !== 'two',
+        deferFormInput: true,
       }));
       await writeFile(cliPlan, JSON.stringify(submissions), { mode: 0o600 });
       const originalToken = await mint('iris', scope);
@@ -1004,9 +1021,11 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       assert.equal(groupRequests.submissions, beforeSubmit + 3);
 
       const reviewTasks = new Set([continued[0].task.taskId, continued[2].task.taskId]);
+      const groupLeases = [];
       for (const { task } of continued) {
         const lease = await store.claim(3, 30_000);
         assert.equal(lease.task_id, task.taskId);
+        groupLeases.push(lease);
         if (reviewTasks.has(task.taskId)) await requestInput(lease);
       }
       const reviewDir = join(groupRoot, 'cli-input-reviews');
@@ -1069,6 +1088,53 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       assert.deepEqual(resumedTasks.map(event => [event.receiptIndex, event.task.status]), [
         [0, 'working'], [1, 'working'], [2, 'input_required'],
       ]);
+      assert.deepEqual(await readFile(join(cliGroup, 'group.json')), manifestBytes);
+
+      const firstLease = await store.claim(3, 30_000);
+      assert.equal(firstLease.task_id, continued[0].task.taskId);
+      await requestInput(firstLease, 'group-confirmation', 'Review the next group step');
+      await requestInput(groupLeases[1]);
+
+      const batchDir = join(groupRoot, 'cli-batch-reviews');
+      const batch = await runGroupCLI('review', cliGroup, renewedToken, '--out-dir', batchDir);
+      assert.deepEqual(batch.map(entry => entry.outcome), ['written', 'written', 'written']);
+      for (const [index, form] of [[1, 'approval'], [2, 'confirmation']]) {
+        const path = batch[index].templatePath;
+        const draft = JSON.parse(await readFile(path, 'utf8'));
+        draft.forms[form].response = { action: 'accept', content: {} };
+        await writeFile(path, JSON.stringify(draft));
+      }
+      const staleSelection = join(batchDir, 'earlier-review.json');
+      const staleDraft = JSON.parse(drafts[0]);
+      staleDraft.forms.approval.response = { action: 'decline' };
+      await writeFile(staleSelection, JSON.stringify(staleDraft), { mode: 0o600 });
+
+      const selected = [batch[2].templatePath, staleSelection, batch[1].templatePath];
+      const flags = selected.flatMap(path => ['--reviewed-input-file', path]);
+      const respondGroup = () => runGroupCLI('respond', cliGroup, renewedToken, ...flags).then(
+        () => assert.fail('a stale selection must make the batch exit nonzero'),
+        error => {
+          assert.equal(error.code, 1, error.stderr);
+          return JSON.parse(error.stdout);
+        },
+      );
+      reviewReplyProbe = { taskId: continued[1].task.taskId, dropped: 0, checks: 0 };
+      const beforeReplies = groupRequests.responses;
+      const results = await respondGroup();
+      assert.deepEqual(results.map(entry => [entry.receiptIndex, entry.outcome, entry.task.taskId]), [
+        [0, 'stale', continued[0].task.taskId],
+        [1, 'applied', continued[1].task.taskId],
+        [2, 'applied', continued[2].task.taskId],
+      ]);
+      assert.deepEqual(results.map(entry => entry.reviewFile), [staleSelection, selected[2], selected[0]]);
+      assert.deepEqual([reviewReplyProbe.dropped, reviewReplyProbe.checks], [1, 1]);
+      assert.equal(groupRequests.responses, beforeReplies + 2);
+      assert.deepEqual(Object.keys((await getTaskInputReview(irisReviewer, continued[0].task.taskId)).forms),
+        ['group-confirmation']);
+
+      assert.deepEqual(await respondGroup(), results);
+      assert.equal(groupRequests.responses, beforeReplies + 2);
+      assert.equal(reviewReplyProbe.dropped, 1);
       assert.deepEqual(await readFile(join(cliGroup, 'group.json')), manifestBytes);
     }
   } finally {

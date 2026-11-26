@@ -483,6 +483,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
 | `gregale mcp task-group-ack` | `gregale mcp client group ack` |
+| `gregale mcp task-group-respond` | `gregale mcp client group respond` |
 | `gregale mcp task-group-review` | `gregale mcp client group review` |
 | `gregale mcp task-group-status` | `gregale mcp client group status` |
 | `gregale mcp task-group-stop` | `gregale mcp client group stop` |

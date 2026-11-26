@@ -33,6 +33,16 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	group := fs.String("group", "", "private group directory saved by the Node SDK")
 	var includeResults, resume bool
 	var reviewDir string
+	var reviewFiles []string
+	if action == "respond" {
+		fs.Func("reviewed-input-file", "private completed review file (repeatable)", func(path string) error {
+			if strings.TrimSpace(path) == "" || len(reviewFiles) >= maxMCPTaskGroupMembers {
+				return errors.New("provide up to 64 reviewed input files")
+			}
+			reviewFiles = append(reviewFiles, path)
+			return nil
+		})
+	}
 	if action == "review" {
 		fs.StringVar(&reviewDir, "out-dir", "", "private directory for new reviewed-input templates")
 	}
@@ -52,6 +62,9 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	}
 	if fs.NArg() != 0 || *timeout <= 0 || strings.TrimSpace(*group) == "" || *tokenEnv == "" {
 		return printErr("Invalid MCP Task group flags", errors.New("provide --url, --token-env and --group with a positive --timeout"))
+	}
+	if action == "respond" && len(reviewFiles) == 0 {
+		return printErr("Invalid MCP Task group flags", errors.New("group respond requires --reviewed-input-file"))
 	}
 	if action == "review" && strings.TrimSpace(reviewDir) == "" {
 		return printErr("Invalid MCP Task group flags", errors.New("group review requires --out-dir"))
@@ -86,6 +99,9 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	}
 	if action == "review" {
 		return runMCPTaskGroupReview(ctx, client, manifest, dir, reviewDir)
+	}
+	if action == "respond" {
+		return runMCPTaskGroupRespond(ctx, client, manifest, dir, reviewFiles)
 	}
 	entries := make([]mcpTaskGroupStatusEntry, len(manifest.Members))
 	for i := range entries {

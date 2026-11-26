@@ -6508,6 +6508,31 @@ from an earlier revision. Choose a new output directory to export the
 current forms while keeping the earlier draft. The server verifies the
 revision again when the response is submitted.
 
+#### Apply selected Task group responses
+
+Fill in every response in each private review file you intend to submit.
+Pass those files explicitly with the saved group and your current token.
+
+```sh
+gregale mcp client group respond \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch \
+  --reviewed-input-file ./reviews/member-0-input.json \
+  --reviewed-input-file ./reviews/member-2-input.json
+```
+
+The command matches files to group members by the Task ID inside each
+file. JSON results follow receipt order, with unmatched and invalid
+selections listed afterward. A stale or unavailable member leaves the
+other selected members eligible to respond. If a reply is lost, the
+command checks for the exact recorded response before reporting the
+outcome. Review files and receipts are preserved.
+
+The command exits with `0` when every selected response is confirmed.
+It exits with `3` if any answer remains unconfirmed or a review read
+needs a retry, and with `1` for other selection failures. Read the
+per-file results before retrying.
+
 #### Stop a Task group from TypeScript
 
 Call `stopMcpTaskGroup` with the saved group path and the current authorized

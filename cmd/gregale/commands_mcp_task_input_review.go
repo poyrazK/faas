@@ -210,42 +210,55 @@ func runMCPTaskInputResponseByID(ctx context.Context, client *mcphosting.Client,
 	if taskID != review.TaskID {
 		return printErr("MCP Task input review", errors.New("MCP Task input review belongs to a different Task"))
 	}
-	if review.Revision == "" {
-		return printErr("MCP Task input review", errors.New("export a new input template by Task ID before submitting"))
+	responses, err := reviewedMCPTaskInputResponses(review)
+	if err != nil {
+		return printErr("MCP Task input review", err)
 	}
-	responses := make(map[string]mcphosting.InputResponse, len(review.Forms))
-	for id, form := range review.Forms {
-		if form.Response == nil {
-			return printErr("MCP Task input review", errors.New("each reviewed form requires an explicit response"))
-		}
-		responses[id] = *form.Response
-	}
-
 	draft, exchange, err := client.GetTaskInputReview(ctx, taskID)
 	if err != nil {
 		return mcpTaskMetadataReadFailure(taskID, exchange.HTTPStatus, err)
 	}
-	var current mcphosting.Task
-	if draft.Revision == review.Revision {
-		forms, formsErr := draft.Task.InputForms()
-		if formsErr != nil || len(forms) != len(review.Forms) {
-			return printErr("MCP Task input review", errMCPTaskInputReviewMismatch)
+	current, err := applyMCPTaskReviewedInput(ctx, client, draft, review, responses)
+	if errors.Is(err, errMCPTaskInputReviewMismatch) {
+		return printErr("MCP Task input review", err)
+	}
+	return printMCPTaskInputResponseByID(current, err)
+}
+
+func reviewedMCPTaskInputResponses(review mcpTaskInputReview) (map[string]mcphosting.InputResponse, error) {
+	if review.Revision == "" {
+		return nil, errors.New("export a new input template by Task ID before submitting")
+	}
+	responses := make(map[string]mcphosting.InputResponse, len(review.Forms))
+	for id, form := range review.Forms {
+		if form.Response == nil {
+			return nil, errors.New("each reviewed form requires an explicit response")
 		}
-		for _, form := range forms {
-			if _, err := review.respond(ctx, form); err != nil {
-				return printErr("MCP Task input review", err)
-			}
-		}
-		current, err = client.ApplyTaskInputReview(ctx, taskID, review.Revision, responses)
-	} else {
+		responses[id] = *form.Response
+	}
+	return responses, nil
+}
+
+func applyMCPTaskReviewedInput(ctx context.Context, client *mcphosting.Client, draft mcphosting.TaskInputReview, review mcpTaskInputReview, responses map[string]mcphosting.InputResponse) (mcphosting.Task, error) {
+	if draft.Revision != review.Revision {
 		// A prior invocation may have applied this exact review before exiting.
-		current, err = client.CheckTaskInputReview(ctx, taskID, review.Revision, responses)
+		current, err := client.CheckTaskInputReview(ctx, review.TaskID, review.Revision, responses)
 		var unconfirmed *mcphosting.TaskInputUpdateUnconfirmedError
 		if errors.As(err, &unconfirmed) && unconfirmed.Unwrap() == nil {
 			err = mcphosting.ErrTaskInputReviewStale
 		}
+		return current, err
 	}
-	return printMCPTaskInputResponseByID(current, err)
+	forms, err := draft.Task.InputForms()
+	if err != nil || len(forms) != len(review.Forms) {
+		return mcphosting.Task{}, errMCPTaskInputReviewMismatch
+	}
+	for _, form := range forms {
+		if _, err := review.respond(ctx, form); err != nil {
+			return mcphosting.Task{}, err
+		}
+	}
+	return client.ApplyTaskInputReview(ctx, review.TaskID, review.Revision, responses)
 }
 
 func printMCPTaskInputResponseByID(current mcphosting.Task, err error) int {
