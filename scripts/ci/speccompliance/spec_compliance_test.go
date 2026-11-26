@@ -275,10 +275,6 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases: behind the preview-databases
 	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
 	"PUT /v1/postgres/databases/{id}/previews": true,
-	// ADR-20261116213000 custom Postgres roles (postgres_custom_roles flag).
-	"GET /v1/postgres/databases/{id}/roles":           true,
-	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
-	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -416,6 +412,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/consumer-signup/{slug}/page":                                          true, // hosted HTML sign-up page over the public sign-up API (ADR-20261021143000)
 	"GET /v1/consumer-signup/{slug}/signup.js":                                     true,
 	"GET /v1/consumer-signup/{slug}/signup.css":                                    true,
+	"GET /v1/consumer-signup/{slug}/upgrade":                                       true, // hosted HTML upgrade page over the documented upgrade API (ADR-20261124094745)
+	"GET /v1/consumer-signup/{slug}/upgrade.js":                                    true,
 	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
 	"POST /v1/product-control/customer/{slug}/session":                             true,
 	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
@@ -567,6 +565,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/build-queue":                  true, // operator build queue report (ADR-20261123163340)
 	"GET /v1/admin/obs/memory-pressure":              true, // operator memory pressure report (ADR-20261123190507)
 	"GET /v1/admin/obs/gateway-traffic":              true, // operator gateway traffic report (ADR-20261124093000)
+	"GET /v1/admin/obs/disk-pressure":                true, // operator disk pressure report (ADR-20261124150000)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -862,7 +861,11 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
-	"RunHistoryFilter": true, // Go-only URL query options; selectors are declared on the route.
+	// ADR-20261124094745: bodies of the consumer link path the gateway
+	// serves on an app's own host, not an apid route.
+	"LinkConsumerRequest":  true,
+	"LinkConsumerResponse": true,
+	"RunHistoryFilter":     true, // Go-only URL query options; selectors are declared on the route.
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
@@ -1142,6 +1145,12 @@ var dtoExclude = map[string]bool{
 	"ObsGatewayEdgeRejection":  true,
 	"ObsGatewayReasonCount":    true,
 	"ObsGatewayAppTraffic":     true,
+	// ADR-20261124150000 operator disk pressure report.
+	"ObsDiskPressureReport": true,
+	"ObsDiskTotals":         true,
+	"ObsDiskNode":           true,
+	"ObsDiskFilesystem":     true,
+	"ObsDiskGuest":          true,
 	// ADR-20261123163340 operator build queue report.
 	"ObsBuildQueueReport":  true,
 	"ObsBuildQueueTotals":  true,
@@ -1258,7 +1267,7 @@ var schemaSpecOnly = map[string]bool{
 	// including their flattened embedded fields, against the OpenAPI schemas.
 	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true, "FlagExperimentCreateRequest": true, "FlagExperiment": true, "FlagExperimentList": true, "FlagExperimentArm": true, "FlagExperimentVariantResult": true, "FlagExperimentResults": true, "FlagExperimentGuardrail": true, "FlagExperimentGuardrailRequest": true, "FlagExperimentGuardrailSetting": true, "FlagExperimentGuardrailSettings": true, "FlagExperimentGuardrailVariant": true, "FlagExperimentGuardrailsRequest": true, "FlagExperimentLatency": true, "FlagExperimentRecommendation": true, "FlagExperimentShipRequest": true, "FlagExperimentShipResponse": true,
-	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "InsightEventsQuery": true, "SavedInsightAlert": true, "SavedInsightRequest": true, "SavedInsight": true, "SavedInsightList": true, "SavedInsightResult": true, "FlagEdge": true, "FlagEdgeAction": true, "FlagEdgeRoute": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
+	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "InsightEventsQuery": true, "SavedInsightAlert": true, "SavedInsightRequest": true, "SavedInsight": true, "SavedInsightList": true, "SavedInsightResult": true, "FlagNotificationSettings": true, "FlagNotificationSettingsRequest": true, "FlagEdge": true, "FlagEdgeAction": true, "FlagEdgeRoute": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
 	"FlagExperimentBandit": true, "FlagExperimentBanditArm": true, "FlagExperimentHoldout": true, "FlagExperimentHoldoutReport": true, "FlagExperimentLayer": true, "FlagExperimentLayerList": true, "FlagExperimentLayerRequest": true, "FlagExperimentLayerSlice": true, "FlagExperimentSegment": true, "FlagExposure": true, "FlagHoldout": true, "FlagLayer": true, "FlagRolloutMetric": true, "FlagRuleExperiment": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,

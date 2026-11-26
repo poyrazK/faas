@@ -97,6 +97,14 @@ test-data-repair: ## Run strict internal repair PostgreSQL, SDK and isolated ope
 test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit
 	@GO="$(GO)" sh scripts/test-commit.sh
 
+.PHONY: test-commit-load
+test-commit-load: ## Run isolated sustained Commit relay and reconciliation recovery qualification
+	@GO="$(GO)" sh scripts/test-commit-load.sh
+
+.PHONY: test-commit-consumer-load
+test-commit-consumer-load: ## Run sustained Commit producer-to-consumer recovery acceptance
+	@GO="$(GO)" sh scripts/test-commit-consumer-load.sh
+
 .PHONY: test-commit-native
 test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
 	@GO="$(GO)" sh scripts/test-commit-native.sh

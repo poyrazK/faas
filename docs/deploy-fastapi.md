@@ -128,3 +128,11 @@ release: alembic upgrade head
 Point the migration tool at `MIGRATION_DATABASE_URL`. A failed release
 command leaves the previous version serving. See
 [Managed PostgreSQL](postgres.md#connect-an-app).
+
+## Example repository
+
+[gregale-dev/fastapi-postgres-jobs](https://github.com/gregale-dev/fastapi-postgres-jobs)
+is a complete FastAPI app with a durable job queue in PostgreSQL, with no
+Redis and no always-on worker. Its `gregale.yaml` creates the database and
+runs the migration as the release command. Clone it, or create your own
+repository from it as a GitHub template.

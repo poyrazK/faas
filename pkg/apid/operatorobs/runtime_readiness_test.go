@@ -109,6 +109,7 @@ func TestRuntimeReadinessValuesAndReasons(t *testing.T) {
 }
 
 func TestRuntimeReadinessFullInventoryAndSourceFailures(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	f, selected, registry := runtimeFixture("control-plane-v2", now, 50)
 	ready, reason := readinessQueries(runtimeBuildJobSpecs(selected.role)[7])

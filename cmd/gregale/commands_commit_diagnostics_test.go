@@ -69,10 +69,33 @@ func TestCommitInspectionPreservesUnknownAndRetainedFacts(t *testing.T) {
 		})
 	}
 	source.RelayStatus = "blocked_events"
-	c := &commitInspectionClient{source: source, receiptErr: missing, blocked: api.CommitBlockedEventsResponse{Items: []api.CommitBlockedEventResponse{{EventID: event, ObservedAt: now}}}}
+	c := &commitInspectionClient{source: source, receiptErr: missing, blocked: api.CommitBlockedEventsResponse{Items: []api.CommitBlockedEventResponse{{EventID: event, Code: "event_schema_rejected", ObservedAt: now}}}}
 	out, err := main.InspectCommitEvent(t.Context(), c, source.ID, event, now)
-	if err != nil || out.Acceptance != "blocked" || out.DatabaseCommit != "observed" || out.Action == "" {
+	if err != nil || out.Acceptance != "blocked" || out.DatabaseCommit != "observed" || !strings.Contains(out.Action, "registered schema version") {
 		t.Fatalf("fresh blocked event=%+v err=%v", out, err)
+	}
+	c.source.RelayStatus = "replay_pending"
+	out, err = main.InspectCommitEvent(t.Context(), c, source.ID, event, now)
+	if err != nil || out.Acceptance != "unknown" {
+		t.Fatalf("replay error without a current snapshot: %+v err=%v", out, err)
+	}
+	blockedCount := int64(1)
+	c.source.BlockedEvents = &blockedCount
+	out, err = main.InspectCommitEvent(t.Context(), c, source.ID, event, now)
+	if err != nil || out.Acceptance != "blocked" {
+		t.Fatalf("deferred replay with a current snapshot: %+v err=%v", out, err)
+	}
+	c.source.LastCheckedAt = &stale
+	c.source.PollIntervalMS = 600_000
+	c.blocked.Items[0].ObservedAt = stale
+	out, err = main.InspectCommitEvent(t.Context(), c, source.ID, event, now)
+	if err != nil || out.Acceptance != "blocked" || out.DatabaseCommit != "observed" {
+		t.Fatalf("block still fresh at the next scheduled poll: %+v err=%v", out, err)
+	}
+	c.blocked.Items[0].ObservedAt = now.Add(-16 * time.Minute)
+	out, err = main.InspectCommitEvent(t.Context(), c, source.ID, event, now)
+	if err != nil || out.Acceptance != "unknown" || out.DatabaseCommit != "observed" {
+		t.Fatalf("block past its grace period was treated as current: %+v err=%v", out, err)
 	}
 }
 
@@ -138,6 +161,20 @@ func TestCommitDoctorStaleAndPausedSources(t *testing.T) {
 				t.Fatal("paused source passed")
 			}
 		})
+	}
+}
+
+func TestCommitDoctorUsesChangesPollInterval(t *testing.T) {
+	now := time.Now().UTC()
+	checked := now.Add(-10 * time.Minute)
+	source := api.CommitSourceResponse{Enabled: true, LastCheckedAt: &checked, RelayStatus: "healthy", PollIntervalMS: 600_000}
+	out := main.DiagnoseCommitSource(source, now)
+	if len(out.Checks) != 2 || out.Checks[1].Name != "scheduler_observation" || out.Checks[1].State != "pass" {
+		t.Fatalf("changes source due to poll: %+v", out.Checks)
+	}
+	out = main.DiagnoseCommitSource(source, now.Add(6*time.Minute))
+	if out.Checks[1].Code != "observation_stale" {
+		t.Fatalf("changes source past its grace period: %+v", out.Checks)
 	}
 }
 

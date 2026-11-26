@@ -7,6 +7,9 @@
  */
 export type CreateConsumerSignupResponse = {
   id: string;
+  /**
+   * Stripe Checkout URL; empty for the free plan, which completes at once.
+   */
   checkout_url: string;
   claim_token: string;
   expires_at: string;

@@ -69,6 +69,7 @@ type cliFlag struct {
 //   - artifact        (publish | verify)
 //   - compute-nodes   (add | list | show | drain | drain-status | activate | force-drain | retire)
 //   - release-acceptance (mint-token | revoke-token)
+//   - journey-fixture (mint-token | revoke-token)
 //   - deploy          (join-node | add-node)
 //   - obs             (health | incidents | overview | capacity)
 //   - debug           (otel-smoke; ADR-127 PR-D)
@@ -216,6 +217,15 @@ var cliCommands = []cliCommand{
 			{Name: "revoke-token", Short: "Revoke one production ingress gate token", Flags: []cliFlag{{Name: "key-id", Short: "acceptance API key id", Req: true}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed production_release_acceptance audit reason", Req: true}}},
 			{Name: "verify-placement", Short: "Require every active node plus both app and function shapes", Flags: []cliFlag{{Name: "slugs", Short: "comma-separated acceptance app slugs", Req: true}}},
 			{Name: "verify-node", Short: "Require one node to serve and to have built an acceptance app", Flags: []cliFlag{{Name: "node", Short: "compute node name", Req: true}, {Name: "slugs", Short: "comma-separated acceptance app slugs", Req: true}}},
+		},
+	},
+	{
+		Name:    dispatchJourneyFixture,
+		DocSlug: "journey-fixture",
+		Short:   "Create the Free/Hobby journey fixture accounts and mint their short-lived keys",
+		Subcommands: []cliSub{
+			{Name: "mint-token", Short: "Create the plan's fixture account once and mint a short-lived admin key", Flags: []cliFlag{{Name: "plan", Short: "free or hobby", Req: true}, {Name: "ttl", Short: "key lifetime (15m..6h)"}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed journey_fixture audit reason", Req: true}}},
+			{Name: "revoke-token", Short: "Revoke one fixture key", Flags: []cliFlag{{Name: "plan", Short: "free or hobby", Req: true}, {Name: "key-id", Short: "fixture API key id", Req: true}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed journey_fixture audit reason", Req: true}}},
 		},
 	},
 	{

@@ -427,6 +427,57 @@ func TestSweepPurgesTheDatabasesOfClosedEnvironments(t *testing.T) {
 	}
 }
 
+// previewsAndBranches is a preview listing that also lists project branches.
+type previewsAndBranches struct {
+	previewList
+	branches map[string][]state.ProjectEnvironmentBranch
+	err      error
+}
+
+func (l previewsAndBranches) ListProjectEnvironmentBranches(_ context.Context, _, projectID string) ([]state.ProjectEnvironmentBranch, error) {
+	return l.branches[projectID], l.err
+}
+
+// A pull request whose project previews it as a branch keeps its empty
+// database with no app preview left (ADR-20261113121342 amendment
+// 2026-11-26); one whose branch is gone loses it, and a branch made by hand
+// keeps nothing.
+func TestSweepKeepsTheDatabasesOfPullRequestBranches(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.database(t, "orders", managedpostgres.PreviewsEmpty,
+		managedpostgres.CreateBindingRequest{Scope: api.DefaultEnvScope, EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite})
+	branched, closed := preview("app-pr-7", 7, "project-1"), preview("app-pr-8", 8, "project-1")
+	for _, pr := range []state.App{branched, closed} {
+		if err := f.manager.Prepare(ctx, api.PlanPro, f.parent, pr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := f.service.PreviewDatabasePage(ctx, "", 100)
+	if err != nil || len(page) != 2 {
+		t.Fatalf("preview database page = %+v, %v", page, err)
+	}
+	// Neither PR has an app preview left: PR 7 has its branch, PR 8 only a
+	// branch made by hand that happens to be called pr-8.
+	listing := previewsAndBranches{branches: map[string][]state.ProjectEnvironmentBranch{"project-1": {
+		{Slug: "pr-7", ProjectID: "project-1", PullRequestNumber: 7},
+		{Slug: "pr-8", ProjectID: "project-1"},
+	}}}
+	if purged, err := f.manager.Sweep(ctx, previewsAndBranches{err: errors.New("replica unavailable")}, page, f.clock.Now().Add(time.Minute)); err == nil || purged != 0 {
+		t.Fatalf("Sweep without the project's branches = %d, %v; want an error and none purged", purged, err)
+	}
+	purged, err := f.manager.Sweep(ctx, listing, page, f.clock.Now().Add(time.Minute))
+	if err != nil || purged != 1 {
+		t.Fatalf("Sweep = %d, %v; want only PR 8's database purged", purged, err)
+	}
+	if kept, _ := f.service.PreviewDatabases(ctx, account, "project-1", 7); len(kept) != 1 {
+		t.Fatalf("the branched PR's database after the sweep = %+v", kept)
+	}
+	if left, _ := f.service.PreviewDatabases(ctx, account, "project-1", 8); len(left) != 0 {
+		t.Fatalf("PR 8's database after the sweep = %+v", left)
+	}
+}
+
 func TestPrepareCopiesASourceWithCopyPreviews(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

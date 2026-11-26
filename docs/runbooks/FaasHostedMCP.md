@@ -49,7 +49,13 @@ matched the operator allowlist. Authorization stops before account sign-in.
 The shipped unit allows Google Antigravity's exact HTTPS callback,
 `https://antigravity.google/oauth-callback`, published at
 `https://antigravity.google/oauth/client-metadata.json`. Older units omit it.
-Inspect `systemctl cat faas-mcp-bridge` for the active `--oauth-redirect-uri`
+It also allows Glama's `https://glama.ai/api/app/mcp/oauth/callback` (Glama's
+connector health checks and users' connections) and
+`https://glama.ai/mcp/inspector/oauth/callback` (its MCP Inspector), as
+published at `https://glama.ai/api/app/mcp/oauth/client-metadata.json` and
+`https://glama.ai/mcp/inspector/oauth/client-metadata.json`. A unit without
+them refuses Glama, and Glama's connector page then reports the server
+unhealthy. Inspect `systemctl cat faas-mcp-bridge` for the active `--oauth-redirect-uri`
 arguments and any `ExecStart` override. Converge `control_plane_service` to
 install the updated unit and let its handler reload/restart the bridge. An
 override that replaces `ExecStart` also needs the exact callback. Retry

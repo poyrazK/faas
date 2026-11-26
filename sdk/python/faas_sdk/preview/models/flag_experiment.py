@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -68,6 +69,8 @@ class FlagExperiment:
     stop_reason: FlagExperimentStopReason | Unset = UNSET
     breach: FlagExperimentBreach | Unset = UNSET
     """The guardrail breach that stopped the experiment."""
+    notify_channel_ids: list[UUID] | Unset = UNSET
+    """The experiment's own notification channels for its decisions and problems; absent uses the environment's."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +148,13 @@ class FlagExperiment:
         if not isinstance(self.breach, Unset):
             breach = self.breach.to_dict()
 
+        notify_channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.notify_channel_ids, Unset):
+            notify_channel_ids = []
+            for notify_channel_ids_item_data in self.notify_channel_ids:
+                notify_channel_ids_item = str(notify_channel_ids_item_data)
+                notify_channel_ids.append(notify_channel_ids_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -195,6 +205,8 @@ class FlagExperiment:
             field_dict["stop_reason"] = stop_reason
         if breach is not UNSET:
             field_dict["breach"] = breach
+        if notify_channel_ids is not UNSET:
+            field_dict["notify_channel_ids"] = notify_channel_ids
 
         return field_dict
 
@@ -305,6 +317,15 @@ class FlagExperiment:
         else:
             breach = FlagExperimentBreach.from_dict(_breach)
 
+        _notify_channel_ids = d.pop("notify_channel_ids", UNSET)
+        notify_channel_ids: list[UUID] | Unset = UNSET
+        if _notify_channel_ids is not UNSET:
+            notify_channel_ids = []
+            for notify_channel_ids_item_data in _notify_channel_ids:
+                notify_channel_ids_item = UUID(notify_channel_ids_item_data)
+
+                notify_channel_ids.append(notify_channel_ids_item)
+
         flag_experiment = cls(
             key=key,
             flag=flag,
@@ -335,6 +356,7 @@ class FlagExperiment:
             latency_threshold_ms=latency_threshold_ms,
             stop_reason=stop_reason,
             breach=breach,
+            notify_channel_ids=notify_channel_ids,
         )
 
         flag_experiment.additional_properties = d

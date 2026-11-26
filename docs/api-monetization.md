@@ -879,6 +879,117 @@ curl -X POST -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consum
   `signup-set --customer-closing`.
 - Anything you have not allowed gets `409 consumer_self_service_unavailable`.
 
+### A free plan without a card
+
+Offer a plan whose rate cards charge nothing, and customers can join it
+without Stripe Checkout:
+
+```bash
+gregale consumers plan-create my-api --name free --max-units-per-month 1000
+gregale consumers rate-card-create my-api --plan free --currency USD --price-millicents 0
+gregale consumers signup-set my-api --display-name "Weather API" --plans free,pro --free-plan free
+```
+
+- **What counts as free.** Every rate card of the plan, in force or
+  scheduled, has no unit price, priced tier, base fee or minimum, and the
+  plan has at least one. Gregale refuses `--free-plan` otherwise, and
+  refuses a charging rate card on the free plan while it is the free plan.
+- **Joining.** `POST /v1/consumer-signup/my-api` with the free plan's
+  `plan_id` returns an empty `checkout_url`; complete the sign-up at once
+  with the claim token. The hosted page does this for you. No Stripe
+  customer is created, so the consumer's `external_ref` is `signup:<id>`.
+- **Moving to a paid plan.** With `--customer-plan-changes`, a customer
+  that reaches its plan's limit gets an `upgrade_url` in the `429
+  consumer_plan_limit_exceeded` problem. The link opens a hosted page that
+  lists your offered plans. A paid plan first saves a card with Stripe
+  Checkout; the new Stripe customer becomes the consumer's `external_ref`,
+  and the plan changes from the next minute. The link works for 24 hours
+  and opens only that customer's plan change. A customer without a card
+  cannot switch to a paid plan with its key
+  (`409 consumer_self_service_unavailable`).
+- **In MCP clients.** An MCP client cannot read a 429 body, so a refused
+  MCP request gets an answer the client understands instead (HTTP 200).
+  A client that supports URL elicitation shows the person the upgrade page
+  (JSON-RPC error `-32042`). Other clients get a tool error, or a JSON-RPC
+  error for methods other than `tools/call`, whose text names the limit,
+  when a per-minute limit clears and the upgrade link, so the agent can
+  tell the person. The answer carries `X-Faas-Error-Code:
+  consumer_plan_limit_exceeded` and `Retry-After`.
+
+### MCP callers become customers
+
+For an MCP server behind OAuth (`gregale mcp server auth enable --mode
+oauth-proxy`, or `--auth external-oauth`; see
+[Host an MCP server](mcp-hosting.md#control-who-can-call-it)), people who
+sign in can become your customers on the free plan the first time they call
+it:
+
+```bash
+gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free --oauth-consumers
+```
+
+- **Who they are.** A customer is the token's issuer and subject: the same
+  person signing in again is the same consumer. The token's `email`, when it
+  has one, names the consumer; it is never used to match one.
+- **Billing and limits.** Their calls are metered, priced and capped by the
+  free plan like a consumer key's, including tool route limits.
+- **Daily limit.** New customers count against `--daily-limit` with the
+  sign-up page's. Past it, new callers get `429 consumer_signup_daily_limit`
+  until the next UTC day; existing customers are not affected.
+- **Closing someone.** `gregale consumers revoke my-mcp CONSUMER` refuses
+  their calls with `403` within five minutes.
+- **Turning it on and off.** Changes reach the gateway within five
+  minutes. If Gregale cannot reach its API while your server enrolls
+  callers, they get `503 consumer_enrollment_unavailable` rather than free
+  calls.
+- **Customers who already have a key.** Someone who signed up for a key
+  and also signs in to your MCP server can make their sign-ins bill to
+  that key's account. Their MCP client, or they with the access token it
+  holds, send the key once:
+
+  ```bash
+  curl -X POST https://my-mcp.gregale.app/.well-known/gregale-consumer-link/mcp \
+    -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+    -d '{"key": "ck_..."}'
+  ```
+
+  The path is `/.well-known/gregale-consumer-link` followed by your MCP
+  endpoint's path. The answer names the consumer they now bill to; the
+  free-plan consumer their first sign-in created is closed. A key that is
+  not a live key of your app gets `403 consumer_link_key_rejected`. A
+  sign-in already linked to another key gets `409 consumer_link_conflict`:
+  `gregale api consumer identity list my-mcp` lists sign-ins and the
+  consumers they bill to, and `gregale api consumer identity delete my-mcp
+  ID` frees one
+  (its next call starts on the free plan again, or it links again).
+
+### Let customers ask about their account from the MCP client
+
+Add `--account-tools` and every signed-in customer sees two more tools in
+your server's tool list, answered by Gregale instead of your code:
+
+```bash
+gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free \
+  --oauth-consumers --customer-plan-changes --account-tools
+```
+
+- `account_usage`: their plan and its limits (requests per minute, units
+  per month, per-tool caps), this UTC month's requests and units, units
+  left, and units per tool. It trails live calls by about a minute.
+- `account_plans`: the plans you offer with their prices, the one they are
+  on and, with `--customer-plan-changes`, an `upgrade_url` to the hosted
+  page where a person saves a card. The tool never charges or changes a
+  plan.
+
+Calls to these tools are free, do not count against the customer's plan
+and work after the plan's limit refuses other calls, so an agent can always
+find the way to upgrade. Each customer may call them 30 times a minute on
+each gateway node.
+While the option is on, the names `account_usage` and `account_plans` are
+Gregale's: a tool of yours with either name is hidden from these customers.
+Only the first page of a paginated tool list gets them. Customers who use a
+consumer key keep the key's [self-service API](#customers-manage-their-own-account).
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send

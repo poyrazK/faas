@@ -21,6 +21,11 @@ other starters. Each one comes with sample tools (`greet`, `add` and
 `stream_demo`), a resource, a resource template and a prompt, so it works
 before you change anything.
 
+The Node starter is also on GitHub as
+[gregale-dev/mcp-server-node](https://github.com/gregale-dev/mcp-server-node),
+and runs as-is at `https://mcp-server-node.gregale.app/mcp`. Connect a client
+to that endpoint to try the sample tools before you create your own.
+
 The files that matter:
 
 | File | What it is |
@@ -174,6 +179,10 @@ gregale mcp server deploy --path ./private-mcp --name private-mcp --token-env MC
 
 The token is read from the environment variable and never written to your
 source.
+
+**Charge for it.** Signed-in callers can become your customers on a free
+plan the first time they call, and move to a paid plan later; see
+[MCP callers become customers](api-monetization.md#mcp-callers-become-customers).
 
 **Browser clients.** `allowed_origins` in `gregale-mcp.json` is empty, which
 rejects every request that carries a browser `Origin` header. Desktop and CLI

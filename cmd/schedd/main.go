@@ -165,8 +165,8 @@ type runDeps struct {
 	// pkg/sched, so the chooser moved here. apid writes apps with
 	// node_id = NULL; schedd races to stamp the owner on
 	// kind="created". nil = the subscriber is not started; the
-	// cold-start sweep still runs so an unplaced app from a prior
-	// run gets reconciled on boot.
+	// unplaced sweep (boot, then about once a minute) still places
+	// any app left with node_id NULL.
 	subscribePlacementClaim func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeRebalancer (Tier A4 / ADR-064) is the
 	// producer-side seam for the compute_node_changed consumer
@@ -1562,7 +1562,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// EgressDriftSubscriber above shares the same channel but
 	// filters to kind="updated"; both run side-by-side. nil seam
 	// = skip in tests that don't want a fake channel; the
-	// cold-start sweep below still runs.
+	// unplaced sweep below still runs.
 	// ADR-20261110210000 §4: under control-plane owner authority a compute
 	// node's schedd never claims an app; the control plane's does.
 	if deps.subscribePlacementClaim != nil && owners.claimsOwners(cfg.Role) {
@@ -1849,35 +1849,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// Cold-start sweep: pg_notify is fire-and-forget, so a schedd
-	// that was down while an apid createApp landed missed the
-	// kind="created" notify. ListUnplacedApps at boot closes that
-	// gap (one tx per unplaced app, sub-second in steady state).
-	// Runs once, not per tick — the subscriber handles the live
-	// path. Errors are logged and dropped; the next notify (or the
-	// next schedd restart) is the next opportunity.
-	go func() {
-		if !owners.claimsOwners(cfg.Role) {
-			return
-		}
-		apps, err := store.ListUnplacedApps(ctx)
-		if err != nil {
-			log.Warn("schedd: cold-start sweep: list unplaced apps", "err", err)
-			return
-		}
-		for _, a := range apps {
-			if ctx.Err() != nil {
-				return
-			}
-			if err := engine.ClaimUnplaced(ctx, a.ID); err != nil {
-				log.Warn("schedd: cold-start sweep: claim", "app_id", a.ID, "err", err)
-				continue
-			}
-		}
-		if len(apps) > 0 {
-			log.Info("schedd: cold-start sweep: reconciled unplaced apps", "count", len(apps))
-		}
-	}()
+	// Unplaced sweep: pg_notify is fire-and-forget, so an app whose
+	// kind="created" never reached a claiming schedd (schedd down, or
+	// an apid path that returned before notifying) keeps
+	// apps.node_id NULL and every gateway wake for it fails. Sweep
+	// ListUnplacedApps at boot and then about once a minute (jittered)
+	// so such an app is placed without a schedd restart (prod
+	// 2026-11-25, project 8624ac80). The subscriber stays the live
+	// path; kind=updated is deliberately not a claim trigger.
+	if owners.claimsOwners(cfg.Role) {
+		go engine.RunUnplacedSweep(ctx, sched.UnplacedSweepInterval)
+	}
 
 	// PR #114 / ADR-025 axis 3: per-node liveness sweep. Every
 	// `HeartbeatInterval` (default 30s) the heartbeat goroutine

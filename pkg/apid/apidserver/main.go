@@ -1811,6 +1811,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	// ADR-20261125105038: opted-in managed Postgres databases start when a
+	// bound app's instance starts waking.
+	if deps.pool != nil {
+		go func() {
+			if err := runManagedPostgresWakeStarter(ctx, deps.pool, srv, log); err != nil && ctx.Err() == nil {
+				log.Error("managed postgres wake starter exited", "err", err)
+			}
+		}()
+	}
 	// ADR-1027 major-upgrade and storage-growth previews: nobody sees them
 	// unless listed.
 	if srv.postgresUpgrades, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS")); err != nil {
@@ -2731,7 +2740,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	spansLimiter := peraccount.NewLimiter()
 	// The tracing capability gates span ingest as it gates trace reads.
 	tracing := receivers.TracingReleased(srv.tracingReleased)
-	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions, agents: srv.agentRequestsForGateways()}
+	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions, agents: srv.agentRequestsForGateways(),
+		consumers: srv.oauthConsumersForGateways(), upgrades: &srv.consumerSignup, links: &srv.consumerSignup,
+		accountTools: &srv.consumerSignup}
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
@@ -2913,7 +2924,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// key authentication and the OTel handler.
 	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
 		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing, spans.sessions, spans.agents)
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing, spans.sessions, spans.authOptions()...)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: auth server: %w", err)
@@ -3487,7 +3498,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// credential hash itself (ADR 20261029202403); single-box gateways ask
 	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, receivers.WithAgentRequests(spans.agents))
+		receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, spans.authOptions()...)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
@@ -3535,7 +3546,7 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
-	receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, receivers.WithAgentRequests(spans.agents))
+	receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, spans.authOptions()...)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
 	} else {
@@ -3576,13 +3587,13 @@ func runSpansWriterServer(ctx context.Context, target string, store state.Store,
 // serves; the gateway's OTel handler refuses to start without
 // auth, so a missing auth server == a missing OTel surface,
 // which is the desired fail-closed posture).
-func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased, sessions receivers.SessionOpener, agents receivers.AgentRequests) (*grpc.Server, net.Listener, error) {
+func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased, sessions receivers.SessionOpener, opts ...receivers.AuthOption) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterAuthReceiver(srv, store, tracing, sessions, receivers.WithAgentRequests(agents))
+	receivers.RegisterAuthReceiver(srv, store, tracing, sessions, opts...)
 	return srv, lis, nil
 }
 
@@ -3607,4 +3618,16 @@ type spansIngest struct {
 	// agents answers gateways' agent approval and activity calls
 	// (ADR-20261111150000).
 	agents receivers.AgentRequests
+	// consumers enrolls gateways' OAuth callers as API consumers
+	// (ADR-20261124094745).
+	consumers receivers.OAuthConsumers
+	// upgrades mints consumers' upgrade links for gateways' plan-limit
+	// refusals (ADR-20261124094745).
+	upgrades receivers.UpgradeLinks
+	// links links gateways' OAuth callers to key consumers
+	// (ADR-20261124094745).
+	links receivers.OAuthLinks
+	// accountTools answers the MCP account tools gateways add for OAuth
+	// consumers (ADR-20261125194510).
+	accountTools receivers.AccountTools
 }

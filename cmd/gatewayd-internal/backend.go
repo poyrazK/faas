@@ -812,6 +812,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RevisionPinTTLSeconds:        app.Manifest.RevisionPinTTLSeconds,
 		ProjectID:                    app.ProjectID,
 		NodeID:                       app.NodeID,
+		HasLiveDeployment:            len(liveDeployments) > 0,
 		Ports:                        gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
 		Sidecars:                     companionRoutes,
 		PrimaryIngressPort:           primaryIngressPort,

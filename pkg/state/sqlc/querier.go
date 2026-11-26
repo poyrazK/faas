@@ -547,6 +547,9 @@ type Querier interface {
 	// lapsed (held NULL). The lease is the database clock's, so replicas'
 	// clocks do not matter.
 	ClaimDatabaseVMUpgrade(ctx context.Context, db DBTX, arg ClaimDatabaseVMUpgradeParams) (pgtype.Timestamptz, error)
+	// Leases pending notifications whose next attempt is due, oldest first,
+	// counting the attempt, with the account's plan.
+	ClaimDueFlagNotifications(ctx context.Context, db DBTX, arg ClaimDueFlagNotificationsParams) ([]ClaimDueFlagNotificationsRow, error)
 	ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, arg ClaimDueLegacyWorkflowRunParams) (WorkflowRun, error)
 	// Claim due schedules for one firer. A held lease is skipped until it lapses,
 	// so a firer that dies mid-fire hands the row to the next tick.
@@ -592,6 +595,10 @@ type Querier interface {
 	// the same transaction, after LockManagedPostgresLifecycleDatabase.
 	ClaimManagedPostgresScheduledDelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresScheduledDeleteParams) (ManagedPostgresDatabase, error)
 	ClaimManagedPostgresUndelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresUndeleteParams) (ManagedPostgresDatabase, error)
+	// Claims the opted-in, ready, scale-to-zero databases bound to the app that
+	// were not started in the last gap, and stamps them, so only the claiming
+	// apid replica starts each one.
+	ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, arg ClaimManagedPostgresWakeStartsParams) ([]ClaimManagedPostgresWakeStartsRow, error)
 	// ADR-732 scheduler side. schedd holds a lease on every restoring or running
 	// fork; terminal transitions clear it (app_forks_lease_status_chk).
 	ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAppForkParams) (AppFork, error)
@@ -764,7 +771,7 @@ type Querier interface {
 	CommitPublicationSchema(ctx context.Context, db DBTX, arg CommitPublicationSchemaParams) (CommitPublicationSchemaRow, error)
 	CommitPublicationSource(ctx context.Context, db DBTX, arg CommitPublicationSourceParams) (CommitPublicationSourceRow, error)
 	CommitReceiptIdentity(ctx context.Context, db DBTX, arg CommitReceiptIdentityParams) (CommitReceiptIdentityRow, error)
-	CommitRelayObservationSummary(ctx context.Context, db DBTX, freshAfter pgtype.Timestamptz) (CommitRelayObservationSummaryRow, error)
+	CommitRelayObservationSummary(ctx context.Context, db DBTX, arg CommitRelayObservationSummaryParams) (CommitRelayObservationSummaryRow, error)
 	CommitSourceForManagedAdmission(ctx context.Context, db DBTX, arg CommitSourceForManagedAdmissionParams) (CommitSourceForManagedAdmissionRow, error)
 	CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error)
 	CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitTenantAppScopeParams) (string, error)
@@ -1208,6 +1215,9 @@ type Querier interface {
 	// RequeueBuildIfClaim: a stale worker cannot defer a newer claim.
 	DeferBuildBehind(ctx context.Context, db DBTX, arg DeferBuildBehindParams) (int64, error)
 	DeferBuildDependencyClaim(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// Moves back the stamp of a claim that started nothing, by shift seconds, so
+	// the next wake may claim it sooner; a later claim's stamp is left alone.
+	DeferManagedPostgresWakeStart(ctx context.Context, db DBTX, arg DeferManagedPostgresWakeStartParams) error
 	DeferNotificationClaim(ctx context.Context, db DBTX, arg DeferNotificationClaimParams) (int64, error)
 	// Fence a failed attempt against a configuration edit or another worker's success.
 	DeferRouteMonitor(ctx context.Context, db DBTX, arg DeferRouteMonitorParams) error
@@ -1420,6 +1430,7 @@ type Querier interface {
 	DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDParams) (DevBridgeByIDRow, error)
 	DevBridgeWebhookReplayByID(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByIDParams) (DevBridgeWebhookReplay, error)
 	DevBridgeWebhookReplayByKey(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByKeyParams) (DevBridgeWebhookReplay, error)
+	DisableManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	DisconnectGitHubConnection(ctx context.Context, db DBTX, arg DisconnectGitHubConnectionParams) error
 	DisconnectGitHubConnectionApps(ctx context.Context, db DBTX, arg DisconnectGitHubConnectionAppsParams) error
 	DisconnectGitHubConnectionProjects(ctx context.Context, db DBTX, arg DisconnectGitHubConnectionProjectsParams) error
@@ -1448,6 +1459,10 @@ type Querier interface {
 	// the link verifies only from a browser signed in to that account
 	// (ADR 20261109120000).
 	EmailVerificationTokenAccount(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
+	// Managed PostgreSQL databases that start when a bound app wakes (gregale
+	// postgres app-wake, ADR-20261125105038). No row is off. apid checks the
+	// caller owns the database before writing.
+	EnableManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseID pgtype.UUID) error
 	EnableReleaseSecretRekey(ctx context.Context, db DBTX) error
 	EndAccountApprovedCliCodes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Grants an account started that a recovery must end (ADR 20261109120000):
@@ -1464,6 +1479,9 @@ type Querier interface {
 	EnqueueEnvironmentGitNotification(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitNotificationParams) error
 	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
 	EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, arg EnqueueExclusiveWebhookEffectParams) error
+	// Queues a notification unless its key was ever queued: the key outlives
+	// the outbox row, so a swept notification is not sent again.
+	EnqueueFlagNotification(ctx context.Context, db DBTX, arg EnqueueFlagNotificationParams) (int64, error)
 	// Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
 	EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error)
 	EnqueueOperatorColdBootOutcome(ctx context.Context, db DBTX, arg EnqueueOperatorColdBootOutcomeParams) (int64, error)
@@ -2474,6 +2492,9 @@ type Querier interface {
 	// metric, at most max_rows per variant.
 	FlagExperimentUnitValues(ctx context.Context, db DBTX, arg FlagExperimentUnitValuesParams) ([]FlagExperimentUnitValuesRow, error)
 	FlagExperimentUnitsWithoutPreValue(ctx context.Context, db DBTX, arg FlagExperimentUnitsWithoutPreValueParams) ([]FlagExperimentUnitsWithoutPreValueRow, error)
+	// The account's notification channels among ids; a deleted channel is
+	// skipped.
+	FlagNotificationChannels(ctx context.Context, db DBTX, arg FlagNotificationChannelsParams) ([]NotificationChannel, error)
 	// A ratio metric's denominator: like FoldFlagExperimentValues into den_sum.
 	FoldFlagExperimentDenominators(ctx context.Context, db DBTX, arg FoldFlagExperimentDenominatorsParams) (int64, error)
 	// Adds the metric event's values of closed days (from_day..through_day) to
@@ -2626,6 +2647,8 @@ type Querier interface {
 	GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	GetFirstBuildExportPublicationForClaim(ctx context.Context, db DBTX, arg GetFirstBuildExportPublicationForClaimParams) (BuildExportPublication, error)
 	GetFlagExperiment(ctx context.Context, db DBTX, arg GetFlagExperimentParams) (FlagExperiment, error)
+	// Flag notifications (ADR-20261125085913).
+	GetFlagNotificationSettings(ctx context.Context, db DBTX, environmentID pgtype.UUID) (FlagNotificationSetting, error)
 	GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFreshBaseImageScanParams) (BaseImageScan, error)
 	GetFunctionMigrationDestination(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationParams) (FunctionMigrationDestination, error)
 	GetFunctionMigrationDestinationIdentity(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationIdentityParams) (GetFunctionMigrationDestinationIdentityRow, error)
@@ -5136,6 +5159,10 @@ type Querier interface {
 	// ADR-845: waits for an in-flight evaluation instead of skipping it, so the
 	// claim reads the incident that evaluation committed.
 	LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX, arg LockRouteMonitorRollbackIncidentParams) (LockRouteMonitorRollbackIncidentRow, error)
+	// FOR NO KEY UPDATE, not FOR UPDATE: the snapshot then locks the app row, and
+	// a child insert's foreign-key checks take KEY SHARE on the app before the
+	// namespace (request_id_journal), so FOR UPDATE here deadlocked them. Route
+	// policy writers, plan/status updates and deletes still conflict with it.
 	LockRoutePolicyAccount(ctx context.Context, db DBTX, arg LockRoutePolicyAccountParams) ([]byte, error)
 	LockRoutePolicyApp(ctx context.Context, db DBTX, arg LockRoutePolicyAppParams) ([]byte, error)
 	LockRoutePolicyContract(ctx context.Context, db DBTX, arg LockRoutePolicyContractParams) (LockRoutePolicyContractRow, error)
@@ -5339,6 +5366,10 @@ type Querier interface {
 	// waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
 	ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error)
 	ManagedPostgresUsageSubjects(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ManagedPostgresUsageSubjectsRow, error)
+	ManagedPostgresWakeWithApp(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]pgtype.UUID, error)
+	// The apps with a live binding to an opted-in database: the only apps whose
+	// wakes can start one.
+	ManagedPostgresWakeWithAppApps(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
 	ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error)
 	MarkAgentApprovalChannelsNotified(ctx context.Context, db DBTX, approvalID pgtype.UUID) error
 	// Only once: a record already undone is left as it is.
@@ -8643,6 +8674,11 @@ type Querier interface {
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
 	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
+	// Records an attempt: delivered, abandoned, or retried at next_attempt_at
+	// to the channels still owed it. Only the claim that counted
+	// claimed_attempts settles: a row reclaimed after its lease ran out is not
+	// settled by the older claim.
+	SettleFlagNotification(ctx context.Context, db DBTX, arg SettleFlagNotificationParams) (int64, error)
 	// Records a run's outcome and releases the lease. A definition changed
 	// since the claim (updated_at) keeps its new schedule.
 	SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) (int64, error)
@@ -8767,6 +8803,11 @@ type Querier interface {
 	SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error)
 	SuppressMCPReminder(ctx context.Context, db DBTX, arg SuppressMCPReminderParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	// Deletes weekly digest keys queued before cutoff, at most max_rows: a past
+	// week's key is never queued again.
+	SweepFlagNotificationDigestKeys(ctx context.Context, db DBTX, arg SweepFlagNotificationDigestKeysParams) (int64, error)
+	// Deletes settled notifications settled before cutoff, at most max_rows.
+	SweepFlagNotifications(ctx context.Context, db DBTX, arg SweepFlagNotificationsParams) (int64, error)
 	// Bounded sweep of windows that ended; run after each recorded failure.
 	SweepLoginFailures(ctx context.Context, db DBTX, windowSeconds float64) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
@@ -9074,6 +9115,7 @@ type Querier interface {
 	// The identity is unique within one environment of the app
 	// (ADR-20261104120000); production is the empty scope.
 	UpsertEventSubscription(ctx context.Context, db DBTX, arg UpsertEventSubscriptionParams) (UpsertEventSubscriptionRow, error)
+	UpsertFlagNotificationSettings(ctx context.Context, db DBTX, arg UpsertFlagNotificationSettingsParams) (FlagNotificationSetting, error)
 	// ---------------------------------------------------------------------------
 	// PR-D / ADR-012 §7 amendment — per-tenant GitHub App webhook secret.
 	//

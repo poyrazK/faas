@@ -773,6 +773,7 @@ from .commit_source_response_destination import CommitSourceResponseDestination
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_consumer_signup_request import CompleteConsumerSignupRequest
 from .complete_consumer_signup_response import CompleteConsumerSignupResponse
+from .complete_consumer_upgrade_request import CompleteConsumerUpgradeRequest
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -833,6 +834,8 @@ from .consumer_credit_pack_settings import ConsumerCreditPackSettings
 from .consumer_credit_packs_response import ConsumerCreditPacksResponse
 from .consumer_credit_purchase_response import ConsumerCreditPurchaseResponse
 from .consumer_credit_purchase_response_status import ConsumerCreditPurchaseResponseStatus
+from .consumer_identity import ConsumerIdentity
+from .consumer_identity_list_response import ConsumerIdentityListResponse
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
@@ -844,6 +847,8 @@ from .consumer_signup_response import ConsumerSignupResponse
 from .consumer_signup_response_status import ConsumerSignupResponseStatus
 from .consumer_signup_settings_response import ConsumerSignupSettingsResponse
 from .consumer_signup_settings_response_provider import ConsumerSignupSettingsResponseProvider
+from .consumer_upgrade_response import ConsumerUpgradeResponse
+from .consumer_upgrade_result import ConsumerUpgradeResult
 from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .control_data_pipeline_request import ControlDataPipelineRequest
 from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
@@ -2408,6 +2413,8 @@ from .flag_lifecycle import FlagLifecycle
 from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
 from .flag_lifecycle_evidence import FlagLifecycleEvidence
 from .flag_lifecycle_report import FlagLifecycleReport
+from .flag_notification_settings import FlagNotificationSettings
+from .flag_notification_settings_request import FlagNotificationSettingsRequest
 from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
@@ -3005,6 +3012,11 @@ from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
 from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
 from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
 from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
+from .managed_postgres_custom_role import ManagedPostgresCustomRole
+from .managed_postgres_custom_role_default_for_item import ManagedPostgresCustomRoleDefaultForItem
+from .managed_postgres_custom_role_granted_to_item import ManagedPostgresCustomRoleGrantedToItem
+from .managed_postgres_custom_role_list import ManagedPostgresCustomRoleList
+from .managed_postgres_custom_role_state import ManagedPostgresCustomRoleState
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
@@ -3059,6 +3071,7 @@ from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageRe
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_postgres_usage_response_history_state import ManagedPostgresUsageResponseHistoryState
 from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
+from .managed_postgres_wake_with_app import ManagedPostgresWakeWithApp
 from .managed_realtime_access_request import ManagedRealtimeAccessRequest
 from .managed_realtime_access_request_action import ManagedRealtimeAccessRequestAction
 from .managed_realtime_access_response import ManagedRealtimeAccessResponse
@@ -5545,6 +5558,9 @@ from .put_issue_saved_view_request import PutIssueSavedViewRequest
 from .put_issue_team_request import PutIssueTeamRequest
 from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_managed_postgres_custom_role_request import PutManagedPostgresCustomRoleRequest
+from .put_managed_postgres_custom_role_request_default_for_item import PutManagedPostgresCustomRoleRequestDefaultForItem
+from .put_managed_postgres_custom_role_request_granted_to_item import PutManagedPostgresCustomRoleRequestGrantedToItem
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
@@ -6465,6 +6481,7 @@ from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_managed_postgres_suspend_timeout_request import SetManagedPostgresSuspendTimeoutRequest
+from .set_managed_postgres_wake_with_app_request import SetManagedPostgresWakeWithAppRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
 from .set_mcp_readiness_fallback_request_region import SetMCPReadinessFallbackRequestRegion
@@ -6551,6 +6568,7 @@ from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
 from .stage_project_release_request import StageProjectReleaseRequest
+from .start_consumer_upgrade_request import StartConsumerUpgradeRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
@@ -7268,6 +7286,7 @@ from .workflow_run_recovery_plan import WorkflowRunRecoveryPlan
 from .workflow_run_recovery_target import WorkflowRunRecoveryTarget
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
+from .workflow_run_start_lookup_response import WorkflowRunStartLookupResponse
 from .workflow_schedule_catch_up_preview import WorkflowScheduleCatchUpPreview
 from .workflow_schedule_catch_up_preview_outcome import WorkflowScheduleCatchUpPreviewOutcome
 from .workflow_schedule_catch_up_preview_policy import WorkflowScheduleCatchUpPreviewPolicy
@@ -8068,6 +8087,7 @@ __all__ = (
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteConsumerSignupRequest",
     "CompleteConsumerSignupResponse",
+    "CompleteConsumerUpgradeRequest",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -8126,6 +8146,8 @@ __all__ = (
     "ConsumerCreditPacksResponse",
     "ConsumerCreditPurchaseResponse",
     "ConsumerCreditPurchaseResponseStatus",
+    "ConsumerIdentity",
+    "ConsumerIdentityListResponse",
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
@@ -8137,6 +8159,8 @@ __all__ = (
     "ConsumerSignupResponseStatus",
     "ConsumerSignupSettingsResponse",
     "ConsumerSignupSettingsResponseProvider",
+    "ConsumerUpgradeResponse",
+    "ConsumerUpgradeResult",
     "ControlApplicationStandardOperationRequest",
     "ControlDataPipelineRequest",
     "ControlDataPipelineRequestAction",
@@ -9641,6 +9665,8 @@ __all__ = (
     "FlagLifecycleAttentionItem",
     "FlagLifecycleEvidence",
     "FlagLifecycleReport",
+    "FlagNotificationSettings",
+    "FlagNotificationSettingsRequest",
     "FlagOutcome",
     "FlagOutcomesResponse",
     "FlagOutcomeType",
@@ -10194,6 +10220,11 @@ __all__ = (
     "ManagedPostgresConnectionBudgetModel",
     "ManagedPostgresConnectionBudgetState",
     "ManagedPostgresConnectionBudgetVersion",
+    "ManagedPostgresCustomRole",
+    "ManagedPostgresCustomRoleDefaultForItem",
+    "ManagedPostgresCustomRoleGrantedToItem",
+    "ManagedPostgresCustomRoleList",
+    "ManagedPostgresCustomRoleState",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",
@@ -10248,6 +10279,7 @@ __all__ = (
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedPostgresUsageResponseHistoryState",
     "ManagedPostgresUsageResponseHold",
+    "ManagedPostgresWakeWithApp",
     "ManagedRealtimeAccessRequest",
     "ManagedRealtimeAccessRequestAction",
     "ManagedRealtimeAccessResponse",
@@ -12546,6 +12578,9 @@ __all__ = (
     "PutIssueTeamRequest",
     "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
+    "PutManagedPostgresCustomRoleRequest",
+    "PutManagedPostgresCustomRoleRequestDefaultForItem",
+    "PutManagedPostgresCustomRoleRequestGrantedToItem",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIFeedbackRequest",
@@ -13450,6 +13485,7 @@ __all__ = (
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetManagedPostgresSuspendTimeoutRequest",
+    "SetManagedPostgresWakeWithAppRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",
     "SetMCPReadinessFallbackRequestRegion",
@@ -13530,6 +13566,7 @@ __all__ = (
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
     "StageProjectReleaseRequest",
+    "StartConsumerUpgradeRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",
@@ -14201,6 +14238,7 @@ __all__ = (
     "WorkflowRunRecoveryTarget",
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
+    "WorkflowRunStartLookupResponse",
     "WorkflowScheduleCatchUpPreview",
     "WorkflowScheduleCatchUpPreviewOutcome",
     "WorkflowScheduleCatchUpPreviewPolicy",

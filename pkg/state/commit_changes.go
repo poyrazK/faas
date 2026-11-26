@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -32,15 +31,6 @@ type CommitChangesConfig struct {
 // IsChanges reports whether the source delivers row changes to a queue.
 func (c CommitChangesConfig) IsChanges() bool { return c.QueueName != "" }
 
-// PollDue reports whether a source last checked at last is due for a relay
-// tick at now. Sources other than changes sources are always due.
-func (c CommitChangesConfig) PollDue(last *time.Time, now time.Time) bool {
-	if !c.IsChanges() || last == nil || c.PollIntervalMS <= 0 {
-		return true
-	}
-	return !now.Before(last.Add(time.Duration(c.PollIntervalMS) * time.Millisecond))
-}
-
 // CommitChangesStore is the narrow surface apid uses to manage changes
 // sources; it is deliberately not part of Store.
 type CommitChangesStore interface {
@@ -62,6 +52,9 @@ func (s *PgStore) UpsertCommitChangesSource(ctx context.Context, account, app, n
 	err := s.pool.QueryRow(ctx, `INSERT INTO commit_sources(account_id, app_id, name, queue_name, changes_feeds, managed_database_id, poll_interval_ms)
  SELECT $1::uuid, id, $3, $4, $5::jsonb, NULLIF($6, '')::uuid, $7 FROM apps WHERE id = $2::uuid AND account_id = $1::uuid
  ON CONFLICT (account_id, name) DO UPDATE SET queue_name = excluded.queue_name, changes_feeds = excluded.changes_feeds,
+   relay_next_poll_at = CASE WHEN commit_sources.poll_interval_ms <> excluded.poll_interval_ms AND commit_sources.relay_poll_token IS NULL
+     THEN COALESCE(commit_sources.last_checked_at + (excluded.poll_interval_ms + commit_sources.relay_poll_backoff_ms)*interval '1 millisecond', '-infinity'::timestamptz)
+     ELSE commit_sources.relay_next_poll_at END,
    managed_database_id = excluded.managed_database_id, poll_interval_ms = excluded.poll_interval_ms
  WHERE commit_sources.app_id = excluded.app_id AND commit_sources.queue_name IS NOT NULL
  RETURNING id::text, enabled`, account, app, name, cfg.QueueName, []byte(cfg.Feeds), cfg.ManagedDatabaseID, cfg.PollIntervalMS).Scan(&src.ID, &src.Enabled)

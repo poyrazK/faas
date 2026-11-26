@@ -1,0 +1,47 @@
+{
+  "scope": {
+    "base_url": "https://control.test",
+    "account_id": "11111111-1111-4111-8111-111111111111",
+    "app_id": "22222222-2222-4222-8222-222222222222",
+    "app_slug": "imports"
+  },
+  "key": "fixture-only-query-cursor-key-32-bytes",
+  "selectors": [
+    {
+      "kind": "pipeline",
+      "name": "process_csv",
+      "contract_sha256": "f1ca6ad4707656baee4d7cbb5fae6f0d8aecf4c184fddc6a29fce56b2182ed3d"
+    },
+    {
+      "kind": "action",
+      "name": "csv_refund"
+    }
+  ],
+  "candidates": [
+    {
+      "kind": "pipeline",
+      "name": "process_csv",
+      "identity": "3ef40089c6a051b64cdacc585c8c027c8b9f65bfe5fc396bc73a0bbb3d49daa7",
+      "request_id": "33333333-3333-4333-8333-333333333331",
+      "position": "40dc3eb3d58f68d9a7d8de5ba97c466dd3bf0d33bdec9cb8249640c35d5cd56cp"
+    },
+    {
+      "kind": "pipeline",
+      "name": "process_csv",
+      "identity": "f3e03eac91c12ad738e8cd0007093879e7b7f4c9366d968a1a0198f4af8940d7",
+      "request_id": "33333333-3333-4333-8333-333333333332",
+      "position": "47a86b6609406187465c9e5e19e2c70cab65009c972f26032d377f24f80ae2dbp"
+    },
+    {
+      "kind": "action",
+      "name": "csv_refund",
+      "identity": "e0b5e9a3f8f00f4f38916f7908863a0fc298322e56b1d40291eef0a596832a68",
+      "request_id": "33333333-3333-4333-8333-333333333333",
+      "position": "a187263b40ca7d9a1f3c7be0e1dadb3255cfe3d25102f029061a893120cadc99a"
+    }
+  ],
+  "first_page": {
+    "items": [],
+    "next_cursor": "eyJ2IjoxLCJiIjoiMjcxMTgyZDQ1YzVkYzVlNmZlOTk1YWRjY2M5ODNkNWUzMWNiMTQwMTVjYmQwYTVhMzg4MjE3NjZiYTMyMDZhZiIsImEiOiI0MGRjM2ViM2Q1OGY2OGQ5YTdkOGRlNWJhOTdjNDY2ZGQzYmYwZDMzYmRlYzljYjgyNDk2NDBjMzVkNWNkNTZjcCJ9.e-J3gXrGmThARQ8WVh6UTGQJd_0IUyAGvuf17GYvu3U"
+  }
+}

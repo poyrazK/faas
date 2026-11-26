@@ -2118,6 +2118,94 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/roles:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      tags: [managed_postgres]
+      operationId: listManagedPostgresCustomRoles
+      summary: List a database's custom roles.
+      description: |
+        Beta (postgres-custom-roles capability). The
+        NOLOGIN group roles declared on the database, with the access modes
+        whose logins may SET ROLE to each, the roles each is a member of, the
+        access modes whose logins start every session as it, and whether it
+        is applied (state ready) yet. Requires postgres read scope and MFA.
+      responses:
+        '200':
+          description: The database's custom roles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedPostgresCustomRoleList'
+        default:
+          description: Missing sign-in, scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/roles/{name}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: name
+        in: path
+        required: true
+        description: "The role name: a lowercase letter or underscore, then at most 62 lowercase letters, digits and underscores. Names starting with gregale, pg_, neon, cloudsql, rds, azure, supabase or cron_, and PostgreSQL's reserved role names, are refused."
+        schema: {type: string}
+    put:
+      tags: [managed_postgres]
+      operationId: putManagedPostgresCustomRole
+      summary: Declare or replace a custom role.
+      description: |
+        Beta (postgres-custom-roles capability). Creates
+        the NOLOGIN role on the database, or corrects it to this declaration,
+        and grants it, SET only, to the database's logins of the granted
+        access modes, including logins issued later. The role and the
+        read_write logins can run the schema owner's functions in public.
+        bypass_rls is refused on a database with Data
+        API or Auth. Hobby and above; at most 16 roles per database. Requires
+        postgres manage scope, MFA and a verified email. Answers 200 when the
+        role is already applied and 202 while it is being applied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutManagedPostgresCustomRoleRequest'
+      responses:
+        '200':
+          description: The role, applied.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+        '202':
+          description: The role, saved and being applied (state pending).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+        default:
+          description: An invalid declaration, a plan without custom roles, the role limit, a BYPASSRLS conflict with Data API or Auth, another default role for the access mode, a backend without custom roles, missing sign-in, scope, MFA or verified email, a database this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      tags: [managed_postgres]
+      operationId: deleteManagedPostgresCustomRole
+      summary: Drop a custom role.
+      description: |
+        Beta (postgres-custom-roles capability). Marks the role deleting;
+        the platform then hands what it owns to the schema owner, removes its
+        grants and drops it. Requires postgres manage scope and MFA.
+      responses:
+        '202':
+          description: The role, deleting.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+        default:
+          description: An unknown role, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/postgres/databases/{id}/query:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2288,6 +2376,59 @@ paths:
               schema: {$ref: '#/components/schemas/ManagedPostgresComputePolicyChange'}
         default:
           description: Authentication or policy lookup error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setManagedPostgresWakeWithApp
+      summary: Start a database when its app wakes
+      description: Turns on or off starting a scale-to-zero database when an app bound to it wakes, so the database's cold start overlaps the app's instead of following it. Off by default. A wake that never queries the database still starts it, and the compute bills at least one suspend timeout. Repeating the same value is harmless. An always-on database, or one on a backend that cannot start its compute, answers 409 wake_with_app_unsupported; one with a change in progress answers a conflict. While operations are closed, only turning it off is taken.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest'}
+      responses:
+        '200':
+          description: The setting in force
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresWakeWithApp'}
+        default:
+          description: Invalid setting, unsupported database, conflict, entitlement or admission failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to set whether a company database starts with its app."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    put:
+      operationId: setOrgManagedPostgresWakeWithApp
+      summary: "Start a company database when its app wakes."
+      description: "An owner or admin turns on or off starting a scale-to-zero company database when an app bound to it wakes. A wake that never queries the database still starts it."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetManagedPostgresWakeWithAppRequest'}
+      responses:
+        '200':
+          description: "Whether the company database starts with its app."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresWakeWithApp'}
+        default:
+          description: "Problem while setting whether the company database starts with its app."
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -5787,6 +5928,38 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/consumer-identities:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerIdentities
+      summary: List the OAuth sign-ins of the app's MCP server and the consumers they bill to, newest first.
+      responses:
+        '200':
+          description: The app's consumer identities.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConsumerIdentityListResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /v1/apps/{slug}/consumer-identities/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The identity to unlink, as listed by the consumer identities endpoint.
+        schema: {type: string, format: uuid}
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerIdentity
+      summary: Unlink an OAuth sign-in from its consumer; the next sign-in enrolls again or links by key.
+      responses:
+        '204':
+          description: Unlinked.
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /v1/deleted-apps:
     get:
       tags: [apps]
@@ -13508,6 +13681,44 @@ paths:
               schema: {$ref: '#/components/schemas/Problem'}
         '409':
           description: "Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServerError'}
+  /v1/apps/{slug}/workflows/run-starts/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 128}
+        description: Workflow name used for the original start.
+    get:
+      tags: [workflows]
+      operationId: lookupWorkflowRunStart
+      summary: Find a retained workflow run by its original pipeline-tool start key.
+      description: |
+        Reads the existing workflow admission binding for this app and workflow.
+        A successful response contains only the native run ID. This operation
+        applies to non-tenant pipeline-tool starts while the run is retained.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: The pipeline tool start receipt's original native idempotency key.
+          schema: {type: string, pattern: '^pipeline-tool:[0-9a-f]{64}$'}
+      responses:
+        '200':
+          description: An accepted run for this key.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkflowRunStartLookupResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404':
+          description: "code: workflow_run_not_found | app_not_found — no retained scoped start matches this key."
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -32694,6 +32905,20 @@ components:
         last_error_code: {type: string, description: "Safe policy-change diagnostic. A confirmed rejection retains the source policy; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
+    SetManagedPostgresWakeWithAppRequest:
+      description: Whether a scale-to-zero database starts when an app bound to it wakes.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean, description: "True starts the database with its app; false leaves it to start on the app's first query."}
+    ManagedPostgresWakeWithApp:
+      description: Whether a database starts when an app bound to it wakes.
+      type: object
+      required: [database_id, enabled]
+      properties:
+        database_id: {type: string}
+        enabled: {type: boolean}
     SetManagedPostgresSuspendTimeoutRequest:
       description: How long a scale-to-zero database stays up after its last activity before it suspends.
       type: object
@@ -32738,6 +32963,57 @@ components:
         last_error_code: {type: string, description: "Safe diagnostic code. A failed resize retains the confirmed source configuration; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
+    ManagedPostgresCustomRole:
+      type: object
+      description: A custom group role declared on a managed database.
+      required: [database_id, name, bypass_rls, granted_to, member_of, default_for, state, created_at, updated_at]
+      properties:
+        database_id: {type: string}
+        name: {type: string}
+        bypass_rls: {type: boolean}
+        granted_to:
+          type: array
+          description: Access modes whose logins may SET ROLE to it (migration, read_write, read_only); read_write includes session logins.
+          items: {type: string, enum: [migration, read_write, read_only]}
+        member_of:
+          type: array
+          description: Other custom roles of the database it is a member of.
+          items: {type: string}
+        default_for:
+          type: array
+          description: Access modes whose logins start every session as this role.
+          items: {type: string, enum: [read_write, read_only]}
+        state:
+          type: string
+          enum: [pending, ready, deleting]
+          description: pending until applied to the database, ready after, deleting until a deleted role is dropped.
+        last_error_code: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ManagedPostgresCustomRoleList:
+      type: object
+      description: A database's custom roles.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+    PutManagedPostgresCustomRoleRequest:
+      type: object
+      description: The declaration of a custom role; absent fields take their defaults.
+      properties:
+        bypass_rls: {type: boolean, default: false}
+        granted_to:
+          type: array
+          description: Access modes whose logins may SET ROLE to it; session is stored as read_write.
+          items: {type: string, enum: [migration, read_write, read_only, session]}
+        member_of:
+          type: array
+          items: {type: string}
+        default_for:
+          type: array
+          description: When present, replaces the access modes whose logins start as this role; absent keeps the current ones that are still granted.
+          items: {type: string, enum: [read_write, read_only]}
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object
@@ -32753,6 +33029,7 @@ components:
         scale_to_zero: {type: boolean}
         suspend_timeout_seconds: {type: integer, format: int64, description: "Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database."}
         suspend_timeout_custom: {type: boolean, description: "True when the database has its own suspend timeout rather than the platform default."}
+        wake_with_app: {type: boolean, description: "True when the database starts when an app bound to it wakes."}
         storage_limit_bytes: {type: integer, format: int64, minimum: 0}
         restore_window_seconds: {type: integer, format: int64, minimum: 0}
         restore_source_database_id: {type: [string, "null"], minLength: 1, maxLength: 128}
@@ -42999,6 +43276,13 @@ components:
         updated_at:
           type: string
           format: date-time
+    WorkflowRunStartLookupResponse:
+      description: The retained run ID for a previously accepted pipeline-tool start.
+      type: object
+      additionalProperties: false
+      required: [run_id]
+      properties:
+        run_id: {type: string, format: uuid}
     ListWorkflowRunsResponse:
       description: "A paginated list of durable workflow runs."
       type: object
@@ -53487,6 +53771,12 @@ components:
           description: |
             Provider-neutral hosted checkout URL on a `payment_required`
             402 when a paid plan upgrade requires a new subscription.
+        upgrade_url:
+          type: string
+          format: uri
+          description: |
+            On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+            where the consumer moves to another plan.
         billing_portal_url: {type: string, format: uri}
         paddle_checkout_url:
           type: string
@@ -54371,6 +54661,26 @@ components:
         current_count: {type: integer, format: int64, minimum: 0, description: Calls the current value was taken over.}
         baseline_count: {type: integer, format: int64, minimum: 0}
         detected_at: {type: string, format: date-time}
+    ConsumerIdentity:
+      description: "An OAuth sign-in of an app's MCP server and the consumer it bills to."
+      type: object
+      required: [id, consumer_id, issuer, subject, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        consumer_id: {type: string, format: uuid}
+        issuer: {type: string}
+        subject: {type: string}
+        email: {type: string, description: "The token's email claim; display only."}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ConsumerIdentityListResponse:
+      description: "An app's OAuth identities, newest first."
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items: {$ref: '#/components/schemas/ConsumerIdentity'}
     PlatformTenantHostnameVerifiedWebhookPayload:
       type: object
       description: DNS ownership verification for a hostname on a surface explicitly linked to this tenant. It does not imply certificate issuance or routing, and never contains the DNS challenge token.

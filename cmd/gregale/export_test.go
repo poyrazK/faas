@@ -1901,6 +1901,13 @@ var ResolveSimpleAppPlan = resolveSimpleAppPlan
 var ResolveTestLoadConfig = resolveTestLoadConfig
 var ResolveTestLoadRecovery = resolveTestLoadRecovery
 var ResolveWorkspaceContext = resolveWorkspaceContext
+
+// ResolveWorkspaceContextReason decides from the tree a deploy would ship:
+// the working tree with worktree, committed HEAD with head.
+func ResolveWorkspaceContextReason(repoRoot, sourceDir string, worktree, head bool) (string, string, bool, string, error) {
+	return resolveWorkspaceContextReason(repoRoot, sourceDir, deployContextTree(repoRoot, sourceDir, worktree, head))
+}
+
 var ResolvedTempDir = resolvedTempDir
 var ResponseActionID = responseActionID
 var RestartAuthApp = restartAuthApp
@@ -3084,25 +3091,30 @@ func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 
 // Built-in Task release gate (commands_mcp_native_gate.go).
 type (
-	MCPGateWorker     = mcpGateWorker
-	MCPTaskHandlerRef = mcpTaskHandlerRef
-	MCPGateStore      = mcpGateStore
-	MCPGateReport     = mcpGateReport
+	MCPGateReport      = mcpGateReport
+	MCPGateDeployments = mcpGateDeployments
 )
 
 var (
 	MCPNativeWorkerRuntime     = mcpNativeWorkerRuntime
 	RequireMCPNativeNodeWorker = requireMCPNativeNodeWorker
-	MCPReplacementsReady       = mcpReplacementsReady
+	RequireMCPWebTaskMigration = requireMCPWebTaskMigration
+	MCPReportReplacementsReady = mcpReportReplacementsReady
+	MCPReportPreviousGone      = mcpReportPreviousGone
+	ErrMCPGateOutsideWorkers   = errMCPGateOutsideWorkers
 )
 
-// RunMCPGate runs the built-in gate against a test store and hooks.
-func RunMCPGate(ctx context.Context, store MCPGateStore, namespace, releaseID, checkpointPath string, timeout time.Duration,
+// RunMCPGate runs the built-in gate against a test compatibility report and
+// hooks.
+func RunMCPGate(ctx context.Context, report func(context.Context) (api.MCPTaskCompatibilityReportResponse, error), deployments func() (MCPGateDeployments, error),
+	namespace, releaseID, checkpointPath string, timeout time.Duration,
 	migrate func(context.Context) error, start func(context.Context, map[string]any) ([]string, error), drain func(context.Context, map[string]any) error) MCPGateReport {
-	g := &mcpGate{store: store, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
+	g := &mcpGate{view: reportMCPGateView{report: report, deployments: deployments}, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
 		checkpointPath: checkpointPath, migrate: migrate, start: start, drain: drain}
 	return g.run(ctx)
 }
+
+var MCPNativeDeployOrder = mcpNativeDeployOrder
 
 // LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
 var LeadingDeploymentID = leadingDeploymentID

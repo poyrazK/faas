@@ -4639,11 +4639,17 @@ The server is the `mcp-bridged` daemon:
 - **Failover:** after a control-plane takeover, the standby's bootstrap and
   deploy start the server again. Connected agents keep their grants; open
   streams reconnect.
-- **Clients:** the unit allows Claude's, ChatGPT's and Google Antigravity's published OAuth
-  callbacks plus loopback clients. Antigravity publishes its client at
-  `https://antigravity.google/oauth/client-metadata.json` and uses the exact
-  callback `https://antigravity.google/oauth-callback`. Override `ExecStart` in a drop-in to
-  change the list.
+- **Clients:** the unit allows Claude's, ChatGPT's, Google Antigravity's and
+  Glama's published OAuth callbacks plus loopback clients. Antigravity
+  publishes its client at `https://antigravity.google/oauth/client-metadata.json`
+  and uses the exact callback `https://antigravity.google/oauth-callback`.
+  Glama publishes two clients: its connector at
+  `https://glama.ai/api/app/mcp/oauth/client-metadata.json` (callback
+  `https://glama.ai/api/app/mcp/oauth/callback`), which runs Glama's health
+  checks and users' connections, and its MCP Inspector at
+  `https://glama.ai/mcp/inspector/oauth/client-metadata.json` (callback
+  `https://glama.ai/mcp/inspector/oauth/callback`). Override `ExecStart` in a
+  drop-in to change the list.
 - **Client identity:** a client either registers (Dynamic Client
   Registration) or names a Client ID Metadata Document URL as its
   `client_id` (ADR-20261030065746). The server fetches the document over
@@ -5105,6 +5111,9 @@ qualification. Raw upstream error text, Task payloads and bearer values are
 excluded. Actions carry argument arrays for use by automation or a dashboard.
 
 ## Runtime catalog management
+
+The Node and Python starters can also publish a [typed application toolkit](sdk-application-toolkits.md)
+with explicit scopes for its SDK tools and resources.
 
 The Node, Go, and Python starters expose in-process operations to register,
 replace, and remove tools, resources, and prompts. Application code can change
@@ -7130,14 +7139,18 @@ failed release; inspect the reported stage and reconcile candidate processes.
 #### Go and Python worker upgrades
 
 `gregale mcp server tasks deploy` also releases Go and Python workers. Their
-starters have no admission tables, so the CLI runs the gate itself
-(ADR-20261123160000): the same release lock, journal, checkpoint and
-deployment adapters as the Node gate, the starter's own migration command
-(`go run . tasks-migrate apply` or `python3 task_schema.py apply`), and a
-readiness rule based on unfinished Tasks: each replacement must be registered,
-heartbeating since the release began and serving every `(tool, handler_version)`
-that `queued`, `running` or `input_required` Tasks need before previous workers
-drain. `recover`, `restore`, `quarantine` and `retire` need the Node gate's claim
+starters have no admission tables, so the CLI runs the gate itself, entirely
+through the Gregale API (ADR-20261123160000, amendment 1): the same journal,
+checkpoint and deployment adapters as the Node gate; the schema migration in
+the web app's release command (`/app/out tasks-migrate apply` or
+`python task_schema.py apply`), with the staged web deployed before the
+candidate worker; and a readiness rule based on unfinished Tasks: a fresh
+report from the always-on observer, taken after the release began, must show
+the candidate deployment serving every `(tool, handler_version)` that `queued`,
+`running` or `input_required` Tasks need, on every replacement, before previous
+workers drain. The machine running the release needs no database credentials;
+set `observer_metric_app` to the app the observer reports for
+(`MCP_TASKS_SCALING_APP_SLUG`). `recover`, `restore`, `quarantine` and `retire` need the Node gate's claim
 fence and stay Node-only; for a failed Go/Python release use the manual steps
 below.
 

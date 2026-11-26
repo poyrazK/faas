@@ -14,11 +14,14 @@ from typing import Any
 import psycopg
 from event_pipeline import ImportRecord, csv_event_pipeline
 from faas_sdk.preview import (
+    QueryToolError,
+    QueryMCPError,
     CompensationError,
     EventOutboxError,
     EventPipelineDelivery,
     EventPipelineError,
     EventPipelineOutcome,
+    OutboundActionError,
     PipelineScope,
     PostgresEventPipelineStore,
     StripeWebhookError,
@@ -31,6 +34,12 @@ from psycopg.rows import dict_row
 
 
 async def execute(request: dict[str, Any]) -> dict[str, Any] | None:
+    if request["action"].startswith("query-"):
+        from query_driver import execute as query_execute
+        return await query_execute(request)
+    if request["action"].startswith("refund-"):
+        from refund_driver import execute as refund_execute
+        return await refund_execute(request)
     if request["action"].startswith("compensation-"):
         from compensation_driver import execute as compensation_execute
         return await compensation_execute(request)
@@ -133,7 +142,7 @@ async def main() -> None:
         request = json.loads(line)
         try:
             result = await execute(request)
-        except (EventPipelineError, EventOutboxError, StripeWebhookError, CompensationError) as error:
+        except (EventPipelineError, EventOutboxError, StripeWebhookError, CompensationError, OutboundActionError, QueryToolError, QueryMCPError) as error:
             result = {"code": error.code}
         print(
             json.dumps({"request_id": request["request_id"], "result": result}),
@@ -144,6 +153,6 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (EventPipelineError, EventOutboxError, StripeWebhookError, CompensationError) as error:
+    except (EventPipelineError, EventOutboxError, StripeWebhookError, CompensationError, OutboundActionError, QueryToolError, QueryMCPError) as error:
         print(json.dumps({"code": error.code}))
         raise SystemExit(2) from None

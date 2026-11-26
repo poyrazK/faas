@@ -407,6 +407,7 @@
         "/v1/account/billing-run-schedule",
         "/v1/account/billing-runs",
         "/v1/apps/{}/consumer-billing-policy",
+        "/v1/apps/{}/consumer-credit-packs",
         "/v1/apps/{}/consumer-overdue-holds",
         "/v1/apps/{}/consumer-plans",
         "/v1/apps/{}/consumer-signup",
@@ -432,7 +433,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestGetApp_SurfacesRequireAuthn",
       "settings": [
         "app.public_auth",
-        "app.require_authn"
+        "app.require_authn",
+        "manifest.access"
       ]
     },
     {
@@ -2676,6 +2678,20 @@
       "always_on": true
     },
     {
+      "id": "flag-notifications",
+      "name": "Flag notifications",
+      "category": "delivery",
+      "description": "Send experiment decisions and problems, a weekly digest of flags that need a decision and flag expiries to notification channels.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261125085913-flag-notifications",
+      "acceptance_test": "pkg/flagnotify/flagnotify_test.go::TestRunner",
+      "parent": "feature-flags",
+      "routes": [
+        "/v1/projects/{}/environments/{}/flags/notifications"
+      ]
+    },
+    {
       "id": "framework-profiles",
       "name": "Framework profiles",
       "category": "delivery",
@@ -3293,6 +3309,7 @@
         "=/v1/postgres/databases/{}",
         "/v1/postgres/databases/{}/connection-budget",
         "/v1/postgres/databases/{}/query",
+        "/v1/postgres/databases/{}/suspend-timeout",
         "/v1/postgres/databases/{}/undelete",
         "/v1/postgres/usage"
       ],
@@ -4314,7 +4331,7 @@
       "name": "Postgres custom roles",
       "category": "data",
       "description": "Declare NOLOGIN group roles, BYPASSRLS included, that a database's own logins can SET ROLE to, so tools such as Windmill run on managed Postgres.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",

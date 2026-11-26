@@ -7,6 +7,7 @@ import (
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -85,4 +86,10 @@ func (r *server) DescribeUnservedEnvironmentBranchWorkload(ctx context.Context, 
 	var workload api.ProjectEnvironmentBranchWorkload
 	err := r.describeUnservedEnvironmentBranchWorkload(ctx, branch, appID, &workload, now)
 	return workload, err
+}
+
+// DatabaseCopyRestoreError classifies a failed restore of the copy of source
+// at point.
+func DatabaseCopyRestoreError(cloned, source managedpostgres.Database, point time.Time, err error) error {
+	return projectEnvironmentDatabaseCopyRestoreError(cloned, projectEnvironmentDatabaseCopy{source: source, pointInTime: point}, err)
 }
