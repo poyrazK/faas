@@ -175,17 +175,19 @@ func printDeployIssueSourceMapsError(err error, slug, deployment string, set *is
 	recovery := newDeployRecovery("source_maps", slug, deployment, "", 0, false)
 	var binding *deployIssueSourceMapsBindingError
 	if errors.As(err, &binding) {
-		recovery.Stage, recovery.ResumeCommand = "source_maps_binding", ""
+		recovery.Stage = "source_maps_binding"
+		recovery.setResumeCommand("")
 		recovery.Hint = "The deployment receipt did not confirm this source and zero production traffic. Inspect the deployment; do not publish artifacts or promote it until the discrepancy is resolved."
 		return printErr("Source-map deployment binding failed", &deployRecoveryError{err: err, recovery: recovery})
 	}
-	recovery.InspectCommand = recoveryCLI() + " debug issue source-map get --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment)
-	recovery.ResumeCommand = ""
+	command := deployRecoveryCLI()
+	recovery.InspectCommand = command + " debug issue source-map get --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment)
+	recovery.setResumeCommand("")
 	recovery.Hint = "The deployment was accepted, but source-map readiness was not confirmed. Keep production traffic at zero. Recover publication for this deployment; do not submit another deployment or promote until artifacts are ready."
 	file, saveErr := saveDeployIssueSourceMapsRecovery(set)
 	if saveErr == nil {
-		recovery.ResumeCommand = recoveryCLI() + " debug issue source-map publish --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment) +
-			" --directory " + recoveryArgument(set.Request.Directory) + " --manifest-file " + recoveryArgument(file)
+		recovery.setResumeCommand(command + " debug issue source-map publish --app " + recoveryArgument(slug) + " --deployment " + recoveryArgument(deployment) +
+			" --directory " + recoveryArgument(set.Request.Directory) + " --manifest-file " + recoveryArgument(file))
 		recovery.Hint += " The resume command uses a private sanitized manifest snapshot. Remove that file and its directory after recovery."
 	} else {
 		recovery.Hint += " The recovery manifest could not be saved; use the exact manifest from the uploaded build with the existing publish command."
