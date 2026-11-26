@@ -307,7 +307,7 @@ func runInlineLoad(t *testing.T, rate, apps, seconds, slots int, wait time.Durat
 	t.Helper()
 	i := New(&recordingObserver{}, nil)
 	i.inlineSlots, i.inlineWait = newSlotPool(slots, api.EdgeWAFInlineAccountSharePercent), wait
-	if _, err := i.inlineWAF(); err != nil {
+	if _, err := i.inlineWAF(true); err != nil {
 		t.Fatal(err)
 	}
 	st := &inlineLoadStats{outcomes: map[string]int{}}

@@ -78,7 +78,8 @@ func TestWAFReviewGroupsAndAssesses(t *testing.T) {
 	}
 
 	search := byKey["942360 /search"]
-	if search.Assessment != api.EdgeWAFReviewLikelyFalsePositive || search.Clients != 4 || search.Events != 5 ||
+	// Spread across clients alone stays for review (amendment 21).
+	if search.Assessment != api.EdgeWAFReviewUndecided || search.Clients != 4 || search.Events != 5 ||
 		search.Blocked != 4 || search.Warned != 1 || search.TopClientPercent != 40 || search.Category != "sqli" || search.RuleMode != "block" {
 		t.Errorf("search group = %+v", search)
 	}
@@ -99,6 +100,39 @@ func TestWAFReviewGroupsAndAssesses(t *testing.T) {
 	}
 	if resp.Groups[0].CRSRuleID != 942360 {
 		t.Errorf("first group = %d, want the largest (942360)", resp.Groups[0].CRSRuleID)
+	}
+}
+
+// adr: 831 — amendment 21: a few addresses probing one endpoint are not
+// called a false positive just because no one of them sent most of the
+// detections, and oversized detections (no CRS rule) never make a client a
+// scanner.
+func TestWAFReviewSpreadIsNotAFalsePositive(t *testing.T) {
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	var events []state.EdgeRuleEvent
+	id := int64(0)
+	add := func(path, ip string, crs ...int) {
+		id++
+		events = append(events, wafEvent(id, t0.Add(time.Duration(id)*time.Minute), state.EdgeRuleEventBlocked, path, ip, crs...))
+	}
+	for _, ip := range []string{"198.51.100.1", "198.51.100.2", "198.51.100.3"} {
+		add("/login", ip, 942260)
+	}
+	// An office address sending long report queries, then a GraphQL query.
+	for _, p := range []string{"/reports/a", "/reports/b", "/reports/c", "/reports/d", "/reports/e"} {
+		add(p, "192.0.2.50")
+	}
+	add("/graphql", "192.0.2.50", 942190)
+	slices.Reverse(events)
+	byKey := map[string]api.EdgeWAFReviewGroup{}
+	for _, g := range WAFReview(t0.Add(-time.Hour), events, nil, false).Groups {
+		byKey[fmt.Sprintf("%d %s", g.CRSRuleID, g.Path)] = g
+	}
+	if g := byKey["942260 /login"]; g.Assessment != api.EdgeWAFReviewUndecided || g.Clients != 3 {
+		t.Errorf("login group = %s (%d clients), want review", g.Assessment, g.Clients)
+	}
+	if g := byKey["942190 /graphql"]; g.Assessment != api.EdgeWAFReviewLikelyFalsePositive || g.ScannerPercent != 0 {
+		t.Errorf("graphql group = %s (scanner %d%%), want the documented false positive", g.Assessment, g.ScannerPercent)
 	}
 }
 
