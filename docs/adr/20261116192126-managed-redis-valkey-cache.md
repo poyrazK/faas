@@ -420,8 +420,43 @@ closed by a later slice:
   2026-11-23), and the prod journey fails a resize whose handoff takes over
   3 minutes.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
-  and adding it would break customers who deploy Valkey themselves. That is
-  left for an owner decision.
+  and adding it would break customers who deploy Valkey themselves. Owner
+  decision 2026-11-25: it stays off the list; managed Redis is the easy path,
+  not the only one.
+- **Valkey upgrades (2026-11-25):** a cache deployment may run any image in
+  `api.ManagedValkeyImages()`; imaged refuses any other image on a cache app.
+  schedd gives the raw TCP probes to a deployment that runs one of them with
+  the command apid gives a cache (`api.IsManagedValkeyCommand`). A customer's
+  own app on the official Valkey image keeps its own probes. A new Valkey image
+  ships in two releases. The first adds it to the list. The second makes it
+  `api.ManagedValkeyImage`, which apid deploys. A schedd that did not know
+  the image would give the cache the HTTP liveness probe, which kills a cache
+  about 50 s after it starts, so apid must never deploy an image the previous
+  release does not accept. Existing caches keep their image until their
+  next handoff moves them: `gregale redis update`, a resize and an
+  eviction-policy change all deploy `api.ManagedValkeyImage`, so a resize
+  also upgrades the cache. An image leaves the list
+  only once no cache deployment runs it. A cache whose image left the list
+  would get the HTTP liveness probe on its next wake and be killed. Before
+  removing an image, this query on the control-plane database must return no
+  row for it:
+  `SELECT d.image_digest, count(*) FROM managed_valkey_caches c JOIN deployments d ON d.app_id = c.app_id WHERE d.status IN ('imaging', 'live') GROUP BY 1;`
+  First use: 8.1.4 → 8.1.12 (9 live caches on 8.1.4 on 2026-11-25).
+  Step 1 (#8091) added 8.1.12 to the list; step 2 makes it the image apid
+  deploys and keeps 8.1.4 accepted for the caches that still run it.
+  Checked before step 2 (2026-11-26): `TestManagedRedisMetal` passes on
+  8.1.12 (create, park and wake, restart, resize handoff; native run
+  redis-20261126T072526, leakcheck clean). The real handoff script also copied
+  an 8.1.4 cache (apid's server command, 5,000 keys, a writer running) into
+  8.1.12 in containers: the new VM promoted itself, opened 6379 after 5 s and
+  held every acknowledged write (127 of 127).
+- **Cross-account isolation verified on prod (2026-11-25):** an app in
+  another account cannot reach a cache. Service addresses are indexes within
+  each account, so the proxy resolves a foreign cache's address in the
+  caller's own account and refuses it (`unknown_service`). DNS gives a
+  foreign cache's name and a name that does not exist the same answer, so it
+  does not reveal which caches exist. The authorizer requires the same owner
+  (`servicebinding.NewAuthorizer`) before any cache grant applies.
 
 ## Rejected alternatives
 

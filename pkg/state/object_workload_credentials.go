@@ -55,6 +55,13 @@ type ObjectWorkloadCredentialStore interface {
 	ListLiveObjectWorkloadCredentials(ctx context.Context, callerAppID string) ([]ObjectWorkloadCredential, error)
 	// DeleteObjectWorkloadCredentials revokes callerAppID's credentials ids.
 	DeleteObjectWorkloadCredentials(ctx context.Context, callerAppID string, ids []string) (int64, error)
+	// RegrantObjectWorkloadCredentials moves callerAppID's credentials ids to
+	// permission and keyPrefix ("" for the whole bucket).
+	RegrantObjectWorkloadCredentials(ctx context.Context, callerAppID string, ids []string, permission, keyPrefix string) (int64, error)
+}
+
+func validObjectS3Permission(p string) bool {
+	return p == ObjectBucketPermissionRead || p == ObjectBucketPermissionWrite || p == ObjectBucketPermissionReadWrite
 }
 
 func validObjectWorkloadCredential(c ObjectWorkloadCredential) bool {
@@ -62,7 +69,7 @@ func validObjectWorkloadCredential(c ObjectWorkloadCredential) bool {
 		c.InstanceID != "" && len(c.InstanceID) <= 128 &&
 		strings.HasPrefix(c.AccessKeyID, ObjectWorkloadCredentialAccessKeyPrefix) && len(c.AccessKeyID) == 20 &&
 		len(c.SecretSealed) > 0 && c.KID != "" && len(c.KID) <= 255 &&
-		(c.Permission == ObjectBucketPermissionRead || c.Permission == ObjectBucketPermissionWrite || c.Permission == ObjectBucketPermissionReadWrite) &&
+		validObjectS3Permission(c.Permission) &&
 		len(c.KeyPrefix) <= 512 && !strings.HasPrefix(c.KeyPrefix, "/") &&
 		!c.CreatedAt.IsZero() && c.ExpiresAt.After(c.CreatedAt) && !c.ExpiresAt.After(c.CreatedAt.Add(ObjectWorkloadCredentialMaxTTL+5*time.Minute))
 }
@@ -146,6 +153,27 @@ func (s *PgStore) DeleteObjectWorkloadCredentials(ctx context.Context, callerApp
 		pgIDs = append(pgIDs, mustPgUUID(id))
 	}
 	n, err := sqlc.New().ObjectWorkloadCredentialDelete(ctx, s.pool, sqlc.ObjectWorkloadCredentialDeleteParams{CallerAppID: mustPgUUID(callerAppID), Ids: pgIDs})
+	return n, mapErr(err)
+}
+
+func (s *PgStore) RegrantObjectWorkloadCredentials(ctx context.Context, callerAppID string, ids []string, permission, keyPrefix string) (int64, error) {
+	if !validUUID(callerAppID) || !validObjectS3Permission(permission) {
+		return 0, ErrInvalidArgument
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	pgIDs := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		if !validUUID(id) {
+			return 0, ErrInvalidArgument
+		}
+		pgIDs = append(pgIDs, mustPgUUID(id))
+	}
+	n, err := sqlc.New().ObjectWorkloadCredentialRegrant(ctx, s.pool, sqlc.ObjectWorkloadCredentialRegrantParams{
+		CallerAppID: mustPgUUID(callerAppID), Ids: pgIDs, Permission: permission,
+		KeyPrefix: pgtype.Text{String: keyPrefix, Valid: keyPrefix != ""},
+	})
 	return n, mapErr(err)
 }
 
@@ -241,6 +269,23 @@ func (m *MemStore) DeleteObjectWorkloadCredentials(_ context.Context, callerAppI
 	for _, id := range ids {
 		if c, ok := m.objectWorkloadCredentials[id]; ok && c.CallerAppID == callerAppID {
 			delete(m.objectWorkloadCredentials, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *MemStore) RegrantObjectWorkloadCredentials(_ context.Context, callerAppID string, ids []string, permission, keyPrefix string) (int64, error) {
+	if !validObjectS3Permission(permission) {
+		return 0, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, id := range ids {
+		if c, ok := m.objectWorkloadCredentials[id]; ok && c.CallerAppID == callerAppID {
+			c.Permission, c.KeyPrefix = permission, keyPrefix
+			m.objectWorkloadCredentials[id] = c
 			n++
 		}
 	}

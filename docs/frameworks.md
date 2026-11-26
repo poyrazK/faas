@@ -12,8 +12,10 @@ is what every framework has in common. The guides cover each one:
 - [Flask](deploy-flask.md) (Python)
 - [Go](deploy-go.md) (`net/http`, Gin)
 
-Moving an existing app? See [Migrate from Heroku](migrate-from-heroku.md) and
-[Migrate from Render](migrate-from-render.md).
+Moving an existing app? See [Migrate from Heroku](migrate-from-heroku.md),
+[Migrate from Render](migrate-from-render.md),
+[Migrate from Railway](migrate-from-railway.md) and
+[Migrate from Fly.io](migrate-from-fly.md).
 
 ## What Gregale detects
 

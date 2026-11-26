@@ -3,9 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down.
+ * Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down (kind memory). When no memory split qualifies, the same rule over CPU peaks suggests moving the route for isolation; both apps keep the current size (kind cpu).
  */
 export type RouteResourceSplit = {
+  /**
+   * memory sizes both apps for what they need; cpu isolates a route whose CPU bursts slow the app's other routes.
+   */
+  kind: 'memory' | 'cpu';
   route: string;
   method?: string;
   /**
@@ -28,6 +32,14 @@ export type RouteResourceSplit = {
   high_memory_share: number;
   presence_share: number;
   high_memory_minutes: number;
+  /**
+   * Share of attributed CPU peaks the route was in flight for; set on cpu splits.
+   */
+  high_cpu_share?: number;
+  /**
+   * CPU peaks the route was in flight for; set on cpu splits.
+   */
+  high_cpu_minutes?: number;
   reason: string;
 };
 

@@ -15,6 +15,17 @@ on:
       - "cmd/gregale/commands_data_api*.go"
       - "sdk/data/**"
       - "pkg/dataapi/integration/**"
+      - "pkg/dataapiinspect/**"
+      - "pkg/dataapiinspectioncommand/**"
+      - "pkg/apptaskproto/**"
+      - "pkg/api/data_api_inspection*"
+      - "pkg/apid/apidserver/*data_api_inspection*"
+      - "pkg/state/*data_api_inspection*"
+      - "pkg/sched/app_task*"
+      - "pkg/fcvm/*app_task*"
+      - "guest/init/app_task_linux.go"
+      - "cmd/vmmd/**"
+      - "migrations/*data_api_inspection*"
       - "tests/data-api/**"
       - "examples/data-api-orders/**"
       - "examples/data-api-teams/**"
@@ -50,6 +61,50 @@ env:
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
 
 jobs:
+  inspection-integration:
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      GOGC: 30
+      GOMEMLIMIT: 2GiB
+      GOMAXPROCS: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore Go build and module cache from main
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-checks-${{ runner.os }}-
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install PostgreSQL for the disposable cluster
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16
+      - name: Build the CLI used by the integration test
+        run: go build -p 1 -o "$RUNNER_TEMP/gregale-inspection" ./cmd/gregale
+      - name: Verify inspection protocol and command validation
+        run: go test -p 1 ./pkg/apptaskproto ./pkg/dataapiinspectioncommand -count=1
+      - name: Verify scheduler provenance and failure handling
+        run: go test -p 1 ./pkg/sched -run '^(TestRoutedVmmdAppTaskUsesDataAPIInspectionProtocol|TestDataAPIInspectionSchedulerEvidenceRequiresSuccessfulExchange)$' -count=1
+      - name: Verify CLI, control plane, scheduler and TLS inspection
+        env:
+          GREGALE_DATA_API_HOSTED_ACCEPTANCE: "1"
+          GREGALE_TEST_POSTGRES_BIN: /usr/lib/postgresql/16/bin
+          GREGALE_INSPECTION_CLI_BIN: ${{ runner.temp }}/gregale-inspection
+        run: go test -p 1 ./pkg/apid/apidserver -run '^(TestDataAPIInspectionDisposableCLIIntegration|TestDataAPIInspectionEvidenceFailsClosed|TestDataAPIInspectionRoutesRequireScopesAndStore|TestGenericAppTaskResponseHidesInspectionOutput)$' -count=1 -timeout=10m
   packaging:
     runs-on: ubuntu-latest
     timeout-minutes: 40

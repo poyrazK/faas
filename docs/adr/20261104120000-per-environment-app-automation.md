@@ -363,3 +363,76 @@ by projects hit: `deployment_public_build_urls` 6; `edge_rules` and
 - Captures made before this release carry no shared secrets and still
   publish; N-1 capture refuses a source with shared secrets, so admission
   stays off until every apid runs N.
+
+## Amendment 2026-11-22: per-environment API consumers, alert rules and stored workflows
+
+Status: accepted (consumers designed here; alert rules and stored workflows
+get their detail in their own slices).
+
+### Problem
+
+The last production project that a full clone refuses holds app-wide
+`api_consumers`, `consumer_keys`, `alert_rules` and stored workflows. None has
+an environment column, so a clone can neither copy them into the stage nor
+leave them behind without changing what the stage serves. `app_openapi_docs`
+is also app-wide; stage deployments already record their own OpenAPI snapshot.
+
+### Decision
+
+1. **`app_openapi_docs` is derived**: the stage's deployments rebuild it.
+2. **The owner chose per-environment configuration for the other three, in
+   minimal form first.** Each gets an environment scope (NULL is production,
+   as for queue bindings and crons). A full clone copies the source
+   environment's rows into the stage; side effects are copied paused. A stage
+   row works only where its source is environment-aware today; elsewhere the
+   stage refuses it with a clear message, and later slices widen that.
+3. **API consumers.**
+   - `api_consumers` and `consumer_keys` gain `environment_id` (NULL is
+     production). A key belongs to its consumer's environment; a trigger
+     fills and checks it.
+   - The unique identities become per-environment: key prefix and key name
+     per app and environment, consumer external reference per app and
+     environment. A stage copy of a key keeps its prefix and keyed hash, so
+     the same plaintext authenticates in both environments.
+   - **Stage hosts:** a stage that has consumers of its own accepts only
+     them; a stage with none keeps accepting production's (owner's choice),
+     so existing stages keep working. Production hosts accept only production
+     consumers.
+   - Consumer plans stay app-wide and are shared; plan assignments follow
+     their consumer.
+   - Stage consumer usage is not billed or metered against consumer plans.
+   - A full clone copies the source environment's active consumers, their
+     active keys and plan assignments into the stage, and publication proves
+     the copy.
+   - API and CLI take `environment` on consumer and key routes; omitted is
+     production.
+4. **Alert rules** (later slice): copied paused; a stage rule may be resumed
+   only on a metric whose source carries the environment (requests, errors,
+   latency and invocations first).
+5. **Stored workflows** (later slice): copied disabled; a stage workflow may
+   be enabled only for HTTP and cron triggers first.
+
+### Release
+
+The per-environment identity indexes are added beside the app-wide ones, and
+a later contract release drops the app-wide ones. They cannot go in the same
+release: platform-tenant consumer creation writes `ON CONFLICT (app_id,
+external_ref)`, which needs the app-wide index, and N-1 runs that path. Until
+the contract release a stage consumer's external reference and key names must
+differ from production's, so a full clone, which copies them, ships with the
+contract release; full clone admission stays off until every apid and gateway
+runs it.
+
+An N-1 gateway reads keys by app and prefix with no environment, so it would
+accept a stage's key on a production host. Creating a stage's consumers waits
+for the apid runtime key `stage_api_consumers_enabled` (default off), which
+operators turn on once every gatewayd-internal runs this release. A stage's
+consumers are not billed: the gateway records their usage without a consumer
+and skips their plan admission, and billing runs read production's consumers
+only.
+
+Release order: (1) the per-environment columns, indexes and stage
+consumers; (2) platform-tenant consumer creation writes `ON CONFLICT (app_id,
+COALESCE(environment_id, zero uuid), external_ref)`, the per-environment
+index; (3) once every apid runs (2), the contract migration drops the
+app-wide indexes and full clones copy consumers, keys and plan assignments.

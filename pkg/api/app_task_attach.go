@@ -204,7 +204,7 @@ const InteractiveSessionsUnavailableTitle = "Interactive sessions unavailable"
 // to run its DDL (agent eval 2026-11-23).
 func ErrInteractiveSessionsNotEnabled() *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeNotImplemented, InteractiveSessionsUnavailableTitle,
-		"interactive sessions (postgres query and connect, app exec, port-forward) are not enabled on this Gregale installation, "+
-			"although app tasks without a session still run. To change a database schema, attach it with --access migration "+
+		"interactive sessions (postgres query and connect, app exec --interactive/--tty, app cp, port-forward) are not enabled on this Gregale installation, "+
+			"although app tasks without a session still run: `gregale app exec APP -- COMMAND` without --interactive works. To change a database schema, attach it with --access migration "+
 			"(MIGRATION_DATABASE_URL) and run the change in release.command")
 }

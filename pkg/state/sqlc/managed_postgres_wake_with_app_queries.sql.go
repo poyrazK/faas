@@ -12,18 +12,25 @@ import (
 )
 
 const claimManagedPostgresWakeStarts = `-- name: ClaimManagedPostgresWakeStarts :many
-UPDATE managed_postgres_wake_with_app w SET last_started_at = now()
-FROM managed_postgres_databases d
-WHERE w.database_id = d.id
-  AND d.deleted_at IS NULL AND d.state = 'ready' AND d.scale_to_zero
-  AND d.provider_resource_id IS NOT NULL
-  AND EXISTS (SELECT 1 FROM managed_postgres_bindings b
-      WHERE b.database_id = d.id AND b.app_id = $1::uuid
-        AND b.deleted_at IS NULL AND b.state = 'ready')
-  AND (w.last_started_at IS NULL
-       OR w.last_started_at < now() - make_interval(secs => $2::double precision))
-RETURNING d.id, d.backend_id, d.backend_fingerprint, d.provider_resource_id::text AS provider_resource_id,
-  w.last_started_at::timestamptz AS claimed_at
+WITH claimed AS (
+    UPDATE managed_postgres_wake_with_app w SET last_started_at = now()
+    FROM managed_postgres_databases d
+    WHERE w.database_id = d.id
+      AND d.deleted_at IS NULL AND d.state = 'ready' AND d.scale_to_zero
+      AND d.provider_resource_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM managed_postgres_bindings b
+          WHERE b.database_id = d.id AND b.app_id = $1::uuid
+            AND b.deleted_at IS NULL AND b.state = 'ready')
+      AND (w.last_started_at IS NULL
+           OR w.last_started_at < now() - make_interval(secs => $2::double precision))
+    RETURNING d.id, d.backend_id, d.backend_fingerprint, d.provider_resource_id::text AS provider_resource_id,
+      w.last_started_at::timestamptz AS claimed_at
+), logged AS (
+    INSERT INTO managed_postgres_app_wake_starts (database_id, claimed_at)
+    SELECT c.id, c.claimed_at FROM claimed c
+    ON CONFLICT DO NOTHING
+)
+SELECT c.id, c.backend_id, c.backend_fingerprint, c.provider_resource_id, c.claimed_at FROM claimed c
 `
 
 type ClaimManagedPostgresWakeStartsParams struct {
@@ -41,7 +48,9 @@ type ClaimManagedPostgresWakeStartsRow struct {
 
 // Claims the opted-in, ready, scale-to-zero databases bound to the app that
 // were not started in the last gap, and stamps them, so only the claiming
-// apid replica starts each one.
+// apid replica starts each one. Each claim is also kept in
+// managed_postgres_app_wake_starts so the activity read can match the start
+// it caused after later claims moved the stamp (ADR-20261125231222).
 func (q *Queries) ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, arg ClaimManagedPostgresWakeStartsParams) ([]ClaimManagedPostgresWakeStartsRow, error) {
 	rows, err := db.Query(ctx, claimManagedPostgresWakeStarts, arg.AppID, arg.GapSeconds)
 	if err != nil {
@@ -69,6 +78,10 @@ func (q *Queries) ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, a
 }
 
 const deferManagedPostgresWakeStart = `-- name: DeferManagedPostgresWakeStart :exec
+WITH forgotten AS (
+    DELETE FROM managed_postgres_app_wake_starts
+    WHERE database_id = $2::uuid AND claimed_at = $3::timestamptz
+)
 UPDATE managed_postgres_wake_with_app
 SET last_started_at = last_started_at - make_interval(secs => $1::double precision)
 WHERE database_id = $2::uuid
@@ -82,7 +95,8 @@ type DeferManagedPostgresWakeStartParams struct {
 }
 
 // Moves back the stamp of a claim that started nothing, by shift seconds, so
-// the next wake may claim it sooner; a later claim's stamp is left alone.
+// the next wake may claim it sooner; a later claim's stamp is left alone. The
+// claim's history row goes too: it caused no start.
 func (q *Queries) DeferManagedPostgresWakeStart(ctx context.Context, db DBTX, arg DeferManagedPostgresWakeStartParams) error {
 	_, err := db.Exec(ctx, deferManagedPostgresWakeStart, arg.ShiftSeconds, arg.DatabaseID, arg.ClaimedAt)
 	return err

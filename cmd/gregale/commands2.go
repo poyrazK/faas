@@ -3408,9 +3408,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// origin. Only an explicitly selected workload can expand the upload
 		// scope; a plain deploy from a repository root remains unchanged.
 		if repoRoot, rootErr := gitRootFromCwd(sourceDir); rootErr == nil {
-			contextRoot, selectedRoot, workspace, contextErr := resolveWorkspaceContext(repoRoot, sourceDir)
+			tree := deployContextTree(repoRoot, sourceDir, *worktree, selectedSourceMode == deploySourceHEAD)
+			contextRoot, selectedRoot, workspace, contextReason, contextErr := resolveWorkspaceContextReason(repoRoot, sourceDir, tree)
 			if contextErr != nil {
 				return printErr("Could not resolve workspace build context", contextErr)
+			}
+			if contextReason != "" {
+				_, _ = fmt.Fprintf(osStderr, "Build context: %s.\n", contextReason)
 			}
 			if workspace {
 				workspaceContextRoot = contextRoot
@@ -4466,7 +4470,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if err == nil {
 				printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
 			}
-			if err == nil && creating {
+			// A --template deploy sends the embedded template, not this
+			// directory, so linking the directory to the new app is wrong:
+			// `init --path web --deploy` run from a parent linked the parent,
+			// and every sibling (a Compose project beside web/) then deployed
+			// as that app (prod hunt r52). init links its --path itself.
+			if err == nil && creating && *templateName == "" {
 				rememberCreatedApp(contextDir, slug)
 			}
 		}
@@ -5911,18 +5920,28 @@ func cmdDomains(args []string) int {
 		// --yes / -y may come before or after the domain, like the other
 		// deletes; without it the CLI asks. It rejected a trailing --yes and
 		// deleted with no prompt (Hunt 32 H32-14).
+		// --app, which `domain create` requires, is accepted too and checked
+		// against the binding (prod hunt r55: it printed usage).
 		var positional []string
 		yes := false
-		for _, arg := range args[1:] {
-			switch arg {
-			case "--yes", "-y", "--yes=true":
+		app := ""
+		rest := args[1:]
+		for i := 0; i < len(rest); i++ {
+			arg := rest[i]
+			switch {
+			case arg == "--yes" || arg == "-y" || arg == "--yes=true":
 				yes = true
+			case (arg == "--app" || arg == "-app") && i+1 < len(rest):
+				i++
+				app = rest[i]
+			case strings.HasPrefix(arg, "--app=") || strings.HasPrefix(arg, "-app="):
+				app = arg[strings.Index(arg, "=")+1:]
 			default:
 				positional = append(positional, arg)
 			}
 		}
 		if len(positional) != 1 || strings.HasPrefix(positional[0], "-") {
-			PrintUsage(os.Stderr, "usage: gregale domain delete <domain> [--yes]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain delete <domain> [--app <slug>] [--yes]", "domains")
 			return 1
 		}
 		domain := positional[0]
@@ -5934,6 +5953,11 @@ func cmdDomains(args []string) int {
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
+		}
+		if app != "" {
+			if err := domainBoundToApp(context.Background(), client, domain, app); err != nil {
+				return printErr("Could not remove domain", err)
+			}
 		}
 		if err := client.DeleteDomain(context.Background(), domain); err != nil {
 			return printErr("Could not remove domain", err)

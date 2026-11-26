@@ -44,7 +44,7 @@ func sample(method, uri string, header http.Header, body string) gateway.WAFSamp
 	return gateway.WAFSample{
 		AppID: "app-1", ParanoiaLevel: 1, AnomalyThreshold: api.EdgeWAFDefaultAnomalyThreshold,
 		ClientIP: "203.0.113.9", Method: method, Host: "app.example.test", URI: uri, Proto: "HTTP/1.1",
-		Header: header, Body: []byte(body),
+		Header: header, Body: []byte(body), Strict: true,
 	}
 }
 

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"mime"
 	"net/http"
 	"slices"
 	"strings"
@@ -302,9 +303,8 @@ func (c *cacheWriter) Flush() {
 //     client session. The exact edge-issued rollout cookie is excluded from
 //     the stored copy while remaining on this caller's live response.
 //   - no Cache-Control: no-store / private: the app opted
-//     out of caching; honour the opt-out. Other directives
-//     (max-age, public) are advisory only — the cache TTL is
-//     driven by the rule, not the upstream's max-age hint.
+//     out of caching; honour the opt-out. The rule supplies the TTL.
+//   - the managed Data API rule also requires an explicitly public JSON 200.
 //   - !bypass: we captured the full body, not a partial.
 //   - wroteBody: an empty 200 is still cacheable, but we
 //     require at least one Write to commit — a request that
@@ -329,7 +329,25 @@ func (c *cacheWriter) shouldStore() bool {
 	if responseForbidsSharedCaching(c.header) {
 		return false
 	}
+	if c.rule != nil && c.rule.DataAPIPublicRead && !c.isPublicDataAPIJSON() {
+		return false
+	}
 	return c.varyCoveredByKey()
+}
+
+func (c *cacheWriter) isPublicDataAPIJSON() bool {
+	media, _, err := mime.ParseMediaType(c.header.Get("Content-Type"))
+	if c.status != http.StatusOK || err != nil || media != "application/json" {
+		return false
+	}
+	for _, field := range c.header.Values("Cache-Control") {
+		for _, directive := range cacheControlDirectives(field) {
+			if strings.EqualFold(strings.TrimSpace(directive), "public") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // varyCoveredByKey honours the origin's Vary header. The cache key only
@@ -343,7 +361,7 @@ func (c *cacheWriter) shouldStore() bool {
 func (c *cacheWriter) varyCoveredByKey() bool {
 	keyed := map[string]struct{}{}
 	if c.rule != nil {
-		for _, name := range c.rule.VaryOn {
+		for _, name := range c.rule.cacheVaryOn() {
 			keyed[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
 		}
 	}
@@ -359,6 +377,14 @@ func (c *cacheWriter) varyCoveredByKey() bool {
 				return false
 			case name == "accept-encoding" && identity:
 				continue
+			}
+			if c.rule != nil && c.rule.DataAPIPublicRead {
+				// These fields cannot be present on requests that reach
+				// this rule's lookup or capture paths.
+				switch name {
+				case "authorization", "cookie", "prefer", "range", "range-unit":
+					continue
+				}
 			}
 			if _, ok := keyed[name]; !ok {
 				return false

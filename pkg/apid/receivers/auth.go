@@ -73,6 +73,9 @@ type authReceiver struct {
 	upgrades UpgradeLinks
 	// links links OAuth callers to key consumers; nil answers Unavailable.
 	links OAuthLinks
+	// accountTools answers MCP account tools; nil answers Unavailable and
+	// reports every app's account tools off.
+	accountTools AccountTools
 }
 
 // sessionKeyHolder is a SessionOpener that can derive keys:

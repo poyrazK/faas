@@ -245,15 +245,17 @@ replicas.
 ## Worker upgrades
 
 `gregale mcp server tasks deploy` replaces Python workers without dropping Tasks.
-The CLI runs the release gate itself (ADR-20261123160000): it takes the
-namespace's release lock, runs `python3 task_schema.py apply` with
-`MCP_TASK_MIGRATION_DATABASE_URL`, deploys the candidate worker app, waits until
-each replacement is registered, heartbeating and serving every handler version
-that unfinished Tasks need, then drains the previous worker apps. Workers log an
+The CLI runs the release gate itself, through the Gregale API
+(ADR-20261123160000, amendment 1): it deploys the staged web first, so its
+release command (`python task_schema.py apply`) migrates the schema, then the
+candidate worker app, waits until the observer's compatibility report shows the
+candidate deployment serving every handler version that unfinished Tasks need
+on each replacement, then drains the previous worker apps. Workers log an
 `mcp_task_worker_started` receipt (worker ID and drain budget) that the CLI reads;
 a generation deployed before the receipt existed must be replaced manually once.
-Export `MCP_TASK_NAMESPACE`, the worker's database binding and the migration
-binding before running it, and keep the release journal outside the sources.
+Export `MCP_TASK_NAMESPACE` before running it, set `observer_metric_app` to the
+observer's `MCP_TASKS_SCALING_APP_SLUG`, and keep the release journal outside the
+sources. No database credentials are needed on your machine.
 
 Retain the owner keys, payload keys and handler versions needed by existing
 Tasks on every writer. Recovery, quarantine and retirement of a failed Python
@@ -355,10 +357,33 @@ gregale mcp client wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
 gregale mcp client cancel --url http://127.0.0.1:8080/mcp --task-id TASK_ID
 ```
 
-The starter's `tasks/update` endpoint follows the protocol response contract; its
-sample handler does not request client input. If the PostgreSQL database is also
-used by the Node worker, run the Node `tasks:migrate` workflow to prepare its
-worker, admission and key-registry tables.
+### Discover and review Tasks that need input
+
+On a modern external OAuth endpoint, call `build_report` with
+`"request_approval": true`, `--tasks`, `--defer-form-input`, and a
+`--task-receipt` path to pause for an approval. An OAuth client with the same
+subject and client ID can now find the pending Task from a fresh profile.
+Use a token with the current scope for the tool.
+
+```sh
+gregale mcp client inbox --url "$MCP_URL" --token-env MCP_TOKEN --status input_required --follow
+gregale mcp client status --url "$MCP_URL" --token-env MCP_TOKEN --task-id TASK_ID --write-input-template ./review.json
+```
+
+Stop the watch with Ctrl+C once it prints the Task ID. In the exported
+template, fill the approval form's `response` with
+`{"action":"accept","content":{"approved":true}}` if you approve it. Then
+submit the reviewed response and retrieve the result.
+
+```sh
+gregale mcp client respond --url "$MCP_URL" --token-env MCP_TOKEN --task-id TASK_ID --reviewed-input-file ./review.json
+gregale mcp client wait --url "$MCP_URL" --token-env MCP_TOKEN --task-id TASK_ID
+```
+
+Run `python task_schema.py apply` and restart the web or combined process to
+enable inbox discovery on an existing queue. If the database also serves the
+Node worker, run its `tasks:migrate` workflow to prepare its worker, admission
+and key-registry tables.
 
 ## Run locally
 

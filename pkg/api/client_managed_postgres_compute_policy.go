@@ -33,3 +33,16 @@ func (c *Client) SetManagedPostgresWakeWithApp(ctx context.Context, id string, r
 	err := c.do(ctx, http.MethodPut, "/v1/postgres/databases/"+url.PathEscape(id)+"/wake-with-app", request, &out)
 	return out, err
 }
+
+// GetManagedPostgresActivity reads why a database was awake since a time
+// (ADR-20261125231222); since is a duration such as 24h or 7d, an RFC 3339
+// time, or empty for the last day.
+func (c *Client) GetManagedPostgresActivity(ctx context.Context, id, since string) (ManagedPostgresActivity, error) {
+	var out ManagedPostgresActivity
+	path := "/v1/postgres/databases/" + url.PathEscape(id) + "/activity"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}

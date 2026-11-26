@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/dataapiinspectioncommand"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 )
@@ -27,6 +28,9 @@ func (m *Manager) ExecuteAppTask(ctx context.Context, instance string, req appta
 // returning. Ordinary app and disposable source-execution instances fail the
 // AppTaskOnly fence before any payload is sent.
 func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string, req apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
+	if len(req.DataAPIInspectionCA) != 0 {
+		return apptaskproto.Result{}, fmt.Errorf("%w: inspection trust must come from the VM host", apptaskproto.ErrInvalidRequest)
+	}
 	if err := req.Validate(); err != nil {
 		return apptaskproto.Result{}, err
 	}
@@ -34,8 +38,33 @@ func (m *Manager) ExecuteAppTaskWithOutput(ctx context.Context, instance string,
 		return apptaskproto.Result{}, fmt.Errorf("%w: interactive request requires an attached client", apptaskproto.ErrInvalidRequest)
 	}
 	return m.runAppTask(ctx, instance, req, func(requestCtx context.Context, session *AppTaskSession) (apptaskproto.Result, error) {
-		return session.ExecuteWithOutput(requestCtx, req, receive)
+		trusted, err := prepareDataAPIInspectionRequest(req, m.vmm)
+		if err != nil {
+			return apptaskproto.Result{}, err
+		}
+		return session.ExecuteWithOutput(requestCtx, trusted, receive)
 	})
+}
+
+// prepareDataAPIInspectionRequest adds only host-owned public trust. It never
+// falls back to image files or accepts trust attached by the requester.
+func prepareDataAPIInspectionRequest(req apptaskproto.Request, vmm any) (apptaskproto.Request, error) {
+	if len(req.DataAPIInspectionCA) != 0 {
+		return apptaskproto.Request{}, fmt.Errorf("%w: requester supplied inspection trust", apptaskproto.ErrInvalidRequest)
+	}
+	if req.Version != apptaskproto.DataAPIInspectionVersion {
+		return req, nil
+	}
+	source, ok := vmm.(interface{ DataAPIInspectionCA() []byte })
+	if !ok {
+		return apptaskproto.Request{}, ErrAppTaskNotConfigured
+	}
+	ca := source.DataAPIInspectionCA()
+	if _, err := dataapiinspectioncommand.ParseTrustBundle(ca); err != nil {
+		return apptaskproto.Request{}, ErrAppTaskNotConfigured
+	}
+	req.DataAPIInspectionCA = append([]byte(nil), ca...)
+	return req, nil
 }
 
 // ExecuteInteractiveAppTask runs one interactive session (ADR-1037) against an

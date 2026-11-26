@@ -46,14 +46,15 @@ func cmdDataAPICheck(args []string) int {
 	baseline := fs.String("baseline", "", "committed JSON contract baseline")
 	current := fs.String("current", "", "saved current contract for an offline check")
 	types := fs.String("types", "", "committed TypeScript types to compare without rewriting")
+	numericMode := fs.String("numeric-mode", "number", "numeric mode used to generate the committed TypeScript types")
 	approvalPath := fs.String("approval", "", "reviewed breaking changes bound to both fingerprints")
 	timeout := fs.Duration("timeout", 2*time.Minute, "entire check deadline (maximum 1h)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	validTarget := (*current == "" && fs.NArg() == 1 && api.ValidAppSlug(fs.Arg(0))) || (*current != "" && fs.NArg() == 0)
-	if !validTarget || *baseline == "" || *types == "" || *timeout <= 0 || *timeout > time.Hour {
-		PrintUsage(os.Stderr, "usage: gregale data-api check [NAME | --current FILE] --baseline FILE --types FILE [--approval FILE] [--timeout DURATION]", "data-api")
+	if !validTarget || *baseline == "" || *types == "" || *timeout <= 0 || *timeout > time.Hour || !dataAPIDiagnosticAllowed(*numericMode, "number", "lossless", "exact") {
+		PrintUsage(os.Stderr, "usage: gregale data-api check [NAME | --current FILE] --baseline FILE --types FILE [--numeric-mode MODE] [--approval FILE] [--timeout DURATION]", "data-api")
 		return 1
 	}
 	// Invalid local inputs never create an owner task. Missing types are a check
@@ -108,6 +109,9 @@ func cmdDataAPICheck(args []string) int {
 	if err != nil {
 		return printErr("Type comparison failed", err)
 	}
+	if *numericMode != "number" {
+		generated = []byte(dataAPITypesForMode(api.AppTaskResponse{StdoutTail: string(generated)}, *numericMode))
+	}
 	if typeResult.Status == "pending" {
 		typeResult.Matches = bytes.Equal(committed, generated)
 		typeResult.Status = "stale"
@@ -146,11 +150,11 @@ func readDataAPICheckTypes(path string) ([]byte, dataAPICheckTypes, error) {
 		return nil, result, err
 	}
 	defer func() { _ = file.Close() }()
-	content, err := io.ReadAll(io.LimitReader(file, api.AppTaskDefaultMaxOutputBytes+1))
+	content, err := io.ReadAll(io.LimitReader(file, api.DataAPIContractArtifactBytes+1))
 	if err != nil {
 		return nil, result, err
 	}
-	if len(content) > api.AppTaskDefaultMaxOutputBytes {
+	if len(content) > api.DataAPIContractArtifactBytes {
 		result.Status = "too_large"
 		return nil, result, nil
 	}
@@ -180,11 +184,11 @@ func renderDataAPICheckTypes(ctx context.Context, contract dataAPIContract) ([]b
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	const script = `import {readFileSync} from 'node:fs'; import {pathToFileURL} from 'node:url'; const {generate}=await import(pathToFileURL(process.argv[1])); const c=JSON.parse(readFileSync(0,'utf8')); process.stdout.write(generate(c.snapshot,c.fingerprint));`
+	const script = `import {readFileSync} from 'node:fs'; import {pathToFileURL} from 'node:url'; const {generate, contractArtifactBytes}=await import(pathToFileURL(process.argv[1])); const c=JSON.parse(readFileSync(0,'utf8')); process.stdout.write(generate(c.snapshot,c.fingerprint,{outputBytes:contractArtifactBytes}));`
 	command := exec.CommandContext(ctx, "node", "--input-type=module", "--eval", script, filepath.Join(runtime, "type-render.mjs")) //nolint:gosec // Fixed script and embedded module; schema travels through stdin, never code.
 	command.Stdin = bytes.NewReader(input)
 	var output bytes.Buffer
-	command.Stdout = &dataAPICheckOutput{writer: &output, remaining: api.AppTaskDefaultMaxOutputBytes}
+	command.Stdout = &dataAPICheckOutput{writer: &output, remaining: api.DataAPIContractArtifactBytes}
 	command.Stderr = io.Discard
 	command.WaitDelay = 2 * time.Second
 	configureDataAPISyncProcess(command)

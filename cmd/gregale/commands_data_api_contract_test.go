@@ -2,13 +2,15 @@ package main_test
 
 import (
 	"context"
-	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestDataAPIServingContract(t *testing.T) {
@@ -62,7 +64,7 @@ func TestDataAPIServingContract(t *testing.T) {
 				ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 				defer cancel()
 			}
-			err := main.VerifyDataAPIServingContract(ctx, server.URL+"/healthz", "secret.token.sentinel", strings.Repeat("a", 64))
+			err := main.VerifyDataAPIServingContract(ctx, server.URL+api.DataAPIReadinessPath, "secret.token.sentinel", strings.Repeat("a", 64))
 			if (err == nil) != (scenario == "match") {
 				t.Fatalf("unexpected contract result: %v", err)
 			}

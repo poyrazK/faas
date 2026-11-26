@@ -907,6 +907,14 @@ gregale consumers signup-set my-api --display-name "Weather API" --plans free,pr
   and opens only that customer's plan change. A customer without a card
   cannot switch to a paid plan with its key
   (`409 consumer_self_service_unavailable`).
+- **In MCP clients.** An MCP client cannot read a 429 body, so a refused
+  MCP request gets an answer the client understands instead (HTTP 200).
+  A client that supports URL elicitation shows the person the upgrade page
+  (JSON-RPC error `-32042`). Other clients get a tool error, or a JSON-RPC
+  error for methods other than `tools/call`, whose text names the limit,
+  when a per-minute limit clears and the upgrade link, so the agent can
+  tell the person. The answer carries `X-Faas-Error-Code:
+  consumer_plan_limit_exceeded` and `Retry-After`.
 
 ### MCP callers become customers
 
@@ -954,6 +962,66 @@ gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,p
   consumers they bill to, and `gregale api consumer identity delete my-mcp
   ID` frees one
   (its next call starts on the free plan again, or it links again).
+
+### Let customers ask about their account from the MCP client
+
+Add `--account-tools` and every signed-in customer sees two more tools in
+your server's tool list, answered by Gregale instead of your code:
+
+```bash
+gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free \
+  --oauth-consumers --customer-plan-changes --account-tools
+```
+
+- `account_usage`: their plan and its limits (requests per minute, units
+  per month, per-tool caps), this UTC month's requests and units, units
+  left, and units per tool. It trails live calls by about a minute.
+- `account_plans`: the plans you offer with their prices, the one they are
+  on and, with `--customer-plan-changes`, an `upgrade_url` to the hosted
+  page where a person saves a card. The tool never charges or changes a
+  plan.
+
+Calls to these tools are free, do not count against the customer's plan
+and work after the plan's limit refuses other calls, so an agent can always
+find the way to upgrade. Each customer may call them 30 times a minute on
+each gateway node.
+While the option is on, the names `account_usage` and `account_plans` are
+Gregale's: a tool of yours with either name is hidden from these customers.
+Only the first page of a paginated tool list gets them. Customers who use a
+consumer key keep the key's [self-service API](#customers-manage-their-own-account).
+
+### Seller stats
+
+See how a sold MCP server is doing, by UTC calendar month:
+
+```bash
+gregale mcp server stats --app my-mcp              # this month so far
+gregale mcp server stats --app my-mcp --months 6   # the last six months
+```
+
+`GET /v1/apps/my-mcp/mcp-stats?months=6` returns the same as JSON, and
+agents connected to Gregale's MCP server can call
+`gregale_get_mcp_seller_stats`.
+
+- **Per month:** sign-ups by how the customer was created (`oauth` for MCP
+  sign-ins, `signup` for the hosted sign-up page, `owner` for customers you
+  created; linking a sign-in to an existing customer later does not change
+  it), customers with billable units (active; anonymous traffic counts
+  toward units only), customers whose month amounts to more than
+  zero (paying), closed customers, requests, units and revenue per
+  currency.
+- **Revenue:** a closed month shows what finalized statements billed,
+  before credits; until the month-end run finalizes a customer's month,
+  its draft statement counts as an estimate. The current month shows an
+  estimate priced exactly as its statement will be. Past 500 customers,
+  the estimate covers the 500 with the most units, and pricing stops after
+  20 seconds; either way `estimate_complete` is `false`.
+- **Tools:** units and distinct customers per MCP tool over the window,
+  and this month's estimated revenue per tool. Closed months have no
+  per-tool revenue because statements do not split by tool.
+- **Near limit:** open customers at 80% or more of their plan's monthly
+  units this month, most used first: the customers an upgrade prompt is
+  about to reach.
 
 ### Know when customers sign up or change
 

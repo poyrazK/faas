@@ -83,6 +83,7 @@ on:
       - 'scripts/ci/test_mcp_qualification*.py'
       - 'scripts/ops/mcp-qualification.py'
       - 'scripts/ops/mcp-sdk-client/**'
+      - 'sdk/node/src/mcp-task-*.ts'
       - 'pkg/secretscan/**'
       - 'pkg/apid/apidserver/secretscan*.go'
       - 'pkg/apid/apidserver/handlers_templates*.go'
@@ -145,7 +146,9 @@ jobs:
   management-client:
     if: ${{ !(github.event.action == 'labeled' && github.event.label.name != 'run-mcp-contract') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Its contract and build steps took 891-1043 s through 11-24 and 1203-1215 s
+    # on the 11-24/25 nightlies, which cancelled the last (real Codex) step.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Restoring main's Go cache can fill the hosted runner before tests
@@ -469,6 +472,15 @@ jobs:
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --legacy --out "$RUNNER_TEMP/mcp-legacy.json" --json
       - name: Install the pinned official MCP client
         run: npm ci --prefix scripts/ops/mcp-sdk-client --ignore-scripts
+      - name: Exercise the Node SDK Task journey with the pinned MCP client
+        env:
+          MCP_TASKS_TEST_DATABASE_URL: postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp
+        run: |
+          npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
+          npm --prefix sdk/node run build
+          MCP_TASKS_TEST_GREGALE="$RUNNER_TEMP/gregale" MCP_TASKS_TEST_NODE_STARTER="$RUNNER_TEMP/mcp-starter" \
+            node --test scripts/ops/mcp-sdk-client/task-inbox.test.mjs
+          PYTHONPATH="$RUNNER_TEMP/mcp-python-tasks" "$RUNNER_TEMP/mcp-python-venv/bin/python" scripts/ops/mcp-sdk-client/task-input-review.py
       - name: Qualify all starter runtimes with the official MCP SDK
         shell: bash
         run: |
@@ -510,7 +522,10 @@ jobs:
   apid-contract:
     if: ${{ github.event.pull_request.draft != true && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-mcp-contract')) && !(github.event.action == 'labeled' && github.event.label.name != 'run-mcp-contract') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The race build of cmd/apid on 2 procs plus both steps took 27-29.5 min on
+    # the green 11-24/25 nightlies and 30+ min on a slower runner, which
+    # cancelled the native upload acceptance step.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

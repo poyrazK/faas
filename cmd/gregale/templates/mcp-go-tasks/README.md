@@ -287,15 +287,17 @@ replicas.
 ## Worker upgrades
 
 `gregale mcp server tasks deploy` replaces Go workers without dropping Tasks.
-The CLI runs the release gate itself (ADR-20261123160000): it takes the
-namespace's release lock, runs `go run . tasks-migrate apply` with
-`MCP_TASK_MIGRATION_DATABASE_URL`, deploys the candidate worker app, waits until
-each replacement is registered, heartbeating and serving every handler version
-that unfinished Tasks need, then drains the previous worker apps. Workers log an
+The CLI runs the release gate itself, through the Gregale API
+(ADR-20261123160000, amendment 1): it deploys the staged web first, so its
+release command (`/app/out tasks-migrate apply`) migrates the schema, then the
+candidate worker app, waits until the observer's compatibility report shows the
+candidate deployment serving every handler version that unfinished Tasks need
+on each replacement, then drains the previous worker apps. Workers log an
 `mcp_task_worker_started` receipt (worker ID and drain budget) that the CLI reads;
 a generation deployed before the receipt existed must be replaced manually once.
-Export `MCP_TASK_NAMESPACE`, the worker's database binding and the migration
-binding before running it, and keep the release journal outside the sources.
+Export `MCP_TASK_NAMESPACE` before running it, set `observer_metric_app` to the
+observer's `MCP_TASKS_SCALING_APP_SLUG`, and keep the release journal outside the
+sources. No database credentials are needed on your machine.
 
 Retain the owner keys, payload keys and handler versions needed by existing
 Tasks on every writer. Recovery, quarantine and retirement of a failed Go
@@ -385,8 +387,24 @@ the Task expires.
 Run `go run . tasks-migrate apply` before starting the updated web runtime to
 enable this capability.
 
-The starter's `tasks/update` endpoint follows the protocol response contract; its
-sample handler does not request client input. The Go SDK does not expose a public
+On a modern external OAuth endpoint, the same migration also installs the inbox
+index. Restart the web runtime, then watch for Tasks that need approval.
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch
+```
+
+Use a reported ID with `gregale mcp client status --task-id ID
+--write-input-template ./reviewed-input.json`. Review and fill the response, then
+use `gregale mcp client respond --task-id ID --reviewed-input-file
+./reviewed-input.json` with the same endpoint and credential. The server applies
+the answer only if the Task is still waiting on the reviewed forms. Use
+`gregale mcp client wait --task-id ID` to retrieve the original result.
+
+The starter's `tasks/update` endpoint follows the protocol response contract.
+Set `request_approval` to true to pause a sample report for client input.
+The Go SDK does not expose a public
 Task result setter, so Task wire requests are handled at the stateless HTTP edge.
 If the PostgreSQL database is also used by the Node worker, run the Node
 `tasks:migrate` workflow to prepare its worker, admission and key-registry tables.

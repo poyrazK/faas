@@ -49,16 +49,15 @@ type classProfile struct {
 var profiles = map[managedpostgres.ServiceClass]classProfile{
 	managedpostgres.ClassDevelopment: {minimumCU: 0.25, maximumCU: 1},
 	managedpostgres.ClassBurstable:   {minimumCU: 0.25, maximumCU: 2},
-	managedpostgres.ClassProduction:  {minimumCU: 1, maximumCU: 4},
+	managedpostgres.ClassProduction:  {minimumCU: 0.5, maximumCU: 4},
 }
 
 // acceptedProfiles are further ranges that read as their class without
-// being provisioned. Production moves to 0.5–4 CU in two releases
-// (ADR-20261124221402): this one only accepts 0.5–4, so every neond can read
-// a database at either range before the next release starts creating at
-// 0.5 and keeps 1–4 here for the endpoints already at it.
+// being provisioned. Production moved from 1–4 to 0.5–4 CU in two releases
+// (ADR-20261124221402); 1–4 stays here for the endpoints created before, which
+// nothing resizes until their database changes class.
 var acceptedProfiles = map[managedpostgres.ServiceClass]classProfile{
-	managedpostgres.ClassProduction: {minimumCU: 0.5, maximumCU: 4},
+	managedpostgres.ClassProduction: {minimumCU: 1, maximumCU: 4},
 }
 
 // Provider is a Neon-backed implementation of managedpostgres.Provider.

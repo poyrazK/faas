@@ -29,6 +29,12 @@ type APIConsumerUsageStatementStore interface {
 	FinalizeAPIConsumerUsageStatement(context.Context, string, string, string, string) (APIConsumerUsageStatement, bool, error)
 }
 
+// ReviewedAPIConsumerStatementStore finalizes a statement only if the amount
+// due after applying credits still matches the owner's review.
+type ReviewedAPIConsumerStatementStore interface {
+	FinalizeReviewedAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID, statementID string, due int64) (APIConsumerUsageStatement, bool, error)
+}
+
 // APIConsumerUsageStatementHandoffStore is the persistence boundary for the
 // provider-neutral invoice handoff. It is optional so existing Store test
 // doubles remain source-compatible.

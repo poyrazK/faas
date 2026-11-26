@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -59,7 +58,7 @@ func TestChangesSourceOrdersEachRowsChanges(t *testing.T) {
 	if _, err := e.customer.Exec(ctx, `UPDATE public.gregale_outbox SET blocked_code = NULL, next_attempt_at = clock_timestamp()`); err != nil {
 		t.Fatal(err)
 	}
-	e.now = e.now.Add(2 * time.Minute)
+	e.makeDue(t)
 	if err := e.manager.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}

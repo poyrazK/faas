@@ -131,6 +131,10 @@ const (
 	EdgePenaltyBox  = "edge_penalty_box"
 	EdgeAttackMode  = "edge_attack_mode"
 	EdgeAICrawlers  = "edge_ai_crawlers"
+	// EdgeWAFStrictInspection releases ADR-831 amendment 21's in-path WAF
+	// changes: a URI past the inspection bound is a detection, and warn and
+	// block rules check the wider CRS rule set.
+	EdgeWAFStrictInspection = "edge_waf_strict_inspection"
 )
 
 // EdgeFeatures are the edge rule features apid refuses to configure and
@@ -413,6 +417,8 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		RetireBy:    "2027-06-30",
+		// Beta (ADR-20261125232048): on for every account until an operator writes it.
+		Default: Definition{Enabled: true, Default: true},
 	},
 	{
 		Key:         QueueMessageGroups,
@@ -528,6 +534,18 @@ var catalog = []Spec{
 			"While it is off apid refuses creating a warn or block rule or switching a rule to one, and gateways inspect existing warn and block rules in observe mode only.",
 		ADR:        "ADR-20261023113721",
 		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:   EdgeWAFStrictInspection,
+		Label: "Edge WAF strict inspection",
+		Description: "Release ADR-831 amendment 21's WAF checks to accounts: warn and block rules check the wider in-path CRS rule set " +
+			"(method enforcement, PHP, Node.js and generic injection, session fixation, Java incl. Log4Shell), and count a URI over 8 KiB as an uninspected-uri detection; " +
+			"observe reports such URIs too. Off by default because rules already in block then start refusing long URIs and methods outside GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE. " +
+			"While it is off, warn and block check the earlier rule set on the first 8 KiB of the URI.",
+		ADR:        "ADR-831",
+		Consumers:  []string{"gatewayd-internal"},
 		Attributes: []Attribute{AttributePlan},
 		RetireBy:   "2027-03-31",
 	},

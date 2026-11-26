@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIConsumerBillingPolicyResponse } from '../models/APIConsumerBillingPolicyResponse.js';
+import type { APIConsumerBillingProgressResponse } from '../models/APIConsumerBillingProgressResponse.js';
 import type { APIConsumerCreditListResponse } from '../models/APIConsumerCreditListResponse.js';
 import type { APIConsumerCreditResponse } from '../models/APIConsumerCreditResponse.js';
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
@@ -23,6 +24,7 @@ import type { APIConsumerUsageResponse } from '../models/APIConsumerUsageRespons
 import type { APIConsumerUsageStatementHandoffResponse } from '../models/APIConsumerUsageStatementHandoffResponse.js';
 import type { APIConsumerUsageStatementListResponse } from '../models/APIConsumerUsageStatementListResponse.js';
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
+import type { APIMonetizationFunnelResponse } from '../models/APIMonetizationFunnelResponse.js';
 import type { AssignAPIConsumerPlanRequest } from '../models/AssignAPIConsumerPlanRequest.js';
 import type { ChangeConsumerBillingPlanRequest } from '../models/ChangeConsumerBillingPlanRequest.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
@@ -58,6 +60,7 @@ import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyReques
 import type { CreateConsumerSignupRequest } from '../models/CreateConsumerSignupRequest.js';
 import type { CreateConsumerSignupResponse } from '../models/CreateConsumerSignupResponse.js';
 import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
+import type { MCPSellerStatsResponse } from '../models/MCPSellerStatsResponse.js';
 import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsumerBillingPolicyRequest.js';
 import type { PutAPIConsumerSpendCapRequest } from '../models/PutAPIConsumerSpendCapRequest.js';
 import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
@@ -643,17 +646,25 @@ export class ConsumersService {
    */
   public static listApiConsumers({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Project environment slug. Omitted or production lists production's consumers; a stage's consumers are its own.
+     */
+    environment?: string,
   }): CancelablePromise<APIConsumerListResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         401: `code: unauthorized`,
@@ -663,24 +674,40 @@ export class ConsumersService {
   }
   /**
    * Register a stable API consumer identity.
+   * With `environment` set to a stage, the consumer and its keys belong
+   * to that stage: the stage's hosts accept only its own consumers once it
+   * has any, and production's until then. Plan assignments follow the
+   * consumer; trials and billing apply to production consumers only. Until
+   * the release after this one, a stage consumer's `external_ref` and key
+   * names must differ from production's. Creating a stage's consumer
+   * answers 501 `not_implemented` until the platform enables it.
+   *
    * @returns APIConsumerResponse The created consumer identity.
    * @throws ApiError
    */
   public static createApiConsumer({
     slug,
     requestBody,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
     requestBody: CreateAPIConsumerRequest,
+    /**
+     * Project environment slug. Omitted or production creates a production consumer.
+     */
+    environment?: string,
   }): CancelablePromise<APIConsumerResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -805,6 +832,66 @@ export class ConsumersService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read customer monetization milestones for one app.
+   * Counts milestones independently for up to 50 recent app customer registrations in the last 120 days. Completed Stripe test signups and platform-managed customers are excluded.
+   * @returns APIMonetizationFunnelResponse Registration cohort and observed pricing and live Stripe collection milestones.
+   * @throws ApiError
+   */
+  public static getApiMonetizationFunnel({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APIMonetizationFunnelResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/monetization-funnel',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read first-invoice progress for one app customer.
+   * Summarizes authoritative usage and pricing, the relevant statement and invoice, and any confirmed live payment.
+   * @returns APIConsumerBillingProgressResponse Billing milestones with timestamps and a bounded recent usage check.
+   * @throws ApiError
+   */
+  public static getApiConsumerBillingProgress({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * App customer whose billing setup progress is being checked.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerBillingProgressResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/billing-progress',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
       },
     });
@@ -1287,6 +1374,76 @@ export class ConsumersService {
         422: `The app consumer statement or customer cannot be invoiced, or the provider rejected the request.`,
         502: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
         503: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export. Sent as 503 by the public edge.`,
+      },
+    });
+  }
+  /**
+   * Export a finalized app consumer statement as a Stripe draft.
+   * Requires a Stripe connection set to draft collection. Refuses an
+   * unfinished export configured to send or charge, including when that
+   * export started concurrently. Requires the same Stripe test or live
+   * mode as the reviewed draft. Uses the verified customer link for that
+   * Stripe account and mode, falling back to a Stripe customer ID in the
+   * consumer's external reference. The export pins the customer for retries.
+   * Repeating the request returns the same draft. Requires a verified
+   * admin session with fresh MFA step-up.
+   *
+   * @returns StatementInvoiceExportResponse The completed Stripe draft export.
+   * @throws ApiError
+   */
+  public static exportApiConsumerUsageStatementStripeDraft({
+    slug,
+    consumerId,
+    statementId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose finalized statement will be exported.
+     */
+    consumerId: string,
+    /**
+     * Finalized statement revision to turn into a Stripe draft.
+     */
+    statementId: string,
+    requestBody: {
+      /**
+       * The Stripe mode reviewed before export.
+       */
+      livemode: boolean;
+    },
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'statement_id': statementId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The statement or Stripe customer cannot be invoiced.`,
+        502: `Stripe could not be reached. Retry to resume the same export.`,
       },
     });
   }
@@ -2141,6 +2298,57 @@ export class ConsumersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Customer funnel, revenue, tool usage and near-limit customers of a sold MCP server.
+   * Reads the app's consumers over UTC calendar months, the current month
+   * to date last. Per month: sign-ups by source (oauth, signup, owner),
+   * customers with billable units, paying customers, closures, requests,
+   * units and revenue per currency. Closed months report billed revenue
+   * from finalized statements before credits; the current month reports
+   * an estimate priced as statements are. Tools come from the
+   * `MCP /tools/<name>` billing labels: units and distinct customers over
+   * the window, and this month's estimated revenue. near_limit lists open
+   * customers at 80% or more of their plan's monthly units.
+   * estimate_complete is false when the estimate priced only the 500
+   * customers with the most units this month, or a customer could not be
+   * priced.
+   *
+   * @returns MCPSellerStatsResponse The app's seller stats.
+   * @throws ApiError
+   */
+  public static getMcpSellerStats({
+    slug,
+    months = 1,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Calendar months to read, 1 (this month, the default) to 12.
+     */
+    months?: number,
+  }): CancelablePromise<MCPSellerStatsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/mcp-stats',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'months': months,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }

@@ -20,11 +20,14 @@ import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
 import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportResponse.js';
 import type { LabelChange } from '../models/LabelChange.js';
 import type { LabelsResponse } from '../models/LabelsResponse.js';
+import type { ManagedPostgresActivity } from '../models/ManagedPostgresActivity.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
 import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgresComputePolicyChange.js';
 import type { ManagedPostgresConnectionBudget } from '../models/ManagedPostgresConnectionBudget.js';
+import type { ManagedPostgresCustomRole } from '../models/ManagedPostgresCustomRole.js';
+import type { ManagedPostgresCustomRoleList } from '../models/ManagedPostgresCustomRoleList.js';
 import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
 import type { ManagedPostgresCutoverPreflight } from '../models/ManagedPostgresCutoverPreflight.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
@@ -39,6 +42,7 @@ import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsag
 import type { ManagedPostgresWakeWithApp } from '../models/ManagedPostgresWakeWithApp.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
+import type { PutManagedPostgresCustomRoleRequest } from '../models/PutManagedPostgresCustomRoleRequest.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
@@ -241,6 +245,108 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * List a database's custom roles.
+   * Beta (postgres-custom-roles capability). The
+   * NOLOGIN group roles declared on the database, with the access modes
+   * whose logins may SET ROLE to each, the roles each is a member of, the
+   * access modes whose logins start every session as it, and whether it
+   * is applied (state ready) yet. Requires postgres read scope and MFA.
+   *
+   * @returns ManagedPostgresCustomRoleList The database's custom roles.
+   * @returns Problem Missing sign-in, scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static listManagedPostgresCustomRoles({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresCustomRoleList | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/roles',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Declare or replace a custom role.
+   * Beta (postgres-custom-roles capability). Creates
+   * the NOLOGIN role on the database, or corrects it to this declaration,
+   * and grants it, SET only, to the database's logins of the granted
+   * access modes, including logins issued later. The role and the
+   * read_write logins can run the schema owner's functions in public.
+   * bypass_rls is refused on a database with Data
+   * API or Auth. Hobby and above; at most 16 roles per database. Requires
+   * postgres manage scope, MFA and a verified email. Answers 200 when the
+   * role is already applied and 202 while it is being applied.
+   *
+   * @returns ManagedPostgresCustomRole The role, applied.
+   * @returns Problem An invalid declaration, a plan without custom roles, the role limit, a BYPASSRLS conflict with Data API or Auth, another default role for the access mode, a backend without custom roles, missing sign-in, scope, MFA or verified email, a database this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static putManagedPostgresCustomRole({
+    id,
+    name,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * The role name: a lowercase letter or underscore, then at most 62 lowercase letters, digits and underscores. Names starting with gregale, pg_, neon, cloudsql, rds, azure, supabase or cron_, and PostgreSQL's reserved role names, are refused.
+     */
+    name: string,
+    requestBody: PutManagedPostgresCustomRoleRequest,
+  }): CancelablePromise<ManagedPostgresCustomRole | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/roles/{name}',
+      path: {
+        'id': id,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Drop a custom role.
+   * Beta (postgres-custom-roles capability). Marks the role deleting;
+   * the platform then hands what it owns to the schema owner, removes its
+   * grants and drops it. Requires postgres manage scope and MFA.
+   *
+   * @returns Problem An unknown role, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+   * @returns ManagedPostgresCustomRole The role, deleting.
+   * @throws ApiError
+   */
+  public static deleteManagedPostgresCustomRole({
+    id,
+    name,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * The role name: a lowercase letter or underscore, then at most 62 lowercase letters, digits and underscores. Names starting with gregale, pg_, neon, cloudsql, rds, azure, supabase or cron_, and PostgreSQL's reserved role names, are refused.
+     */
+    name: string,
+  }): CancelablePromise<Problem | ManagedPostgresCustomRole> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/databases/{id}/roles/{name}',
+      path: {
+        'id': id,
+        'name': name,
+      },
+    });
+  }
+  /**
    * Read a managed database's conditions.
    * Preview (resource-conditions capability). The database's Ready,
    * Progressing and Degraded conditions, mapped from the response
@@ -310,6 +416,37 @@ export class ManagedPostgresService {
         409: `The database is not ready, or another query of it is running.`,
         422: `PostgreSQL refused or failed the statement (postgres_query_failed); the detail carries its message and SQLSTATE.`,
         501: `The database's backend cannot run queries (postgres_query_unsupported).`,
+      },
+    });
+  }
+  /**
+   * Inspect public-schema metadata for a Data API connection.
+   * Requires data:read (or admin) and MFA. Runs a fixed catalog-only
+   * statement as the provider-managed read-only query identity, in a
+   * bounded read-only transaction. No request body, customer table rows,
+   * SQL expressions or credentials are returned. The query identity may
+   * be created or refreshed and a suspended database can wake. Results
+   * describe that identity, not a future Data API binding. At most 1000
+   * rows and 1 MiB of values are returned; truncated marks partial results.
+   * Cache-Control no-store.
+   *
+   * @returns ManagedPostgresQueryResponse Bounded public-schema catalog metadata.
+   * @returns Problem Invalid request, unavailable database, insufficient access, unsupported backend or rate limit.
+   * @throws ApiError
+   */
+  public static previewManagedPostgresDataApiCatalog({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresQueryResponse | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/data-api-catalog-preview',
+      path: {
+        'id': id,
       },
     });
   }
@@ -669,6 +806,74 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Show what kept a database awake
+   * Lists a database's recorded compute starts in the period, newest first (at most 200), each with a likely cause, plus each cause's starts and awake time and hints that name the command acting on the largest causes. A cause is the first of app_wake (wake-with-app started it), cron (a cron of a bound app fired just before), request (a request woke a bound app), app_start (a bound app started without a request), running_app (a bound app was running) and external (none of these, so a client outside Gregale) that matches the start's timing; it is a best guess, never billing. Starts are recorded from the usage sweep, so the latest can lag by up to an hour, and kept 30 days. Reading never wakes the database.
+   * @returns ManagedPostgresActivity Why the database was awake in the period
+   * @returns Problem Invalid period, unknown database, or managed PostgreSQL not configured
+   * @throws ApiError
+   */
+  public static getManagedPostgresActivity({
+    id,
+    since,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day; anything older than 30 days is clamped to 30 days.
+     */
+    since?: string,
+  }): CancelablePromise<ManagedPostgresActivity | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/activity',
+      path: {
+        'id': id,
+      },
+      query: {
+        'since': since,
+      },
+    });
+  }
+  /**
+   * Show what kept a company database awake.
+   * A member who can read the organization's databases lists a company database's recorded compute starts with their likely causes, each cause's awake time, and hints.
+   * @returns ManagedPostgresActivity Why the company database was awake in the period.
+   * @returns Problem Problem while reading the company database's activity.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresActivity({
+    organization,
+    id,
+    since,
+  }: {
+    /**
+     * Organization selected to read what kept a company database awake.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day.
+     */
+    since?: string,
+  }): CancelablePromise<ManagedPostgresActivity | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/activity',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      query: {
+        'since': since,
+      },
+    });
+  }
+  /**
    * Set when a scale-to-zero database suspends
    * Sets how long a scale-to-zero database stays up after its last activity, from 60 to 3600 seconds, or with null returns it to the platform default. Every wake bills at least this much compute. A suspended database takes the value at once; a running one takes it the next time it suspends, without interrupting connections. Repeating the same value is harmless. seconds is required; null is the default. An always-on database answers 409 suspend_timeout_always_on; one with a change in progress answers a conflict. While operations are closed, only a shorter timeout is taken.
    * @returns ManagedPostgresSuspendTimeout The suspend timeout in force
@@ -899,9 +1104,10 @@ export class ManagedPostgresService {
    * Runs one fixed schema inspection inside a fresh task VM from the app's
    * live deployment: `types` renders the TypeScript contract, `validators`
    * the table and RPC input validators, and `schema` the JSON contract
-   * snapshot. The receipt is an ordinary app task receipt and the output
-   * arrives in `stdout_tail`. Belongs to the Data API, so it works without
-   * the general app-task API.
+   * snapshot. By default the output arrives in `stdout_tail`. With
+   * `output=artifact`, the receipt omits the generated output and the
+   * owner can download up to 8 MiB while the task's deployment is live.
+   * Belongs to the Data API, so it works without the general app-task API.
    *
    * @returns AppTaskResponse Contract inspection admitted and queued.
    * @throws ApiError
@@ -910,6 +1116,7 @@ export class ManagedPostgresService {
     slug,
     requestBody,
     idempotencyKey,
+    output,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -922,6 +1129,10 @@ export class ManagedPostgresService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Request a downloadable result and the larger export limit.
+     */
+    output?: 'artifact',
   }): CancelablePromise<AppTaskResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
@@ -931,6 +1142,9 @@ export class ManagedPostgresService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'output': output,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -951,13 +1165,14 @@ export class ManagedPostgresService {
   }
   /**
    * Get one Data API contract inspection
-   * Current or terminal receipt of a contract inspection. Any other app task is not found here.
-   * @returns AppTaskResponse Current or terminal contract inspection receipt.
+   * Reads the task receipt or downloads a completed artifact for the current serving deployment.
+   * @returns AppTaskResponse Current or terminal contract inspection receipt, or an artifact download.
    * @throws ApiError
    */
   public static getDataApiContractTask({
     slug,
     id,
+    output,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -967,6 +1182,10 @@ export class ManagedPostgresService {
      * Canonical UUID for a deployment-attached app task.
      */
     id: string,
+    /**
+     * Download the artifact from a task created with the same option.
+     */
+    output?: 'artifact',
   }): CancelablePromise<AppTaskResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -975,10 +1194,14 @@ export class ManagedPostgresService {
         'slug': slug,
         'id': id,
       },
+      query: {
+        'output': output,
+      },
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

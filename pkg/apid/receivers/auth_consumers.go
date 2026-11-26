@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -91,7 +92,50 @@ func (r *authReceiver) EnrollOAuthConsumer(ctx context.Context, req *apidpb.Enro
 	case err != nil:
 		return nil, status.Error(codes.Unavailable, "could not enroll the consumer")
 	}
-	return &apidpb.EnrollOAuthConsumerResponse{ConsumerId: consumer.ID, Active: consumer.Active(), Created: created}, nil
+	resp := &apidpb.EnrollOAuthConsumerResponse{ConsumerId: consumer.ID, Active: consumer.Active(), Created: created}
+	if r.accountTools != nil {
+		resp.AccountTools = r.accountTools.AccountToolsOn(ctx, req.GetAccountId(), req.GetAppId())
+	}
+	return resp, nil
+}
+
+// AccountTools answers the account tools a gateway adds to an MCP server
+// for its OAuth consumers (ADR-20261125194510): apid's
+// *consumersignup.Service.
+type AccountTools interface {
+	// AccountToolsOn reports the app's opt-in.
+	AccountToolsOn(ctx context.Context, accountID, appID string) bool
+	// AccountTool returns tool's JSON answer for the consumer.
+	// consumersignup.ErrAccountToolUnknown, consumersignup.ErrAccountToolsOff
+	// and state.ErrNotFound.
+	AccountTool(ctx context.Context, accountID, appID, consumerID, tool string) ([]byte, error)
+}
+
+// WithAccountTools lets the Auth service answer account tools.
+func WithAccountTools(tools AccountTools) AuthOption {
+	return func(r *authReceiver) { r.accountTools = tools }
+}
+
+// ConsumerAccountTool answers one account tool for a gateway.
+func (r *authReceiver) ConsumerAccountTool(ctx context.Context, req *apidpb.ConsumerAccountToolRequest) (*apidpb.ConsumerAccountToolResponse, error) {
+	if r.accountTools == nil {
+		return nil, status.Error(codes.Unavailable, "account tools are not configured")
+	}
+	if req.GetAccountId() == "" || req.GetAppId() == "" || req.GetConsumerId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "account_id, app_id and consumer_id are required")
+	}
+	out, err := r.accountTools.AccountTool(ctx, req.GetAccountId(), req.GetAppId(), req.GetConsumerId(), req.GetTool())
+	switch {
+	case errors.Is(err, consumersignup.ErrAccountToolUnknown):
+		return nil, status.Error(codes.InvalidArgument, "unknown account tool")
+	case errors.Is(err, consumersignup.ErrAccountToolsOff):
+		return nil, status.Error(codes.FailedPrecondition, "the app's account tools are off")
+	case errors.Is(err, state.ErrNotFound):
+		return nil, status.Error(codes.NotFound, "no such app or consumer")
+	case err != nil:
+		return nil, status.Error(codes.Unavailable, "could not answer the account tool")
+	}
+	return &apidpb.ConsumerAccountToolResponse{ResultJson: out}, nil
 }
 
 // OAuthLinks links a gateway's verified OAuth callers to the consumer whose

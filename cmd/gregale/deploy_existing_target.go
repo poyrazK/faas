@@ -47,7 +47,7 @@ func rememberCreatedApp(dir, slug string) {
 	if dir == "" || slug == "" {
 		return
 	}
-	if _, _, err := targetProjectContext(dir); !errors.Is(err, errProjectContextNotFound) {
+	if _, _, err := targetProjectContext(dir); !errors.Is(err, errProjectContextNotFound) && !otherAppLinkedAbove(dir, slug) {
 		return
 	}
 	if err := rememberInitApp(dir, slug); err != nil {

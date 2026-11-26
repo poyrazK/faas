@@ -82,7 +82,7 @@ Still open from this ADR:
      - Raising the cap lifts both at the next cap sweep.
      - The cap email (ADR-20261025094915 decision 8) names the spend cap as the reason.
 5. **The ceiling once overage is billed.** With `managed_postgres_billing_mode = live`, the compute ceiling is four times the allowance (`api.ManagedPostgresBilledOverageCeilingMultiplier = 4`) instead of twice.
-   - On Scale that is 800 CU-hours, enough for one production-class database at its 1 CU floor for the whole month.
+   - On Scale that is 800 CU-hours, enough for one production-class database at its 1 CU floor for the whole month (twice that at the 0.5 CU floor production has had since ADR-20261124221402).
    - The customer's control is the spend cap; the 4× ceiling is the platform's backstop.
    - The storage pool stays at twice the plan's pool. Storage past it blocks writes, as today.
    - In `off` and `shadow` mode, nothing changes: 2× and unbilled.
@@ -91,7 +91,7 @@ Still open from this ADR:
    - `gregale postgres overage on` states the rates and the cap.
    - The dashboard shows the same.
    - `postgres-overage` moves from `internal` to `ga` once live billing is on in production.
-   - The customer guide documents how to keep a production database running for a whole month: overage on, and a spend cap that covers it. At 1 CU for 720 hours on Scale, that is (720 − 200) × $0.20 = $104.
+   - The customer guide documents how to keep a production database running for a whole month: overage on, and a spend cap that covers it. At 1 CU for 720 hours on Scale, that is (720 − 200) × $0.20 = $104; at the 0.5 CU floor production has had since ADR-20261124221402, (360 − 200) × $0.20 = $32.
 7. **Reconciliation with Neon.**
    - At month close, apid compares the month's billed and waived quantities with the provider's consumption totals for each backend's organization for the same month.
    - The difference is exported as `apid_managed_postgres_billing_reconciliation_drift_ratio`.

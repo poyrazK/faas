@@ -99,7 +99,8 @@ gregale redis restart sessions
 ```
 
 All three keep your data. A resize or update starts a new VM that copies the
-cache before it takes over; writes pause for a moment at the switch. Shrinking
+cache before it takes over; open connections are closed at the switch, so a
+client reconnects (most Redis clients do on their own). Shrinking
 below the data the cache holds needs `--evict`, which lets the cache evict keys
 by its policy. A restart saves the cache's memory and restores it. A parked
 cache, or one switching to its new VM during a resize or update, has nothing
@@ -120,5 +121,8 @@ running to restart; its next connection starts it with its data.
 gregale redis delete sessions
 ```
 
-The cache and its data are deleted. Apps bound to it keep their `REDIS_URL`
-until you remove it with `gregale env unset`.
+The cache and its data are deleted. A cache that apps are still bound to is
+not deleted: the refusal names each app and its `gregale redis unbind` step.
+Unbind them, remove their `REDIS_URL` with `gregale env unset`, then delete the
+cache. Otherwise each app's `REDIS_URL` would point at a deleted cache, which
+answers every command with `ERR cache unavailable`.

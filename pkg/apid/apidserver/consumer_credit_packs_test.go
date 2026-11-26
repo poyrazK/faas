@@ -106,6 +106,7 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 	client := &stripeinvoice.Client{BaseURL: server.URL, HTTP: server.Client()}
 	service.Stripe, invoices.Stripe = client, client
 	connectionPath := "/v1/account/billing-connections/stripe"
+	setupPath := connectionPath + "/setup"
 	testConnection := api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}
 	liveConnection := api.PutBillingConnectionRequest{SecretKey: "rk_live_51abcdWXYZ"}
 	meteringResponse(t, do, http.MethodPut, connectionPath, testConnection, http.StatusOK, nil)
@@ -154,7 +155,9 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 	}
 	request(http.MethodPost, purchases, req, buyer, http.StatusConflict, nil)
 	request(http.MethodGet, purchases+"/"+req.PurchaseID, nil, buyer, http.StatusNotFound, nil)
-	request(http.MethodPut, connectionPath, liveConnection, nil, http.StatusOK, nil)
+	var live api.BillingConnectionResponse
+	request(http.MethodPut, connectionPath, liveConnection, nil, http.StatusOK, &live)
+	rotation := api.PutStripeSetupRequest{SecretKey: "rk_live_51abcdNEXT", ExpectedUpdatedAt: &live.UpdatedAt}
 
 	request(http.MethodGet, billingPath+"/credit-packs", nil, buyer, http.StatusOK, &offered)
 	if len(offered.Packs) != 1 || offered.Packs[0] != settings.Packs[0] {
@@ -187,6 +190,11 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 		buyer, http.StatusConflict, nil)
 	checkStripeCreditCheckout(t, stripe, req.PurchaseID)
 	request(http.MethodPut, connectionPath, testConnection, nil, http.StatusConflict, nil)
+	var rotationConflict api.Problem
+	request(http.MethodPut, setupPath, rotation, nil, http.StatusConflict, &rotationConflict)
+	if rotationConflict.Title != "Stripe credit purchases pending" {
+		t.Fatalf("Stripe setup conflict = %+v", rotationConflict)
+	}
 	request(http.MethodDelete, connectionPath, nil, nil, http.StatusConflict, nil)
 
 	// Disabling the catalog cannot strand a paid checkout.
@@ -263,6 +271,11 @@ func checkCreditPackPurchase(t *testing.T, do meteringRequest, store state.Store
 		t.Fatalf("expired purchase = %+v", expired)
 	}
 	checkPackGrants(t, store, app, buyerID, &credited)
+	var rotated api.BillingConnectionResponse
+	request(http.MethodPut, setupPath, rotation, nil, http.StatusOK, &rotated)
+	if rotated.KeyLast4 != "NEXT" || !rotated.UpdatedAt.After(live.UpdatedAt) {
+		t.Fatalf("rotated Stripe connection = %+v", rotated)
+	}
 	request(http.MethodPut, connectionPath, testConnection, nil, http.StatusOK, nil)
 	request(http.MethodDelete, connectionPath, nil, nil, http.StatusNoContent, nil)
 }

@@ -24,7 +24,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-respond|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-inbox|task-wait|task-respond|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -74,7 +74,7 @@ func cmdMCP(args []string) int {
 		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
-	case "auth", "replay", "insights", "keys":
+	case "auth", "replay", "insights", "keys", "stats":
 		if !mcpGatewayPreviewCLI() {
 			printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
 			return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
@@ -84,6 +84,8 @@ func cmdMCP(args []string) int {
 			return cmdMCPAuth(args[1:])
 		case "insights":
 			return cmdMCPInsights(args[1:])
+		case "stats":
+			return cmdMCPStats(args[1:])
 		case "keys":
 			return cmdMCPKeys(args[1:])
 		}
@@ -100,6 +102,22 @@ func cmdMCP(args []string) int {
 		return cmdMCPResourceWatch(args[1:])
 	case "complete":
 		return cmdMCPComplete(args[1:])
+	case "task-inbox":
+		return cmdMCPTaskInbox(args[1:])
+	case "task-group-status":
+		return cmdMCPTaskGroup("status", args[1:])
+	case "task-group-stop":
+		return cmdMCPTaskGroup("stop", args[1:])
+	case "task-group-watch":
+		return cmdMCPTaskGroup("watch", args[1:])
+	case "task-group-ack":
+		return cmdMCPTaskGroupAck(args[1:])
+	case "task-group-submit":
+		return cmdMCPTaskGroupSubmit(args[1:])
+	case "task-group-review":
+		return cmdMCPTaskGroup("review", args[1:])
+	case "task-group-respond":
+		return cmdMCPTaskGroup("respond", args[1:])
 	case "doctor":
 		for i, arg := range args[1:] {
 			if arg == "--stack" {
@@ -474,7 +492,7 @@ func cmdMCPRemote(command string, args []string) int {
 	name := fs.String("name", "gregale", "connection name (config)")
 	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
-	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait or task-cancel)")
+	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait, task-respond or task-cancel)")
 	var metadataOnly, readResult bool
 	var inputTemplatePath, reviewedInputPath, receiptDir string
 	if command == "task-get" {
@@ -584,8 +602,8 @@ func cmdMCPRemote(command string, args []string) int {
 	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
 	}
-	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
-		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
+	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-respond" && command != "task-cancel" {
+		return printErr("Invalid MCP task flags", errors.New("--task-id requires mcp client status, wait, respond or cancel"))
 	}
 	if command == "task-get" && ((*taskID == "" && !keyed && receiptDir == "") || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("modern task-get requires --task-id or a keyed Task selector"))
@@ -596,8 +614,8 @@ func cmdMCPRemote(command string, args []string) int {
 			return printErr("Invalid MCP task flags", fmt.Errorf("modern %s requires exactly one of --task-id or --task-receipt", command))
 		}
 	}
-	if command == "task-respond" && (*legacy || taskReceiptPath == "" || reviewedInputPath == "") {
-		return printErr("Invalid MCP task flags", errors.New("modern task-respond requires --task-receipt and --reviewed-input-file"))
+	if command == "task-respond" && (*legacy || (*taskID == "") == (taskReceiptPath == "") || reviewedInputPath == "") {
+		return printErr("Invalid MCP task flags", errors.New("modern mcp client respond requires --reviewed-input-file and exactly one of --task-id or --task-receipt"))
 	}
 	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
 		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
@@ -675,6 +693,12 @@ func cmdMCPRemote(command string, args []string) int {
 		if err != nil {
 			return printErr("MCP Task input review", err)
 		}
+	}
+	if command == "task-respond" && *taskID != "" {
+		return runMCPTaskInputResponseByID(ctx, c, *taskID, review)
+	}
+	if reviewedInputPath != "" && review.Revision != "" {
+		return printErr("MCP Task input review", errors.New("submit this template with mcp client respond --task-id"))
 	}
 	if command == "task-respond" {
 		return runMCPTaskInputResponse(ctx, c, submissionKey, review)

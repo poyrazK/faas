@@ -541,6 +541,8 @@ of the shared `faas`. That is outside this ADR.
   `instance_bridge_resume_wait_seconds`
 - `vmmd_forward_rpcs_total{rpc}` (legacy path; must reach zero before
   removal)
+- `instance_bridge_activity_checks_total{result}` (P1d shadow comparison of
+  a bridge's counters with vmmd's activity tracker)
 
 Alerts:
 
@@ -799,6 +801,21 @@ its own.
       with the vmmd unit, and the successor serves the adopted guest
       through a new unit (`FAAS_E2E_SUCCESSOR_BRIDGE_UNIT=1`).
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
+    - Slice 1, counters in shadow (2026-11-26): behind
+      `FAAS_INSTANCE_BRIDGE_CONTROL=1` (vmmd, default off; needs bridge
+      units) vmmd starts each bridge unit with `FAAS_BRIDGE_CONTROL_SOCKET`
+      and `FAAS_BRIDGE_INSTANCE`. The bridge counts HTTP requests (inside
+      h2c, so an idle pooled connection counts nothing) and sessions, and
+      serves them on `control.sock` (0600) beside its data socket
+      (`pkg/instancebridge/control.go`: `FAAS-IBRIDGE-CTL/1` hello, `HELLO
+      <instance>`, `STATS`). vmmd checks the peer uid as for the data socket
+      and that the hello names the instance, keeps one connection per
+      bridge (also for adopted ones that have the socket) and every 5 s
+      compares the counters with its activity tracker
+      (`instance_bridge_activity_checks_total{result}`: `agree`,
+      `bridge_only_busy`, `vmmd_only_busy`, `error`). It decides nothing
+      from them yet. `vmmd_only_busy` is expected for executions and tail
+      tasks; `bridge_only_busy` is not while vmmd forwards, and is logged.
 
   After P1, bridges survive vmmd, but streams are still cut, because the
   RPCs still terminate in vmmd.

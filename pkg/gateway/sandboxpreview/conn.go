@@ -30,6 +30,12 @@ type streamConn struct {
 	rbuf []byte
 	rerr error
 
+	// ended closes once Read learns how the call ended; endErr is that
+	// result. A Send that finds the call already over waits for it.
+	endOnce sync.Once
+	ended   chan struct{}
+	endErr  error
+
 	wmu       sync.Mutex
 	wclosed   bool
 	closeOnce sync.Once
@@ -38,6 +44,7 @@ type streamConn struct {
 func (c *streamConn) Read(p []byte) (int, error) {
 	for len(c.rbuf) == 0 {
 		if c.rerr != nil {
+			c.end(c.rerr)
 			return 0, c.rerr
 		}
 		ev, err := c.stream.Recv()
@@ -78,12 +85,46 @@ func (c *streamConn) Write(p []byte) (int, error) {
 		n := min(len(p), sandboxproto.ChunkBytes)
 		frame := &vmmdpb.SandboxFrame{Type: sandboxproto.FrameData, Body: append([]byte(nil), p[:n]...)}
 		if err := c.stream.Send(&vmmdpb.SandboxCallRequest{Message: &vmmdpb.SandboxCallRequest_Frame{Frame: frame}}); err != nil {
-			return written, err
+			return written, c.sendErr(err)
 		}
 		written += n
 		p = p[n:]
 	}
 	return written, nil
+}
+
+// callEndWait bounds how long a failed Send waits for Read to learn why the
+// call ended. The transport reads the connection while it writes, so the
+// result is usually already on its way.
+const callEndWait = 5 * time.Second
+
+// end records how the call ended, once.
+func (c *streamConn) end(err error) {
+	c.endOnce.Do(func() {
+		c.endErr = err
+		if c.ended != nil {
+			close(c.ended)
+		}
+	})
+}
+
+// sendErr turns a Send that found the call over (io.EOF) into the call's
+// result: a guest that refuses port_connect ends the call at once, and the
+// request write can lose that race to the guest's error frame.
+func (c *streamConn) sendErr(err error) error {
+	if !errors.Is(err, io.EOF) || c.ended == nil {
+		return err
+	}
+	timer := time.NewTimer(callEndWait)
+	defer timer.Stop()
+	select {
+	case <-c.ended:
+		if errors.Is(c.endErr, errPortClosed) || errors.Is(c.endErr, errGuest) {
+			return c.endErr
+		}
+	case <-timer.C:
+	}
+	return err
 }
 
 // CloseWrite ends what is sent to the guest port; the guest half-closes its

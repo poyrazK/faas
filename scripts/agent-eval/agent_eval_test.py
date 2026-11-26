@@ -63,7 +63,8 @@ class TaskTests(unittest.TestCase):
     def test_shipped_tasks_load(self):
         tasks = ev.load_tasks()
         self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app", "first-hour-private", "first-hour-edit",
-                                                    "deploy-express-render", "migrate-fastapi-render", "deploy-flask-render", "migrate-django-heroku", "deploy-go-heroku"])
+                                                    "deploy-express-render", "migrate-fastapi-render", "deploy-flask-render", "migrate-django-heroku", "deploy-go-heroku",
+                                                "day2-config-change", "day2-schedule", "day2-no-cold-start"])
 
     def test_framework_tasks_grade_the_fix_not_the_repo(self):
         # The pristine repositories leave these features unused; only the
@@ -346,6 +347,44 @@ class CheckTests(unittest.TestCase):
         self.assertIn("not a count per option", malformed["detail"])
         self.assertFalse(grade(VotingApps(), created={"apps": ["vote", "vote-worker"]})["ok"])
 
+        class SuffixedUrls(Urls):
+            def get(self, path):
+                return {"/v1/apps/vote-k3x7q": {"canonical_url": "https://vote.example"},
+                        "/v1/apps/result-a2b4c": {"canonical_url": "https://result.example"}}[path]
+        (suffixed,) = ev.run_checks(task, None, Path("."), "", SuffixedUrls(), created={"apps": ["result-a2b4c", "vote-k3x7q"]},
+                                    http=VotingApps(), http_deadline_s=0)
+        self.assertTrue(suffixed["ok"], "a name another account holds gets a 5-character suffix")
+
+    def test_day2_checks_read_the_app_record_and_cli(self):
+        class Day2:
+            def __init__(self, app, cron_out="", code=0):
+                self.app, self.cron_out, self.code, self.calls = app, cron_out, code, []
+
+            def get(self, path):
+                return self.app
+
+            def cli(self, *args, **kwargs):
+                self.calls.append(args)
+                return mock.Mock(returncode=self.code, stdout=self.cron_out, stderr="")
+
+        task = {"checks": [{"kind": "app_field", "field": "min_instances", "min": 1},
+                           {"kind": "cli_output", "args": ["cron", "list", "--app", "{app}"], "patterns": ["/tick", "(\\*/15|15m)"]}]}
+        cron = '{"items":[{"path":"/tick","method":"POST","schedule":"*/15 * * * *"}]}'
+        g = Day2({"min_instances": 1}, cron)
+        warm, scheduled = ev.run_checks(task, "eval-app", Path("."), "", g)
+        self.assertEqual((warm["ok"], warm["detail"]), (True, "min_instances=1"))
+        self.assertEqual((scheduled["ok"], scheduled["detail"]), (True, "all patterns present"))
+        self.assertEqual(g.calls, [("cron", "list", "--app", "eval-app")])
+
+        cold, hourly = ev.run_checks(task, "eval-app", Path("."), "", Day2({"min_instances": 0}, cron.replace("*/15", "0")))
+        self.assertFalse(cold["ok"])
+        self.assertFalse(hourly["ok"])
+        self.assertIn("missing", hourly["detail"])
+        _, failed = ev.run_checks(task, "eval-app", Path("."), "", Day2({}, "boom", code=4))
+        self.assertIn("exited 4", failed["detail"])
+        self.assertFalse(ev.app_field_check({"min_instances": None}, {"field": "min_instances", "min": 1})[0])
+        self.assertTrue(ev.app_field_check({"require_authn": True}, {"field": "require_authn", "equals": True})[0])
+
     def test_live_worker_counts_as_serving(self):
         # Health reads "unsupported" for a worker pool unless app_health_workers
         # is on; a live worker serves its queue (2026-11-24 voting-app rerun).
@@ -625,6 +664,23 @@ class CliLoginTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             g.get("/v1/billing")
 
+    def test_reads_retry_only_retryable_failures(self):
+        timeout = mock.Mock(returncode=3, stdout="", stderr='{"code":"transport_error","retryable":true}')
+        ok = mock.Mock(returncode=0, stdout='{"slug":"vote"}', stderr="")
+        g = ev.CliGregale("/bin/gregale")
+        with mock.patch.object(g, "cli", side_effect=[timeout, ok]) as cli, mock.patch.object(ev.time, "sleep"):
+            self.assertEqual(g.get("/v1/apps/vote"), {"slug": "vote"})
+        self.assertEqual(cli.call_count, 2)
+        with mock.patch.object(g, "cli", side_effect=[timeout] * 3) as cli, mock.patch.object(ev.time, "sleep"):
+            with self.assertRaises(ValueError):
+                g.get("/v1/apps/vote")
+        self.assertEqual(cli.call_count, 3)
+        missing = mock.Mock(returncode=4, stdout="", stderr='{"code":"not_found","retryable":false}')
+        with mock.patch.object(g, "cli", side_effect=[missing]) as cli:
+            with self.assertRaises(ValueError):
+                g.get("/v1/apps/vote")
+        self.assertEqual(cli.call_count, 1)
+
     def test_cli_login_keeps_the_callers_profile(self):
         with mock.patch.dict(os.environ, {"FAAS_PROFILE": "default", "CLAUDECODE": "1"}):
             env = ev.CliGregale("/bin/gregale").env()
@@ -692,6 +748,20 @@ class CliLoginTests(unittest.TestCase):
             ("app", "delete", "--yes", "--delete-bindings", "stuck"),
         ])
         self.assertEqual(left, ["name:held", "app:stuck"])
+
+    def test_project_members_belong_to_the_run(self):
+        # rc.381 retail-store: Compose named retail-catalog and retail-carts
+        # from its services; the agent never typed them, so they went
+        # unattributed, failed apps_created and were left behind.
+        g = ev.CliGregale("/bin/gregale")
+        lists = {"/v1/projects": {"items": [{"id": "p1", "slug": "retail-store"}, {"id": "p2", "slug": "other"}]},
+                 "/v1/apps": {"items": [{"slug": "retail-catalog", "project_id": "p1"}, {"slug": "retail-carts", "project_id": "p1"},
+                                        {"slug": "bh57-py", "project_id": ""}, {"slug": "side", "project_id": "p2"}]}}
+        touched = {"apps": ["bh57-py", "retail-carts", "retail-catalog", "retail-ui", "side"], "projects": ["retail-store"], "databases": []}
+        with mock.patch.object(g, "get", side_effect=lambda path: lists[path]):
+            mine, others = ev.attribute(g, touched, "gregale deploy --project retail-store\ncurl https://retail-ui.gregale.app")
+        self.assertEqual(mine["apps"], ["retail-carts", "retail-catalog", "retail-ui"])
+        self.assertEqual(others["apps"], ["bh57-py", "side"])
 
     def test_cleanup_deletes_the_runs_databases_only(self):
         # The 2026-11-24 voting-app rerun found the account at its database

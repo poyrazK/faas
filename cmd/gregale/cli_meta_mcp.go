@@ -37,7 +37,18 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "context-file", Short: "read previous arguments from a JSON file", Value: "PATH"},
 		cliFlag{Name: "timeout", Short: "total completion request timeout (default 30s)", Value: "DURATION"},
 	)
-	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait or task-cancel)", Value: "ID"})
+	taskInboxFlags := append(append([]cliFlag{}, remote[:4]...),
+		cliFlag{Name: "status", Short: "filter by retained Task status", Value: "STATUS", ClosedSet: []string{"working", "input_required", "completed", "failed", "cancelled"}},
+		cliFlag{Name: "limit", Short: "maximum entries on this page (1–50, default 20)", Value: "N"},
+		cliFlag{Name: "cursor", Short: "nextCursor from the previous page (single-page reads)", Value: "CURSOR"},
+		cliFlag{Name: "watch", Short: "follow new and changed inbox entries as JSON lines"},
+		cliFlag{Name: "once", Short: "exit after printing one inbox event (requires --watch)"},
+		cliFlag{Name: "wait-timeout", Short: "total time to wait for the first event (requires --watch --once)", Value: "DURATION"},
+		cliFlag{Name: "checkpoint-file", Short: "save inbox watch progress to a private file (requires --watch)", Value: "FILE"},
+		cliFlag{Name: "interval", Short: "time between watch scans (1s–1h, default 30s)", Value: "DURATION"},
+		cliFlag{Name: "timeout", Short: "deadline for one inbox read or watch scan (default 30s)", Value: "DURATION"},
+	)
+	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait, task-respond or task-cancel)", Value: "ID"})
 	taskStatusFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "metadata-only", Short: "show Task metadata and next action"},
 		cliFlag{Name: "read-result", Short: "read a completed Task result from a private receipt"},
@@ -55,7 +66,8 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "task-receipt", Short: "cancel a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
 	)
 	taskRespondFlags := append(append([]cliFlag{}, remote[:4]...),
-		cliFlag{Name: "task-receipt", Short: "private receipt for the retained Task", Value: "FILE", Req: true},
+		cliFlag{Name: "task-receipt", Short: "private receipt for the retained Task", Value: "FILE"},
+		cliFlag{Name: "task-id", Short: "Task ID from the inbox or a Task submission", Value: "ID"},
 		cliFlag{Name: "reviewed-input-file", Short: "answer forms from a reviewed private Task input template", Value: "FILE", Req: true},
 		cliFlag{Name: "timeout", Short: "total request timeout (default 30s)", Value: "DURATION"},
 	)
@@ -233,6 +245,13 @@ func mcpCLICommand() cliCommand {
 			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 			{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server insights --app my-mcp", "gregale mcp server insights --app my-mcp --json"}},
+		{Name: "stats", Short: "Show a sold server's customers, revenue, tools and customers near their limit", Notes: []string{
+			"Months are UTC calendar months; the current month is to date and its revenue is an estimate. Billed revenue is finalized statements before credits; a closed month not yet finalized shows its draft statements as an estimate.",
+			"Needs API monetization on the account.",
+		}, Flags: []cliFlag{
+			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
+			{Name: "months", Short: "calendar months to read, 1-12 (default 1: this month)", Value: "N"},
+		}, Examples: []string{"gregale mcp server stats --app my-mcp", "gregale mcp server stats --app my-mcp --months 6 --json"}},
 		{Name: "keys", Short: "Issue, list and revoke consumer keys for an api-key MCP server", Subcommands: []cliSub{
 			{Name: "create", Short: "Create a consumer key with mcp: scopes", Notes: []string{"Scopes default to the endpoint scopes in gregale-mcp.json."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
@@ -317,9 +336,57 @@ func mcpCLICommand() cliCommand {
 		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{`gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
 		{Name: "complete", Short: "Request bounded suggestions for a prompt or resource-template argument", Flags: completionFlags, Examples: []string{"gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec", "gregale mcp client complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-"}},
 		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Positionals: []string{"[<slug>]"}, Flags: callFlags, Examples: []string{`gregale mcp client call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp client call --app my-mcp --tool report_preview --wait`, `gregale mcp client call --app my-mcp --tool report_preview --tasks`}},
+		{Name: "task-group-status", Short: "Read the current status of a saved Node SDK Task group", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL used to save the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private group directory saved by the Node SDK", Value: "DIR", Req: true},
+			{Name: "include-results", Short: "include retained results and execution errors", Bool: true},
+			{Name: "timeout", Short: "total Task read deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group status --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports"}},
+		{Name: "task-group-stop", Short: "Stop a saved Node SDK Task group and request cancellation", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL used to save the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private group directory saved by the Node SDK", Value: "DIR", Req: true},
+			{Name: "timeout", Short: "total group stop deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group stop --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports"}},
+		{Name: "task-group-watch", Short: "Stream status changes of a saved Node SDK Task group", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL used to save the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private group directory saved by the Node SDK", Value: "DIR", Req: true},
+			{Name: "interval", Short: "polling interval when a stream is unavailable (default 2s)", Value: "DURATION"},
+			{Name: "timeout", Short: "total group watch deadline (default 2m)", Value: "DURATION"},
+			{Name: "resume", Short: "skip updates acknowledged from the CLI or Node SDK", Bool: true},
+		}, Examples: []string{"gregale mcp client group watch --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports"}},
+		{Name: "task-group-ack", Short: "Acknowledge a handled update in a saved Task group", Flags: []cliFlag{
+			{Name: "group", Short: "private group directory saved by the Node SDK", Value: "DIR", Req: true},
+			{Name: "update-id", Short: "updateId from a Task group watch event", Value: "ID", Req: true},
+		}, Examples: []string{"gregale mcp client group ack --group ./reports --update-id UPDATE_ID"}},
+		{Name: "task-group-submit", Short: "Submit or continue a recoverable group of owner-bound Tasks", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL for the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private interoperable Task group directory", Value: "DIR", Req: true},
+			{Name: "plan", Short: "JSON file with the original tool calls in order", Value: "FILE", Req: true},
+			{Name: "retry-unconfirmed", Short: "retry recorded submissions after a Task-not-found lookup", Bool: true},
+			{Name: "timeout", Short: "total group submission deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group submit --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --plan ./calls.json"}},
+		{Name: "task-group-review", Short: "Export private reviewed-input templates for paused Task group members", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL used to save the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private interoperable Task group directory", Value: "DIR", Req: true},
+			{Name: "out-dir", Short: "private directory for new reviewed-input templates", Value: "DIR", Req: true},
+			{Name: "timeout", Short: "total group review deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group review --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --out-dir ./reviews"}},
+		{Name: "task-group-respond", Short: "Apply selected reviewed inputs to Tasks in a saved group", Flags: []cliFlag{
+			{Name: "url", Short: "MCP endpoint URL used to save the group", Value: "URL", Req: true},
+			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
+			{Name: "group", Short: "private interoperable Task group directory", Value: "DIR", Req: true},
+			{Name: "reviewed-input-file", Short: "private completed review file (repeatable)", Value: "FILE", Req: true, Repeatable: true},
+			{Name: "timeout", Short: "total group response deadline (default 30s)", Value: "DURATION"},
+		}, Examples: []string{"gregale mcp client group respond --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --reviewed-input-file ./reviews/member-0-input.json --reviewed-input-file ./reviews/member-2-input.json"}},
+		{Name: "task-inbox", Short: "List your retained Task metadata on a server", Flags: taskInboxFlags, Examples: []string{"gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required", "gregale mcp client inbox --app my-mcp --token-env MCP_TOKEN --status input_required --watch"}},
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
-		{Name: "task-respond", Short: "Submit reviewed Task input and return a status snapshot", Positionals: []string{"[<slug>]"}, Flags: taskRespondFlags, Examples: []string{"gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json"}},
+		{Name: "task-respond", Short: "Submit reviewed Task input and return a status snapshot", Positionals: []string{"[<slug>]"}, Flags: taskRespondFlags, Examples: []string{"gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json", "gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --reviewed-input-file ./reviewed-input.json"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskCancelFlags, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client cancel --app my-mcp --task-receipt ./task.json --token-env MCP_TOKEN"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
 

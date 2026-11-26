@@ -20,7 +20,7 @@ func (f *observationFixture) CommitRelayObservationSummary(context.Context, time
 }
 
 func TestObservationCollectorUnknownAndRecovery(t *testing.T) {
-	f := &observationFixture{snapshot: state.CommitRelayObservation{EnabledSources: 2, UnknownSources: 1, PendingEvents: 9, OldestPendingTimestamp: 1234}}
+	f := &observationFixture{snapshot: state.CommitRelayObservation{EnabledSources: 2, UnknownSources: 1, PendingEvents: 9, OldestPendingTimestamp: 1234, CleanupUnknownSources: 1, CleanupEligibleEvents: 17}}
 	r := prometheus.NewPedanticRegistry()
 	r.MustRegister(NewObservationCollector(f))
 	read := func() map[string]float64 {
@@ -38,7 +38,7 @@ func TestObservationCollectorUnknownAndRecovery(t *testing.T) {
 		}
 		return values
 	}
-	if got := read(); got["schedd_commit_relay_unknown_sources"] != 1 || got["schedd_commit_relay_pending_events"] != 9 {
+	if got := read(); got["schedd_commit_relay_unknown_sources"] != 1 || got["schedd_commit_relay_pending_events"] != 9 || got["schedd_commit_relay_cleanup_unknown_sources"] != 1 || got["schedd_commit_relay_cleanup_eligible_events"] != 17 {
 		t.Fatalf("snapshot=%v", got)
 	}
 	f.err = errors.New("database unavailable")
