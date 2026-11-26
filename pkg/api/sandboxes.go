@@ -125,6 +125,10 @@ const (
 	CodeSandboxNotFound = "sandbox_not_found"
 	// CodeSandboxEnded: the session closed, expired or failed.
 	CodeSandboxEnded = "sandbox_ended"
+	// CodeSandboxNotPausable: a pause of a session that is not a running
+	// persistent one, or a resume of one that is not paused
+	// (ADR-20261122132055 §1).
+	CodeSandboxNotPausable = "sandbox_not_pausable"
 	// CodeSandboxUnsupported: the request asks for something sessions do
 	// not offer yet; the detail names it.
 	CodeSandboxUnsupported = "sandbox_unsupported"
@@ -281,6 +285,11 @@ type CreateSandboxRequest struct {
 	// registry host.
 	Pull         string                `json:"pull,omitempty"`
 	RegistryAuth *ImageRunRegistryAuth `json:"registry_auth,omitempty"`
+	// VCPU and VolumeGB size a persistent session (ADR-20261122132055 §4,
+	// §5): its vCPUs within SandboxPersistentVCPUMax and its workspace
+	// volume within SandboxVolumeMaxGB (SandboxVolumeDefaultGB when 0).
+	VCPU     int `json:"vcpu,omitempty"`
+	VolumeGB int `json:"volume_gb,omitempty"`
 }
 
 // SandboxImageSource is a seller image to cache for a session: the image,
@@ -435,6 +444,18 @@ type Sandbox struct {
 	Template string `json:"template,omitempty"`
 	// Browser is a session created with the sandbox browser running.
 	Browser bool `json:"browser,omitempty"`
+	// Persistent sessions (ADR-20261122132055): the shape and volume, the
+	// pending pause or resume, when the session paused, where its capture
+	// is kept (node, then remote once uploaded), whether its last resume
+	// cold-booted, and the session it was forked from.
+	VCPU              int        `json:"vcpu,omitempty"`
+	VolumeGB          int        `json:"volume_gb,omitempty"`
+	PauseRequestedAt  *time.Time `json:"pause_requested_at,omitempty"`
+	ResumeRequestedAt *time.Time `json:"resume_requested_at,omitempty"`
+	PausedAt          *time.Time `json:"paused_at,omitempty"`
+	Durability        string     `json:"durability,omitempty"`
+	ResumedCold       bool       `json:"resumed_cold,omitempty"`
+	ForkedFrom        string     `json:"forked_from,omitempty"`
 }
 
 // SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a

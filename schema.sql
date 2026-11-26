@@ -62101,6 +62101,36 @@ COMMENT ON TABLE public.sandbox_ports IS 'ADR-20261027090013 §11 exposed sandbo
 
 
 --
+-- Name: sandbox_session_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_session_captures (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id text NOT NULL,
+    storage_key text NOT NULL,
+    vmstate_storage_key text NOT NULL,
+    fc_version text NOT NULL,
+    mem_bytes bigint NOT NULL,
+    vmstate_bytes bigint DEFAULT 0 NOT NULL,
+    has_backing boolean DEFAULT false NOT NULL,
+    state text DEFAULT 'live'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    consumed_at timestamp with time zone,
+    checked_at timestamp with time zone,
+    CONSTRAINT sandbox_session_captures_check CHECK (((state = 'consumed'::text) = (consumed_at IS NOT NULL))),
+    CONSTRAINT sandbox_session_captures_check1 CHECK (((state = 'consumed'::text) OR ((fc_version <> ''::text) AND (mem_bytes > 0)))),
+    CONSTRAINT sandbox_session_captures_mem_bytes_check CHECK ((mem_bytes >= 0)),
+    CONSTRAINT sandbox_session_captures_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_session_captures_state_check CHECK ((state = ANY (ARRAY['live'::text, 'consumed'::text]))),
+    CONSTRAINT sandbox_session_captures_storage_key_check CHECK ((storage_key ~~ 'snap/sandbox-session-%/captures/%/v2/mem'::text)),
+    CONSTRAINT sandbox_session_captures_vmstate_bytes_check CHECK ((vmstate_bytes >= 0)),
+    CONSTRAINT sandbox_session_captures_vmstate_storage_key_check CHECK ((vmstate_storage_key ~~ 'snap/sandbox-session-%/captures/%/v2/vmstate'::text))
+);
+
+
+--
 -- Name: sandbox_session_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62142,6 +62172,16 @@ CREATE TABLE public.sandbox_session_usage (
     final boolean DEFAULT false NOT NULL,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_token text,
+    base_samples integer DEFAULT 0 NOT NULL,
+    base_expected_samples integer DEFAULT 0 NOT NULL,
+    base_measured_ms bigint DEFAULT 0 NOT NULL,
+    base_paused_ms bigint DEFAULT 0 NOT NULL,
+    base_frozen_ms bigint DEFAULT 0 NOT NULL,
+    base_private_mb_ms bigint DEFAULT 0 NOT NULL,
+    base_unpaused_private_mb_ms bigint DEFAULT 0 NOT NULL,
+    base_billable_mb_ms bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT sandbox_session_usage_base_check CHECK (((base_measured_ms >= 0) AND (base_measured_ms <= measured_ms))),
     CONSTRAINT sandbox_session_usage_billable_mb_ms_check CHECK ((billable_mb_ms >= 0)),
     CONSTRAINT sandbox_session_usage_check CHECK ((expected_samples >= samples)),
     CONSTRAINT sandbox_session_usage_check1 CHECK (((paused_ms >= 0) AND (paused_ms <= measured_ms))),
@@ -62203,7 +62243,17 @@ CREATE TABLE public.sandbox_sessions (
     egress_allow text[],
     egress_deny text[],
     placed_node_id text,
+    vcpu smallint,
+    volume_gb integer,
+    pause_requested_at timestamp with time zone,
+    resume_requested_at timestamp with time zone,
+    paused_at timestamp with time zone,
+    durability text,
+    resumed_cold boolean DEFAULT false NOT NULL,
+    forked_from uuid,
+    resume_not_before timestamp with time zone,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
+    CONSTRAINT sandbox_sessions_durability_check CHECK (((durability IS NULL) OR (durability = ANY (ARRAY['node'::text, 'remote'::text])))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
     CONSTRAINT sandbox_sessions_instance_id_check CHECK (((instance_id IS NULL) OR ((char_length(instance_id) >= 1) AND (char_length(instance_id) <= 128)))),
@@ -62216,9 +62266,12 @@ CREATE TABLE public.sandbox_sessions (
     CONSTRAINT sandbox_sessions_node_id_check CHECK (((node_id IS NULL) OR ((char_length(node_id) >= 1) AND (char_length(node_id) <= 128)))),
     CONSTRAINT sandbox_sessions_outcome_code_check CHECK (((outcome_code IS NULL) OR (outcome_code ~ '^[a-z][a-z0-9_]{0,63}$'::text))),
     CONSTRAINT sandbox_sessions_outcome_message_check CHECK (((outcome_message IS NULL) OR (char_length(outcome_message) <= 2048))),
+    CONSTRAINT sandbox_sessions_paused_check CHECK (((state = 'paused'::text) <= ((paused_at IS NOT NULL) AND (kind = 'persistent'::text)))),
     CONSTRAINT sandbox_sessions_preset_check CHECK (((char_length(preset) >= 1) AND (char_length(preset) <= 64))),
-    CONSTRAINT sandbox_sessions_ram_mb_check CHECK ((((ram_mb >= 512) AND (ram_mb <= 4096)) AND ((ram_mb % 512) = 0))),
-    CONSTRAINT sandbox_sessions_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'closed'::text, 'expired'::text, 'failed'::text])))
+    CONSTRAINT sandbox_sessions_ram_mb_v2_check CHECK ((((ram_mb >= 512) AND (ram_mb <= 32768)) AND ((ram_mb % 512) = 0))),
+    CONSTRAINT sandbox_sessions_state_v2_check CHECK ((state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'pausing'::text, 'paused'::text, 'resuming'::text, 'closed'::text, 'expired'::text, 'failed'::text]))),
+    CONSTRAINT sandbox_sessions_vcpu_check CHECK (((vcpu IS NULL) OR ((vcpu >= 1) AND (vcpu <= 16)))),
+    CONSTRAINT sandbox_sessions_volume_gb_check CHECK (((volume_gb IS NULL) OR ((kind = 'persistent'::text) AND ((volume_gb >= 1) AND (volume_gb <= 1024)))))
 );
 
 
@@ -78891,6 +78944,14 @@ ALTER TABLE ONLY public.sandbox_ports
 
 
 --
+-- Name: sandbox_session_captures sandbox_session_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_captures
+    ADD CONSTRAINT sandbox_session_captures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sandbox_session_domains sandbox_session_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -91254,6 +91315,20 @@ CREATE INDEX sandbox_actions_undelivered_idx ON public.sandbox_actions USING btr
 
 
 --
+-- Name: sandbox_session_captures_consumed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_session_captures_consumed ON public.sandbox_session_captures USING btree (consumed_at) WHERE (state = 'consumed'::text);
+
+
+--
+-- Name: sandbox_session_captures_live; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sandbox_session_captures_live ON public.sandbox_session_captures USING btree (session_id) WHERE (state = 'live'::text);
+
+
+--
 -- Name: sandbox_session_usage_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -91268,6 +91343,13 @@ CREATE INDEX sandbox_sessions_account_created_idx ON public.sandbox_sessions USI
 
 
 --
+-- Name: sandbox_sessions_forked_from_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_sessions_forked_from_idx ON public.sandbox_sessions USING btree (forked_from) WHERE (forked_from IS NOT NULL);
+
+
+--
 -- Name: sandbox_sessions_image_job_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -91279,6 +91361,20 @@ CREATE INDEX sandbox_sessions_image_job_idx ON public.sandbox_sessions USING btr
 --
 
 CREATE INDEX sandbox_sessions_live_idx ON public.sandbox_sessions USING btree (account_id, state) WHERE (state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text]));
+
+
+--
+-- Name: sandbox_sessions_paused_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_sessions_paused_idx ON public.sandbox_sessions USING btree (paused_at, id) WHERE (state = 'paused'::text);
+
+
+--
+-- Name: sandbox_sessions_persistent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_sessions_persistent_idx ON public.sandbox_sessions USING btree (account_id) WHERE ((kind = 'persistent'::text) AND (state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'pausing'::text, 'paused'::text, 'resuming'::text])));
 
 
 --
@@ -116837,6 +116933,22 @@ ALTER TABLE ONLY public.sandbox_ports
 
 
 --
+-- Name: sandbox_session_captures sandbox_session_captures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_captures
+    ADD CONSTRAINT sandbox_session_captures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_session_captures sandbox_session_captures_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_captures
+    ADD CONSTRAINT sandbox_session_captures_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: sandbox_session_domains sandbox_session_domains_sandbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -116866,6 +116978,14 @@ ALTER TABLE ONLY public.sandbox_session_usage
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_forked_from_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_forked_from_fkey FOREIGN KEY (forked_from) REFERENCES public.sandbox_sessions(id) ON DELETE SET NULL;
 
 
 --

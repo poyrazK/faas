@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -167,28 +167,71 @@ func TestProjectDeployReceiptSaveFailurePreservesAcceptedIDs(t *testing.T) {
 }
 
 func TestProjectDeployResumeTimeoutKeepsAcceptedSession(t *testing.T) {
+	t.Chdir(t.TempDir())
+	appID, deploymentID, instanceID := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
+	var submissions atomic.Int32
+	var live atomic.Bool
 	pending := api.NewDeploymentConfigurationStatus("prepared", "awaiting_activation")
+	activated := api.NewDeploymentConfigurationStatus("activated", "")
 	deployReliabilityCLI(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Error("resume mutated server")
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v1/projects/scan":
+			_ = json.NewEncoder(w).Encode(api.PlanResponse{CanApply: true, PlanToken: "plan", Workloads: []api.PlanWorkload{{Name: "demo"}}})
+		case "POST /v1/projects":
+			submissions.Add(1)
+			_ = json.NewEncoder(w).Encode(api.ApplyResponse{ProjectID: "project", Builds: []api.AppliedBuild{
+				{Slug: "demo", AppID: appID, DeploymentID: deploymentID, Configuration: &pending},
+			}})
+		case "GET /v1/deployments/" + deploymentID:
+			config := &pending
+			if live.Load() {
+				config = &activated
+			}
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: deploymentID, AppID: appID, Scope: "default", Status: statusLive, Configuration: config})
+		case "GET /v1/apps/demo":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: appID, Slug: "demo", Visibility: "internal"})
+		case "GET /v1/deployments/response-check/capabilities":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponseCheckCapabilities{ProtocolVersion: api.DeploymentResponseCheckProtocolVersion, Available: true})
+		case "POST /v1/apps/demo/deployments/" + deploymentID + "/response-check":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponseCheckResult{AppID: appID, DeploymentID: deploymentID, InstanceID: instanceID, Scope: "default", HTTPStatus: 200, Body: "ready"})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
 		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep", AppID: "app", Status: statusLive, Configuration: &pending})
 	})
-	c, err := authedClient()
-	if err != nil {
+	t.Setenv("FAAS_JSON", "0")
+	stdout, stderr := osStdout.(*bytes.Buffer), osStderr.(*bytes.Buffer)
+	archive := writeDeploySourceArchive(t, map[string]string{
+		"compose.yaml": "services:\n  demo:\n    build: .\n    ports: ['127.0.0.1:3000:3000']\n",
+		"Dockerfile":   "FROM alpine\n",
+	})
+	if code := run([]string{"--non-interactive", "--json", "deploy", "--project", "--name", "demo", "--tarball", archive, "--yes", "--timeout", "1"}); code != 3 {
+		t.Fatalf("deploy exit=%d, want timeout exit 3, stderr=%s", code, stderr)
+	}
+	var receipt projectDeployReceipt
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil || !receipt.TimedOut || !receipt.RecoverySaved || len(receipt.Builds) != 1 || receipt.Builds[0].DeploymentID != deploymentID {
+		t.Fatalf("timeout stdout=%s err=%v", stdout, err)
+	}
+	if want := "gregale --non-interactive --json release resume " + receipt.SessionID + " --timeout 1"; receipt.ResumeCommand != want {
+		t.Fatalf("resume_command=%q, want %q", receipt.ResumeCommand, want)
+	}
+	if err := os.Remove(archive); err != nil {
 		t.Fatal(err)
 	}
-	s, lock, err := newSavedProjectDeploy(c, "demo", "", api.ApplyResponse{Builds: []api.AppliedBuild{{Slug: "demo", AppID: "app", DeploymentID: "dep", Configuration: &pending}}})
-	if err != nil {
-		t.Fatal(err)
+	live.Store(true)
+	stdout.Reset()
+	stderr.Reset()
+	runEmittedDeployCommand(t, receipt.ResumeCommand, 0)
+	var resumed projectDeployReceipt
+	if err := json.Unmarshal(stdout.Bytes(), &resumed); err != nil || resumed.TimedOut || resumed.SessionID != receipt.SessionID || len(resumed.Builds) != 1 || resumed.Builds[0].DeploymentID != deploymentID {
+		t.Fatalf("resume stdout=%s err=%v", stdout, err)
 	}
-	_ = lock.Close()
-	if code := resumeSavedProjectDeploy(t.Context(), c, s, 20*time.Millisecond); code != 3 {
-		t.Fatalf("timeout exit=%d", code)
+	if config := resumed.Builds[0].Configuration; config == nil || config.Crons.Status != "activated" {
+		t.Fatalf("configuration remained pending: %+v", config)
 	}
-	fresh, err := loadSavedDeploySession(c, s.path)
-	if err != nil || fresh.record.Project.Workloads[0].DeploymentID != "dep" {
-		t.Fatalf("lost accepted session: %v", err)
+	verifyResumedDeployment(t, "demo", resumed.Builds[0].DeploymentID)
+	if submissions.Load() != 1 {
+		t.Fatalf("submitted %d builds, want 1", submissions.Load())
 	}
 }
 

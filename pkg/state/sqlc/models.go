@@ -16724,10 +16724,36 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput   []byte
-	EgressAllow  []string
-	EgressDeny   []string
-	PlacedNodeID pgtype.Text
+	TaskOutput        []byte
+	EgressAllow       []string
+	EgressDeny        []string
+	PlacedNodeID      pgtype.Text
+	Vcpu              pgtype.Int2
+	VolumeGb          pgtype.Int4
+	PauseRequestedAt  pgtype.Timestamptz
+	ResumeRequestedAt pgtype.Timestamptz
+	PausedAt          pgtype.Timestamptz
+	Durability        pgtype.Text
+	ResumedCold       bool
+	ForkedFrom        pgtype.UUID
+	ResumeNotBefore   pgtype.Timestamptz
+}
+
+type SandboxSessionCapture struct {
+	ID                pgtype.UUID
+	SessionID         pgtype.UUID
+	AccountID         pgtype.UUID
+	NodeID            string
+	StorageKey        string
+	VmstateStorageKey string
+	FcVersion         string
+	MemBytes          int64
+	VmstateBytes      int64
+	HasBacking        bool
+	State             string
+	CreatedAt         pgtype.Timestamptz
+	ConsumedAt        pgtype.Timestamptz
+	CheckedAt         pgtype.Timestamptz
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
@@ -16740,22 +16766,31 @@ type SandboxSessionDomain struct {
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
 type SandboxSessionUsage struct {
-	SandboxID           pgtype.UUID
-	AccountID           pgtype.UUID
-	Method              int16
-	Samples             int32
-	ExpectedSamples     int32
-	MeasuredMs          int64
-	PausedMs            int64
-	FrozenMs            int64
-	PrivateMbMs         int64
-	UnpausedPrivateMbMs int64
-	BillableMbMs        int64
-	PeakPrivateMb       int64
-	ColdBoot            bool
-	Final               bool
-	RecordedAt          pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	SandboxID               pgtype.UUID
+	AccountID               pgtype.UUID
+	Method                  int16
+	Samples                 int32
+	ExpectedSamples         int32
+	MeasuredMs              int64
+	PausedMs                int64
+	FrozenMs                int64
+	PrivateMbMs             int64
+	UnpausedPrivateMbMs     int64
+	BillableMbMs            int64
+	PeakPrivateMb           int64
+	ColdBoot                bool
+	Final                   bool
+	RecordedAt              pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	LeaseToken              pgtype.Text
+	BaseSamples             int32
+	BaseExpectedSamples     int32
+	BaseMeasuredMs          int64
+	BasePausedMs            int64
+	BaseFrozenMs            int64
+	BasePrivateMbMs         int64
+	BaseUnpausedPrivateMbMs int64
+	BaseBillableMbMs        int64
 }
 
 // ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.

@@ -1,0 +1,11 @@
+{
+  "name": "journey-pnpm-hello",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ms": "2.1.3"
+  }
+}

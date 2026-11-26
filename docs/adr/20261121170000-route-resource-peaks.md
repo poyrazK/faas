@@ -156,7 +156,10 @@ budget charge, audit and notifications as one a customer makes:
 1. `creating`: the row reserves the target name, `<slug>-<last static path
    segment>` (a random five-character suffix when taken). apid creates a
    standalone app in the source's account and org, sized `route_ram_mb`
-   (CPU splits: the source's RAM). When its deployment is seeded it takes
+   (CPU splits: the source's RAM), and before seeding its deployment puts a
+   deny-all `kind=ip` rule on each of its own hosts (its platform host and
+   `<slug>--*` port-selector hosts), so it never answers except through the
+   source. When its deployment is seeded it takes
    every runtime and security setting of the source (the environment
    promotion's settings set: egress allowlist and ports, auth, IP
    allowlist, rate limits, security policy, declared routes, CORS, start
@@ -171,7 +174,9 @@ budget charge, audit and notifications as one a customer makes:
    identity, not to the app). Only the request workload is copied: never
    the release command, workflows, crons, workers, queue consumers, event
    subscriptions or schedules, which would run twice.
-3. `rule_live`: once the deployment is live, a `kind=route` edge rule on
+3. `rule_live`: once the deployment is live, the worker makes the block
+   whole again (a transient failure is retried, a refusal rolls back), then
+   adds a `kind=route` edge rule on
    each of the source's hosts (its platform host and verified app-wide
    custom domains) for the method and path glob, pointing at the target.
    The rules are named `route-split:<id>` so a retried pass reuses them and
@@ -179,7 +184,8 @@ budget charge, audit and notifications as one a customer makes:
 4. `done`: a memory split sizes the source to `main_ram_mb` first.
 
 A failure before the rules are live rolls back: the rules made so far go
-first (so the path never routes to a deleted app), then the target app,
+first (so the path never routes to a deleted app), then the block and the
+target app (deleting an app keeps its rules),
 and the row ends `rolled_back` with the error. Once recorded, a split's
 creation runs to the end even if the caller disconnects. The worker pages
 through every in-flight split each pass, so waiting splits never hold
@@ -194,17 +200,37 @@ ends `done` with a warning. Undo counts a 404 from deleting the route's app
 as deleted only when the app is really gone.
 `DELETE /v1/apps/{slug}/route-splits/{id}` undoes a finished split: the
 source gets its previous size back first (it serves the route again once
-the rules go), then the rules and the target app are deleted. A failed step
+the rules go), then the rules, the block and the target app are deleted. A failed step
 leaves the split `done`, so undo can be retried.
 
 The first slice splits standalone apps only. Apps in a project (their
 workloads are source-managed), previews, and apps with managed bindings
 (Postgres, object storage) or service bindings are refused up front with
 422 `route_split_unsupported` and what blocks them, so no split ever serves
-a route without the data it needs. So are apps with their own edge rules
-(the route's app answers on its own hostname, where those deny, auth, IP
-and rate-limit rules would not run) and apps with a static egress IP
-(unique to one app). A second slice copies request-path
+a route without the data it needs. So are apps with a static egress IP
+(unique to one app) and apps with app-wide (`@app`) edge rules. An
+account that may not create `kind=ip` rules is refused before anything is
+made. So is an app with an enabled rule whose path may overlap the split's
+and that already decides where the request goes (`route`, `rewrite`,
+`redirect`, `respond`, `async`; earlier splits' rules excepted), or a
+`throttle` rule over it: throttle buckets are kept per serving app, so the
+moved path would get a second allowance. Overlap is judged on the paths'
+literal prefixes, which may refuse globs that never meet but never misses
+ones that do.
+
+The gateway serves a routed request as the route's app but keeps the
+source's host. The source's host rules (deny, auth, IP, rate limit, WAF)
+therefore still match the moved route, since both apps share an edge-rule
+scope, and the target's host-specific block never does. App-wide rules
+follow the serving app, so the source's `@app` rules would not run on the
+moved route: such an app is refused, naming the rule, until its rules name
+hosts. `cmd/gatewayd-internal` `TestRouteSplitRuleScope` pins these three
+facts, and that the source's host jwt, limit, throttle, WAF and challenge
+rules match a routed request; if the gateway starts applying a routed
+source's `@app` rules, the refusal can go. Rules changed after a split is
+done (a new `@app` rule on the source, a deleted block) are not watched
+yet. (Amendment 3, 2026-11-26, replaces the first slice's refusal
+of any edge rule.) A second slice copies request-path
 bindings with the environment clone's binding definitions and still never
 copies consumers.
 
