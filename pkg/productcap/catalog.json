@@ -5479,7 +5479,9 @@
       "acceptance_test": "pkg/routeresources/analyze_test.go::TestAnalyzeFindsHeavyRoute",
       "parent": "metrics",
       "routes": [
-        "/v1/apps/{}/analytics/route-resources"
+        "/v1/apps/{}/analytics/route-resources",
+        "/v1/apps/{}/route-splits",
+        "/v1/apps/{}/route-splits/{}"
       ],
       "cli": [
         "route-resources"

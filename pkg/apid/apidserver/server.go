@@ -4723,6 +4723,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-customers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteCustomerUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-resources", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteResources)))
+	// ADR-20261121170000 amendment 2: apply, read and undo a route split.
+	mux.HandleFunc("POST /v1/apps/{slug}/route-splits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createRouteSplit)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-splits", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listRouteSplits)))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-splits/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getRouteSplit)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/route-splits/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.undoRouteSplit))))
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-tool-insights", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getMCPToolInsights)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))

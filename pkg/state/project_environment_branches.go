@@ -255,6 +255,9 @@ type projectEnvironmentBranchDeploymentInput struct {
 	// Seed, when set, seeds a rehearsal member from the branch workload
 	// instead of creating the branch's own deployment (slice 6b).
 	Seed *EnvironmentBranchSeed
+	// RouteSplit, when set, seeds a route split's target app from the
+	// source app's live artifact (ADR-20261121170000 amendment 2).
+	RouteSplit *RouteSplitSeed
 }
 
 type projectEnvironmentBranchDeployment struct {
@@ -510,6 +513,9 @@ func (m *MemStore) CreateDeploymentForEnvironmentBranch(ctx context.Context, acc
 // second call for the same app returns the deployment already created.
 func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Deployment, string, error) {
 	input := d.branchInput
+	if input.RouteSplit != nil {
+		return m.prepareRouteSplitDeploymentLocked(d)
+	}
 	if input.Seed != nil {
 		return m.prepareSeedDeploymentLocked(d)
 	}
@@ -542,6 +548,10 @@ func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Dep
 }
 
 func (m *MemStore) attachBranchDeploymentLocked(input projectEnvironmentBranchDeploymentInput, sourceID string, created Deployment) {
+	if input.RouteSplit != nil {
+		m.attachRouteSplitDeploymentLocked(sourceID, created)
+		return
+	}
 	if input.Seed != nil {
 		m.attachSeedDeploymentLocked(input, sourceID, created)
 		return
