@@ -332,7 +332,16 @@ CREATE TABLE sandbox_session_usage (
  cold_boot boolean NOT NULL,
  final boolean NOT NULL DEFAULT false,
  recorded_at timestamptz NOT NULL DEFAULT now(),
- updated_at timestamptz NOT NULL DEFAULT now()
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ lease_token text,
+ base_samples integer NOT NULL DEFAULT 0,
+ base_expected_samples integer NOT NULL DEFAULT 0,
+ base_measured_ms bigint NOT NULL DEFAULT 0,
+ base_paused_ms bigint NOT NULL DEFAULT 0,
+ base_frozen_ms bigint NOT NULL DEFAULT 0,
+ base_private_mb_ms bigint NOT NULL DEFAULT 0,
+ base_unpaused_private_mb_ms bigint NOT NULL DEFAULT 0,
+ base_billable_mb_ms bigint NOT NULL DEFAULT 0
 );
 CREATE TABLE sandbox_session_domains (
  sandbox_id uuid NOT NULL,
