@@ -215,7 +215,10 @@ func main() {
 	// without truncating an in-flight stream.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	srv, guestPool := buildServerWithGuestPool(guestIP, uint16(port), deadline)
+	// The bridge counts the instance's activity and serves it on a control
+	// socket when vmmd asks for one (connection-survival ADR §2, P1d).
+	counters := startControl(ctx)
+	srv, guestPool := buildCountingServer(guestIP, uint16(port), deadline, counters)
 	if currentBridgeFramingFrom(os.Getenv("FAAS_BRIDGE_PROTOCOL")) == framingH2C {
 		go func() {
 			prewarmCtx, prewarmCancel := context.WithTimeout(ctx, guestH2CPrewarmTimeout)
@@ -228,7 +231,7 @@ func main() {
 
 	// Raw, TCP and UDP sessions share the socket (connection-survival ADR
 	// §2, P1b): each starts with a hello, HTTP connections never do.
-	httpLn := instancebridge.Split(ctx, ln, &instancebridge.Sessions{GuestIP: guestIP, Dial: dialGuest})
+	httpLn := instancebridge.Split(ctx, ln, &instancebridge.Sessions{GuestIP: guestIP, Dial: dialGuest, Counters: counters})
 	errc := make(chan error, 1)
 	go func() {
 		err := srv.Serve(httpLn)
@@ -316,7 +319,19 @@ func buildServer(guestIP string, guestPort uint16, deadline time.Time) *http.Ser
 }
 
 func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Time) (*http.Server, *guestTransportPool) {
+	return buildCountingServer(guestIP, guestPort, deadline, nil)
+}
+
+// buildCountingServer is buildServerWithGuestPool whose requests counters
+// counts (P1d; nil counts nothing). The count wraps the per-request handler
+// inside h2c, never h2c itself: h2c serves a whole prior-knowledge
+// connection in one call, and vmmd keeps pooled connections open while idle.
+func buildCountingServer(guestIP string, guestPort uint16, deadline time.Time, counters *instancebridge.Counters) (*http.Server, *guestTransportPool) {
 	guestPool := newGuestTransportPool(guestIP)
+	handler := newHandlerWithPool(guestIP, guestPort, deadline, guestPool)
+	if counters != nil {
+		handler = countRequests(handler, counters)
+	}
 	srv := &http.Server{
 		//nolint:staticcheck // ADR-127 §D2 (Layer 9) — the inner Handler is wrapped with
 		// h2c.NewHandler so the listener negotiates H2C prior-knowledge
@@ -328,7 +343,7 @@ func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Ti
 		// wrapped handler. See the import-block comment for the same
 		// rationale; once stdlib exposes a Protocols.Get indirection,
 		// both annotations can be removed in lockstep.
-		Handler: h2c.NewHandler(newHandlerWithPool(guestIP, guestPort, deadline, guestPool), &http2.Server{
+		Handler: h2c.NewHandler(handler, &http2.Server{
 			MaxConcurrentStreams: h2cMaxConcurrentStreams, // 100
 			MaxReadFrameSize:     h2cMaxReadFrameSize,     // 1 MiB
 			// MaxHeaderListSize is a client-side SETTINGS capability

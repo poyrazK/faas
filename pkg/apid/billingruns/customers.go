@@ -58,16 +58,20 @@ func (s *Service) billConsumer(ctx context.Context, acct state.Account, run stat
 // checkCompleteness records the completeness status and holds the item on
 // a detected gap when the run asks to.
 func (s *Service) checkCompleteness(ctx context.Context, acct state.Account, run state.BillingRun, item *state.BillingRunItem) (bool, *api.Problem) {
-	status, missing, err := s.Host.ConsumerCompleteness(ctx, acct, item.AppID, item.SourceID, run.PeriodStart, run.PeriodEnd)
+	report, err := s.Host.ConsumerCompleteness(ctx, acct, item.AppID, item.SourceID, run.PeriodStart, run.PeriodEnd)
 	if err != nil {
 		return false, api.ErrInternal("could not compare usage with request telemetry")
 	}
-	item.Completeness = status
-	if !run.HoldOnGaps || status != billing.CompletenessGapsDetected {
+	item.Completeness = report.Status
+	if !run.HoldOnGaps || report.Status != billing.CompletenessGapsDetected {
 		return false, nil
 	}
 	item.Outcome = state.BillingRunItemHeld
-	item.Reason = fmt.Sprintf("request telemetry saw at least %d successful requests the usage ledger did not bill; reconcile with `gregale consumers completeness` before invoicing", missing)
+	item.Reason = fmt.Sprintf("request telemetry saw at least %d successful requests the usage ledger did not bill; reconcile with `gregale consumers completeness` before invoicing", report.MissingRequests)
+	if !run.Finalize && run.Export == state.BillingRunExportNone {
+		heldAt := s.now()
+		item.UsageGapHours, item.UsageHeldAt = report.GapHours, &heldAt
+	}
 	return true, nil
 }
 

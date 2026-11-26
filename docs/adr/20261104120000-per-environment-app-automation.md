@@ -430,3 +430,9 @@ operators turn on once every gatewayd-internal runs this release. A stage's
 consumers are not billed: the gateway records their usage without a consumer
 and skips their plan admission, and billing runs read production's consumers
 only.
+
+Release order: (1) the per-environment columns, indexes and stage
+consumers; (2) platform-tenant consumer creation writes `ON CONFLICT (app_id,
+COALESCE(environment_id, zero uuid), external_ref)`, the per-environment
+index; (3) once every apid runs (2), the contract migration drops the
+app-wide indexes and full clones copy consumers, keys and plan assignments.
