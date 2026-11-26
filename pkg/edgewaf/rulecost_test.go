@@ -37,10 +37,12 @@ func compileInlineRemoving(remove string) (coraza.WAF, error) {
 %s
 Include @crs-setup.conf.example
 SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level=1"
-%sSecRuleEngine DetectionOnly
+%s
+%s%s
+SecRuleEngine DetectionOnly
 SecAuditEngine Off
 SecRequestBodyAccess Off
-SecResponseBodyAccess Off`, engine.directive(), rules.String())
+SecResponseBodyAccess Off`, engine.directive(), platformPolicy, rules.String(), platformOverrides)
 	return coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(coreruleset.FS).WithDirectives(directives))
 }
 
@@ -71,7 +73,8 @@ func TestInlineRuleSetCost(t *testing.T) {
 		t.Skip("set FAAS_WAF_FTW_DIR to a CRS tests/regression/tests checkout")
 	}
 	removals := []string{"", "932000-932999", "942000-942999", "941000-941999", "930000-931999",
-		"913000-913999 921000-921999", "932230 932250 932260", "932230 932235 932250 932260 932340", ""}
+		"913000-913999 921000-921999", "911000-911999 920000-920999", "933000-933999", "934000-934999",
+		"943000-944999", ""}
 	if v := os.Getenv("FAAS_WAF_RULE_COST_REMOVE"); v != "" {
 		removals = append([]string{""}, strings.Split(v, ";")...)
 	}

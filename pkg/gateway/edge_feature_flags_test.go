@@ -3,6 +3,7 @@ package gateway
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,41 @@ func TestEdgeWAFBlockingFlag(t *testing.T) {
 			}
 			if !tc.enforced && submit == nil {
 				t.Error("unreleased block rule was not sampled as observe")
+			}
+		})
+	}
+}
+
+// adr: 831 — amendment 21: a URI past the inspection bound is refused by a
+// block rule only for accounts edge_waf_strict_inspection includes; for the
+// rest the in-path check runs (on the bounded URI) and the sample says so.
+func TestEdgeWAFStrictInspectionFlag(t *testing.T) {
+	app := App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}
+	uri := "/search?q=" + strings.Repeat("a", api.EdgeWAFMaxInspectURIBytes)
+	for name, tc := range map[string]struct {
+		flags  *platformflags.Set
+		strict bool
+	}{
+		"no flags wired": {nil, true},
+		"unreleased":     {edgeFeatureSet("acct-1", platformflags.EdgeWAFBlocking), false},
+		"released":       {edgeFeatureSet("acct-1", platformflags.EdgeWAFBlocking, platformflags.EdgeWAFStrictInspection), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inline := &fakeWAFInline{result: WAFInlineResult{Outcome: WAFInlineClean}}
+			rule := &EdgeRuleWAFResolved{ID: "rule-1", AccountID: "acct-1", ParanoiaLevel: 1, AnomalyThreshold: 5, Mode: api.EdgeWAFModeBlock}
+			h := &Handler{edgeRules: wafRuleMatcher{rule: rule}, wafInspector: &recordingWAFInspector{}, wafInline: inline}
+			if tc.flags != nil {
+				h.WithEdgeFeatureFlags(tc.flags)
+			}
+			r := httptest.NewRequest(http.MethodGet, "http://app.example.test"+uri, nil)
+			w := httptest.NewRecorder()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
+			handled, _ := h.applyEdgeRuleWAF(rec, r, app, rec)
+			if handled != tc.strict {
+				t.Fatalf("refused = %v, want %v", handled, tc.strict)
+			}
+			if !tc.strict && (inline.calls != 1 || inline.last.Strict) {
+				t.Fatalf("in-path checks = %d (strict %v), want one baseline check", inline.calls, inline.last.Strict)
 			}
 		})
 	}
