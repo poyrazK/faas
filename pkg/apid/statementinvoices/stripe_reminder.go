@@ -85,9 +85,8 @@ func (s *Service) readStripeReminder(ctx context.Context, issue stripeInvoiceIss
 	review.Hash = stripeIssueHash(struct {
 		Account, Export, Customer string
 		StripeAmountRemaining     int64
-		ConnectionTime            time.Time
 		Review                    ProductStripeInvoiceReminderReview
-	}{issue.export.AccountID, issue.export.ID, invoice.Customer, invoice.AmountRemaining, issue.conn.updatedAt.UTC(), review})
+	}{issue.export.AccountID, issue.export.ID, invoice.Customer, invoice.AmountRemaining, review})
 	return review, nil
 }
 

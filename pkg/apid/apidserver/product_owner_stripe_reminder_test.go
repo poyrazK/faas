@@ -63,6 +63,7 @@ func testProductControlOwnerStripeReminder(t *testing.T, paidAfterReview bool) {
 	stripe.assertWrites(t, 1, 1, 2, 2)
 
 	started := fixture.now
+	dashboard.connectStripe(t, fixture.owner, "rk_test_stripe_rotated")
 	page = dashboard.call(t, "", nil, http.StatusOK, "Stripe reminder pending")
 	fixture.now = started.Add(api.ProductStripeInvoiceSendRetryWindow)
 	page = dashboard.call(t, "", nil, http.StatusOK, "Stripe reminder needs review", "Open invoice in Stripe")

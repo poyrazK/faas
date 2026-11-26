@@ -48,7 +48,9 @@ func (s *Service) ownerPaymentRow(c *ownerContext, item state.ProductOwnerPaymen
 		CanIssue:      item.PaddleDraft && s.canIssueInvoice(),
 		Remaining:     "Unknown", DueAt: "—", LastSync: "Never",
 		DocumentURL: ownerURL(c, item.TenantID, item.Period, params) + "#document-" + item.DocumentID,
-		HostedURL:   api.ProviderHostedURL(item.HostedInvoiceURL),
+	}
+	if !item.PaddleDraft {
+		row.HostedURL = api.ProviderHostedURL(item.HostedInvoiceURL)
 	}
 	switch item.Action {
 	case state.ProductOwnerPaymentDraft:

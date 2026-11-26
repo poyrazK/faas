@@ -118,7 +118,7 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	if !ok && p != nil {
 		if stored, err := exports.GetBillingConnection(ctx, export.AccountID, export.Provider); err == nil {
 			if key, opened := s.openKey(export.AccountID, stored); opened {
-				cached.conn = &connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode, updatedAt: stored.UpdatedAt}
+				cached.conn = &connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode}
 			}
 		}
 		conns[cacheKey] = cached

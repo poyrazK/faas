@@ -36,6 +36,7 @@ type fakePaddle struct {
 	billed          map[string]string
 	billedBusiness  map[string]string
 	billedAt        *time.Time
+	checkoutURL     string
 	totalMinor      string
 	prepared        map[string]fakePaddleDraftBilling
 	totalByAddress  map[string]string
@@ -222,6 +223,9 @@ func (f *fakePaddle) transaction(id string) (string, bool) {
 		if prepared.address != "" {
 			data["status"], data["address_id"], data["business_id"] = "ready", prepared.address, prepared.business
 			data["updated_at"] = prepared.updatedAt
+			if f.checkoutURL != "" {
+				data["checkout"] = map[string]string{"url": f.checkoutURL}
+			}
 		}
 		if _, billed := f.billed[id]; billed {
 			data["status"], data["billed_at"] = "billed", f.billedAt

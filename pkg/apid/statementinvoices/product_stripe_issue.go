@@ -156,14 +156,14 @@ func (i stripeInvoiceIssue) review(invoice stripeinvoice.InvoiceState, attempt s
 		InvoiceID: invoice.ID, Recipient: invoice.CustomerEmail, Currency: i.export.Currency, Livemode: i.export.Livemode,
 		TotalMinor: unit.ToISOMinor(invoice.Total, iso), AmountDueMinor: unit.ToISOMinor(invoice.AmountDue, iso), DueAt: dueAt.UTC(),
 	}
-	// invoice() has already matched this invoice and its statement under the
-	// current key. A replacement key for the same account leaves the approval
-	// valid and can resume the existing idempotent send.
+	// invoice() matches the provider invoice and statement under the current
+	// key. The reviewed terms stay valid through a same-account key rotation,
+	// including when the replacement key cannot read the account profile.
 	terms := stripeIssueHash(struct {
-		Account, Export, Customer, StripeAccount string
-		Total, AmountDue                         int64
-		Review                                   ProductStripeInvoiceSendReview
-	}{i.export.AccountID, i.export.ID, invoice.Customer, i.conn.stripeAccountID, invoice.Total, invoice.AmountDue, review})
+		Account, Export, Customer string
+		Total, AmountDue          int64
+		Review                    ProductStripeInvoiceSendReview
+	}{i.export.AccountID, i.export.ID, invoice.Customer, invoice.Total, invoice.AmountDue, review})
 	review.Hash = stripeIssueHash(struct {
 		Terms, Collection string
 		CurrentDue        *time.Time

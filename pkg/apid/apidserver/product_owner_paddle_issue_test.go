@@ -84,8 +84,10 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 	}
 	srv := apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "",
 		apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*time.Minute, "").WithProductControlEnabled(true)
+	const checkoutURL = "https://checkout.example.com/pay?_ptxn=txn_1"
 	paddle := &fakePaddle{
-		addresses: map[string]string{}, totalMinor: "900", billedAt: &issuedAt,
+		checkoutURL: checkoutURL,
+		addresses:   map[string]string{}, totalMinor: "900", billedAt: &issuedAt,
 		totalByAddress: map[string]string{"add_first": "1080", "add_changed": "1170"},
 	}
 	paddleServer := httptest.NewServer(paddle)
@@ -164,6 +166,10 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 	body = call(base+"/review", reviewForm, http.StatusOK)
 	expect(body, "Issue and send invoice", customer, "EUR 10.80", "Due 30 days after issuance", "Test")
 	checkProvider(0, "")
+	prepared, problem := srv.StatementInvoices().RefreshProductInvoicePayment(ctx, acct, scope, doc.ID)
+	if problem != nil || prepared.PaymentStatus != state.InvoicePaymentDraft || prepared.HostedInvoiceURL != "" {
+		t.Fatalf("unissued checkout exposed: %+v, %v", prepared, problem)
+	}
 	confirm := ownerConsoleForm(t, body, "confirm")
 	paddle.mu.Lock()
 	paddle.addresses[customer] = "add_changed"
@@ -194,7 +200,7 @@ func TestProductControlOwnerPaddleIssue(t *testing.T) {
 	if err != nil || synced.PaymentStatus != state.InvoicePaymentOpen || synced.StatusSyncedAt == nil ||
 		synced.DueAt == nil || !synced.DueAt.Equal(issuedAt.AddDate(0, 0, 30)) ||
 		synced.AmountRemainingMinor == nil || *synced.AmountRemainingMinor != 1170 ||
-		synced.ProviderInvoiceID != export.InvoiceID {
+		synced.ProviderInvoiceID != export.InvoiceID || synced.HostedInvoiceURL != checkoutURL {
 		t.Fatalf("issued payment status = %+v, %v", synced, err)
 	}
 	// A background sync that saw the draft before issuance cannot put it back.

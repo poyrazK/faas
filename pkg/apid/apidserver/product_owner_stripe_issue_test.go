@@ -23,19 +23,19 @@ import (
 )
 
 type stripeDraftSend struct {
-	mu                                                 sync.Mutex
-	invoiceID, customer, statement, export, email      string
-	status, collection, marker                         string
-	dueAt                                              *int64
-	prepares, finalizes, emails                        int
-	sendKeys                                           []string
-	sendAt, checkAt                                    time.Time
-	eventReads                                         int
-	eventsForbidden, matchEvent                        bool
-	losePrepareReply, loseFinalizeReply, loseSendReply bool
-	amountRemaining                                    int64
-	loseReminderReply                                  bool
-	unexpectedWrites                                   int
+	mu                                                  sync.Mutex
+	invoiceID, customer, statement, export, email       string
+	status, collection, marker                          string
+	dueAt                                               *int64
+	prepares, finalizes, emails                         int
+	sendKeys                                            []string
+	sendAt, checkAt                                     time.Time
+	eventReads                                          int
+	eventsForbidden, matchEvent, accountLookupForbidden bool
+	losePrepareReply, loseFinalizeReply, loseSendReply  bool
+	amountRemaining                                     int64
+	loseReminderReply                                   bool
+	unexpectedWrites                                    int
 }
 
 func (f *stripeDraftSend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +48,10 @@ func (f *stripeDraftSend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case authorization != "Bearer rk_test_stripe_reviewed" && authorization != "Bearer rk_test_stripe_rotated":
 		w.WriteHeader(http.StatusUnauthorized)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/account":
+		if f.accountLookupForbidden {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		_, _ = io.WriteString(w, `{"id":"acct_reviewed"}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/invoices":
 		_, _ = io.WriteString(w, `{"data":[]}`)
@@ -414,10 +418,19 @@ func testProductControlOwnerStripeSend(t *testing.T, recoverExpired bool) {
 	confirm = ownerConsoleForm(t, body, "confirm")
 	call("/confirm", confirm, http.StatusBadGateway, "Retry send")
 	checkProvider(1, 1, 0, 0)
+	wantAccountID := connection.StripeAccountID
+	if !recoverExpired {
+		// The replacement can still read and send this invoice even though
+		// Stripe denies the optional lookup of the account profile.
+		stripe.mu.Lock()
+		stripe.accountLookupForbidden = true
+		stripe.mu.Unlock()
+		wantAccountID = ""
+	}
 	dashboard.connectStripe(t, fixture.owner, "rk_test_stripe_rotated")
 	rotated, err := store.GetBillingConnection(ctx, fixture.acct.ID, state.BillingProviderStripe)
-	if err != nil || rotated.StripeAccountID != connection.StripeAccountID || !rotated.UpdatedAt.After(connection.UpdatedAt) {
-		t.Fatalf("expected a rotated key for the same Stripe account, got %+v, %v", rotated, err)
+	if err != nil || rotated.StripeAccountID != wantAccountID || !rotated.UpdatedAt.After(connection.UpdatedAt) {
+		t.Fatalf("rotated Stripe account ID = %q, want %q, err = %v", rotated.StripeAccountID, wantAccountID, err)
 	}
 	call("/confirm", confirm, http.StatusBadGateway, "Retry send")
 	checkProvider(1, 1, 1, 1)

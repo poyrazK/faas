@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -18,12 +19,14 @@ func TestLookupStripeDraftDeletion(t *testing.T) {
 	now := created.Add(time.Hour)
 	for _, tc := range []struct {
 		name, status, eventInvoice string
-		eventMode                  bool
+		eventMode, wasSynced       bool
 		eventStatus                int
 		wantDeleted, wantEventRead bool
 	}{
 		{name: "deletion before the first sync", status: state.InvoicePaymentDraft, eventInvoice: "in_draft", eventMode: true, wantDeleted: true, wantEventRead: true},
 		{name: "another invoice", status: state.InvoicePaymentDraft, eventInvoice: "in_other", eventMode: true, wantEventRead: true},
+		{name: "cached draft observation after reconnect", status: state.InvoicePaymentDraft, eventInvoice: "in_other", eventMode: true, wasSynced: true, wantEventRead: true},
+		{name: "verified deletion of a previously synced draft", status: state.InvoicePaymentDraft, eventInvoice: "in_draft", eventMode: true, wasSynced: true, wantDeleted: true, wantEventRead: true},
 		{name: "other mode", status: state.InvoicePaymentDraft, eventInvoice: "in_draft", wantEventRead: true},
 		{name: "events permission missing", status: state.InvoicePaymentDraft, eventStatus: http.StatusForbidden, wantEventRead: true},
 		{name: "issued balance", status: state.InvoicePaymentOpen, eventInvoice: "in_draft", eventMode: true},
@@ -58,7 +61,14 @@ func TestLookupStripeDraftDeletion(t *testing.T) {
 
 			p := stripeProvider{client: &stripeinvoice.Client{BaseURL: server.URL, HTTP: server.Client()}}
 			export := state.StatementInvoiceExport{ProviderInvoiceID: "in_draft", Livemode: true, PaymentStatus: tc.status, CreatedAt: created}
-			payment, known, err := lookupInvoicePayment(t.Context(), p, connection{key: "rk_live_test", livemode: true}, export, now)
+			rotation := now.Add(-5 * time.Minute)
+			if tc.wasSynced {
+				// A sync tick can still use its cached old key after a rotation.
+				observed := rotation.Add(time.Minute)
+				export.StatusSyncedAt = &observed
+			}
+			conn := connection{key: "rk_live_test", livemode: true, updatedAt: rotation}
+			payment, known, err := lookupInvoicePayment(t.Context(), p, conn, export, now)
 			if tc.wantDeleted {
 				if err != nil || !known || payment.Status != state.InvoicePaymentDeleted {
 					t.Fatalf("verified deletion returned %+v, known=%t, err=%v", payment, known, err)
@@ -72,6 +82,35 @@ func TestLookupStripeDraftDeletion(t *testing.T) {
 			}
 			if got := eventReads.Load(); got != wantReads {
 				t.Fatalf("event reads = %d, want %d", got, wantReads)
+			}
+		})
+	}
+}
+
+func TestPaddleCheckoutLinkRequiresIssuance(t *testing.T) {
+	const checkoutURL = "https://checkout.example.com/pay"
+	for _, tc := range []struct {
+		status, wantURL string
+	}{
+		{status: "draft"},
+		{status: "ready"},
+		{status: "canceled"},
+		{status: "billed", wantURL: checkoutURL},
+		{status: "past_due", wantURL: checkoutURL},
+		{status: "paid", wantURL: checkoutURL},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			payment, known, err := paddleTransactionPayment(paddleinvoice.TransactionState{Status: tc.status, CheckoutURL: checkoutURL})
+			if err != nil || !known || payment.HostedInvoiceURL != tc.wantURL {
+				t.Fatalf("observed checkout URL = %q, want %q, known=%t, err=%v", payment.HostedInvoiceURL, tc.wantURL, known, err)
+			}
+			// An existing export may already have an unissued checkout URL.
+			response := statementInvoiceExportResponse(state.StatementInvoiceExport{
+				Provider: state.BillingProviderPaddle, Status: state.StatementInvoiceExportCompleted,
+				PaymentStatus: payment.Status, HostedInvoiceURL: checkoutURL,
+			})
+			if response.HostedInvoiceURL != tc.wantURL {
+				t.Fatalf("existing checkout URL = %q, want %q", response.HostedInvoiceURL, tc.wantURL)
 			}
 		})
 	}

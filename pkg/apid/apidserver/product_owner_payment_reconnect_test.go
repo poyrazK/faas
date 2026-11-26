@@ -36,7 +36,7 @@ func TestProductControlOwnerPaymentSyncAfterReconnect(t *testing.T) {
 	}
 
 	const liveKey, missingKey = "rk_live_stripe_original", "rk_live_stripe_other"
-	var liveReads, draftReads, writes atomic.Int32
+	var liveReads, draftReads, eventReads, writes atomic.Int32
 	dashboard := fixture.dashboard(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writes.Add(1)
@@ -49,6 +49,17 @@ func TestProductControlOwnerPaymentSyncAfterReconnect(t *testing.T) {
 		case "/v1/invoices/" + draft.invoiceID:
 			draftReads.Add(1)
 			http.NotFound(w, r)
+		case "/v1/events":
+			eventReads.Add(1)
+			if r.URL.Query().Get("type") != "invoice.deleted" || r.Header.Get("Authorization") != "Bearer rk_test_stripe_reviewed" {
+				http.Error(w, "unexpected Stripe event lookup", http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{
+				"id": "evt_testdraftdeleted", "type": "invoice.deleted", "livemode": false,
+				"created": next.Add(-time.Minute).Unix(),
+				"data":    map[string]any{"object": map[string]string{"object": "invoice", "id": draft.invoiceID}},
+			}}})
 		case "/v1/invoices/" + live.invoiceID:
 			liveReads.Add(1)
 			if r.Header.Get("Authorization") != "Bearer "+liveKey {
@@ -117,8 +128,8 @@ func TestProductControlOwnerPaymentSyncAfterReconnect(t *testing.T) {
 	if liveReads.Load() != 0 || draftReads.Load() != 1 {
 		t.Fatalf("reads after mode mismatch: live %d, test %d", liveReads.Load(), draftReads.Load())
 	}
-	if export := load(draft.statement); export.PaymentStatus != state.InvoicePaymentDeleted {
-		t.Fatalf("confirmed draft on the matching connection = %+v", export)
+	if export := load(draft.statement); export.PaymentStatus != state.InvoicePaymentDeleted || export.NextStatusSyncAt != nil || eventReads.Load() != 1 {
+		t.Fatalf("verified draft deletion = %+v, event reads = %d", export, eventReads.Load())
 	}
 	found := false
 	for _, msg := range mailer.Snapshot() {

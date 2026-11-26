@@ -64,30 +64,23 @@ type provider interface {
 
 func lookupInvoicePayment(ctx context.Context, p provider, conn connection, export state.StatementInvoiceExport, observedAt time.Time) (state.StatementInvoicePayment, bool, error) {
 	payment, known, err := p.payment(ctx, conn, export.ProviderInvoiceID)
-	if err != nil || payment.Status != state.InvoicePaymentDeleted {
+	stripe, isStripe := p.(stripeProvider)
+	if !isStripe || !errors.Is(err, errInvoiceLookupUnconfirmed) ||
+		(export.PaymentStatus != state.InvoicePaymentDraft && export.PaymentStatus != "") {
 		return payment, known, err
 	}
-	// A missing invoice can be a deleted draft or an invoice the current
-	// connection cannot access. Accept deletion only for a draft observed on
-	// this connection. Preserve issued balances and keep checking them.
-	if export.PaymentStatus == state.InvoicePaymentDraft && export.StatusSyncedAt != nil &&
-		!conn.updatedAt.After(*export.StatusSyncedAt) {
-		return payment, known, nil
+
+	// A Stripe 404 can come from a different account. A deletion event proves
+	// the draft was removed even if its last successful read used another key.
+	from := export.CreatedAt
+	if earliest := observedAt.Add(-stripeinvoice.InvoiceSendEventLookback); from.Before(earliest) {
+		from = earliest
 	}
-	// A draft deleted before its first successful read has no observation
-	// timestamp. A matching Stripe event proves deletion without treating a
-	// bare 404 from the wrong account as a payment state.
-	if stripe, ok := p.(stripeProvider); ok && (export.PaymentStatus == state.InvoicePaymentDraft || export.PaymentStatus == "") {
-		from := export.CreatedAt
-		if earliest := observedAt.Add(-stripeinvoice.InvoiceSendEventLookback); from.Before(earliest) {
-			from = earliest
-		}
-		deleted, err := stripe.client.HasInvoiceDeletionEvent(ctx, conn.key, export.ProviderInvoiceID, export.Livemode, from, observedAt)
-		if err == nil && deleted {
-			return payment, known, nil
-		}
+	deleted, eventErr := stripe.client.HasInvoiceDeletionEvent(ctx, conn.key, export.ProviderInvoiceID, export.Livemode, from, observedAt)
+	if eventErr == nil && deleted {
+		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
 	}
-	return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
+	return payment, known, err
 }
 
 func (s *Service) provider(name string) provider {
@@ -330,7 +323,7 @@ func (p stripeProvider) payment(ctx context.Context, conn connection, invoiceID 
 
 func stripeInvoicePayment(invoice stripeinvoice.InvoiceState) (state.StatementInvoicePayment, bool, error) {
 	if invoice.Deleted {
-		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
 	}
 	// Stripe writes some currencies differently from ISO 4217; Gregale keeps
 	// ISO minor units (ADR-20261019100330).
@@ -497,7 +490,7 @@ func (p paddleProvider) payment(ctx context.Context, conn connection, id string)
 
 func paddleTransactionPayment(txn paddleinvoice.TransactionState) (state.StatementInvoicePayment, bool, error) {
 	if txn.Deleted {
-		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
 	}
 	status, ok := paddleStatuses[txn.Status]
 	if !ok {
@@ -508,7 +501,18 @@ func paddleTransactionPayment(txn paddleinvoice.TransactionState) (state.Stateme
 		remaining = 0
 	}
 	return knownPayment(state.StatementInvoicePayment{Status: status, AmountPaidMinor: max(txn.GrandTotal-remaining, 0),
-		AmountRemainingMinor: remaining, DueAt: txn.DueAt, PaidAt: txn.PaidAt}, txn.CheckoutURL)
+		AmountRemainingMinor: remaining, DueAt: txn.DueAt, PaidAt: txn.PaidAt}, paddleCheckoutURL(status, txn.CheckoutURL))
+}
+
+// Paddle can expose checkout for a ready draft. Only share the link after
+// issuance, including when reading a payment observation written by an older build.
+func paddleCheckoutURL(status, url string) string {
+	switch status {
+	case state.InvoicePaymentOpen, state.InvoicePaymentPaid:
+		return url
+	default:
+		return ""
+	}
 }
 
 // --- Lago (ADR-1507) ---
@@ -627,8 +631,10 @@ func (p lagoProvider) payment(ctx context.Context, conn connection, id string) (
 	}
 	var status string
 	switch {
-	case inv.Deleted:
+	case inv.Status == "deleted":
 		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+	case inv.Deleted:
+		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
 	case inv.Status == "voided":
 		status = state.InvoicePaymentVoid
 	case inv.Status == "finalized" && inv.PaymentStatus == "succeeded":

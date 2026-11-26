@@ -399,6 +399,9 @@ func statementInvoiceExportResponse(e state.StatementInvoiceExport) api.Statemen
 		SourceKind: e.SourceKind, PaymentStatus: e.PaymentStatus, AmountPaidMinor: e.AmountPaidMinor,
 		AmountRemainingMinor: e.AmountRemainingMinor, DueAt: e.DueAt, PaidAt: e.PaidAt,
 		HostedInvoiceURL: e.HostedInvoiceURL, StatusSyncedAt: e.StatusSyncedAt, Overdue: e.Overdue(time.Now())}
+	if e.Provider == state.BillingProviderPaddle {
+		out.HostedInvoiceURL = paddleCheckoutURL(e.PaymentStatus, out.HostedInvoiceURL)
+	}
 	if e.ProviderInvoiceID != "" {
 		out.DashboardURL = dashboardURL(e.Provider, e.Livemode, e.ProviderInvoiceID)
 	}
