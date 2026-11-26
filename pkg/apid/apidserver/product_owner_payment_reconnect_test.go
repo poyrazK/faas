@@ -141,6 +141,10 @@ func TestProductControlOwnerPaymentSyncAfterReconnect(t *testing.T) {
 
 	dashboard.connectStripe(t, fixture.owner, liveKey)
 	fixture.now = fixture.now.Add(api.StatementInvoiceSyncRetry)
+	// The failed manual refresh keeps its short claim. Advance the store's
+	// claim clock as well as the worker clock to let that lease expire.
+	claimTime := time.Now().Add(api.StatementInvoiceSyncRetry)
+	fixture.store.SetClockForTest(func() time.Time { return claimTime })
 	sync()
 	export := load(live.statement)
 	if export.PaymentStatus != state.InvoicePaymentPaid || export.AmountRemainingMinor == nil || *export.AmountRemainingMinor != 0 ||

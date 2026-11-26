@@ -168,7 +168,7 @@ func (s *Service) CustomerCheckOverduePayment(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	unavailable := api.NewProblem(http.StatusServiceUnavailable, api.CodeBillingProviderUnavailable, "Payment check unavailable",
+	unavailable := api.NewProblem(http.StatusServiceUnavailable, api.CodeBillingProviderUnavailable, "Payment provider unavailable",
 		"Could not confirm payment right now. Try again shortly or contact your product team.")
 	if s.RefreshHeldInvoicePayment == nil {
 		api.WriteProblem(w, unavailable)

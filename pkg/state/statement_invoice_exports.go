@@ -384,7 +384,7 @@ func (m *MemStore) ClaimStatementInvoiceExport(_ context.Context, accountID, exp
 	if !ok || e.AccountID != accountID {
 		return StatementInvoiceExport{}, ErrNotFound
 	}
-	if e.claimToken != token && e.claimedUntil.After(time.Now()) {
+	if e.claimToken != token && e.claimedUntil.After(m.clock()) {
 		return StatementInvoiceExport{}, ErrStatementInvoiceExportInProgress
 	}
 	e.claimToken, e.claimedUntil = token, until

@@ -96,8 +96,9 @@ func (s *Service) refreshInvoicePayment(parent context.Context, exports state.St
 	token := uuid.NewString()
 	claimed, err := exports.ClaimStatementInvoiceExport(parent, export.AccountID, export.ID, token, time.Now().Add(paymentRefreshLease))
 	if errors.Is(err, state.ErrStatementInvoiceExportInProgress) {
-		return empty, api.NewProblem(http.StatusConflict, api.CodeStatementInvoiceExportInProgress, "Payment refresh unavailable",
-			"A payment refresh or invoice update is already in progress. Try again shortly.")
+		problem := exportInProgress()
+		problem.Detail = "A payment refresh or invoice update is already in progress. Try again shortly."
+		return empty, problem
 	}
 	if err != nil {
 		return empty, api.ErrInternal("could not claim the invoice for payment refresh")
