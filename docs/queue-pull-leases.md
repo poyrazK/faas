@@ -8,7 +8,7 @@ for messages when it has capacity, and acks or nacks each one.
 [Organization queues](organization-queues.md) use the same lease contract and
 keep their backlog and receipts through creator departure or erasure.
 
-## Set up
+## Bind the queue to your worker app
 
 Give the app a **pull** binding for the queue:
 
@@ -22,7 +22,7 @@ curl -X POST "$GREGALE_API_URL/v1/apps/my-worker/queue-bindings" \
 the app's workers. Pair the binding with a `queue_depth` scaling target to
 scale the worker pool on the backlog.
 
-## Consume with the SDK
+## Run a background worker that processes the queue
 
 The SDK consumers lease with `wait_seconds`, run your handler, ack on success
 and nack (retry under the binding's policy) when it throws. While a handler
@@ -53,7 +53,7 @@ Outside Gregale, pass `apiKey` / `api_key` (a key with `queues:consume`).
 `concurrency` is per process; the binding's `max_concurrency` still caps the
 whole app.
 
-## Consume over HTTP
+## Process queue messages over HTTP from any language
 
 ```bash
 # Lease up to 10 messages, hidden from other consumers for 60 seconds.
