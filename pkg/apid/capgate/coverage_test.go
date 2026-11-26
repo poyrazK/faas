@@ -26,6 +26,8 @@ var legacyPolicyRoutes = []string{
 	"POST /v1/postgres/databases/{id}/data-api-catalog-preview",
 	"GET /v1/apps/{slug}/mcp-stats",
 	"GET /v1/apps/{slug}/monetization-funnel",
+	"GET /v1/apps/{slug}/consumer-identities",
+	"DELETE /v1/apps/{slug}/consumer-identities/{id}",
 }
 
 var (

@@ -3423,7 +3423,6 @@
         "/dashboard/apps/{}/mcp-readiness-policy",
         "/dashboard/apps/{}/mcp-task-compatibility",
         "/dashboard/mcp",
-        "/v1/apps/{}/consumer-identities",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-health",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-probe",
         "/v1/deployments/{}/mcp-admissions",
