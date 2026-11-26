@@ -1038,7 +1038,8 @@ gregale mcp server listing delete --app my-mcp     # unpublish
 
 `publish` lists the live server's tools and stores them with the listing.
 The page shows the tools as of the last publish, so publish again after
-you change them. A server that requires a client credential at the
+you change them. A republish keeps the title, summary, registry name and
+usage setting unless you pass them again. A server that requires a client credential at the
 gateway needs `--token-env <ENV>` so the CLI can list its tools.
 
 The page lives at `https://<gregale domain>/v1/consumer-signup/my-mcp/listing/page`
@@ -1053,7 +1054,10 @@ and shows:
 
 The page serves only while the app takes sign-ups. Its JSON is at
 `GET /v1/consumer-signup/my-mcp/listing`, which needs no credential. The
-endpoint must be https on the app's own host. The owner API is
+endpoint must be https on the app's own host (its platform URL or default
+custom domain); if the app stops answering on that host, for example after
+you remove the custom domain, the page stops serving until you publish
+again. The owner API is
 `GET`, `PUT` and `DELETE /v1/apps/my-mcp/mcp-listing`.
 
 To list the server in the [MCP registry](https://registry.modelcontextprotocol.io),

@@ -1,5 +1,10 @@
 -- ADR-20261126175800: a sold MCP server's public listing.
 
+-- name: CountOpenMCPListingCustomers :one
+-- The listing page's usage badge: production consumers not revoked.
+SELECT count(*)::bigint FROM api_consumers
+ WHERE account_id = $1 AND app_id = $2 AND environment_id IS NULL AND revoked_at IS NULL;
+
 -- name: GetMCPListing :one
 SELECT * FROM mcp_listings WHERE account_id = $1 AND app_id = $2;
 

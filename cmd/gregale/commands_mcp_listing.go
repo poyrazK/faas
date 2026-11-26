@@ -48,7 +48,17 @@ func cmdMCPListing(args []string) int {
 	defer cancel()
 	switch verb {
 	case "publish":
+		set := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 		req := api.PutMCPListingRequest{Title: *title, Summary: *summary, RegistryName: *registry, ShowUsage: *showUsage}
+		// Republishing refreshes the tools and keeps what the flags leave out.
+		current, err := c.GetMCPListing(ctx, *slug)
+		switch {
+		case err == nil:
+			req = mcpListingKeep(req, current, set)
+		case !isNotFound(err):
+			return printErr("Could not read the listing", err)
+		}
 		if req.Title == "" {
 			req.Title = *slug
 		}
@@ -121,6 +131,25 @@ func mcpListingPublish(ctx context.Context, c *Client, slug, path, tokenEnv stri
 	}
 	renderMCPListing(osStdout, listing)
 	return 0
+}
+
+// mcpListingKeep fills the fields whose flags were not given from the
+// published listing, so a republish after a tool change keeps the title,
+// summary, registry name and usage badge.
+func mcpListingKeep(req api.PutMCPListingRequest, current api.MCPListingResponse, set map[string]bool) api.PutMCPListingRequest {
+	if !set["title"] {
+		req.Title = current.Title
+	}
+	if !set["summary"] {
+		req.Summary = current.Summary
+	}
+	if !set["registry-name"] {
+		req.RegistryName = current.RegistryName
+	}
+	if !set["show-usage"] {
+		req.ShowUsage = current.ShowUsage
+	}
+	return req
 }
 
 // mcpListingTools keeps each tool's name, description and annotation title.

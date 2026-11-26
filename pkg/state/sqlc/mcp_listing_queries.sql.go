@@ -11,6 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countOpenMCPListingCustomers = `-- name: CountOpenMCPListingCustomers :one
+
+SELECT count(*)::bigint FROM api_consumers
+ WHERE account_id = $1 AND app_id = $2 AND environment_id IS NULL AND revoked_at IS NULL
+`
+
+type CountOpenMCPListingCustomersParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261126175800: a sold MCP server's public listing.
+// The listing page's usage badge: production consumers not revoked.
+func (q *Queries) CountOpenMCPListingCustomers(ctx context.Context, db DBTX, arg CountOpenMCPListingCustomersParams) (int64, error) {
+	row := db.QueryRow(ctx, countOpenMCPListingCustomers, arg.AccountID, arg.AppID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteMCPListing = `-- name: DeleteMCPListing :execrows
 DELETE FROM mcp_listings WHERE account_id = $1 AND app_id = $2
 `
@@ -29,7 +49,6 @@ func (q *Queries) DeleteMCPListing(ctx context.Context, db DBTX, arg DeleteMCPLi
 }
 
 const getMCPListing = `-- name: GetMCPListing :one
-
 SELECT app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at FROM mcp_listings WHERE account_id = $1 AND app_id = $2
 `
 
@@ -38,7 +57,6 @@ type GetMCPListingParams struct {
 	AppID     pgtype.UUID
 }
 
-// ADR-20261126175800: a sold MCP server's public listing.
 func (q *Queries) GetMCPListing(ctx context.Context, db DBTX, arg GetMCPListingParams) (McpListing, error) {
 	row := db.QueryRow(ctx, getMCPListing, arg.AccountID, arg.AppID)
 	var i McpListing

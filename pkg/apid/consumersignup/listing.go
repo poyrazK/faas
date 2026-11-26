@@ -41,6 +41,12 @@ func (s *Service) publicListing(w http.ResponseWriter, r *http.Request) (state.A
 		api.WriteProblem(w, api.ErrInternal("could not read the listing"))
 		return state.App{}, state.APIConsumerSignupSettings{}, state.MCPListing{}, false
 	}
+	// The endpoint was checked when published; a custom domain removed since
+	// may belong to someone else now, so the page never points at it.
+	if !mcplisting.OnAppHost(listing.Endpoint, s.Host.AppHosts(r.Context(), app)) {
+		httpkit.NotFound(w, "this MCP server is not listed")
+		return state.App{}, state.APIConsumerSignupSettings{}, state.MCPListing{}, false
+	}
 	return app, set, listing, true
 }
 
@@ -68,16 +74,10 @@ func (s *Service) Listing(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Plans = plans
 	if listing.ShowUsage {
-		consumers, err := s.Host.Store().ListAPIConsumersForApp(r.Context(), app.AccountID, app.ID)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
+		open, err := s.Host.Store().(state.MCPListingStore).CountOpenMCPListingCustomers(r.Context(), app.AccountID, app.ID)
+		if err != nil {
 			api.WriteProblem(w, api.ErrInternal("could not read the listing"))
 			return
-		}
-		var open int64
-		for _, c := range consumers {
-			if c.RevokedAt == nil {
-				open++
-			}
 		}
 		out.Customers = &open
 	}

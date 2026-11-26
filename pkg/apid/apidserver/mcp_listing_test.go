@@ -94,6 +94,7 @@ func TestMCPListing(t *testing.T) {
 	}
 
 	decode(t, e.Do(t, http.MethodDelete, "/v1/apps/search/mcp-listing", nil, nil), http.StatusNoContent, nil)
+	decode(t, e.Do(t, http.MethodDelete, "/v1/apps/search/mcp-listing", nil, nil), http.StatusNotFound, nil)
 	for _, path := range []string{"/listing", "/listing/page", "/server.json"} {
 		if res := e.Do(t, http.MethodGet, "/v1/consumer-signup/search"+path, nil, public); res.Code != http.StatusNotFound {
 			t.Errorf("%s after unpublish: %d", path, res.Code)

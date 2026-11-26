@@ -2038,6 +2038,8 @@ const (
 	// MCPListingMaxTools tools; titles, summaries, tool fields and the
 	// endpoint are at most these many characters, and the registry
 	// server.json description at most MCPListingRegistryDescriptionMax.
+	// The tools as stored JSON stay under MCPListingToolsMaxBytes, below the
+	// mcp_listings.tools CHECK of 262144 bytes with room for jsonb's spacing.
 	MCPListingMaxTools               = 200
 	MCPListingTitleMax               = 80
 	MCPListingSummaryMax             = 500
@@ -2047,6 +2049,7 @@ const (
 	MCPListingEndpointMax            = 2048
 	MCPListingRequestMaxBytes        = 512 << 10
 	MCPListingRegistryDescriptionMax = 100
+	MCPListingToolsMaxBytes          = 256000
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,

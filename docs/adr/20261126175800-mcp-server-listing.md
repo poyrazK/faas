@@ -34,6 +34,8 @@ optional usage badge; Gregale hosts it next to the sign-up page.
    `monetization-funnel`. They are part of the API monetization surface.
 2. **Endpoint.** The endpoint must be https on the app's own host (its
    platform URL or default custom domain): a listing never points elsewhere.
+   The public routes check it again on every read against the app's hosts
+   then, so a removed custom domain takes the page down until a republish.
 3. **Public routes** (no credential, the sign-up page's rate limit, only
    while the listing is published, the account has API monetization and
    the app has sign-up settings):

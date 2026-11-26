@@ -2473,6 +2473,7 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        413: `The request body is above 512 KiB (\`request_too_large\`).`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });
@@ -2498,7 +2499,7 @@ export class ConsumersService {
       },
       errors: {
         401: `code: unauthorized`,
-        404: `code: not_found`,
+        404: `The app does not exist or has no published listing.`,
       },
     });
   }

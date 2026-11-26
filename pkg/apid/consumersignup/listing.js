@@ -129,7 +129,11 @@
       message("Not found", "This MCP server is not listed.");
       return;
     }
-    render(await res.json());
+    try {
+      render(await res.json());
+    } catch (e) {
+      message("Unavailable", "Could not read this server's listing. Reload to try again.");
+    }
   }
 
   start();

@@ -35,6 +35,9 @@ func checkMCPListings(t *testing.T, ctx context.Context, st state.Store, account
 	if _, err := listings.GetMCPListing(ctx, other, appID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("other account get = %v", err)
 	}
+	if n, err := listings.CountOpenMCPListingCustomers(ctx, accountID, appID); err != nil || n != 0 {
+		t.Fatalf("open customers = %d, %v; want 0", n, err)
+	}
 	if err := listings.DeleteMCPListing(ctx, accountID, appID); err != nil {
 		t.Fatal(err)
 	}

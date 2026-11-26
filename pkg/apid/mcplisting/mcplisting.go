@@ -54,7 +54,11 @@ func Validate(req api.PutMCPListingRequest, accountID, appID string, hosts []str
 	tools := make([]state.MCPListingTool, 0, len(req.Tools))
 	seen := map[string]bool{}
 	for _, t := range req.Tools {
-		if !toolName.MatchString(t.Name) || utf8.RuneCountInString(t.Name) > api.MCPListingToolNameMax {
+		if n := utf8.RuneCountInString(t.Name); n > api.MCPListingToolNameMax {
+			return state.MCPListing{}, invalid(fmt.Sprintf("a tool name is longer than %d characters", api.MCPListingToolNameMax)).
+				WithLimit(api.MCPListingToolNameMax, int64(n))
+		}
+		if !toolName.MatchString(t.Name) {
 			return state.MCPListing{}, invalid(fmt.Sprintf("tool name %q must be 1-%d letters, digits, _ . or -", t.Name, api.MCPListingToolNameMax))
 		}
 		if seen[t.Name] {
@@ -69,13 +73,20 @@ func Validate(req api.PutMCPListingRequest, accountID, appID string, hosts []str
 		}
 		tools = append(tools, state.MCPListingTool{Name: t.Name, Title: strings.TrimSpace(t.Title), Description: strings.TrimSpace(t.Description)})
 	}
+	// The stored snapshot has its own byte cap: many long descriptions, or
+	// multi-byte text, can pass every per-field limit and still not fit.
+	if raw, err := json.Marshal(tools); err != nil || len(raw) > api.MCPListingToolsMaxBytes {
+		return state.MCPListing{}, invalid(fmt.Sprintf("the tools take more than %d bytes; shorten their descriptions or list fewer", api.MCPListingToolsMaxBytes)).
+			WithLimit(api.MCPListingToolsMaxBytes, int64(len(raw)))
+	}
 	return state.MCPListing{AccountID: accountID, AppID: appID, Title: req.Title, Summary: req.Summary, Endpoint: req.Endpoint,
 		Tools: tools, RegistryName: req.RegistryName, ShowUsage: req.ShowUsage}, nil
 }
 
 func checkEndpoint(raw string, hosts []string) *api.Problem {
-	if utf8.RuneCountInString(raw) > api.MCPListingEndpointMax {
-		return invalid(fmt.Sprintf("endpoint is longer than %d characters", api.MCPListingEndpointMax))
+	if n := utf8.RuneCountInString(raw); n > api.MCPListingEndpointMax {
+		return invalid(fmt.Sprintf("endpoint is longer than %d characters", api.MCPListingEndpointMax)).
+			WithLimit(api.MCPListingEndpointMax, int64(n))
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {

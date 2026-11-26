@@ -43,6 +43,9 @@ type MCPListingStore interface {
 	PutMCPListing(ctx context.Context, l MCPListing) (MCPListing, error)
 	// DeleteMCPListing unpublishes; ErrNotFound when nothing was published.
 	DeleteMCPListing(ctx context.Context, accountID, appID string) error
+	// CountOpenMCPListingCustomers counts the app's production consumers
+	// that are not revoked, for the listing's usage badge.
+	CountOpenMCPListingCustomers(ctx context.Context, accountID, appID string) (int64, error)
 }
 
 var (
@@ -90,6 +93,18 @@ func (m *MemStore) DeleteMCPListing(_ context.Context, accountID, appID string) 
 	}
 	delete(m.mcpListings, appID)
 	return nil
+}
+
+func (m *MemStore) CountOpenMCPListingCustomers(_ context.Context, accountID, appID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, c := range m.apiConsumers {
+		if c.AccountID == accountID && c.AppID == appID && c.EnvironmentID == "" && c.RevokedAt == nil {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func fromMCPListing(row sqlc.McpListing) (MCPListing, error) {
@@ -145,4 +160,13 @@ func (s *PgStore) DeleteMCPListing(ctx context.Context, accountID, appID string)
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *PgStore) CountOpenMCPListingCustomers(ctx context.Context, accountID, appID string) (int64, error) {
+	n, err := sqlc.New().CountOpenMCPListingCustomers(ctx, s.pool, sqlc.CountOpenMCPListingCustomersParams{
+		AccountID: uuidToPgtype(accountID), AppID: uuidToPgtype(appID)})
+	if err != nil {
+		return 0, fmt.Errorf("count MCP listing customers: %w", err)
+	}
+	return n, nil
 }

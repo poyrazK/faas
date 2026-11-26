@@ -43,6 +43,13 @@ func TestValidate(t *testing.T) {
 		"long description": func(r *api.PutMCPListingRequest) {
 			r.Tools[0].Description = strings.Repeat("x", api.MCPListingToolDescriptionMax+1)
 		},
+		"tools over the byte cap": func(r *api.PutMCPListingRequest) {
+			r.Tools = nil
+			for i := 0; i < api.MCPListingMaxTools; i++ {
+				// Every field is within its rune limit; the stored JSON is not.
+				r.Tools = append(r.Tools, api.MCPListingTool{Name: "t" + strconv.Itoa(i), Description: strings.Repeat("é", api.MCPListingToolDescriptionMax)})
+			}
+		},
 		"too many tools": func(r *api.PutMCPListingRequest) {
 			r.Tools = nil
 			for i := 0; i <= api.MCPListingMaxTools; i++ {
@@ -57,6 +64,30 @@ func TestValidate(t *testing.T) {
 		if _, p := mcplisting.Validate(req, "acct", "app", hosts); p == nil || p.Status != 422 {
 			t.Errorf("%s: problem = %v, want 422", name, p)
 		}
+	}
+}
+
+// Limit problems name the limit and the observed value.
+func TestValidateLimitFields(t *testing.T) {
+	req := valid()
+	req.Endpoint = "https://mcp.acme.dev/" + strings.Repeat("x", api.MCPListingEndpointMax)
+	if _, p := mcplisting.Validate(req, "acct", "app", hosts); p == nil || p.Limit == nil || *p.Limit != api.MCPListingEndpointMax || p.Observed == nil {
+		t.Fatalf("long endpoint problem = %+v", p)
+	}
+	req = valid()
+	req.Tools = []api.MCPListingTool{{Name: strings.Repeat("x", api.MCPListingToolNameMax+1)}}
+	if _, p := mcplisting.Validate(req, "acct", "app", hosts); p == nil || p.Limit == nil || *p.Limit != api.MCPListingToolNameMax {
+		t.Fatalf("long tool name problem = %+v", p)
+	}
+}
+
+// A stored endpoint serves only while the app still answers on its host.
+func TestOnAppHost(t *testing.T) {
+	if !mcplisting.OnAppHost("https://mcp.acme.dev/mcp", hosts) {
+		t.Fatal("endpoint on a current host refused")
+	}
+	if mcplisting.OnAppHost("https://mcp.acme.dev/mcp", []string{"search.gregale.app"}) {
+		t.Fatal("endpoint on a removed custom domain still served")
 	}
 }
 
