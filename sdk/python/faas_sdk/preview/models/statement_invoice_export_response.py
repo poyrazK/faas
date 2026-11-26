@@ -65,6 +65,12 @@ class StatementInvoiceExportResponse:
     overdue: bool | Unset = UNSET
     """Open, past its due date, with an amount remaining."""
     status_synced_at: datetime.datetime | Unset = UNSET
+    stripe_send_pending: bool | Unset = UNSET
+    """A reviewed Stripe issuance or delivery can be resumed."""
+    stripe_issued_at: datetime.datetime | Unset = UNSET
+    """When Stripe finalized this reviewed draft."""
+    stripe_sent_at: datetime.datetime | Unset = UNSET
+    """When Stripe accepted the manual invoice send."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -126,6 +132,16 @@ class StatementInvoiceExportResponse:
         if not isinstance(self.status_synced_at, Unset):
             status_synced_at = self.status_synced_at.isoformat()
 
+        stripe_send_pending = self.stripe_send_pending
+
+        stripe_issued_at: str | Unset = UNSET
+        if not isinstance(self.stripe_issued_at, Unset):
+            stripe_issued_at = self.stripe_issued_at.isoformat()
+
+        stripe_sent_at: str | Unset = UNSET
+        if not isinstance(self.stripe_sent_at, Unset):
+            stripe_sent_at = self.stripe_sent_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -168,6 +184,12 @@ class StatementInvoiceExportResponse:
             field_dict["overdue"] = overdue
         if status_synced_at is not UNSET:
             field_dict["status_synced_at"] = status_synced_at
+        if stripe_send_pending is not UNSET:
+            field_dict["stripe_send_pending"] = stripe_send_pending
+        if stripe_issued_at is not UNSET:
+            field_dict["stripe_issued_at"] = stripe_issued_at
+        if stripe_sent_at is not UNSET:
+            field_dict["stripe_sent_at"] = stripe_sent_at
 
         return field_dict
 
@@ -253,6 +275,22 @@ class StatementInvoiceExportResponse:
         else:
             status_synced_at = datetime.datetime.fromisoformat(_status_synced_at)
 
+        stripe_send_pending = d.pop("stripe_send_pending", UNSET)
+
+        _stripe_issued_at = d.pop("stripe_issued_at", UNSET)
+        stripe_issued_at: datetime.datetime | Unset
+        if isinstance(_stripe_issued_at, Unset):
+            stripe_issued_at = UNSET
+        else:
+            stripe_issued_at = datetime.datetime.fromisoformat(_stripe_issued_at)
+
+        _stripe_sent_at = d.pop("stripe_sent_at", UNSET)
+        stripe_sent_at: datetime.datetime | Unset
+        if isinstance(_stripe_sent_at, Unset):
+            stripe_sent_at = UNSET
+        else:
+            stripe_sent_at = datetime.datetime.fromisoformat(_stripe_sent_at)
+
         statement_invoice_export_response = cls(
             statement_id=statement_id,
             provider=provider,
@@ -276,6 +314,9 @@ class StatementInvoiceExportResponse:
             hosted_invoice_url=hosted_invoice_url,
             overdue=overdue,
             status_synced_at=status_synced_at,
+            stripe_send_pending=stripe_send_pending,
+            stripe_issued_at=stripe_issued_at,
+            stripe_sent_at=stripe_sent_at,
         )
 
         statement_invoice_export_response.additional_properties = d

@@ -16,6 +16,7 @@ fi
 runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/gregale-data-api.XXXXXX")"
 trap 'rm -rf "$runtime_dir"' EXIT
 cp cmd/gregale/templates/data-api/{config.mjs,access.mjs,server.mjs,openapi31.mjs,types.mjs,type-render.mjs,refresh.mjs,refresh-rotation.mjs,logging.mjs,timing.mjs,database-timing.mjs,admission.mjs,health.mjs,pool.mjs,deadline.mjs,sql-deadline.mjs,pipeline-read-gate.mjs,response-limit.mjs,shared-budget.mjs,rate-limit.mjs,user-concurrency.mjs,connection-observations.mjs,usage.mjs,storage.mjs,storage-sessions.mjs,data-maintenance.mjs,engine.mjs,changes.mjs,hooks-worker.mjs,dev.mjs,behavior-contract.mjs,dev-project.mjs,dev-upgrade.mjs,dev-explain.mjs,dev-access.mjs,guided-access.mjs,guided-mutations.mjs,mutation-observer.mjs,fixture-builder.mjs,starter-verification.json,dev-inspector.mjs,dev-browser.mjs,dev-requests.mjs,request-replay.mjs,hosted-replay.mjs,inspector.html,inspector.mjs,inspector-data.mjs,csv-import.mjs,csv-export.mjs,bulk-write.mjs,bulk-history.mjs,package.json,package-lock.json,runtime-version.json} "$runtime_dir/"
+cp cmd/gregale/templates/data-api/hosted-integration-verify.mjs "$runtime_dir/"
 cp cmd/gregale/templates/data-api-starter/migrations/{migrate.mjs,rpc-permissions.mjs} "$runtime_dir/"
 mkdir -p "$runtime_dir/rpc-runtime"
 cp cmd/gregale/templates/data-api/{types.mjs,type-render.mjs,config.mjs} "$runtime_dir/rpc-runtime/"
@@ -30,11 +31,12 @@ cp cmd/gregale/templates/data-api/csv-export.mjs "$support_console_dir/public/cs
 npm ci --prefix "$support_console_dir" --ignore-scripts
 npm test --prefix "$support_console_dir"
 DATA_API_SUPPORT_CONSOLE_DIR="$support_console_dir" node --test tests/data-api/support-console.test.mjs
-DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/dev-watch.test.mjs tests/data-api/dev-requests.test.mjs tests/data-api/dev-project.test.mjs tests/data-api/dev-upgrade.test.mjs tests/data-api/fixture-policy.test.mjs tests/data-api/explain.test.mjs tests/data-api/access.test.mjs tests/data-api/guided-access.test.mjs tests/data-api/guided-mutations.test.mjs tests/data-api/guided-lifecycle.test.mjs tests/data-api/hosted-replay.test.mjs
+DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/dev-watch.test.mjs tests/data-api/dev-requests.test.mjs tests/data-api/dev-project.test.mjs tests/data-api/dev-upgrade.test.mjs tests/data-api/fixture-policy.test.mjs tests/data-api/explain.test.mjs tests/data-api/access.test.mjs tests/data-api/guided-access.test.mjs tests/data-api/guided-mutations.test.mjs tests/data-api/guided-lifecycle.test.mjs tests/data-api/write-qualification.test.mjs tests/data-api/hosted-replay.test.mjs
 npm ci --prefix sdk/data --ignore-scripts
 npm test --prefix sdk/data
 node --test tests/data-api/replay-expiry-contract.test.mjs tests/data-api/mutation-journal-contract.test.mjs tests/data-api/receipt-diagnostics-contract.test.mjs tests/data-api/note-change-feed-contract.test.mjs tests/data-api/note-search-contract.test.mjs
 DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/type-helpers.test.mjs tests/data-api/input-validators.test.mjs tests/data-api/schema-forms.test.mjs tests/data-api/relationships.test.mjs tests/data-api/csv-import.test.mjs tests/data-api/csv-export.test.mjs tests/data-api/bulk-write.test.mjs tests/data-api/bulk-history.test.mjs tests/data-api/read-only.test.mjs
+DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/hosted-integration-client.test.mjs
 starter_dir="$runtime_dir/starter"
 cp -R cmd/gregale/templates/data-api-starter "$starter_dir"
 mkdir -p "$starter_dir/migrations/rpc-runtime"
@@ -59,6 +61,7 @@ if [[ "${1:-}" == "--integration" ]]; then
   integration_group env DATA_API_RUNTIME_DIR="$runtime_dir" node tests/data-api/load/verify.mjs --output "${DATA_API_LOAD_REPORT:-$runtime_dir/load-report.json}"
   integration_group env DATA_API_LOAD_FAILURE_TESTS=1 DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/load/integration.test.mjs
   integration_group env DATA_API_HOSTED_LOAD_SQL_TEST=1 DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/staging/load-postgres.test.mjs
+  integration_group env DATA_API_HOSTED_WRITE_SQL_TEST=1 DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/hosted-write-inspect.test.mjs
   integration_group env DATA_API_SUPPORT_CONSOLE_DIR="$support_console_dir" DATA_API_RUNTIME_DIR="$runtime_dir" node --test tests/data-api/support-console-postgres.test.mjs
   integration_group env DATA_API_SUPPORT_CONSOLE_DIR="$support_console_dir" node --test tests/data-api/support-audit-postgres.test.mjs tests/data-api/support-actions-postgres.test.mjs
   integration_group env DATA_API_RUNTIME_DIR="$runtime_dir" DATA_API_STARTER_DIR="$starter_dir" node --test tests/data-api/integration.test.mjs tests/data-api/storage.test.mjs tests/data-api/data-workflows.test.mjs tests/data-api/catalog-regressions.test.mjs tests/data-api/data-maintenance.test.mjs tests/data-api/remote-tls.test.mjs tests/data-api/lifecycle.test.mjs tests/data-api/row-security.test.mjs tests/data-api/starter.test.mjs tests/data-api/note-search.test.mjs tests/data-api/admission.test.mjs tests/data-api/deadline.test.mjs tests/data-api/pool.test.mjs tests/data-api/lock-contention.test.mjs tests/data-api/sql-deadline.test.mjs tests/data-api/sql-deadline-enrollment.test.mjs tests/data-api/refresh-rotation.test.mjs

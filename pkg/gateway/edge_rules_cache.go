@@ -60,6 +60,7 @@ import (
 type EdgeRuleCacheResolved struct {
 	EdgeRuleCondition
 	ID                          string
+	DataAPIPublicRead           bool // applies the Data API representation policy
 	AccountID                   string
 	AppID                       string
 	Priority                    int

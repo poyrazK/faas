@@ -7,18 +7,19 @@ import (
 )
 
 type dataAPIMigrationOptions struct {
-	AccessChecks string
-	Verify       bool
-	PlanCheck    bool
-	PlanBudget   string
-	Explain      bool
-	Collection   string
-	PlanBaseline string
-	PlanScenario string
-	Dependencies string
-	FromVersion  int
-	Fixture      string
-	DataCheck    string
+	WriteQualification *dataAPIWriteQualification
+	AccessChecks       string
+	Verify             bool
+	PlanCheck          bool
+	PlanBudget         string
+	Explain            bool
+	Collection         string
+	PlanBaseline       string
+	PlanScenario       string
+	Dependencies       string
+	FromVersion        int
+	Fixture            string
+	DataCheck          string
 }
 
 func cmdDataAPIMigration(args []string) int {

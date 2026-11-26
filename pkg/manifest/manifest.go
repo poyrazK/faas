@@ -660,6 +660,7 @@ type DaemonConfig struct {
 	ServiceProxyHTTPSListen string       `yaml:"service_proxy_https_listen,omitempty"`
 	ServiceProxyTLS         *TLSMaterial `yaml:"service_proxy_tls,omitempty"`
 	ServiceProxyCAPath      string       `yaml:"service_proxy_ca_path,omitempty"`
+	DataAPIInspectionCAPath string       `yaml:"data_api_inspection_ca_path,omitempty"`
 
 	// Outbound is the dial target. On a single-box install this is
 	// the unix socket; on a split-box fleet it's the tcp://

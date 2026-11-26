@@ -18,12 +18,16 @@ import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { AccountTraceLookupResponse } from '../models/AccountTraceLookupResponse.js';
 import type { AnonymousSessionRequest } from '../models/AnonymousSessionRequest.js';
 import type { AnonymousSessionResponse } from '../models/AnonymousSessionResponse.js';
+import type { ApproveBillingRunDraftExportRequest } from '../models/ApproveBillingRunDraftExportRequest.js';
 import type { BillingConnectionResponse } from '../models/BillingConnectionResponse.js';
 import type { BillingProvider } from '../models/BillingProvider.js';
+import type { BillingRunCollectionsResponse } from '../models/BillingRunCollectionsResponse.js';
+import type { BillingRunDraftExportReview } from '../models/BillingRunDraftExportReview.js';
 import type { BillingRunItemListResponse } from '../models/BillingRunItemListResponse.js';
 import type { BillingRunListResponse } from '../models/BillingRunListResponse.js';
 import type { BillingRunResponse } from '../models/BillingRunResponse.js';
 import type { BillingRunScheduleResponse } from '../models/BillingRunScheduleResponse.js';
+import type { BillingRunUsageHold } from '../models/BillingRunUsageHold.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { ClaimLinkResponse } from '../models/ClaimLinkResponse.js';
@@ -31,16 +35,22 @@ import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
 import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
 import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
+import type { LinkBillingRunStripeCustomerRequest } from '../models/LinkBillingRunStripeCustomerRequest.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
 import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
 import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
+import type { PutDraftBillingRunScheduleRequest } from '../models/PutDraftBillingRunScheduleRequest.js';
+import type { PutStripeSetupRequest } from '../models/PutStripeSetupRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SecurityActivityResponse } from '../models/SecurityActivityResponse.js';
 import type { SelectedTraceLookupResponse } from '../models/SelectedTraceLookupResponse.js';
+import type { SendStripeInvoiceRequest } from '../models/SendStripeInvoiceRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
 import type { SignInMethodsResponse } from '../models/SignInMethodsResponse.js';
+import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { StatementInvoiceListResponse } from '../models/StatementInvoiceListResponse.js';
+import type { StripeInvoiceSendReview } from '../models/StripeInvoiceSendReview.js';
 import type { UpdateAccountBillingInfoRequest } from '../models/UpdateAccountBillingInfoRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -1010,6 +1020,34 @@ export class AccountService {
     });
   }
   /**
+   * Connect Stripe or replace the key reviewed in Monetize.
+   * Creates a draft-only Stripe connection or rotates the reviewed key in the same mode, preserving existing collection and tax settings.
+   * @returns BillingConnectionResponse The stored connection with the key masked.
+   * @throws ApiError
+   */
+  public static putStripeSetup({
+    requestBody,
+  }: {
+    requestBody: PutStripeSetupRequest,
+  }): CancelablePromise<BillingConnectionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/billing-connections/stripe/setup',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Stripe rejected the key, its format, or a change of mode.`,
+        502: `Stripe could not be reached.`,
+        503: `Stripe could not be reached through the public edge.`,
+      },
+    });
+  }
+  /**
    * List invoices exported from usage statements, with their payment status.
    * @returns StatementInvoiceListResponse Exported invoices, newest first.
    * @throws ApiError
@@ -1043,6 +1081,100 @@ export class AccountService {
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Check the current Stripe payment status of one exported app consumer invoice.
+   * Reads the invoice from Stripe and updates Gregale's recorded balance after verifying the invoice identity and mode.
+   * @returns StatementInvoiceExportResponse Invoice export with the verified payment state.
+   * @throws ApiError
+   */
+  public static refreshStripeStatementInvoicePayment({
+    statementId,
+  }: {
+    /**
+     * App consumer usage statement linked to the Stripe invoice.
+     */
+    statementId: string,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/statement-invoices/{statement_id}/refresh',
+      path: {
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Stripe refused the configured key.`,
+        502: `Stripe could not confirm the current balance.`,
+      },
+    });
+  }
+  /**
+   * Review the live Stripe draft and its manual payment terms.
+   * Reads the intended recipient, Stripe amount due, mode and due date before owner approval.
+   * @returns StripeInvoiceSendReview Stripe invoice details bound to a review token.
+   * @throws ApiError
+   */
+  public static reviewStripeInvoiceSend({
+    statementId,
+  }: {
+    /**
+     * Finalized app consumer statement with a completed Stripe draft export.
+     */
+    statementId: string,
+  }): CancelablePromise<StripeInvoiceSendReview> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/statement-invoices/{statement_id}/send',
+      path: {
+        'statement_id': statementId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        502: `Stripe was unavailable during the draft review.`,
+      },
+    });
+  }
+  /**
+   * Issue and send one approved Stripe invoice for manual payment.
+   * Revalidates the reviewed terms, finalizes the existing draft and resumes delivery on retry without creating a new invoice.
+   * @returns StatementInvoiceExportResponse Same invoice export with its delivery receipt and payment state.
+   * @throws ApiError
+   */
+  public static sendReviewedStripeInvoice({
+    statementId,
+    requestBody,
+  }: {
+    /**
+     * Finalized app consumer statement with a completed Stripe draft export.
+     */
+    statementId: string,
+    requestBody: SendStripeInvoiceRequest,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/statement-invoices/{statement_id}/send',
+      path: {
+        'statement_id': statementId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Stripe rejected the reviewed invoice operation.`,
+        502: `The provider response was inconclusive. Retry the same reviewed invoice.`,
       },
     });
   }
@@ -1184,6 +1316,215 @@ export class AccountService {
     });
   }
   /**
+   * Read recorded Stripe payment totals for a completed draft billing run.
+   * @returns BillingRunCollectionsResponse Whole-run totals split by currency and Stripe mode.
+   * @throws ApiError
+   */
+  public static getBillingRunCollections({
+    id,
+  }: {
+    /**
+     * Completed draft billing run whose invoice payments are summarized.
+     */
+    id: string,
+  }): CancelablePromise<BillingRunCollectionsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs/{id}/collections',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Review Stripe draft export eligibility for one page of a completed run.
+   * Reads the original run items and checks the current statements and connection without calling Stripe.
+   * @returns BillingRunDraftExportReview Draft eligibility, amounts after credits and the Stripe connection version.
+   * @throws ApiError
+   */
+  public static reviewBillingRunDraftExports({
+    id,
+    cursor,
+  }: {
+    /**
+     * Completed draft billing run.
+     */
+    id: string,
+    /**
+     * The previous review page's next_cursor.
+     */
+    cursor?: string,
+  }): CancelablePromise<BillingRunDraftExportReview> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs/{id}/draft-exports',
+      path: {
+        'id': id,
+      },
+      query: {
+        'cursor': cursor,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Finalize a reviewed usage statement and export a Stripe draft.
+   * Rechecks the run item, revision, customer, Stripe connection and amount due after credits.
+   * The approval applies to one item of the selection. A retry resumes or returns the same export.
+   *
+   * @returns StatementInvoiceExportResponse The receipt for the approved run item and its Stripe draft.
+   * @throws ApiError
+   */
+  public static approveBillingRunDraftExport({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Completed draft billing run.
+     */
+    id: string,
+    requestBody: ApproveBillingRunDraftExportRequest,
+  }): CancelablePromise<StatementInvoiceExportResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/billing-runs/{id}/draft-exports',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Stripe refused the draft.`,
+        502: `The provider request failed. Retry resumes the export.`,
+      },
+    });
+  }
+  /**
+   * Link a Stripe customer from a blocked draft review row.
+   * Verifies a customer in the reviewed Stripe account and mode and saves it for future draft reviews.
+   * @returns void
+   * @throws ApiError
+   */
+  public static linkBillingRunStripeCustomer({
+    id,
+    consumerId,
+    requestBody,
+  }: {
+    /**
+     * Completed draft run containing the blocked statement.
+     */
+    id: string,
+    /**
+     * API consumer whose Stripe billing customer is missing.
+     */
+    consumerId: string,
+    requestBody: LinkBillingRunStripeCustomerRequest,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/billing-runs/{id}/draft-exports/{consumer_id}/stripe-customer',
+      path: {
+        'id': id,
+        'consumer_id': consumerId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The Stripe customer is unavailable with the connected credential.`,
+        502: `Stripe could not verify the account or customer for this link.`,
+      },
+    });
+  }
+  /**
+   * Read the captured evidence for a billing run usage hold.
+   * Compares the recorded minimum with the current billing ledger for each affected UTC hour.
+   * @returns BillingRunUsageHold Captured gap hours and the run item's current status.
+   * @throws ApiError
+   */
+  public static getBillingRunUsageHold({
+    id,
+    consumerId,
+  }: {
+    /**
+     * Completed draft billing run with recorded usage holds.
+     */
+    id: string,
+    /**
+     * App consumer held for a request telemetry gap.
+     */
+    consumerId: string,
+  }): CancelablePromise<BillingRunUsageHold> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs/{id}/usage-holds/{consumer_id}',
+      path: {
+        'id': id,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Recheck usage for a single held app consumer.
+   * Preserves observed gaps and refreshes the customer's draft once the billing ledger covers every recorded hour.
+   * @returns BillingRunUsageHold Updated gap evidence and either the held item or its recovered draft.
+   * @throws ApiError
+   */
+  public static recheckBillingRunUsageHold({
+    id,
+    consumerId,
+  }: {
+    /**
+     * Completed draft billing run with recorded usage holds.
+     */
+    id: string,
+    /**
+     * App consumer held for a request telemetry gap.
+     */
+    consumerId: string,
+  }): CancelablePromise<BillingRunUsageHold> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/billing-runs/{id}/usage-holds/{consumer_id}',
+      path: {
+        'id': id,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
    * Get the account's monthly billing run schedule.
    * @returns BillingRunScheduleResponse The schedule and when it next starts a run.
    * @throws ApiError
@@ -1238,6 +1579,61 @@ export class AccountService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Create a draft-only monthly schedule or change its delay.
+   * Creates the schedule only if absent, or adjusts the reviewed version while preserving the next month and billing options.
+   * @returns BillingRunScheduleResponse The saved draft schedule.
+   * @throws ApiError
+   */
+  public static putDraftBillingRunSchedule({
+    requestBody,
+  }: {
+    requestBody: PutDraftBillingRunScheduleRequest,
+  }): CancelablePromise<BillingRunScheduleResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/billing-run-schedule/draft',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `The delay is outside the supported range.`,
+      },
+    });
+  }
+  /**
+   * Disable the reviewed draft-only schedule.
+   * Removes the matching draft schedule. Any billing run already started continues.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteDraftBillingRunSchedule({
+    expectedUpdatedAt,
+  }: {
+    /**
+     * The reviewed schedule version as returned in updated_at.
+     */
+    expectedUpdatedAt: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/billing-run-schedule/draft',
+      query: {
+        'expected_updated_at': expectedUpdatedAt,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

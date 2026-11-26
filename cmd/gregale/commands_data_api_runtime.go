@@ -141,7 +141,7 @@ func dataAPIRuntimeArchiveFiles(runtime dataAPIRuntimeBundle, skip ...string) []
 
 // deployDataAPIRuntime uploads the runtime alone, for an API whose schema is
 // managed elsewhere.
-func deployDataAPIRuntime(ctx context.Context, client *api.Client, slug, scope, timeout string) int {
+func deployDataAPIRuntime(ctx context.Context, client *api.Client, slug, scope, timeout string, onQueued ...func(api.DeploymentResponse)) int {
 	runtime, err := resolveDataAPIRuntime(ctx, client, slug)
 	if err != nil {
 		return printErr("Could not get the Data API runtime", err)
@@ -149,7 +149,7 @@ func deployDataAPIRuntime(ctx context.Context, client *api.Client, slug, scope, 
 	reportDataAPIRuntime(runtime)
 	return deployDataAPIArchive(ctx, slug, scope, timeout, func(dest string) error {
 		return writeDataAPIArchive(dest, dataAPIRuntimeArchiveFiles(runtime))
-	})
+	}, onQueued...)
 }
 
 func reportDataAPIRuntime(runtime dataAPIRuntimeBundle) {

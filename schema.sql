@@ -6488,6 +6488,44 @@ END $$;
 
 
 --
+-- Name: bump_data_api_binding_inspection_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bump_data_api_binding_inspection_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF ROW(NEW.account_id, NEW.database_account_id, NEW.database_id, NEW.app_id, NEW.scope, NEW.environment_key, NEW.access, NEW.state, NEW.deleted_at, NEW.credential_generation, NEW.credential_ref, NEW.provider_identity_id, NEW.rotation_previous_generation, NEW.cutover_id)
+     IS DISTINCT FROM ROW(OLD.account_id, OLD.database_account_id, OLD.database_id, OLD.app_id, OLD.scope, OLD.environment_key, OLD.access, OLD.state, OLD.deleted_at, OLD.credential_generation, OLD.credential_ref, OLD.provider_identity_id, OLD.rotation_previous_generation, OLD.cutover_id) THEN
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision + 1;
+  ELSE
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: bump_data_api_database_inspection_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bump_data_api_database_inspection_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF ROW(NEW.account_id, NEW.org_id, NEW.cutover_id, NEW.backend_id, NEW.backend_fingerprint, NEW.provider_resource_id, NEW.data_resource_id, NEW.state, NEW.deleted_at, NEW.desired_generation, NEW.observed_generation)
+     IS DISTINCT FROM ROW(OLD.account_id, OLD.org_id, OLD.cutover_id, OLD.backend_id, OLD.backend_fingerprint, OLD.provider_resource_id, OLD.data_resource_id, OLD.state, OLD.deleted_at, OLD.desired_generation, OLD.observed_generation) THEN
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision + 1;
+  ELSE
+    NEW.data_api_inspection_revision := OLD.data_api_inspection_revision;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: capture_binding_promotion_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27254,6 +27292,19 @@ $$;
 
 
 --
+-- Name: reject_data_api_inspection_evidence_update(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_data_api_inspection_evidence_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'Data API inspection evidence is immutable' USING ERRCODE = '23514';
+END;
+$$;
+
+
+--
 -- Name: reject_event_execution_outcome_update(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -38931,6 +38982,50 @@ COMMENT ON COLUMN public.data_api_change_hook_reports.last_dropped_at IS 'ADR-20
 
 
 --
+-- Name: data_api_inspection_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_inspection_admissions (
+    task_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    table_name text NOT NULL,
+    nonce text NOT NULL,
+    binding_revision bigint NOT NULL,
+    database_revision bigint NOT NULL,
+    runtime_generation bigint NOT NULL,
+    credential_generation bigint NOT NULL,
+    target_digest text NOT NULL,
+    trust_digest text NOT NULL,
+    CONSTRAINT data_api_inspection_admissions_binding_revision_check CHECK ((binding_revision > 0)),
+    CONSTRAINT data_api_inspection_admissions_credential_generation_check CHECK ((credential_generation > 0)),
+    CONSTRAINT data_api_inspection_admissions_database_revision_check CHECK ((database_revision > 0)),
+    CONSTRAINT data_api_inspection_admissions_nonce_check CHECK ((nonce ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT data_api_inspection_admissions_runtime_generation_check CHECK ((runtime_generation > 0)),
+    CONSTRAINT data_api_inspection_admissions_table_name_check CHECK ((table_name ~ '^[A-Za-z_][A-Za-z0-9_]{0,62}$'::text)),
+    CONSTRAINT data_api_inspection_admissions_target_digest_check CHECK ((target_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT data_api_inspection_admissions_trust_digest_check CHECK ((trust_digest ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: data_api_inspection_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_inspection_executions (
+    task_id uuid NOT NULL,
+    protocol_version smallint NOT NULL,
+    stdout_sha256 bytea NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    CONSTRAINT data_api_inspection_executions_protocol_version_check CHECK ((protocol_version = ANY (ARRAY[5, 6]))),
+    CONSTRAINT data_api_inspection_executions_stdout_sha256_check CHECK ((octet_length(stdout_sha256) = 32))
+);
+
+
+--
 -- Name: data_api_runtime_connection_observations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -48542,12 +48637,14 @@ CREATE TABLE public.managed_postgres_bindings (
     cutover_id uuid,
     connection_limit bigint DEFAULT 0 NOT NULL,
     database_account_id uuid NOT NULL,
+    data_api_inspection_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT managed_postgres_bindings_access_v2_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text, 'session'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
     CONSTRAINT managed_postgres_bindings_connection_limit_check CHECK (((connection_limit >= 0) AND (connection_limit <= 84))),
     CONSTRAINT managed_postgres_bindings_credential_generation_check CHECK ((credential_generation >= 1)),
+    CONSTRAINT managed_postgres_bindings_data_api_inspection_revision_check CHECK ((data_api_inspection_revision > 0)),
     CONSTRAINT managed_postgres_bindings_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_bindings_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_bindings_lease_pair_chk CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
@@ -49011,6 +49108,7 @@ CREATE TABLE public.managed_postgres_databases (
     preview_environment_id text,
     preview_pr_number integer,
     expires_at timestamp with time zone,
+    data_api_inspection_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -49024,6 +49122,7 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_check4 CHECK (((data_resource_id IS NULL) OR ((data_resource_id <> ''::text) AND (length(data_resource_id) <= 255) AND (provider_resource_id IS NOT NULL)))),
     CONSTRAINT managed_postgres_databases_check5 CHECK (((clone_resource_role = 'target'::text) OR (environment_clone_operation_id IS NOT NULL))),
     CONSTRAINT managed_postgres_databases_clone_resource_role_check CHECK ((clone_resource_role = ANY (ARRAY['target'::text, 'checkpoint'::text]))),
+    CONSTRAINT managed_postgres_databases_data_api_inspection_revision_check CHECK ((data_api_inspection_revision > 0)),
     CONSTRAINT managed_postgres_databases_desired_generation_check CHECK ((desired_generation >= 1)),
     CONSTRAINT managed_postgres_databases_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
@@ -68650,6 +68749,22 @@ ALTER TABLE ONLY public.data_api_access_configs
 
 ALTER TABLE ONLY public.data_api_change_hook_reports
     ADD CONSTRAINT data_api_change_hook_reports_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_pkey PRIMARY KEY (task_id);
+
+
+--
+-- Name: data_api_inspection_executions data_api_inspection_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_executions
+    ADD CONSTRAINT data_api_inspection_executions_pkey PRIMARY KEY (task_id);
 
 
 --
@@ -94998,6 +95113,20 @@ CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE 
 
 
 --
+-- Name: data_api_inspection_admissions data_api_inspection_admission_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_api_inspection_admission_immutable BEFORE UPDATE ON public.data_api_inspection_admissions FOR EACH ROW EXECUTE FUNCTION public.reject_data_api_inspection_evidence_update();
+
+
+--
+-- Name: data_api_inspection_executions data_api_inspection_execution_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_api_inspection_execution_immutable BEFORE UPDATE ON public.data_api_inspection_executions FOR EACH ROW EXECUTE FUNCTION public.reject_data_api_inspection_evidence_update();
+
+
+--
 -- Name: accounts data_pipeline_account_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -100157,6 +100286,20 @@ CREATE TRIGGER workflow_webhook_routing_guard BEFORE INSERT OR UPDATE ON public.
 
 
 --
+-- Name: managed_postgres_bindings zz_data_api_binding_inspection_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_data_api_binding_inspection_revision BEFORE UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.bump_data_api_binding_inspection_revision();
+
+
+--
+-- Name: managed_postgres_databases zz_data_api_database_inspection_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER zz_data_api_database_inspection_revision BEFORE UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.bump_data_api_database_inspection_revision();
+
+
+--
 -- Name: queue_bindings zz_environment_gitops_guard_queue_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -104663,6 +104806,38 @@ ALTER TABLE ONLY public.data_api_access_configs
 
 ALTER TABLE ONLY public.data_api_change_hook_reports
     ADD CONSTRAINT data_api_change_hook_reports_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.managed_postgres_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_admissions data_api_inspection_admissions_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_admissions
+    ADD CONSTRAINT data_api_inspection_admissions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_inspection_executions data_api_inspection_executions_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_inspection_executions
+    ADD CONSTRAINT data_api_inspection_executions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
 
 
 --

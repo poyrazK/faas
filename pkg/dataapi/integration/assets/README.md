@@ -30,6 +30,10 @@ const data = createAppData({
 const { data: notes, error } = await listNotes(data)
 ```
 
+The client uses the mode carried by the generated types. To enable exact
+numbers later, set `"numeric_mode": "exact"` in
+`gregale-data/data-api.dev.json` and regenerate the types with `data-api serve`.
+
 The example uses `auth` and `dataApiUrl` supplied by your app. During local
 development use the local API URL and matching Alice/Bob token from the private
 inspector/session, never a management API key. No credentials are committed.
