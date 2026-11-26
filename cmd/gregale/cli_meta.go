@@ -3876,11 +3876,14 @@ var cliCommands = []cliCommand{
 			"gregale api consumer plan set my-api CONSUMER_ID --plan free",
 		},
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List an app's API consumers", Positionals: []string{"<slug>"}},
+			{Name: "list", Short: "List an app's API consumers", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "environment", Short: "project environment whose consumers to list; omitted is production", Value: "ENV"},
+			}},
 			{Name: "create", Short: "Register an API consumer", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "external-ref", Short: "stable consumer reference", Value: "REF", Req: true},
 				{Name: "name", Short: "consumer display name", Value: "TEXT", Req: true},
 				{Name: "trial-days", Short: "free trial from the next minute: usage is priced at zero for this many days", Value: "N"},
+				{Name: "environment", Short: "project environment whose consumers to create it in; trials are production's; omitted is production", Value: "ENV"},
 			}},
 			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}},

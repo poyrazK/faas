@@ -121,8 +121,11 @@ func (h *Handler) consumerPlanPolicy(ctx context.Context, app App, consumerID st
 // unverifiable requests never become billable. Consumers on unlimited plans
 // cost one cached lookup and no counter write.
 func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, deploymentSmoke bool) bool {
-	consumerID := authenticatedFrom(r.Context()).ConsumerID
-	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" || !h.APIMonetizationEnabledFor(app.AccountID) {
+	auth := authenticatedFrom(r.Context())
+	consumerID := auth.ConsumerID
+	// A stage's consumers are not metered against consumer plans
+	// (ADR-20261104120000 amendment 2026-11-22).
+	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" || auth.StageConsumer || !h.APIMonetizationEnabledFor(app.AccountID) {
 		return true
 	}
 	policy, err := h.consumerPlanPolicy(r.Context(), app, consumerID)

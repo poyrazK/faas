@@ -48,7 +48,7 @@ func (s *PgStore) CreatePlatformTenantSelfConsumer(ctx context.Context, in Creat
 	// The unique identity is per app. A matching, already-linked active row is
 	// a safe replay and does not need provisioning to remain enabled.
 	existing, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
-		from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 for update`,
+		from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 and environment_id is null for update`,
 		in.AccountID, appID, in.ExternalRef))
 	if err == nil {
 		if !samePlatformTenantSelfConsumer(existing, in.TenantID, in.Name) {
@@ -96,7 +96,7 @@ func (s *PgStore) CreatePlatformTenantSelfConsumer(ctx context.Context, in Creat
 		// tenant row lock. Resolve only an exact same-tenant replay; never adopt
 		// an unlinked or differently named consumer implicitly.
 		existing, readErr := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
-			from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 for update`,
+			from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 and environment_id is null for update`,
 			in.AccountID, appID, in.ExternalRef))
 		if readErr != nil {
 			return APIConsumer{}, false, readErr
