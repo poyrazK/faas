@@ -147,6 +147,12 @@ func TestAnonymousDeployIsClaimedInPlace(t *testing.T) {
 		!strings.Contains(rec.Body.String(), "warm_pool_size") {
 		t.Errorf("POST /v1/apps warm_pool_size = %d %s, want claim_required naming the field", rec.Code, rec.Body.String())
 	}
+	// A new app takes the account's suffix; a short name is refused with the
+	// name to use.
+	if rec := claimBearer(h, http.MethodPost, "/v1/apps", sess.APIKey, `{"slug":"app"}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), api.AnonymousAppSlug(sess.AccountID, "app")) {
+		t.Errorf("POST /v1/apps without the suffix = %d %s, want claim_required naming the suffixed name", rec.Code, rec.Body.String())
+	}
 	// A WebSocket upgrade under a read root acts rather than reads.
 	upgrade := httptest.NewRequest(http.MethodGet, "/v1/apps/agent-app", nil)
 	upgrade.Header.Set("Authorization", "Bearer "+sess.APIKey)
