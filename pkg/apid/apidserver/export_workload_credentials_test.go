@@ -7,10 +7,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// RevokeUngrantedWorkloadCredentials runs the post-apply revocation for
+// ReconcileWorkloadCredentials runs the post-apply revocation for
 // changed apps.
-func (r *server) RevokeUngrantedWorkloadCredentials(changed []state.App) {
-	r.revokeUngrantedWorkloadCredentials(context.Background(), changed)
+func (r *server) ReconcileWorkloadCredentials(changed []state.App) {
+	r.reconcileWorkloadCredentials(context.Background(), changed)
 }
 
 // SweepWorkloadCredentials runs one workload credential sweep as of now
