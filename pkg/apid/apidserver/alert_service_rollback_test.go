@@ -37,7 +37,7 @@ func TestAlertServiceRollbackResumesExactHandoffAndWaitsForDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fire, won, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now())
+	fire, won, _, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now())
 	if err != nil || !won {
 		t.Fatalf("fire %v %v", won, err)
 	}

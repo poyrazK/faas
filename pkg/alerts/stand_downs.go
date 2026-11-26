@@ -24,7 +24,7 @@ import (
 // standDownNotes explain, per reason, why a notice arrives without the
 // metric recovering.
 var standDownNotes = map[string]string{
-	state.StandDownDisabled:    "The rule was disabled, so Gregale stopped evaluating it.",
+	state.StandDownDisabled:    "Live notifications for this rule were disabled.",
 	state.StandDownNotReleased: "The account's plan or features no longer cover this rule, so Gregale stopped evaluating it.",
 	state.StandDownAppDeleted:  "The app was deleted, so Gregale stopped evaluating this rule.",
 	state.StandDownDeleted:     "The rule was deleted.",
@@ -35,7 +35,7 @@ var standDownNotes = map[string]string{
 // leaves the rule stranded and the next tick tries again.
 func (e *Evaluator) standDown(ctx context.Context, rule state.AlertRule, reason string, now time.Time, stats *Stats) {
 	// MCP readiness rules run their own incident lifecycle and notices.
-	if rule.State == state.AlertStateOk || string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+	if rule.ObserveOnly || rule.State == state.AlertStateOk || string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
 		return
 	}
 	wasFiring := e.episodeWasFiring(ctx, rule)
@@ -61,7 +61,9 @@ func (e *Evaluator) standDown(ctx context.Context, rule state.AlertRule, reason 
 		})
 	}
 	if rule.NotifyResolved && rule.WebhookURL != "" {
-		e.deliverResolve(ctx, rule, nil, reason, now, stats)
+		if held, ok := e.deferredFireRecipients(ctx, rule.ID, rule.LastFiredAt); ok && held.WebhookURL != rule.WebhookURL {
+			e.deliverResolve(ctx, rule, nil, reason, now, stats)
+		}
 	}
 }
 
@@ -145,8 +147,13 @@ func (e *Evaluator) deliverChannelStandDowns(ctx context.Context, now time.Time)
 			e.log.Warn("alerts: read channel for a stand-down", "channel", s.ChannelID, "err", err)
 			continue
 		}
+		destination := ch
+		if s.PagerDutyTargetSealed != nil {
+			destination.TargetSealed = s.PagerDutyTargetSealed
+			destination.PagerDutyRegion = s.PagerDutyRegion
+		}
 		errMsg := ""
-		if target, ok := openTarget(ids, ch); !ok {
+		if target, ok := openTarget(ids, destination); !ok {
 			errMsg = "could not open the channel destination; recreate the channel"
 		} else {
 			sctx, cancel := context.WithTimeout(ctx, channelSendBudget)
@@ -200,14 +207,50 @@ func (e *Evaluator) abandonStandDown(ctx context.Context, store state.AlertChann
 	}
 }
 
-// clearChannelStandDowns drops the notices a rule still owed: a new fire
-// supersedes them, as it does a resolve retry.
-func (e *Evaluator) clearChannelStandDowns(ctx context.Context, ruleID string) {
+// channelStandDownPending holds a new notification while the recipient still
+// owes an earlier episode a terminal event from entering Observe only.
+func (e *Evaluator) channelStandDownPending(ctx context.Context, ruleID, channelID string, fire bool) bool {
 	store, ok := e.store.(state.AlertChannelStandDownStore)
 	if !ok {
-		return
+		return false
 	}
-	if err := store.ClearAlertChannelStandDowns(ctx, ruleID); err != nil {
-		e.log.Warn("alerts: clear channel stand-downs", "rule", ruleID, "err", err)
+	pending, err := store.AlertChannelStandDownPending(ctx, ruleID, channelID, fire)
+	if err != nil {
+		e.log.Warn("alerts: check channel stand-down", "rule", ruleID, "channel", channelID, "err", err)
+		return true
 	}
+	return pending
+}
+
+// pagerDutyStandDownPending uses the remote destination, since different
+// Gregale channel rows can share a PagerDuty routing key and incident key.
+func (e *Evaluator) pagerDutyStandDownPending(ctx context.Context, ruleID string, ch state.NotificationChannel) bool {
+	store, ok := e.store.(state.AlertChannelStandDownStore)
+	if !ok || ch.Kind != alertchannels.KindPagerDuty {
+		return false
+	}
+	channels, err := store.ListPagerDutyObservationStandDownChannels(ctx, ruleID)
+	if err != nil {
+		e.log.Warn("alerts: check PagerDuty stand-down destinations", "rule", ruleID, "err", err)
+		return true
+	}
+	if len(channels) == 0 {
+		return false
+	}
+
+	ids := e.unsealIdentities()
+	target, ok := openTarget(ids, ch)
+	if !ok {
+		return true
+	}
+	for _, earlier := range channels {
+		if earlier.PagerDutyRegion != target.Region {
+			continue
+		}
+		previous, opened := openTarget(ids, earlier)
+		if !opened || previous.RoutingKey == target.RoutingKey {
+			return true
+		}
+	}
+	return false
 }

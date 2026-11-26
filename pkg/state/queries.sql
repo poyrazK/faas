@@ -22322,23 +22322,87 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb)
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb,sqlc.arg(observe_only),sqlc.arg(observation_enabled),sqlc.arg(environment_scope),sqlc.arg(recovery_confirmation_checks))
 RETURNING *;
+
+-- name: LockCustomerAlertRule :one
+SELECT * FROM alert_rules WHERE id=sqlc.arg(id) FOR UPDATE;
 
 -- name: UpdateCustomerAlertRule :one
 UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,mcp_min_calls),
- mcp_for_minutes=coalesce(sqlc.narg(mcp_for_minutes)::integer,mcp_for_minutes), name=coalesce(sqlc.narg(name)::text,name),enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
+ mcp_for_minutes=coalesce(sqlc.narg(mcp_for_minutes)::integer,mcp_for_minutes), name=coalesce(sqlc.narg(name)::text,name),enabled=sqlc.arg(enabled),
  metric=coalesce(sqlc.narg(metric)::text,metric),comparison=coalesce(sqlc.narg(comparison)::text,comparison),
  threshold=coalesce(sqlc.narg(threshold)::double precision,threshold),window_spec=coalesce(sqlc.narg(window_spec)::text,window_spec),
  action=coalesce(sqlc.narg(action)::text,action),webhook_url=coalesce(sqlc.narg(webhook_url)::text,webhook_url),
  webhook_secret_sealed=coalesce(sqlc.narg(webhook_secret_sealed)::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce(sqlc.narg(cooldown_minutes)::integer,cooldown_minutes),
+ recovery_confirmation_checks=coalesce(sqlc.narg(recovery_confirmation_checks)::integer,recovery_confirmation_checks),
  post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),
- notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),updated_at=now()
+ notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),
+ state=CASE WHEN observe_only <> sqlc.arg(observe_only)::boolean THEN 'ok' ELSE state END,
+ observe_only=sqlc.arg(observe_only),observation_enabled=sqlc.arg(observation_enabled),
+ environment_scope=coalesce(sqlc.narg(environment_scope)::text,environment_scope),
+ observed_incidents=sqlc.narg(observed_incidents)::jsonb,
+ latest_anomaly_evaluation=NULL,updated_at=sqlc.arg(updated_at)
 WHERE id=sqlc.arg(id) RETURNING *;
+
+-- name: CloseLiveAlertEpisodeForObservation :exec
+UPDATE alert_episodes AS episode SET resolved_at=greatest(episode.opened_at,sqlc.arg(ended_at)::timestamptz)
+WHERE episode.rule_id=sqlc.arg(id) AND episode.resolved_at IS NULL;
+
+-- name: LockAlertRuleObservationMode :one
+SELECT observe_only, environment_scope FROM alert_rules WHERE id=sqlc.arg(id) FOR UPDATE;
+
+-- name: RecordCustomerAlertObservation :execrows
+WITH recorded AS (
+ UPDATE alert_rules SET last_evaluated_at=sqlc.arg(evaluated_at)::timestamptz,
+ latest_anomaly_evaluation=sqlc.narg(evidence)::jsonb,
+ observed_incidents=sqlc.narg(incidents)::jsonb
+ WHERE id=sqlc.arg(id) AND observe_only AND observation_enabled
+ AND environment_scope=sqlc.arg(expected_environment_scope)
+ AND updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND last_evaluated_at IS NOT DISTINCT FROM sqlc.narg(expected_last_evaluated_at)::timestamptz
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < sqlc.arg(evaluated_at)::timestamptz)
+ RETURNING id
+), expired AS (
+ DELETE FROM alert_observation_checks USING recorded
+ WHERE rule_id=recorded.id AND evaluated_at <= sqlc.arg(coverage_cutoff)::timestamptz
+)
+INSERT INTO alert_observation_checks(rule_id,evaluated_at,skip_reason)
+SELECT id,sqlc.arg(evaluated_at)::timestamptz,sqlc.arg(skip_reason)::text FROM recorded;
+
+-- name: ListCustomerAlertObservationCoverage :many
+SELECT checks.skip_reason, count(*) FILTER (WHERE checks.evaluated_at > sqlc.arg(coverage_cutoff)::timestamptz) AS checks_in_window,
+ max(checks.evaluated_at)::timestamptz AS last_checked_at
+FROM alert_observation_checks AS checks
+JOIN alert_rules AS rule ON rule.id=checks.rule_id
+WHERE rule.id=sqlc.arg(id) AND rule.observe_only
+ AND rule.updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND checks.evaluated_at <= sqlc.arg(as_of)::timestamptz
+GROUP BY checks.skip_reason ORDER BY checks.skip_reason;
+
+-- name: DeleteCustomerAlertObservationChecks :exec
+DELETE FROM alert_observation_checks WHERE rule_id=sqlc.arg(id);
+
+-- name: RecordCustomerAlertAnomalyEvaluation :execrows
+-- A skipped observation leaves any open alert episode alone.
+WITH scope_aware AS (
+ SELECT set_config('faas.scoped_alert_state', 'on', true)
+)
+UPDATE alert_rules SET
+ last_evaluated_at=sqlc.arg(evaluated_at)::timestamptz,
+ latest_anomaly_evaluation=sqlc.narg(evidence)::jsonb,
+ updated_at=CASE WHEN state <> sqlc.narg(skipped_state)::text
+                 THEN greatest(updated_at,sqlc.arg(evaluated_at)::timestamptz) ELSE updated_at END,
+ state=coalesce(sqlc.narg(skipped_state)::text,state)
+FROM scope_aware
+WHERE id=sqlc.arg(id) AND enabled AND comparison IN ('above_baseline','below_baseline')
+ AND updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND (recovery_confirmation_checks = 1 OR last_evaluated_at IS NOT DISTINCT FROM sqlc.narg(expected_last_evaluated_at)::timestamptz)
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < sqlc.arg(evaluated_at)::timestamptz);
 
 -- name: ReadCustomerAlertRule :one
 SELECT * FROM alert_rules WHERE id=sqlc.arg(id);
@@ -22400,15 +22464,23 @@ WITH rule AS (
     DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = sqlc.arg(rule_id)::uuid
 )
 INSERT INTO alert_channel_stand_downs
-    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at,
+     observation_transition, pagerduty_target_sealed, pagerduty_region)
 SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
-       sqlc.arg(reason)::text, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
-  FROM rule CROSS JOIN owed
-ON CONFLICT (rule_id, channel_id) DO NOTHING;
+       sqlc.arg(reason)::text, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz, sqlc.arg(observation_transition)::boolean,
+       CASE WHEN sqlc.arg(observation_transition)::boolean AND c.kind = 'pagerduty' THEN c.target_sealed END,
+       CASE WHEN sqlc.arg(observation_transition)::boolean AND c.kind = 'pagerduty' THEN c.pagerduty_region END
+  FROM rule CROSS JOIN owed JOIN notification_channels c ON c.id = owed.channel_id
+ON CONFLICT (rule_id, channel_id) DO UPDATE SET
+    observation_transition = true,
+    pagerduty_target_sealed = EXCLUDED.pagerduty_target_sealed,
+    pagerduty_region = EXCLUDED.pagerduty_region
+ WHERE EXCLUDED.observation_transition AND NOT alert_channel_stand_downs.observation_transition;
 
 -- name: DueAlertChannelStandDowns :many
 SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
-       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts
+       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts,
+       s.pagerduty_target_sealed, coalesce(s.pagerduty_region, '')::text AS pagerduty_region
   FROM alert_channel_stand_downs s
  WHERE s.next_attempt_at <= sqlc.arg(now)::timestamptz
  ORDER BY s.next_attempt_at, s.rule_id, s.channel_id
@@ -22424,7 +22496,133 @@ DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid AN
 
 -- name: ClearAlertChannelStandDowns :exec
 -- A new fire of the rule supersedes the recovery notices it still owed.
-DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid;
+DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid AND NOT observation_transition;
+
+-- name: AlertChannelStandDownPending :one
+-- A new fire can supersede ordinary stand-downs. On entering Observe only,
+-- the old episode's terminal notice must go out before the channel opens another.
+WITH superseded AS (
+    DELETE FROM alert_channel_stand_downs
+     WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid
+       AND NOT observation_transition AND sqlc.arg(supersede)::boolean
+)
+SELECT EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs
+     WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid AND observation_transition
+)::boolean AS pending;
+
+-- name: ListPagerDutyObservationStandDownChannels :many
+SELECT sqlc.embed(c), coalesce(s.pagerduty_target_sealed, c.target_sealed)::bytea AS stand_down_target_sealed,
+       coalesce(s.pagerduty_region, c.pagerduty_region, '')::text AS stand_down_region
+  FROM alert_channel_stand_downs s
+  JOIN notification_channels c ON c.id = s.channel_id
+ WHERE s.rule_id = sqlc.arg(rule_id)::uuid AND s.observation_transition AND c.kind = 'pagerduty';
+
+-- name: QueueDeferredAlertFires :many
+-- Use the recipients selected by the claim. The current bindings may have
+-- changed since that snapshot. Meterd compares actual PagerDuty keys when
+-- releasing same-region aliases.
+WITH live AS (
+    SELECT d.id, d.fired_at, r.id AS rule_id, r.webhook_url
+      FROM alert_deliveries d JOIN alert_rules r ON r.id = d.rule_id
+     WHERE d.id = sqlc.arg(delivery_id)::uuid
+), recipients AS (
+    SELECT unnest(sqlc.arg(channel_ids)::uuid[]) AS channel_id,
+           unnest(sqlc.arg(pagerduty_regions)::text[]) AS pagerduty_region
+)
+INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
+SELECT live.id, target.channel_id, '', live.webhook_url = '', live.fired_at
+  FROM live CROSS JOIN recipients target
+ WHERE EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs s JOIN notification_channels old ON old.id = s.channel_id
+     WHERE s.rule_id = live.rule_id AND s.observation_transition
+       AND (s.channel_id = target.channel_id OR
+            (old.kind = 'pagerduty' AND target.pagerduty_region = coalesce(s.pagerduty_region, old.pagerduty_region)))
+ )
+UNION ALL
+SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
+ WHERE live.webhook_url <> '' AND EXISTS (
+    SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = live.rule_id AND s.webhook_url = live.webhook_url
+ )
+RETURNING coalesce(channel_id::text, '')::text AS channel_id, webhook_url;
+
+-- name: AlertDeferredFireRecipients :many
+SELECT coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE d.rule_id = sqlc.arg(rule_id)::uuid AND d.fired_at = sqlc.arg(fired_at)::timestamptz
+   AND (f.channel_id IS NOT NULL OR (NOT f.started AND d.status = 'pending'));
+
+-- name: DueDeferredAlertFires :many
+SELECT f.id::text AS id, d.id::text AS delivery_id, d.rule_id::text AS rule_id,
+       coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url, f.channel_only,
+       d.fired_at, d.status, d.payload, d.observed_value,
+       CASE WHEN f.channel_id IS NULL THEN EXISTS (
+           SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = d.rule_id AND s.webhook_url = f.webhook_url
+       ) ELSE EXISTS (
+           SELECT 1 FROM alert_channel_stand_downs s
+            WHERE s.rule_id = d.rule_id AND s.channel_id = f.channel_id AND s.observation_transition
+       ) END::boolean AS blocked
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE f.next_attempt_at <= sqlc.arg(now)::timestamptz
+ ORDER BY f.next_attempt_at, f.id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: StartDeferredWebhookFire :execrows
+-- Serialize handing the webhook to transport with edits that end its episode.
+WITH live AS (
+    SELECT f.id
+      FROM alert_deferred_fires f
+      JOIN alert_deliveries d ON d.id = f.delivery_id
+      JOIN alert_rules r ON r.id = d.rule_id
+     WHERE f.id = sqlc.arg(id)::uuid AND f.channel_id IS NULL
+       AND r.enabled AND NOT r.observe_only AND r.state = 'firing'
+       AND r.last_fired_at = d.fired_at AND r.webhook_url = f.webhook_url AND d.status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = r.id AND s.webhook_url = f.webhook_url)
+     FOR UPDATE OF r
+)
+UPDATE alert_deferred_fires f SET started = true FROM live WHERE f.id = live.id;
+
+-- name: FinishDeferredAlertFire :one
+WITH removed AS (
+    DELETE FROM alert_deferred_fires WHERE id = sqlc.arg(id)::uuid RETURNING id, delivery_id
+)
+SELECT NOT EXISTS (
+    SELECT 1 FROM alert_deferred_fires f JOIN removed ON f.delivery_id = removed.delivery_id AND f.id <> removed.id
+)::boolean AS last_recipient;
+
+-- name: RetryDeferredAlertFire :exec
+UPDATE alert_deferred_fires SET next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz WHERE id = sqlc.arg(id)::uuid;
+
+-- name: QueueAlertWebhookStandDown :exec
+-- Snapshot the pre-edit destination and payload while its live episode is open.
+INSERT INTO alert_webhook_stand_downs
+    (rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+     webhook_url, webhook_secret_sealed, queued_at, next_attempt_at)
+SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spec, r.environment_scope,
+       r.webhook_url, r.webhook_secret_sealed, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
+  FROM alert_rules r
+ WHERE r.id = sqlc.arg(rule_id)::uuid AND r.notify_resolved AND r.webhook_url <> ''
+   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL)
+   AND NOT EXISTS (
+       SELECT 1 FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+        WHERE d.rule_id = r.id AND d.fired_at = r.last_fired_at AND f.webhook_url = r.webhook_url AND NOT f.started AND d.status = 'pending'
+   );
+
+-- name: DueAlertWebhookStandDowns :many
+SELECT id, rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+       webhook_url, webhook_secret_sealed, queued_at, attempts
+  FROM alert_webhook_stand_downs
+ WHERE next_attempt_at <= sqlc.arg(now)::timestamptz
+ ORDER BY next_attempt_at, id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: DeleteAlertWebhookStandDown :exec
+DELETE FROM alert_webhook_stand_downs WHERE id = sqlc.arg(id)::uuid;
+
+-- name: RetryAlertWebhookStandDown :exec
+UPDATE alert_webhook_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+ WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ListStrandedAlertRules :many
 -- Rules left out of evaluation (disabled, or their app deleted) while not
@@ -22453,7 +22651,7 @@ DELETE FROM alert_deliveries d WHERE d.id IN (
 -- name: ListEnabledCustomerAlertRules :many
 -- A deleted app's rules wait out its restore grace without evaluating
 -- (ADR-20261029203000); account-wide rules have no app.
-SELECT * FROM alert_rules r WHERE r.enabled=true
+SELECT * FROM alert_rules r WHERE (r.enabled OR r.observation_enabled)
  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
  ORDER BY r.account_id;
 

@@ -1371,6 +1371,70 @@ func (q *Queries) AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const alertChannelStandDownPending = `-- name: AlertChannelStandDownPending :one
+WITH superseded AS (
+    DELETE FROM alert_channel_stand_downs
+     WHERE rule_id = $1::uuid AND channel_id = $2::uuid
+       AND NOT observation_transition AND $3::boolean
+)
+SELECT EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs
+     WHERE rule_id = $1::uuid AND channel_id = $2::uuid AND observation_transition
+)::boolean AS pending
+`
+
+type AlertChannelStandDownPendingParams struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+	Supersede bool
+}
+
+// A new fire can supersede ordinary stand-downs. On entering Observe only,
+// the old episode's terminal notice must go out before the channel opens another.
+func (q *Queries) AlertChannelStandDownPending(ctx context.Context, db DBTX, arg AlertChannelStandDownPendingParams) (bool, error) {
+	row := db.QueryRow(ctx, alertChannelStandDownPending, arg.RuleID, arg.ChannelID, arg.Supersede)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
+const alertDeferredFireRecipients = `-- name: AlertDeferredFireRecipients :many
+SELECT coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE d.rule_id = $1::uuid AND d.fired_at = $2::timestamptz
+   AND (f.channel_id IS NOT NULL OR (NOT f.started AND d.status = 'pending'))
+`
+
+type AlertDeferredFireRecipientsParams struct {
+	RuleID  pgtype.UUID
+	FiredAt pgtype.Timestamptz
+}
+
+type AlertDeferredFireRecipientsRow struct {
+	ChannelID  string
+	WebhookUrl string
+}
+
+func (q *Queries) AlertDeferredFireRecipients(ctx context.Context, db DBTX, arg AlertDeferredFireRecipientsParams) ([]AlertDeferredFireRecipientsRow, error) {
+	rows, err := db.Query(ctx, alertDeferredFireRecipients, arg.RuleID, arg.FiredAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertDeferredFireRecipientsRow{}
+	for rows.Next() {
+		var i AlertDeferredFireRecipientsRow
+		if err := rows.Scan(&i.ChannelID, &i.WebhookUrl); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const alertRuleEpisodeOpen = `-- name: AlertRuleEpisodeOpen :one
 SELECT EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $1::uuid AND e.resolved_at IS NULL)::boolean AS open
 `
@@ -8431,7 +8495,7 @@ func (q *Queries) ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, 
 }
 
 const clearAlertChannelStandDowns = `-- name: ClearAlertChannelStandDowns :exec
-DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid
+DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid AND NOT observation_transition
 `
 
 // A new fire of the rule supersedes the recovery notices it still owed.
@@ -9527,6 +9591,21 @@ AND s.step_name=t.step_name AND s.attempt=t.attempt AND s.status IN ('running','
 
 func (q *Queries) CloseLegacyWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, closeLegacyWorkflowOutboundUnknownAttempts, runID)
+	return err
+}
+
+const closeLiveAlertEpisodeForObservation = `-- name: CloseLiveAlertEpisodeForObservation :exec
+UPDATE alert_episodes AS episode SET resolved_at=greatest(episode.opened_at,$1::timestamptz)
+WHERE episode.rule_id=$2 AND episode.resolved_at IS NULL
+`
+
+type CloseLiveAlertEpisodeForObservationParams struct {
+	EndedAt pgtype.Timestamptz
+	ID      pgtype.UUID
+}
+
+func (q *Queries) CloseLiveAlertEpisodeForObservation(ctx context.Context, db DBTX, arg CloseLiveAlertEpisodeForObservationParams) error {
+	_, err := db.Exec(ctx, closeLiveAlertEpisodeForObservation, arg.EndedAt, arg.ID)
 	return err
 }
 
@@ -15335,6 +15414,15 @@ func (q *Queries) DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID p
 	return err
 }
 
+const deleteAlertWebhookStandDown = `-- name: DeleteAlertWebhookStandDown :exec
+DELETE FROM alert_webhook_stand_downs WHERE id = $1::uuid
+`
+
+func (q *Queries) DeleteAlertWebhookStandDown(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAlertWebhookStandDown, id)
+	return err
+}
+
 const deleteApp = `-- name: DeleteApp :exec
 update apps
 set status = 'deleted',
@@ -15718,6 +15806,15 @@ delete from custom_domains where domain = $1
 
 func (q *Queries) DeleteCustomDomain(ctx context.Context, db DBTX, domain interface{}) error {
 	_, err := db.Exec(ctx, deleteCustomDomain, domain)
+	return err
+}
+
+const deleteCustomerAlertObservationChecks = `-- name: DeleteCustomerAlertObservationChecks :exec
+DELETE FROM alert_observation_checks WHERE rule_id=$1
+`
+
+func (q *Queries) DeleteCustomerAlertObservationChecks(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCustomerAlertObservationChecks, id)
 	return err
 }
 
@@ -17116,7 +17213,8 @@ func (q *Queries) DueAlertChannelResolveRetries(ctx context.Context, db DBTX, ar
 
 const dueAlertChannelStandDowns = `-- name: DueAlertChannelStandDowns :many
 SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
-       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts
+       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts,
+       s.pagerduty_target_sealed, coalesce(s.pagerduty_region, '')::text AS pagerduty_region
   FROM alert_channel_stand_downs s
  WHERE s.next_attempt_at <= $1::timestamptz
  ORDER BY s.next_attempt_at, s.rule_id, s.channel_id
@@ -17129,15 +17227,17 @@ type DueAlertChannelStandDownsParams struct {
 }
 
 type DueAlertChannelStandDownsRow struct {
-	RuleID     string
-	ChannelID  string
-	AccountID  string
-	AppID      string
-	RuleName   string
-	RuleMetric string
-	Reason     string
-	QueuedAt   pgtype.Timestamptz
-	Attempts   int32
+	RuleID                string
+	ChannelID             string
+	AccountID             string
+	AppID                 string
+	RuleName              string
+	RuleMetric            string
+	Reason                string
+	QueuedAt              pgtype.Timestamptz
+	Attempts              int32
+	PagerdutyTargetSealed []byte
+	PagerdutyRegion       string
 }
 
 func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg DueAlertChannelStandDownsParams) ([]DueAlertChannelStandDownsRow, error) {
@@ -17159,6 +17259,139 @@ func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg Du
 			&i.Reason,
 			&i.QueuedAt,
 			&i.Attempts,
+			&i.PagerdutyTargetSealed,
+			&i.PagerdutyRegion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueAlertWebhookStandDowns = `-- name: DueAlertWebhookStandDowns :many
+SELECT id, rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+       webhook_url, webhook_secret_sealed, queued_at, attempts
+  FROM alert_webhook_stand_downs
+ WHERE next_attempt_at <= $1::timestamptz
+ ORDER BY next_attempt_at, id
+ LIMIT $2::integer
+`
+
+type DueAlertWebhookStandDownsParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueAlertWebhookStandDownsRow struct {
+	ID                  pgtype.UUID
+	RuleID              pgtype.UUID
+	AppID               pgtype.UUID
+	RuleName            string
+	Metric              string
+	Comparison          string
+	Threshold           float64
+	WindowSpec          string
+	EnvironmentScope    string
+	WebhookUrl          string
+	WebhookSecretSealed []byte
+	QueuedAt            pgtype.Timestamptz
+	Attempts            int32
+}
+
+func (q *Queries) DueAlertWebhookStandDowns(ctx context.Context, db DBTX, arg DueAlertWebhookStandDownsParams) ([]DueAlertWebhookStandDownsRow, error) {
+	rows, err := db.Query(ctx, dueAlertWebhookStandDowns, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueAlertWebhookStandDownsRow{}
+	for rows.Next() {
+		var i DueAlertWebhookStandDownsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuleID,
+			&i.AppID,
+			&i.RuleName,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.EnvironmentScope,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.QueuedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueDeferredAlertFires = `-- name: DueDeferredAlertFires :many
+SELECT f.id::text AS id, d.id::text AS delivery_id, d.rule_id::text AS rule_id,
+       coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url, f.channel_only,
+       d.fired_at, d.status, d.payload, d.observed_value,
+       CASE WHEN f.channel_id IS NULL THEN EXISTS (
+           SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = d.rule_id AND s.webhook_url = f.webhook_url
+       ) ELSE EXISTS (
+           SELECT 1 FROM alert_channel_stand_downs s
+            WHERE s.rule_id = d.rule_id AND s.channel_id = f.channel_id AND s.observation_transition
+       ) END::boolean AS blocked
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE f.next_attempt_at <= $1::timestamptz
+ ORDER BY f.next_attempt_at, f.id
+ LIMIT $2::integer
+`
+
+type DueDeferredAlertFiresParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueDeferredAlertFiresRow struct {
+	ID            string
+	DeliveryID    string
+	RuleID        string
+	ChannelID     string
+	WebhookUrl    string
+	ChannelOnly   bool
+	FiredAt       pgtype.Timestamptz
+	Status        string
+	Payload       []byte
+	ObservedValue float64
+	Blocked       bool
+}
+
+func (q *Queries) DueDeferredAlertFires(ctx context.Context, db DBTX, arg DueDeferredAlertFiresParams) ([]DueDeferredAlertFiresRow, error) {
+	rows, err := db.Query(ctx, dueDeferredAlertFires, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueDeferredAlertFiresRow{}
+	for rows.Next() {
+		var i DueDeferredAlertFiresRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeliveryID,
+			&i.RuleID,
+			&i.ChannelID,
+			&i.WebhookUrl,
+			&i.ChannelOnly,
+			&i.FiredAt,
+			&i.Status,
+			&i.Payload,
+			&i.ObservedValue,
+			&i.Blocked,
 		); err != nil {
 			return nil, err
 		}
@@ -25009,6 +25242,22 @@ func (q *Queries) FinishDatabaseVMUpgrade(ctx context.Context, db DBTX, arg Fini
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const finishDeferredAlertFire = `-- name: FinishDeferredAlertFire :one
+WITH removed AS (
+    DELETE FROM alert_deferred_fires WHERE id = $1::uuid RETURNING id, delivery_id
+)
+SELECT NOT EXISTS (
+    SELECT 1 FROM alert_deferred_fires f JOIN removed ON f.delivery_id = removed.delivery_id AND f.id <> removed.id
+)::boolean AS last_recipient
+`
+
+func (q *Queries) FinishDeferredAlertFire(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, finishDeferredAlertFire, id)
+	var last_recipient pgtype.Bool
+	err := row.Scan(&last_recipient)
+	return last_recipient, err
 }
 
 const finishDevBridgeWebhookReplay = `-- name: FinishDevBridgeWebhookReplay :execrows
@@ -34322,11 +34571,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,$13,
- $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::jsonb)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels
+ $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::jsonb,$28,$29,$30,$31)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -34357,6 +34606,10 @@ type InsertCustomerAlertRuleParams struct {
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
 	CustomMetricLabels              []byte
+	ObserveOnly                     bool
+	ObservationEnabled              bool
+	EnvironmentScope                string
+	RecoveryConfirmationChecks      int32
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -34388,6 +34641,10 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.CreatedByAccountID,
 		arg.NotifyResolved,
 		arg.CustomMetricLabels,
+		arg.ObserveOnly,
+		arg.ObservationEnabled,
+		arg.EnvironmentScope,
+		arg.RecoveryConfirmationChecks,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -34424,6 +34681,12 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
 		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
 	)
 	return i, err
 }
@@ -48574,8 +48837,57 @@ func (q *Queries) ListCustomDomainsForActor(ctx context.Context, db DBTX, accoun
 	return items, nil
 }
 
+const listCustomerAlertObservationCoverage = `-- name: ListCustomerAlertObservationCoverage :many
+SELECT checks.skip_reason, count(*) FILTER (WHERE checks.evaluated_at > $1::timestamptz) AS checks_in_window,
+ max(checks.evaluated_at)::timestamptz AS last_checked_at
+FROM alert_observation_checks AS checks
+JOIN alert_rules AS rule ON rule.id=checks.rule_id
+WHERE rule.id=$2 AND rule.observe_only
+ AND rule.updated_at=$3::timestamptz
+ AND checks.evaluated_at <= $4::timestamptz
+GROUP BY checks.skip_reason ORDER BY checks.skip_reason
+`
+
+type ListCustomerAlertObservationCoverageParams struct {
+	CoverageCutoff    pgtype.Timestamptz
+	ID                pgtype.UUID
+	ExpectedUpdatedAt pgtype.Timestamptz
+	AsOf              pgtype.Timestamptz
+}
+
+type ListCustomerAlertObservationCoverageRow struct {
+	SkipReason     string
+	ChecksInWindow int64
+	LastCheckedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ListCustomerAlertObservationCoverage(ctx context.Context, db DBTX, arg ListCustomerAlertObservationCoverageParams) ([]ListCustomerAlertObservationCoverageRow, error) {
+	rows, err := db.Query(ctx, listCustomerAlertObservationCoverage,
+		arg.CoverageCutoff,
+		arg.ID,
+		arg.ExpectedUpdatedAt,
+		arg.AsOf,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomerAlertObservationCoverageRow{}
+	for rows.Next() {
+		var i ListCustomerAlertObservationCoverageRow
+		if err := rows.Scan(&i.SkipReason, &i.ChecksInWindow, &i.LastCheckedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id, r.notify_resolved, r.custom_metric_labels FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id, r.notify_resolved, r.custom_metric_labels, r.latest_anomaly_evaluation, r.observe_only, r.observation_enabled, r.observed_incidents, r.environment_scope, r.recovery_confirmation_checks FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -48629,6 +48941,12 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
 		); err != nil {
 			return nil, err
 		}
@@ -48641,7 +48959,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -48687,6 +49005,12 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
 		); err != nil {
 			return nil, err
 		}
@@ -51197,7 +51521,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules r WHERE r.enabled=true
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks FROM alert_rules r WHERE (r.enabled OR r.observation_enabled)
  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
  ORDER BY r.account_id
 `
@@ -51247,6 +51571,12 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
 		); err != nil {
 			return nil, err
 		}
@@ -53387,7 +53717,7 @@ func (q *Queries) ListMCPDestinationEvents(ctx context.Context, db DBTX, arg Lis
 }
 
 const listMCPNotificationRules = `-- name: ListMCPNotificationRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE account_id=$1 AND app_id=$2
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks FROM alert_rules WHERE account_id=$1 AND app_id=$2
  AND metric='mcp_readiness_unhealthy' AND action='webhook'
  AND ($3::text='' OR mcp_readiness_scope='' OR mcp_readiness_scope=$3)
  AND ($4::uuid IS NULL OR id>$4)
@@ -53451,6 +53781,12 @@ func (q *Queries) ListMCPNotificationRules(ctx context.Context, db DBTX, arg Lis
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
 		); err != nil {
 			return nil, err
 		}
@@ -55175,6 +55511,56 @@ func (q *Queries) ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX
 			&i.BindingFacts,
 			&i.Plan,
 			&i.CredentialRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPagerDutyObservationStandDownChannels = `-- name: ListPagerDutyObservationStandDownChannels :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at, coalesce(s.pagerduty_target_sealed, c.target_sealed)::bytea AS stand_down_target_sealed,
+       coalesce(s.pagerduty_region, c.pagerduty_region, '')::text AS stand_down_region
+  FROM alert_channel_stand_downs s
+  JOIN notification_channels c ON c.id = s.channel_id
+ WHERE s.rule_id = $1::uuid AND s.observation_transition AND c.kind = 'pagerduty'
+`
+
+type ListPagerDutyObservationStandDownChannelsRow struct {
+	NotificationChannel   NotificationChannel
+	StandDownTargetSealed []byte
+	StandDownRegion       string
+}
+
+func (q *Queries) ListPagerDutyObservationStandDownChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]ListPagerDutyObservationStandDownChannelsRow, error) {
+	rows, err := db.Query(ctx, listPagerDutyObservationStandDownChannels, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPagerDutyObservationStandDownChannelsRow{}
+	for rows.Next() {
+		var i ListPagerDutyObservationStandDownChannelsRow
+		if err := rows.Scan(
+			&i.NotificationChannel.ID,
+			&i.NotificationChannel.AccountID,
+			&i.NotificationChannel.Name,
+			&i.NotificationChannel.Kind,
+			&i.NotificationChannel.TargetSealed,
+			&i.NotificationChannel.TargetHint,
+			&i.NotificationChannel.PagerdutyRegion,
+			&i.NotificationChannel.Email,
+			&i.NotificationChannel.LastDeliveredAt,
+			&i.NotificationChannel.LastError,
+			&i.NotificationChannel.LastErrorAt,
+			&i.NotificationChannel.CreatedAt,
+			&i.NotificationChannel.UpdatedAt,
+			&i.StandDownTargetSealed,
+			&i.StandDownRegion,
 		); err != nil {
 			return nil, err
 		}
@@ -58495,7 +58881,7 @@ func (q *Queries) ListStoredWorkflows(ctx context.Context, db DBTX, appID pgtype
 }
 
 const listStrandedAlertRules = `-- name: ListStrandedAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules r
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks FROM alert_rules r
  WHERE r.state <> 'ok'
    AND (NOT r.enabled OR EXISTS (SELECT 1 FROM apps a WHERE a.id = r.app_id AND a.status = 'deleted'))
  ORDER BY r.updated_at, r.id
@@ -58547,6 +58933,12 @@ func (q *Queries) ListStrandedAlertRules(ctx context.Context, db DBTX, maxRows i
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
 		); err != nil {
 			return nil, err
 		}
@@ -59921,6 +60313,22 @@ func (q *Queries) LockAlertRollbackRule(ctx context.Context, db DBTX, ruleID pgt
 	return id, err
 }
 
+const lockAlertRuleObservationMode = `-- name: LockAlertRuleObservationMode :one
+SELECT observe_only, environment_scope FROM alert_rules WHERE id=$1 FOR UPDATE
+`
+
+type LockAlertRuleObservationModeRow struct {
+	ObserveOnly      bool
+	EnvironmentScope string
+}
+
+func (q *Queries) LockAlertRuleObservationMode(ctx context.Context, db DBTX, id pgtype.UUID) (LockAlertRuleObservationModeRow, error) {
+	row := db.QueryRow(ctx, lockAlertRuleObservationMode, id)
+	var i LockAlertRuleObservationModeRow
+	err := row.Scan(&i.ObserveOnly, &i.EnvironmentScope)
+	return i, err
+}
+
 const lockAppConfigAccount = `-- name: LockAppConfigAccount :one
 SELECT n.id FROM resource_namespaces n
 LEFT JOIN LATERAL (SELECT a.id FROM accounts a WHERE a.id = n.id FOR UPDATE) owner_account ON true
@@ -61035,6 +61443,57 @@ func (q *Queries) LockCustomDomainTLSAdmissionClaim(ctx context.Context, db DBTX
 		&i.AppID,
 		&i.Token,
 		&i.OwnerID,
+	)
+	return i, err
+}
+
+const lockCustomerAlertRule = `-- name: LockCustomerAlertRule :one
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks FROM alert_rules WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
+	row := db.QueryRow(ctx, lockCustomerAlertRule, id)
+	var i AlertRule
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Enabled,
+		&i.Metric,
+		&i.Comparison,
+		&i.Threshold,
+		&i.WindowSpec,
+		&i.FailureSource,
+		&i.WebhookUrl,
+		&i.WebhookSecretSealed,
+		&i.CooldownMinutes,
+		&i.State,
+		&i.LastFiredAt,
+		&i.LastEvaluatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrgID,
+		&i.Action,
+		&i.PostDeployRollbackWindowSeconds,
+		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
+		&i.McpMinCalls,
+		&i.McpForMinutes,
+		&i.McpReadinessScope,
+		&i.LogQuery,
+		&i.CreatedByAccountID,
+		&i.NotifyResolved,
+		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
 	)
 	return i, err
 }
@@ -82865,39 +83324,78 @@ func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg
 
 const queueAlertChannelStandDowns = `-- name: QueueAlertChannelStandDowns :execrows
 WITH rule AS (
-    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $3::uuid
+    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $4::uuid
 ), owed AS (
     SELECT b.channel_id FROM alert_rule_channels b
-     WHERE b.rule_id = $3::uuid
-       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $3::uuid AND e.resolved_at IS NULL)
+     WHERE b.rule_id = $4::uuid
+       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $4::uuid AND e.resolved_at IS NULL)
     UNION
-    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $4::uuid
 ), moved AS (
-    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $4::uuid
 )
 INSERT INTO alert_channel_stand_downs
-    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at,
+     observation_transition, pagerduty_target_sealed, pagerduty_region)
 SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
-       $1::text, $2::timestamptz, $2::timestamptz
-  FROM rule CROSS JOIN owed
-ON CONFLICT (rule_id, channel_id) DO NOTHING
+       $1::text, $2::timestamptz, $2::timestamptz, $3::boolean,
+       CASE WHEN $3::boolean AND c.kind = 'pagerduty' THEN c.target_sealed END,
+       CASE WHEN $3::boolean AND c.kind = 'pagerduty' THEN c.pagerduty_region END
+  FROM rule CROSS JOIN owed JOIN notification_channels c ON c.id = owed.channel_id
+ON CONFLICT (rule_id, channel_id) DO UPDATE SET
+    observation_transition = true,
+    pagerduty_target_sealed = EXCLUDED.pagerduty_target_sealed,
+    pagerduty_region = EXCLUDED.pagerduty_region
+ WHERE EXCLUDED.observation_transition AND NOT alert_channel_stand_downs.observation_transition
 `
 
 type QueueAlertChannelStandDownsParams struct {
-	Reason string
-	At     pgtype.Timestamptz
-	RuleID pgtype.UUID
+	Reason                string
+	At                    pgtype.Timestamptz
+	ObservationTransition bool
+	RuleID                pgtype.UUID
 }
 
 // A rule whose episode ends without it recovering owes each bound channel a
 // recovery notice (ADR-20261104142830): the channels of its open episode,
 // and those whose recovery notice is still being retried, which move here.
 func (q *Queries) QueueAlertChannelStandDowns(ctx context.Context, db DBTX, arg QueueAlertChannelStandDownsParams) (int64, error) {
-	result, err := db.Exec(ctx, queueAlertChannelStandDowns, arg.Reason, arg.At, arg.RuleID)
+	result, err := db.Exec(ctx, queueAlertChannelStandDowns,
+		arg.Reason,
+		arg.At,
+		arg.ObservationTransition,
+		arg.RuleID,
+	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueAlertWebhookStandDown = `-- name: QueueAlertWebhookStandDown :exec
+INSERT INTO alert_webhook_stand_downs
+    (rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+     webhook_url, webhook_secret_sealed, queued_at, next_attempt_at)
+SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spec, r.environment_scope,
+       r.webhook_url, r.webhook_secret_sealed, $1::timestamptz, $1::timestamptz
+  FROM alert_rules r
+ WHERE r.id = $2::uuid AND r.notify_resolved AND r.webhook_url <> ''
+   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL)
+   AND NOT EXISTS (
+       SELECT 1 FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+        WHERE d.rule_id = r.id AND d.fired_at = r.last_fired_at AND f.webhook_url = r.webhook_url AND NOT f.started AND d.status = 'pending'
+   )
+`
+
+type QueueAlertWebhookStandDownParams struct {
+	At     pgtype.Timestamptz
+	RuleID pgtype.UUID
+}
+
+// Snapshot the pre-edit destination and payload while its live episode is open.
+func (q *Queries) QueueAlertWebhookStandDown(ctx context.Context, db DBTX, arg QueueAlertWebhookStandDownParams) error {
+	_, err := db.Exec(ctx, queueAlertWebhookStandDown, arg.At, arg.RuleID)
+	return err
 }
 
 const queueApplicationStandardExceptionChange = `-- name: QueueApplicationStandardExceptionChange :execrows
@@ -83885,6 +84383,66 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueDeferredAlertFires = `-- name: QueueDeferredAlertFires :many
+WITH live AS (
+    SELECT d.id, d.fired_at, r.id AS rule_id, r.webhook_url
+      FROM alert_deliveries d JOIN alert_rules r ON r.id = d.rule_id
+     WHERE d.id = $1::uuid
+), recipients AS (
+    SELECT unnest($2::uuid[]) AS channel_id,
+           unnest($3::text[]) AS pagerduty_region
+)
+INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
+SELECT live.id, target.channel_id, '', live.webhook_url = '', live.fired_at
+  FROM live CROSS JOIN recipients target
+ WHERE EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs s JOIN notification_channels old ON old.id = s.channel_id
+     WHERE s.rule_id = live.rule_id AND s.observation_transition
+       AND (s.channel_id = target.channel_id OR
+            (old.kind = 'pagerduty' AND target.pagerduty_region = coalesce(s.pagerduty_region, old.pagerduty_region)))
+ )
+UNION ALL
+SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
+ WHERE live.webhook_url <> '' AND EXISTS (
+    SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = live.rule_id AND s.webhook_url = live.webhook_url
+ )
+RETURNING coalesce(channel_id::text, '')::text AS channel_id, webhook_url
+`
+
+type QueueDeferredAlertFiresParams struct {
+	DeliveryID       pgtype.UUID
+	ChannelIds       []pgtype.UUID
+	PagerdutyRegions []string
+}
+
+type QueueDeferredAlertFiresRow struct {
+	ChannelID  string
+	WebhookUrl string
+}
+
+// Use the recipients selected by the claim. The current bindings may have
+// changed since that snapshot. Meterd compares actual PagerDuty keys when
+// releasing same-region aliases.
+func (q *Queries) QueueDeferredAlertFires(ctx context.Context, db DBTX, arg QueueDeferredAlertFiresParams) ([]QueueDeferredAlertFiresRow, error) {
+	rows, err := db.Query(ctx, queueDeferredAlertFires, arg.DeliveryID, arg.ChannelIds, arg.PagerdutyRegions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QueueDeferredAlertFiresRow{}
+	for rows.Next() {
+		var i QueueDeferredAlertFiresRow
+		if err := rows.Scan(&i.ChannelID, &i.WebhookUrl); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const queueDepthForBinding = `-- name: QueueDepthForBinding :one
@@ -87089,7 +87647,7 @@ func (q *Queries) ReadCustomDomainProbeObservation(ctx context.Context, db DBTX,
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -87129,6 +87687,12 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
 		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
 	)
 	return i, err
 }
@@ -98750,6 +99314,97 @@ func (q *Queries) RecordCustomDomainVerificationCheck(ctx context.Context, db DB
 	return result.RowsAffected(), nil
 }
 
+const recordCustomerAlertAnomalyEvaluation = `-- name: RecordCustomerAlertAnomalyEvaluation :execrows
+WITH scope_aware AS (
+ SELECT set_config('faas.scoped_alert_state', 'on', true)
+)
+UPDATE alert_rules SET
+ last_evaluated_at=$1::timestamptz,
+ latest_anomaly_evaluation=$2::jsonb,
+ updated_at=CASE WHEN state <> $3::text
+                 THEN greatest(updated_at,$1::timestamptz) ELSE updated_at END,
+ state=coalesce($3::text,state)
+FROM scope_aware
+WHERE id=$4 AND enabled AND comparison IN ('above_baseline','below_baseline')
+ AND updated_at=$5::timestamptz
+ AND (recovery_confirmation_checks = 1 OR last_evaluated_at IS NOT DISTINCT FROM $6::timestamptz)
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < $1::timestamptz)
+`
+
+type RecordCustomerAlertAnomalyEvaluationParams struct {
+	EvaluatedAt             pgtype.Timestamptz
+	Evidence                []byte
+	SkippedState            pgtype.Text
+	ID                      pgtype.UUID
+	ExpectedUpdatedAt       pgtype.Timestamptz
+	ExpectedLastEvaluatedAt pgtype.Timestamptz
+}
+
+// A skipped observation leaves any open alert episode alone.
+func (q *Queries) RecordCustomerAlertAnomalyEvaluation(ctx context.Context, db DBTX, arg RecordCustomerAlertAnomalyEvaluationParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCustomerAlertAnomalyEvaluation,
+		arg.EvaluatedAt,
+		arg.Evidence,
+		arg.SkippedState,
+		arg.ID,
+		arg.ExpectedUpdatedAt,
+		arg.ExpectedLastEvaluatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordCustomerAlertObservation = `-- name: RecordCustomerAlertObservation :execrows
+WITH recorded AS (
+ UPDATE alert_rules SET last_evaluated_at=$1::timestamptz,
+ latest_anomaly_evaluation=$3::jsonb,
+ observed_incidents=$4::jsonb
+ WHERE id=$5 AND observe_only AND observation_enabled
+ AND environment_scope=$6
+ AND updated_at=$7::timestamptz
+ AND last_evaluated_at IS NOT DISTINCT FROM $8::timestamptz
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < $1::timestamptz)
+ RETURNING id
+), expired AS (
+ DELETE FROM alert_observation_checks USING recorded
+ WHERE rule_id=recorded.id AND evaluated_at <= $9::timestamptz
+)
+INSERT INTO alert_observation_checks(rule_id,evaluated_at,skip_reason)
+SELECT id,$1::timestamptz,$2::text FROM recorded
+`
+
+type RecordCustomerAlertObservationParams struct {
+	EvaluatedAt              pgtype.Timestamptz
+	SkipReason               string
+	Evidence                 []byte
+	Incidents                []byte
+	ID                       pgtype.UUID
+	ExpectedEnvironmentScope string
+	ExpectedUpdatedAt        pgtype.Timestamptz
+	ExpectedLastEvaluatedAt  pgtype.Timestamptz
+	CoverageCutoff           pgtype.Timestamptz
+}
+
+func (q *Queries) RecordCustomerAlertObservation(ctx context.Context, db DBTX, arg RecordCustomerAlertObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCustomerAlertObservation,
+		arg.EvaluatedAt,
+		arg.SkipReason,
+		arg.Evidence,
+		arg.Incidents,
+		arg.ID,
+		arg.ExpectedEnvironmentScope,
+		arg.ExpectedUpdatedAt,
+		arg.ExpectedLastEvaluatedAt,
+		arg.CoverageCutoff,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordDatabaseVMBackup = `-- name: RecordDatabaseVMBackup :execrows
 UPDATE database_vms SET last_backup_at = $1
 WHERE database_id = $2 AND state <> 'deleting'
@@ -106805,6 +107460,22 @@ func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDat
 	return i, err
 }
 
+const retryAlertWebhookStandDown = `-- name: RetryAlertWebhookStandDown :exec
+UPDATE alert_webhook_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = $1::timestamptz
+ WHERE id = $2::uuid
+`
+
+type RetryAlertWebhookStandDownParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+}
+
+func (q *Queries) RetryAlertWebhookStandDown(ctx context.Context, db DBTX, arg RetryAlertWebhookStandDownParams) error {
+	_, err := db.Exec(ctx, retryAlertWebhookStandDown, arg.NextAttemptAt, arg.ID)
+	return err
+}
+
 const retryCustomDomainVerificationClaim = `-- name: RetryCustomDomainVerificationClaim :execrows
 UPDATE custom_domains SET verification_next_check_at=now(),verification_attempts=0
 WHERE domain=$1::text::citext AND verified_at IS NULL AND verification_expires_at>now()
@@ -106855,6 +107526,20 @@ func (q *Queries) RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const retryDeferredAlertFire = `-- name: RetryDeferredAlertFire :exec
+UPDATE alert_deferred_fires SET next_attempt_at = $1::timestamptz WHERE id = $2::uuid
+`
+
+type RetryDeferredAlertFireParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+}
+
+func (q *Queries) RetryDeferredAlertFire(ctx context.Context, db DBTX, arg RetryDeferredAlertFireParams) error {
+	_, err := db.Exec(ctx, retryDeferredAlertFire, arg.NextAttemptAt, arg.ID)
+	return err
 }
 
 const retryExternalTriggerRecordByOperator = `-- name: RetryExternalTriggerRecordByOperator :execrows
@@ -112159,6 +112844,30 @@ func (q *Queries) StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg St
 	return result.RowsAffected(), nil
 }
 
+const startDeferredWebhookFire = `-- name: StartDeferredWebhookFire :execrows
+WITH live AS (
+    SELECT f.id
+      FROM alert_deferred_fires f
+      JOIN alert_deliveries d ON d.id = f.delivery_id
+      JOIN alert_rules r ON r.id = d.rule_id
+     WHERE f.id = $1::uuid AND f.channel_id IS NULL
+       AND r.enabled AND NOT r.observe_only AND r.state = 'firing'
+       AND r.last_fired_at = d.fired_at AND r.webhook_url = f.webhook_url AND d.status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = r.id AND s.webhook_url = f.webhook_url)
+     FOR UPDATE OF r
+)
+UPDATE alert_deferred_fires f SET started = true FROM live WHERE f.id = live.id
+`
+
+// Serialize handing the webhook to transport with edits that end its episode.
+func (q *Queries) StartDeferredWebhookFire(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, startDeferredWebhookFire, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one
 UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
 terminal_at=e.retired_at FROM environment_qualification_executions e
@@ -114985,22 +115694,28 @@ func (q *Queries) UpdateCustomDomainProbeCert(ctx context.Context, db DBTX, arg 
 
 const updateCustomerAlertRule = `-- name: UpdateCustomerAlertRule :one
 UPDATE alert_rules SET mcp_min_calls=coalesce($1::integer,mcp_min_calls),
- mcp_for_minutes=coalesce($2::integer,mcp_for_minutes), name=coalesce($3::text,name),enabled=coalesce($4::boolean,enabled),
+ mcp_for_minutes=coalesce($2::integer,mcp_for_minutes), name=coalesce($3::text,name),enabled=$4,
  metric=coalesce($5::text,metric),comparison=coalesce($6::text,comparison),
  threshold=coalesce($7::double precision,threshold),window_spec=coalesce($8::text,window_spec),
  action=coalesce($9::text,action),webhook_url=coalesce($10::text,webhook_url),
  webhook_secret_sealed=coalesce($11::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($12::integer,cooldown_minutes),
- post_deploy_rollback_window_seconds=coalesce($13::integer,post_deploy_rollback_window_seconds),
- notify_resolved=coalesce($14::boolean,notify_resolved),updated_at=now()
-WHERE id=$15 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels
+ recovery_confirmation_checks=coalesce($13::integer,recovery_confirmation_checks),
+ post_deploy_rollback_window_seconds=coalesce($14::integer,post_deploy_rollback_window_seconds),
+ notify_resolved=coalesce($15::boolean,notify_resolved),
+ state=CASE WHEN observe_only <> $16::boolean THEN 'ok' ELSE state END,
+ observe_only=$16,observation_enabled=$17,
+ environment_scope=coalesce($18::text,environment_scope),
+ observed_incidents=$19::jsonb,
+ latest_anomaly_evaluation=NULL,updated_at=$20
+WHERE id=$21 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks
 `
 
 type UpdateCustomerAlertRuleParams struct {
 	McpMinCalls                     pgtype.Int4
 	McpForMinutes                   pgtype.Int4
 	Name                            pgtype.Text
-	Enabled                         pgtype.Bool
+	Enabled                         bool
 	Metric                          pgtype.Text
 	Comparison                      pgtype.Text
 	Threshold                       pgtype.Float8
@@ -115009,8 +115724,14 @@ type UpdateCustomerAlertRuleParams struct {
 	WebhookUrl                      pgtype.Text
 	WebhookSecretSealed             []byte
 	CooldownMinutes                 pgtype.Int4
+	RecoveryConfirmationChecks      pgtype.Int4
 	PostDeployRollbackWindowSeconds pgtype.Int4
 	NotifyResolved                  pgtype.Bool
+	ObserveOnly                     bool
+	ObservationEnabled              bool
+	EnvironmentScope                pgtype.Text
+	ObservedIncidents               []byte
+	UpdatedAt                       pgtype.Timestamptz
 	ID                              pgtype.UUID
 }
 
@@ -115028,8 +115749,14 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		arg.WebhookUrl,
 		arg.WebhookSecretSealed,
 		arg.CooldownMinutes,
+		arg.RecoveryConfirmationChecks,
 		arg.PostDeployRollbackWindowSeconds,
 		arg.NotifyResolved,
+		arg.ObserveOnly,
+		arg.ObservationEnabled,
+		arg.EnvironmentScope,
+		arg.ObservedIncidents,
+		arg.UpdatedAt,
 		arg.ID,
 	)
 	var i AlertRule
@@ -115067,6 +115794,12 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
 		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
 	)
 	return i, err
 }

@@ -195,7 +195,7 @@ func alertHistoricalSuite(t *testing.T, s state.Store, node string, pool *pgxpoo
 			t.Fatal(err)
 		}
 		// A supplied fire timestamp outside the window must fail closed at capture.
-		id, won, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":expired", nil, 42, current.RolloutCompletedAt.Add(2*time.Second))
+		id, won, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":expired", nil, 42, current.RolloutCompletedAt.Add(2*time.Second))
 		if err != nil || !won {
 			t.Fatalf("claim %v %v", won, err)
 		}

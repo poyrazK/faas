@@ -32,6 +32,14 @@ T = TypeVar("T", bound="UpdateAlertRuleRequest")
 class UpdateAlertRuleRequest:
     """Partial update — every field is optional. Omitted means leave alone."""
 
+    observe_only: bool | Unset = UNSET
+    """Switch an app-scoped baseline rule between observing and notifying."""
+    recovery_confirmation_checks: int | Unset = UNSET
+    """Change the number of consecutive healthy checks required to recover. Two checks require an app-scoped
+    baseline comparison."""
+    environment_scope: str | Unset = UNSET
+    """Change the environment of an anomaly rule in Observe only mode. Set to the empty string to clear the scope.
+    Omit to keep the saved scope when enabling notifications."""
     mcp_readiness_scope: str | Unset = UNSET
     """Immutable environment selector. If supplied it must equal the current value; create a new rule to select
     another environment."""
@@ -71,6 +79,12 @@ class UpdateAlertRuleRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        observe_only = self.observe_only
+
+        recovery_confirmation_checks = self.recovery_confirmation_checks
+
+        environment_scope = self.environment_scope
+
         mcp_readiness_scope = self.mcp_readiness_scope
 
         mcp_min_calls = self.mcp_min_calls
@@ -119,6 +133,12 @@ class UpdateAlertRuleRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if observe_only is not UNSET:
+            field_dict["observe_only"] = observe_only
+        if recovery_confirmation_checks is not UNSET:
+            field_dict["recovery_confirmation_checks"] = recovery_confirmation_checks
+        if environment_scope is not UNSET:
+            field_dict["environment_scope"] = environment_scope
         if mcp_readiness_scope is not UNSET:
             field_dict["mcp_readiness_scope"] = mcp_readiness_scope
         if mcp_min_calls is not UNSET:
@@ -157,6 +177,12 @@ class UpdateAlertRuleRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        observe_only = d.pop("observe_only", UNSET)
+
+        recovery_confirmation_checks = d.pop("recovery_confirmation_checks", UNSET)
+
+        environment_scope = d.pop("environment_scope", UNSET)
+
         mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
 
         mcp_min_calls = d.pop("mcp_min_calls", UNSET)
@@ -217,6 +243,9 @@ class UpdateAlertRuleRequest:
             action = check_update_alert_rule_request_action(_action)
 
         update_alert_rule_request = cls(
+            observe_only=observe_only,
+            recovery_confirmation_checks=recovery_confirmation_checks,
+            environment_scope=environment_scope,
             mcp_readiness_scope=mcp_readiness_scope,
             mcp_min_calls=mcp_min_calls,
             mcp_for_minutes=mcp_for_minutes,
