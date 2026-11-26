@@ -89,8 +89,10 @@ func TestGrowPausedVolumeUsesUpTheCapture(t *testing.T) {
 	if err := s.BeginSandboxPause(ctx, id, "tok-a"); err != nil {
 		t.Fatal(err)
 	}
-	capture := agents.SandboxCapture{ID: "44444444-4444-4444-4444-444444444444", NodeID: "node-a", StorageKey: "snap/c/mem",
-		VMStateStorageKey: "snap/c/vmstate", FCVersion: "1.10.0", MemBytes: 1 << 30}
+	const captureID = "44444444-4444-4444-4444-444444444444"
+	prefix := "snap/sandbox-session-" + account + "/captures/" + captureID + "/v2/"
+	capture := agents.SandboxCapture{ID: captureID, NodeID: "node-a", StorageKey: prefix + "mem",
+		VMStateStorageKey: prefix + "vmstate", FCVersion: "1.10.0", MemBytes: 1 << 30}
 	if err := s.MarkSandboxPaused(ctx, id, "tok-a", capture, time.Hour); err != nil {
 		t.Fatal(err)
 	}
