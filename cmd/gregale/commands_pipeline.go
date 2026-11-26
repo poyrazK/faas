@@ -285,12 +285,8 @@ func cmdPipelineCreate(args []string) int {
 	if *database != "" {
 		db, err = resolveManagedPostgresDatabase(ctx, client, *database)
 	} else {
-		if *region == "" {
-			caps, capErr := client.GetManagedPostgresCapabilities(ctx, "")
-			if capErr != nil {
-				return printErr("Could not inspect placement", capErr)
-			}
-			*region = caps.Region
+		if *region, err = defaultPostgresRegion(ctx, client, *region); err != nil {
+			return printErr("Could not inspect placement", err)
 		}
 		req := api.CreateManagedPostgresDatabaseRequest{Name: pipelineMirrorName(fs.Arg(0)), Region: *region, PostgresMajor: api.ManagedPostgresDefaultMajor}
 		db, err = client.CreateManagedPostgresDatabase(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline-mirror", req.Name, req.Region)), req)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -36,6 +37,25 @@ func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities,
 		return fmt.Errorf("--availability %s is not available in region %s; available: %s", availability, region, strings.Join(capabilities.Availability, ", "))
 	}
 	return nil
+}
+
+// defaultPostgresRegion returns region, or the platform's default placement
+// when it is empty. Placement is the operator's choice, so commands that
+// create a database never ask for a region; --region stays for the day more
+// than one is offered. Resolving here (rather than sending an empty region)
+// keeps the CLI working against servers that still require the field.
+func defaultPostgresRegion(ctx context.Context, client addPostgresCapabilities, region string) (string, error) {
+	if region = strings.TrimSpace(region); region != "" {
+		return region, nil
+	}
+	capabilities, err := client.GetManagedPostgresCapabilities(ctx, "")
+	if err != nil {
+		return "", fmt.Errorf("could not read the default region: %w", err)
+	}
+	if capabilities.Region == "" {
+		return "", errors.New("the server reported no default region; pass --region")
+	}
+	return capabilities.Region, nil
 }
 
 // printAddPostgresMigrationHint tells a developer who just bound a runtime

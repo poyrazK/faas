@@ -4966,7 +4966,7 @@ Create a managed PostgreSQL database
 Examples:
 
 ```sh
-gregale postgres create orders --region us-east-2 --class development --scale-to-zero
+gregale postgres create orders --class development --scale-to-zero
 ```
 
 ### postgres get

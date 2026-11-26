@@ -4128,7 +4128,7 @@ earlier attempt created instead of creating it twice.
 |---|---|---|
 | `gregale_plan_domain` (`app`, `domain`) | `gregale domain create DOMAIN --app APP` | `deploy:write` |
 | `gregale_plan_bucket` (`app`, `name`, `permission`) | `gregale add bucket --app APP --env default --permission P NAME` | `storage:manage` |
-| `gregale_plan_postgres` (`app`, `region`, `access`) | `gregale add postgres --app APP --env default --region R --access A` | `postgres:manage`, `postgres:read` |
+| `gregale_plan_postgres` (`app`, optional `region`, `access`) | `gregale add postgres --app APP --env default [--region R] --access A` | `postgres:manage`, `postgres:read` |
 | `gregale_plan_cron` (`app`, `schedule`, `path`, `timezone`) | `gregale cron create --app APP --schedule S --path P` | `deploy:write` |
 
 Every plan also takes a `reason`. Apply each with `gregale_apply_provision`

@@ -495,6 +495,11 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
+	if strings.TrimSpace(req.Region) == "" {
+		// Placement is the operator's choice: a create without a region
+		// lands in the platform default, as dev sessions and manifests do.
+		req.Region = s.managedPostgres.DefaultRegion()
+	}
 	spec, err := managedPostgresSpecFromRequest(req, limits)
 	if err != nil {
 		if errors.Is(err, managedpostgres.ErrQuotaExceeded) {

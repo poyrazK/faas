@@ -154,7 +154,7 @@ public.
 - Set configuration and secrets with `gregale env set --app my-api KEY=value`;
   they arrive as environment variables. See [Secrets](secrets.md).
 - Add a managed database with
-  `gregale add postgres --app my-api --region <region>`. Its URL arrives as
+  `gregale add postgres --app my-api`. Its URL arrives as
   `DATABASE_URL`. See [Managed PostgreSQL](postgres.md).
 - Run migrations as a release command: `release:` in the `Procfile` or
   `release.command` in `gregale.yaml`. It runs before the new version takes

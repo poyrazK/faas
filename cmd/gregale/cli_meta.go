@@ -6515,7 +6515,7 @@ var cliCommands = []cliCommand{
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "storage-bytes", Short: "storage limit in bytes", Value: "N"},
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
-			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
+			}, Examples: []string{"gregale postgres create orders --class development --scale-to-zero"}},
 			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
 			{Name: subStatus, Short: "Show the database's conditions (preview)", Notes: []string{"Ready, Progressing and Degraded, from its state and cached health."}, Positionals: []string{"<database>"}, Examples: []string{"gregale postgres status orders"}},
 			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<database>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale postgres wait orders"}, Flags: []cliFlag{
