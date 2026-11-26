@@ -319,7 +319,7 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 	m.toolWrites[name] = !readOnly
 	destructive := !readOnly
 	handler := toolHandler(m, name, readOnly, handle)
-	tool := &mcp.Tool{Name: name, Title: toolTitle(name), Description: description, OutputSchema: registeredToolOutputSchema(name), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: toolIdempotent(name, readOnly)}}
+	tool := &mcp.Tool{Name: name, Title: toolTitle(name), Description: description, OutputSchema: registeredToolOutputSchema(name), Annotations: &mcp.ToolAnnotations{Title: toolTitle(name), ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: toolIdempotent(name, readOnly), OpenWorldHint: toolOpenWorld(name)}}
 	m.queueTool(name, description, func() { mcp.AddTool(s, tool, handler) })
 }
 

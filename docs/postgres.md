@@ -89,12 +89,14 @@ Operators: see the [operator guide](managed-postgres.md).
 ## Create a database
 
 ```sh
-gregale postgres create orders --region eu-central-1
+gregale postgres create orders
 gregale postgres get orders
 ```
 
 The database starts in `provisioning` and moves to `ready`. Options:
 
+- `--region REGION`: optional. New databases go to the platform default
+  region; `gregale postgres capabilities` shows it.
 - `--class development|burstable|production`: the compute class your plan
   allows. The default is `development`.
 - `--postgres-major N`: the PostgreSQL major version, 15 to 18. The default is
@@ -106,14 +108,14 @@ The database starts in `provisioning` and moves to `ready`. Options:
 To create a database and attach it to an app in one step:
 
 ```sh
-gregale add postgres --app my-api --region eu-central-1
+gregale add postgres --app my-api
 gregale add postgres --database orders --app my-api --env production
 ```
 
 `add postgres` reuses a matching database when there is one. Otherwise it
 creates one named `<app>-postgres`, waits until it is ready, and binds it to
 the app as `DATABASE_URL`. `--database` attaches an existing database by name
-or ID. `--region` is needed only when a database is created.
+or ID. New databases are placed in the platform default region.
 
 ## Connect an app
 

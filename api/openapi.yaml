@@ -27967,10 +27967,15 @@ paths:
         path to it with an edge rule once it is live and, for a memory split,
         sizes the app down. A split that fails before traffic moves deletes
         the route's app and ends rolled_back. Apps in a project, previews,
-        apps with managed or service bindings, apps with their own edge rules
-        and apps with a static egress IP are refused with
-        route_split_unsupported. Available only where route resource peaks
-        are enabled for the account.
+        apps with managed or service bindings, apps with app-wide (@app)
+        edge rules, apps with a static egress IP, and apps with a route,
+        rewrite, redirect, respond, async or throttle rule whose path may
+        overlap the route are refused with route_split_unsupported. The
+        route's app is reachable only through the app: its own hostnames get
+        an ip rule that denies every request, so the account must be able to
+        create ip rules.
+        Available only where route resource peaks are enabled for the
+        account.
       requestBody:
         required: true
         content:
@@ -98023,11 +98028,11 @@ components:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
       additionalProperties: false
-      required: [name, region]
+      required: [name]
       properties:
         request_id: { type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
-        region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional. Omit it to use the platform's default placement, which GET /v1/postgres/capabilities reports." }
         postgres_major: { type: integer, minimum: 12, maximum: 99, default: 17 }
         service_class: { type: string, enum: [development, burstable, production], default: development }
         availability: { type: string, enum: [single_zone, high_availability], default: single_zone }

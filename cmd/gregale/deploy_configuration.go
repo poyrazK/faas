@@ -23,7 +23,7 @@ func (s *savedDeploySession) readCronConfiguration(ctx context.Context, c deploy
 		return false, nil // APID predates ADR-20261019120054; preserve existing recovery.
 	}
 	if d.ID != s.record.DeploymentID || d.AppID != s.record.AppID {
-		return true, fmt.Errorf("configuration status belongs to a different deployment or app")
+		return true, deployRecoveryConflict("configuration status belongs to a different deployment or app")
 	}
 	if d.Configuration.Crons.SessionID != "" && d.Configuration.Crons.SessionID != s.record.ID {
 		prior := s.record.CronConfiguration
@@ -50,7 +50,7 @@ func (s *savedDeploySession) readCronConfiguration(ctx context.Context, c deploy
 		return true, err
 	}
 	if !d.Configuration.Complete && status != "pending" {
-		return true, fmt.Errorf("%s %s", d.Configuration.Crons.Message, d.Configuration.Crons.Hint)
+		return true, deployRecoveryConflict(fmt.Sprintf("%s %s", d.Configuration.Crons.Message, d.Configuration.Crons.Hint))
 	}
 	return true, nil
 }
