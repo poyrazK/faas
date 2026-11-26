@@ -27,7 +27,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -56,7 +55,7 @@ func secretsRotate(args []string) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for application acknowledgements")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "secret rotate:", err)
+		fmt.Fprintln(osStderr, "env rotate:", err)
 		return 1
 	}
 	if err := fs.Parse(orderedArgs); err != nil {
@@ -70,7 +69,7 @@ func secretsRotate(args []string) int {
 	*app = resolvedApp
 
 	if *timeout <= 0 {
-		fmt.Fprintln(os.Stderr, "secret rotate: --timeout must be greater than zero")
+		fmt.Fprintln(osStderr, "env rotate: --timeout must be greater than zero")
 		return 1
 	}
 	timeoutSpecified := false
@@ -80,7 +79,7 @@ func secretsRotate(args []string) int {
 		}
 	})
 	if timeoutSpecified && !*waitForAck {
-		fmt.Fprintln(os.Stderr, "secret rotate: --timeout requires --wait-for-ack")
+		fmt.Fprintln(osStderr, "env rotate: --timeout requires --wait-for-ack")
 		return 1
 	}
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
@@ -93,7 +92,7 @@ func secretsRotate(args []string) int {
 	var pair secretsPair
 	if *fromStdin {
 		if fs.NArg() != 0 {
-			fmt.Fprintln(os.Stderr, "secret rotate: --from-stdin takes no positional pair")
+			fmt.Fprintln(osStderr, "env rotate: --from-stdin takes no positional pair")
 			return 1
 		}
 		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
@@ -106,30 +105,30 @@ func secretsRotate(args []string) int {
 			}
 			p, err := parseDotenvLine(line)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(osStderr, err)
 				return 1
 			}
 			pair = p
 			break
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintln(os.Stderr, "read stdin:", keyValueScanErr(err))
+			fmt.Fprintln(osStderr, "read stdin:", keyValueScanErr(err))
 			return 1
 		}
 		if pair.Key == "" {
-			fmt.Fprintln(os.Stderr, "secret rotate: no KEY=VALUE pair found on stdin")
+			fmt.Fprintln(osStderr, "env rotate: no KEY=VALUE pair found on stdin")
 			return 1
 		}
 	} else {
 		if fs.NArg() != 1 {
-			fmt.Fprintln(os.Stderr,
-				"secret rotate: exactly one KEY=VALUE pair is required (got "+
+			fmt.Fprintln(osStderr,
+				"env rotate: exactly one KEY=VALUE pair is required (got "+
 					fmt.Sprint(fs.NArg())+")")
 			return 1
 		}
 		p, err := parseSecretsPair(fs.Arg(0))
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(osStderr, "env rotate:", err)
 			return 1
 		}
 		pair = p

@@ -907,12 +907,12 @@ type secretsPair struct {
 func parseSecretsPair(s string) (secretsPair, error) {
 	i := strings.IndexByte(s, '=')
 	if i <= 0 {
-		return secretsPair{}, fmt.Errorf("secret set must look like KEY=VALUE")
+		return secretsPair{}, errors.New("expected KEY=VALUE; a bare KEY has no value to store")
 	}
 	key := s[:i]
 	value := s[i+1:]
 	if key == "" {
-		return secretsPair{}, fmt.Errorf("secret set has an empty KEY")
+		return secretsPair{}, errors.New("expected KEY=VALUE; the KEY is empty")
 	}
 	return secretsPair{Key: key, Value: value}, nil
 }

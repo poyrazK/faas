@@ -18,7 +18,7 @@ func cmdSecretRequirements(args []string) int {
 		return cmdSecretsRequiredConsistency(args[1:])
 	}
 	if len(args) == 0 || args[0] != "set" && args[0] != "add" && args[0] != "remove" && args[0] != "show" && args[0] != "clear" {
-		return printErr("Invalid requirements command", errors.New("use secrets requirements set/add/remove KEY..., check --from-env-file PATH, show, or clear"))
+		return printErr("Invalid requirements command", errors.New("use `gregale env requirement set|create|delete KEY...`, `check --from-env-file PATH`, `get`, or `clear`"))
 	}
 	keys := []string{}
 	operation := args[0]
@@ -183,7 +183,7 @@ func cmdSecretRequirements(args []string) int {
 		if sourceSet {
 			_, _ = fmt.Fprintf(osStdout, "Names imported from: %s\n", oneLine(sourceFile))
 		}
-		_, _ = fmt.Fprintln(osStdout, "Used automatically by secrets check and env push --dry-run. No secret values were read or changed.")
+		_, _ = fmt.Fprintln(osStdout, "Used automatically by `gregale env check` and `env push --dry-run`. No secret values were read or changed.")
 	}
 	return 0
 }
