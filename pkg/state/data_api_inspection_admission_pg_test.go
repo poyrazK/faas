@@ -10,7 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -91,6 +93,27 @@ func TestDataAPIInspectionAdmissionFencePG(t *testing.T) {
 	record, err = store.ReadDataAPIInspectionRecord(ctx, accountID, appID, id)
 	if err != nil || !record.Current || record.ProtocolVersion != apptaskproto.DataAPIInspectionVersion || len(record.StdoutSHA256) != 32 {
 		t.Fatalf("completed record: %+v %v", record, err)
+	}
+	// Replay the whole inspection migration tail with v6 evidence present.
+	// It must neither narrow the protocol constraint nor disable the fences.
+	for _, name := range []string{
+		"20261126083905100_data_api_inspection_execution.sql",
+		"20261126083905200_data_api_inspection_trust_version.sql",
+		"20261126083905300_data_api_inspection_admissions.sql",
+		"20261126083905400_data_api_inspection_revision_validation.sql",
+		"20261126083905500_data_api_inspection_evidence_immutable.sql",
+	} {
+		sql, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pgtest.ExecMigration(ctx, t, pool, string(sql), true); err != nil {
+			t.Fatalf("replay %s with existing evidence: %v", name, err)
+		}
+	}
+	record, err = store.ReadDataAPIInspectionRecord(ctx, accountID, appID, id)
+	if err != nil || !record.Current || record.ProtocolVersion != apptaskproto.DataAPIInspectionVersion {
+		t.Fatalf("record after migration replay: %+v %v", record, err)
 	}
 	for _, statement := range []string{
 		`UPDATE data_api_inspection_executions SET protocol_version=5 WHERE task_id=$1`,

@@ -3,13 +3,26 @@
 SET LOCAL lock_timeout = '5s';
 -- Monotonic revisions detect a change-and-revert between admission and
 -- verification. Only fields that affect the selected target are included.
-ALTER TABLE managed_postgres_bindings ADD COLUMN data_api_inspection_revision bigint NOT NULL DEFAULT 1;
-ALTER TABLE managed_postgres_databases ADD COLUMN data_api_inspection_revision bigint NOT NULL DEFAULT 1;
-ALTER TABLE managed_postgres_bindings ADD CONSTRAINT managed_postgres_bindings_data_api_inspection_revision_check CHECK (data_api_inspection_revision > 0) NOT VALID;
-ALTER TABLE managed_postgres_databases ADD CONSTRAINT managed_postgres_databases_data_api_inspection_revision_check CHECK (data_api_inspection_revision > 0) NOT VALID;
+ALTER TABLE managed_postgres_bindings ADD COLUMN IF NOT EXISTS data_api_inspection_revision bigint NOT NULL DEFAULT 1;
+ALTER TABLE managed_postgres_databases ADD COLUMN IF NOT EXISTS data_api_inspection_revision bigint NOT NULL DEFAULT 1;
+-- +goose StatementBegin
+DO $guard$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_bindings'::regclass AND conname = 'managed_postgres_bindings_data_api_inspection_revision_check') THEN
+  ALTER TABLE managed_postgres_bindings ADD CONSTRAINT managed_postgres_bindings_data_api_inspection_revision_check CHECK (data_api_inspection_revision > 0) NOT VALID;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'managed_postgres_databases'::regclass AND conname = 'managed_postgres_databases_data_api_inspection_revision_check') THEN
+  ALTER TABLE managed_postgres_databases ADD CONSTRAINT managed_postgres_databases_data_api_inspection_revision_check CHECK (data_api_inspection_revision > 0) NOT VALID;
+ END IF;
+END
+$guard$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION bump_data_api_binding_inspection_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+DO $guard$
+BEGIN
+ IF to_regprocedure(format('%I.bump_data_api_binding_inspection_revision()', current_schema())) IS NULL THEN
+  EXECUTE $create$CREATE FUNCTION bump_data_api_binding_inspection_revision() RETURNS trigger LANGUAGE plpgsql AS $body$
 BEGIN
   IF ROW(NEW.account_id, NEW.database_account_id, NEW.database_id, NEW.app_id, NEW.scope, NEW.environment_key, NEW.access, NEW.state, NEW.deleted_at, NEW.credential_generation, NEW.credential_ref, NEW.provider_identity_id, NEW.rotation_previous_generation, NEW.cutover_id)
      IS DISTINCT FROM ROW(OLD.account_id, OLD.database_account_id, OLD.database_id, OLD.app_id, OLD.scope, OLD.environment_key, OLD.access, OLD.state, OLD.deleted_at, OLD.credential_generation, OLD.credential_ref, OLD.provider_identity_id, OLD.rotation_previous_generation, OLD.cutover_id) THEN
@@ -19,13 +32,27 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$;
+$body$$create$;
+ END IF;
+END
+$guard$;
 -- +goose StatementEnd
 -- Run after the existing BEFORE UPDATE triggers that may normalize ownership.
-CREATE TRIGGER zz_data_api_binding_inspection_revision BEFORE UPDATE ON managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION bump_data_api_binding_inspection_revision();
+-- +goose StatementBegin
+DO $guard$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'managed_postgres_bindings'::regclass AND tgname = 'zz_data_api_binding_inspection_revision' AND NOT tgisinternal) THEN
+  CREATE TRIGGER zz_data_api_binding_inspection_revision BEFORE UPDATE ON managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION bump_data_api_binding_inspection_revision();
+ END IF;
+END
+$guard$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION bump_data_api_database_inspection_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+DO $guard$
+BEGIN
+ IF to_regprocedure(format('%I.bump_data_api_database_inspection_revision()', current_schema())) IS NULL THEN
+  EXECUTE $create$CREATE FUNCTION bump_data_api_database_inspection_revision() RETURNS trigger LANGUAGE plpgsql AS $body$
 BEGIN
   IF ROW(NEW.account_id, NEW.org_id, NEW.cutover_id, NEW.backend_id, NEW.backend_fingerprint, NEW.provider_resource_id, NEW.data_resource_id, NEW.state, NEW.deleted_at, NEW.desired_generation, NEW.observed_generation)
      IS DISTINCT FROM ROW(OLD.account_id, OLD.org_id, OLD.cutover_id, OLD.backend_id, OLD.backend_fingerprint, OLD.provider_resource_id, OLD.data_resource_id, OLD.state, OLD.deleted_at, OLD.desired_generation, OLD.observed_generation) THEN
@@ -35,11 +62,22 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$;
+$body$$create$;
+ END IF;
+END
+$guard$;
 -- +goose StatementEnd
-CREATE TRIGGER zz_data_api_database_inspection_revision BEFORE UPDATE ON managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION bump_data_api_database_inspection_revision();
+-- +goose StatementBegin
+DO $guard$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'managed_postgres_databases'::regclass AND tgname = 'zz_data_api_database_inspection_revision' AND NOT tgisinternal) THEN
+  CREATE TRIGGER zz_data_api_database_inspection_revision BEFORE UPDATE ON managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION bump_data_api_database_inspection_revision();
+ END IF;
+END
+$guard$;
+-- +goose StatementEnd
 
-CREATE TABLE data_api_inspection_admissions (
+CREATE TABLE IF NOT EXISTS data_api_inspection_admissions (
   task_id uuid PRIMARY KEY REFERENCES app_tasks(id) ON DELETE CASCADE,
   account_id uuid NOT NULL,
   app_id uuid NOT NULL,
