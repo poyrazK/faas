@@ -17,7 +17,10 @@ import (
 // track() events. The tree names alias `gregale insights <verb>`;
 // `gregale analytics` is request analytics.
 
-const insightsVerbs = "events|funnel|retention|requests|cohorts|saved"
+// insightsVerbs spells the subcommands as help lists them; the dispatcher
+// still takes the legacy plurals the CLI tree rewrites to (prod hunt r60:
+// `insight list` answered "events|...|requests").
+const insightsVerbs = "event|funnel|retention|request|cohorts|saved"
 
 type insightsFlags struct {
 	project, environment, from, until, unit, by *string

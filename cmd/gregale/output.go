@@ -284,17 +284,24 @@ func printCommandValidationWithCLI(w io.Writer, advice *cliFlagDiagnostic, forma
 // text diagnostic and typo hint for interactive use.
 func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got string) int {
 	command = visibleSubcommands(path, command)
-	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", path, got)
+	shown := path
+	if tree, noun, ok := treeChoices(path); ok && typedNoun == noun {
+		// Typed as the tree noun (`org agent x`): answer in its words.
+		// The dispatcher's names (orgs: ls, info, rm, agent-policy...) are
+		// not what `org --help` lists (prod hunt r60).
+		shown, command = noun, tree
+	}
+	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", shown, got)
 	suggestion, ok := suggestSubcommand(got, command)
 	if ok && jsonOutput && !jsonUsageHelp {
-		detail += fmt.Sprintf("; did you mean %q?", "gregale "+path+" "+suggestion)
+		detail += fmt.Sprintf("; did you mean %q?", "gregale "+shown+" "+suggestion)
 	}
 	printUnknownCommandValidation(w, path, got, "%s\n", detail)
 	if ok && !jsonOutput {
 		maybeSuggestSub(suggestion)
 	}
 	if !ok && !jsonOutput && len(command.Subcommands) > 0 {
-		printSubcommandChoices(w, path, command, got)
+		printSubcommandChoices(w, shown, command, got)
 	}
 	return 1
 }
