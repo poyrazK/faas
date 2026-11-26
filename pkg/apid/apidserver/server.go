@@ -1815,6 +1815,18 @@ func newServerWithDeps(
 	s.productControl.OwnerRender = s.renderProductOwner
 	s.productControl.OperationDoctor = s.operation.ObserveProductDefinitionDoctor
 	s.productControl.ExportInvoice = s.statementInvoices.ExportProductStatement
+	s.productControl.ReviewInvoice = s.statementInvoices.ReviewProductStatementExport
+	s.productControl.ConfirmInvoice = s.statementInvoices.ConfirmProductStatementExport
+	s.productControl.ReviewInvoiceIssue = s.statementInvoices.ReviewProductPaddleInvoiceIssue
+	s.productControl.IssueInvoice = s.statementInvoices.IssueProductPaddleInvoice
+	s.productControl.ReviewStripeInvoiceReminder = s.statementInvoices.ReviewProductStripeInvoiceReminder
+	s.productControl.SendStripeInvoiceReminder = s.statementInvoices.SendProductStripeInvoiceReminder
+	s.productControl.ReviewStripeDraftSend = s.statementInvoices.ReviewProductStripeDraftSend
+	s.productControl.ReviewStripeInvoiceSend = s.statementInvoices.ReviewProductStripeInvoiceSend
+	s.productControl.SendStripeInvoice = s.statementInvoices.SendProductStripeInvoice
+	s.productControl.CheckStripeInvoiceSend = s.statementInvoices.CheckProductStripeInvoiceSend
+	s.productControl.RefreshInvoicePayment = s.statementInvoices.RefreshProductInvoicePayment
+	s.productControl.RefreshHeldInvoicePayment = s.statementInvoices.RefreshProductHeldInvoicePayment
 	s.productControl.InvoiceExport = s.statementInvoices.GetProductStatementExport
 	s.productControl.DocumentInvoice = s.statementInvoices.ProductStatementInvoice
 	s.productControl.BillingDetails = s.statementInvoices.PaddleBillingDetails
@@ -1840,6 +1852,7 @@ func newServerWithDeps(
 	s.appEvents.Host = appEventsHost{s}
 	s.outboundAI.Host = outboundAIHost{s}
 	s.statementInvoices.Host = statementInvoicesHost{s}
+	s.statementInvoices.ProductControlEnabled = func() bool { return s.productControl.Enabled }
 	s.billingRuns.Host = billingRunsHost{s}
 	s.billingSync.Host = billingSyncHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}
