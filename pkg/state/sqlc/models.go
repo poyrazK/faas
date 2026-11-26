@@ -9312,6 +9312,27 @@ type ManagedPostgresAccountingReconciliation struct {
 	CreatedAt          pgtype.Timestamptz
 }
 
+// Wake-with-app start claims, matched to recorded compute starts; pruned with them after 30 days; written only by apid.
+type ManagedPostgresAppWakeStart struct {
+	DatabaseID pgtype.UUID
+	ClaimedAt  pgtype.Timestamptz
+}
+
+// Weekly notices that one cause kept a managed PostgreSQL database awake; mailed once; written only by apid.
+type ManagedPostgresAwakeNotice struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	WeekStart    pgtype.Date
+	AwakeSeconds int64
+	Starts       int32
+	Cause        string
+	CauseAppID   pgtype.UUID
+	CauseDetail  string
+	CauseStarts  int32
+	RecordedAt   pgtype.Timestamptz
+	MailedAt     pgtype.Timestamptz
+}
+
 type ManagedPostgresBinding struct {
 	ID                         pgtype.UUID
 	AccountID                  pgtype.UUID
@@ -9372,6 +9393,19 @@ type ManagedPostgresCheckpointMaintenance struct {
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
 	ReservedByCutoverID      pgtype.UUID
+}
+
+// Starts of a managed PostgreSQL database's compute with their likely cause (diagnosis, never billing); pruned after 30 days; written only by apid.
+type ManagedPostgresComputeStart struct {
+	DatabaseID          pgtype.UUID
+	AccountID           pgtype.UUID
+	ProviderOperationID string
+	StartedAt           pgtype.Timestamptz
+	SuspendedAt         pgtype.Timestamptz
+	Cause               string
+	CauseAppID          pgtype.UUID
+	CauseDetail         string
+	RecordedAt          pgtype.Timestamptz
 }
 
 type ManagedPostgresConnectionCapacity struct {
