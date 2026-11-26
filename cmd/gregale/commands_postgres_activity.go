@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -89,7 +90,7 @@ func renderPostgresActivity(a api.ManagedPostgresActivity) string {
 		b.WriteString("\nWhat to do\n")
 		for _, h := range a.Hints {
 			fmt.Fprintf(&b, "  • %s\n", h.Message)
-			if h.Command != "" {
+			if h.Command != "" && !slices.Contains(h.FixCommands, h.Command) {
 				fmt.Fprintf(&b, "    look: $ %s\n", h.Command)
 			}
 			for _, fix := range h.FixCommands {

@@ -33,6 +33,15 @@ func TestRenderPostgresActivity(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
+	// A command that is also the fix prints once, as the fix.
+	off := "gregale postgres app-wake set orders-db off"
+	wake := main.RenderPostgresActivity(api.ManagedPostgresActivity{DatabaseName: "orders-db", Since: until.Add(-time.Hour), Until: until,
+		Starts: 1, AwakeSeconds: 60, Causes: []api.ManagedPostgresActivityCause{{Cause: "app_wake", Starts: 1, AwakeSeconds: 60}},
+		ComputeStarts: []api.ManagedPostgresActivityComputeStart{{StartedAt: until.Add(-time.Minute), Cause: "app_wake"}},
+		Hints: []api.ManagedPostgresActivityHint{{Code: "app_wake_starts_database", Cause: "app_wake", Message: "Turn it off.", Command: off, FixCommands: []string{off}}}})
+	if strings.Count(wake, off) != 1 || !strings.Contains(wake, "fix:  $ "+off) {
+		t.Errorf("wake output:\n%s", wake)
+	}
 	empty := main.RenderPostgresActivity(api.ManagedPostgresActivity{DatabaseName: "orders-db", Since: until.Add(-time.Hour), Until: until})
 	if !strings.Contains(empty, "No recorded starts") {
 		t.Errorf("empty output:\n%s", empty)
