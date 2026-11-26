@@ -262,6 +262,7 @@ func (s *Server) adoptBridgeUnit(ctx context.Context, unit, instance string) (*s
 		proc.close()
 		return nil, err
 	}
+	m.connectControl(ctx, entry)
 	return entry, nil
 }
 

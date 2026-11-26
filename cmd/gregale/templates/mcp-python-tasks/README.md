@@ -245,15 +245,17 @@ replicas.
 ## Worker upgrades
 
 `gregale mcp server tasks deploy` replaces Python workers without dropping Tasks.
-The CLI runs the release gate itself (ADR-20261123160000): it takes the
-namespace's release lock, runs `python3 task_schema.py apply` with
-`MCP_TASK_MIGRATION_DATABASE_URL`, deploys the candidate worker app, waits until
-each replacement is registered, heartbeating and serving every handler version
-that unfinished Tasks need, then drains the previous worker apps. Workers log an
+The CLI runs the release gate itself, through the Gregale API
+(ADR-20261123160000, amendment 1): it deploys the staged web first, so its
+release command (`python task_schema.py apply`) migrates the schema, then the
+candidate worker app, waits until the observer's compatibility report shows the
+candidate deployment serving every handler version that unfinished Tasks need
+on each replacement, then drains the previous worker apps. Workers log an
 `mcp_task_worker_started` receipt (worker ID and drain budget) that the CLI reads;
 a generation deployed before the receipt existed must be replaced manually once.
-Export `MCP_TASK_NAMESPACE`, the worker's database binding and the migration
-binding before running it, and keep the release journal outside the sources.
+Export `MCP_TASK_NAMESPACE` before running it, set `observer_metric_app` to the
+observer's `MCP_TASKS_SCALING_APP_SLUG`, and keep the release journal outside the
+sources. No database credentials are needed on your machine.
 
 Retain the owner keys, payload keys and handler versions needed by existing
 Tasks on every writer. Recovery, quarantine and retirement of a failed Python

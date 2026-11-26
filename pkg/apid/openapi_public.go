@@ -18,7 +18,21 @@ import (
 // for SDK generation, contract diffs and the route compliance gate.
 // gatewayd-public's trace ring answers only the operator's observer token
 // (X-Faas-Trace-Auth); customers read traces through /v1/account/traces.
-var publicHiddenPathPrefixes = []string{"/v1/apps/{slug}/entities", "/v1/traces/{trace_id}"}
+var publicHiddenPathPrefixes = []string{
+	"/v1/apps/{slug}/entities",
+	"/v1/traces/{trace_id}",
+	// Monetize console workflows remain in the full spec for typed clients.
+	"/v1/account/billing-connections/stripe/setup",
+	"/v1/account/billing-run-schedule/draft",
+	"/v1/account/billing-runs/{id}/collections",
+	"/v1/account/billing-runs/{id}/draft-exports",
+	"/v1/account/billing-runs/{id}/usage-holds",
+	"/v1/account/statement-invoices/{statement_id}/send",
+	"/v1/account/statement-invoices/{statement_id}/refresh",
+	"/v1/apps/{slug}/monetization-funnel",
+	"/v1/apps/{slug}/consumers/{consumer_id}/billing-progress",
+	"/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft",
+}
 
 // Visibility names the unreleased features the served spec publishes.
 type Visibility struct {

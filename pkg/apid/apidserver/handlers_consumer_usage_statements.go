@@ -413,17 +413,21 @@ func (s *server) finalizeAPIConsumerStatement(ctx context.Context, acct state.Ac
 	if err != nil || !changed {
 		return statement, err
 	}
+	s.recordAPIConsumerStatementFinalized(ctx, acct, statement)
+	return statement, nil
+}
+
+func (s *server) recordAPIConsumerStatementFinalized(ctx context.Context, acct state.Account, statement state.APIConsumerUsageStatement) {
 	s.audit.Emit(ctx, "api_consumer_usage_statement.finalized", &acct.ID, map[string]any{
-		"app_id": appID, "consumer_id": consumerID, "statement_id": statement.ID,
+		"app_id": statement.AppID, "consumer_id": statement.ConsumerID, "statement_id": statement.ID,
 		"finalized_at": statement.FinalizedAt.UTC().Format(time.RFC3339Nano),
 	})
 	if outbox, ok := s.store.(state.AppWebhookEventOutboxStore); ok {
 		if _, err := outbox.RelayAppWebhookEventOutboxSource(ctx, state.AppWebhookEventUsageStatementFinalized, statement.ID); err != nil {
 			s.log.WarnContext(ctx, "relay usage statement finalized webhook",
-				"app_id", appID, "statement_id", statement.ID, "err", err.Error())
+				"app_id", statement.AppID, "statement_id", statement.ID, "err", err.Error())
 		}
 	}
-	return statement, nil
 }
 
 type unpricedConsumerModelError struct {
