@@ -30,6 +30,10 @@ type fakePaddle struct {
 	addresses      map[string]string
 	billed         map[string]string
 	billedBusiness map[string]string
+	billedAt       *time.Time
+	totalMinor     string
+	billAttempts   int
+	loseBillReply  bool
 	// entities holds addresses and businesses written through the API by
 	// "customer/kind"; writes counts POSTs and PATCHes.
 	entities map[string][]map[string]any
@@ -148,11 +152,17 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.billed == nil {
 			f.billed = map[string]string{}
 		}
+		f.billAttempts++
 		f.billed[id] = body.AddressID
 		if f.billedBusiness == nil {
 			f.billedBusiness = map[string]string{}
 		}
 		f.billedBusiness[id] = body.BusinessID
+		if f.loseBillReply {
+			f.loseBillReply = false
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
 		_, _ = fmt.Fprintf(w, `{"data":{"id":%q,"status":"billed"}}`, id)
 	default:
 		w.WriteHeader(http.StatusNotFound)
@@ -162,15 +172,25 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // transaction answers GET for a created transaction: a draft until it is
 // billed.
 func (f *fakePaddle) transaction(id string) (string, bool) {
-	for i := range f.created {
+	for i, created := range f.created {
 		if fmt.Sprintf("txn_%d", i+1) != id {
 			continue
 		}
-		status := "draft"
-		if _, billed := f.billed[id]; billed {
-			status = "billed"
+		total := f.totalMinor
+		if total == "" {
+			total = "0"
 		}
-		return fmt.Sprintf(`{"data":{"id":%q,"status":%q,"currency_code":"EUR","details":{"totals":{"grand_total":"0","balance":"0"}}}}`, id, status), true
+		data := map[string]any{
+			"id": id, "status": "draft", "currency_code": created["currency_code"],
+			"customer_id": created["customer_id"], "collection_mode": created["collection_mode"],
+			"custom_data": created["custom_data"], "billing_details": created["billing_details"],
+			"details": map[string]any{"totals": map[string]string{"grand_total": total, "balance": total}},
+		}
+		if _, billed := f.billed[id]; billed {
+			data["status"], data["billed_at"] = "billed", f.billedAt
+		}
+		raw, _ := json.Marshal(map[string]any{"data": data})
+		return string(raw), true
 	}
 	return "", false
 }

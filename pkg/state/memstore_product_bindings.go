@@ -64,6 +64,7 @@ func (m *MemStore) ResolveProductFeature(_ context.Context, req ProductFeatureRe
 		}
 	}
 	d := m.productLocked()
+	m.applyDueProductPlanLocked(req.AccountID, req.AppID, req.TenantID, time.Now())
 	customer, ok := d.customers[req.AppID+"/"+req.TenantID]
 	if !ok {
 		return OperationDefinition{}, ErrProductAccess

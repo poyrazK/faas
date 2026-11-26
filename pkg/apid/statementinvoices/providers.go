@@ -22,6 +22,8 @@ import (
 // can stop using a key without knowing the provider.
 var errKeyRejected = errors.New("billing provider rejected the key")
 
+var errInvoiceLookupUnconfirmed = errors.New("billing provider could not find the invoice")
+
 // providerMaxItems bounds the items Paddle and Lago receive; a statement
 // with more lines exports as one summary item.
 const providerMaxItems = 100
@@ -58,6 +60,21 @@ type provider interface {
 		record func(invoiceID string) error, reject func()) *api.Problem
 	payment(ctx context.Context, conn connection, invoiceID string) (state.StatementInvoicePayment, bool, error)
 	dashboardURL(livemode bool, invoiceID string) string
+}
+
+func lookupInvoicePayment(ctx context.Context, p provider, conn connection, export state.StatementInvoiceExport) (state.StatementInvoicePayment, bool, error) {
+	payment, known, err := p.payment(ctx, conn, export.ProviderInvoiceID)
+	if err != nil || payment.Status != state.InvoicePaymentDeleted {
+		return payment, known, err
+	}
+	// A missing invoice can be a deleted draft or an invoice the current
+	// connection cannot access. Accept deletion only for a draft observed on
+	// this connection. Preserve issued balances and keep checking them.
+	if export.PaymentStatus == state.InvoicePaymentDraft && export.StatusSyncedAt != nil &&
+		!conn.updatedAt.After(*export.StatusSyncedAt) {
+		return payment, known, nil
+	}
+	return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
 }
 
 func (s *Service) provider(name string) provider {
@@ -418,27 +435,32 @@ func (p paddleProvider) collect(ctx context.Context, conn connection, export *st
 	if txn.Deleted || txn.Status != "draft" && txn.Status != "ready" {
 		return nil
 	}
-	address, err := p.client.CustomerAddress(ctx, conn.key, export.Customer)
-	if errors.Is(err, paddleinvoice.ErrNoAddress) {
-		return providerProblem(http.StatusUnprocessableEntity, "Paddle customer has no address",
-			"add an address to the customer in Paddle, then export again; the transaction is kept as a draft")
+	address, business, problem := p.billingDetails(ctx, conn, export.Customer)
+	if problem != nil {
+		return problem
 	}
-	if err != nil {
-		return paddleCallProblem(err)
-	}
-	// The customer's business, when it has one, carries its tax identifier
-	// onto the invoice (ADR-20261020120000).
-	business, hasBusiness, err := p.client.ActiveBusiness(ctx, conn.key, export.Customer)
-	if err != nil {
-		return paddleCallProblem(err)
-	}
-	if !hasBusiness {
-		business.ID = ""
-	}
-	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address, business.ID); err != nil {
+	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address.ID, business.ID); err != nil {
 		return paddleCallProblem(err)
 	}
 	return nil
+}
+
+func (p paddleProvider) billingDetails(ctx context.Context, conn connection, customer string) (paddleinvoice.Address, paddleinvoice.Business, *api.Problem) {
+	address, found, err := p.client.ActiveAddress(ctx, conn.key, customer)
+	if err != nil {
+		return address, paddleinvoice.Business{}, paddleCallProblem(err)
+	}
+	if !found || address.ID == "" {
+		return address, paddleinvoice.Business{}, providerProblem(http.StatusUnprocessableEntity, "Paddle customer has no address",
+			"Add an active billing address in Paddle or in the workspace's Billing details, then try again. The invoice stays a draft.")
+	}
+	// The customer's business, when it has one, carries its tax identifier
+	// onto the invoice (ADR-20261020120000).
+	business, _, err := p.client.ActiveBusiness(ctx, conn.key, customer)
+	if err != nil {
+		return address, business, paddleCallProblem(err)
+	}
+	return address, business, nil
 }
 
 // paddleStatuses map Paddle transaction statuses to payment statuses.
@@ -457,6 +479,10 @@ func (p paddleProvider) payment(ctx context.Context, conn connection, id string)
 	if err != nil {
 		return state.StatementInvoicePayment{}, false, err
 	}
+	return paddleTransactionPayment(txn)
+}
+
+func paddleTransactionPayment(txn paddleinvoice.TransactionState) (state.StatementInvoicePayment, bool, error) {
 	if txn.Deleted {
 		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
 	}

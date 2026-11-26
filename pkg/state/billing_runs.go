@@ -540,6 +540,7 @@ func (m *MemStore) discoverUsageCustomersLocked(run BillingRun, tenantReason str
 // Control app with a published catalog that has receipts in the run's month
 // (ADR-20261018212918).
 func (m *MemStore) discoverProductCustomersLocked(run BillingRun, add func(BillingRunItem)) {
+	m.resolveProductPlanSchedulesLocked(time.Now())
 	d := m.productLocked()
 	period := run.PeriodStart.UTC().Format("2006-01")
 	for _, r := range d.receipts {

@@ -31,7 +31,7 @@ func productPlanViewPG(ctx context.Context, tx pgx.Tx, s ProductPlanScope) (prod
 	if err != nil {
 		return v, err
 	}
-	c, err := productCustomerTx(ctx, tx, s.AccountID, s.AppID, s.TenantID)
+	c, err := productCustomerForChangePG(ctx, tx, s.AccountID, s.AppID, s.TenantID)
 	if err != nil {
 		return v, err
 	}
@@ -46,16 +46,26 @@ func productPlanViewPG(ctx context.Context, tx pgx.Tx, s ProductPlanScope) (prod
 	if err != nil {
 		return v, err
 	}
-	now := time.Now()
-	v = productPlanView{head: head, current: current, customer: c, starts: map[string]int64{}, period: productcontrol.Period(now), now: now}
-	rows, err := sqlc.New().ProductPlanStarts(ctx, tx, sqlc.ProductPlanStartsParams{AccountID: mustPgUUID(s.AccountID), AppID: mustPgUUID(s.AppID), TenantID: mustPgUUID(s.TenantID), Period: v.period, Features: productPlanFeatures(v)})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	v = productPlanView{head: head, current: current, customer: c, period: productcontrol.Period(now), now: now}
+	v.starts, err = productPlanStartsPG(ctx, tx, ProductBillingScope{s.AccountID, s.AppID, s.TenantID, v.period}, c, productPlanFeatures(v))
+	return v, err
+}
+
+func productPlanStartsPG(ctx context.Context, tx sqlc.DBTX, scope ProductBillingScope, customer api.ProductCustomer, features []string) (map[string]productPlanStartCounts, error) {
+	p := sqlc.ProductPlanStartsParams{AccountID: mustPgUUID(scope.AccountID), AppID: mustPgUUID(scope.AppID), TenantID: mustPgUUID(scope.TenantID), Period: scope.Period, Features: features}
+	if from, until, ok := productTrialInPeriod(customer, scope.Period); ok {
+		p.TrialFrom, p.TrialUntil = pgTime(from), pgTime(until)
+	}
+	rows, err := sqlc.New().ProductPlanStarts(ctx, tx, p)
 	if err != nil {
-		return v, err
+		return nil, err
 	}
+	starts := make(map[string]productPlanStartCounts, len(rows))
 	for _, r := range rows {
-		v.starts[r.Feature] = r.Starts
+		starts[r.Feature] = productPlanStartCounts{total: r.Starts, trial: r.TrialStarts}
 	}
-	return v, nil
+	return starts, nil
 }
 
 func (s *PgStore) productPlanTx(ctx context.Context, scope ProductPlanScope) (pgx.Tx, productPlanView, error) {
@@ -89,6 +99,10 @@ func (s *PgStore) PreviewProductPlanChange(ctx context.Context, scope ProductPla
 		return api.ProductPlanChangePreview{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	v.history, err = productPlanHistoryPG(ctx, tx, ProductBillingScope{scope.AccountID, scope.AppID, scope.TenantID, v.period})
+	if err != nil {
+		return api.ProductPlanChangePreview{}, err
+	}
 	p, err := productPlanPreview(scope, v, selection)
 	if err != nil {
 		return p, err
@@ -126,6 +140,10 @@ func (s *PgStore) ApplyProductPlanChange(ctx context.Context, scope ProductPlanS
 	if !errors.Is(err, ErrNotFound) {
 		return api.ProductPlanChangeReceipt{}, err
 	}
+	v.history, err = productPlanHistoryPG(ctx, tx, ProductBillingScope{scope.AccountID, scope.AppID, scope.TenantID, v.period})
+	if err != nil {
+		return api.ProductPlanChangeReceipt{}, err
+	}
 	p, err := productPlanPreview(scope, v, c.Request)
 	if err != nil {
 		return api.ProductPlanChangeReceipt{}, err
@@ -133,10 +151,10 @@ func (s *PgStore) ApplyProductPlanChange(ctx context.Context, scope ProductPlanS
 	if p.Hash != c.ExpectedHash {
 		return api.ProductPlanChangeReceipt{}, ErrProductPlanChangeStale
 	}
-	r := productPlanReceipt(p, scope.Role)
+	r := productPlanReceipt(p, scope.Role, v.now)
 	after := p.AfterCustomer
 	q := sqlc.New()
-	err = q.ProductControlSetCustomer(ctx, tx, sqlc.ProductControlSetCustomerParams{AccountID: mustPgUUID(scope.AccountID), AppID: mustPgUUID(scope.AppID), TenantID: mustPgUUID(scope.TenantID), Revision: after.Revision, Plan: after.Plan, Suspended: after.Suspended, AuthOrganizationID: mustPgUUID(after.AuthOrganizationID)})
+	err = q.ProductControlSetCustomer(ctx, tx, sqlc.ProductControlSetCustomerParams{AccountID: mustPgUUID(scope.AccountID), AppID: mustPgUUID(scope.AppID), TenantID: mustPgUUID(scope.TenantID), Revision: after.Revision, Plan: after.Plan, Suspended: after.Suspended, AuthOrganizationID: mustPgUUID(after.AuthOrganizationID), EffectiveAt: pgTime(v.now)})
 	if err != nil {
 		return r, mapErr(err)
 	}

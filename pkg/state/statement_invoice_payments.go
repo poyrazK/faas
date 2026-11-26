@@ -43,13 +43,17 @@ type StatementInvoicePayment struct {
 	HostedInvoiceURL     string
 }
 
+// ErrStatementInvoicePaymentStale means a newer provider observation was already stored.
+var ErrStatementInvoicePaymentStale = errors.New("state: older statement invoice payment observation")
+
 // StatementInvoicePaymentStore follows exported invoices' payment status.
 type StatementInvoicePaymentStore interface {
 	// ClaimStatementInvoiceSyncs returns completed exports due for a status
 	// sync, pushing each one's next sync to now+lease so replicas skip it.
 	ClaimStatementInvoiceSyncs(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]StatementInvoiceExport, error)
 	// RecordStatementInvoicePayment stores a synced status and returns the
-	// previous one; a nil next stops syncing.
+	// previous one; a nil next stops syncing. An older observation returns
+	// ErrStatementInvoicePaymentStale.
 	RecordStatementInvoicePayment(ctx context.Context, exportID string, payment StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error)
 	// SetStatementInvoiceNextSync schedules the next check without changing
 	// the recorded payment or balance-check timestamp. Nil stops polling.
@@ -143,6 +147,9 @@ func (m *MemStore) RecordStatementInvoicePayment(_ context.Context, exportID str
 	e, ok := m.statementInvoiceExports[exportID]
 	if !ok {
 		return "", ErrNotFound
+	}
+	if e.StatusSyncedAt != nil && syncedAt.Before(*e.StatusSyncedAt) {
+		return "", ErrStatementInvoicePaymentStale
 	}
 	prev := e.PaymentStatus
 	paid, remaining, synced := p.AmountPaidMinor, p.AmountRemainingMinor, syncedAt.UTC()
@@ -263,20 +270,28 @@ func (s *PgStore) RecordStatementInvoicePayment(ctx context.Context, exportID st
 		return "", err
 	}
 	var prev string
+	var updated bool
 	err := s.pool.QueryRow(ctx, `with prev as (
-			select coalesce(payment_status, '') as status from usage_statement_invoice_exports where id = $1::uuid for update)
-		update usage_statement_invoice_exports
-		   set payment_status = $2, amount_paid_minor = $3, amount_remaining_minor = $4, due_at = $5, paid_at = $6,
-		       hosted_invoice_url = nullif($7, ''), status_synced_at = $8, next_status_sync_at = $9
-		  from prev
-		 where id = $1::uuid
-		returning prev.status`, exportID, p.Status, p.AmountPaidMinor, p.AmountRemainingMinor, p.DueAt, p.PaidAt,
-		p.HostedInvoiceURL, syncedAt, next).Scan(&prev)
+			select coalesce(payment_status, '') as status, status_synced_at
+			  from usage_statement_invoice_exports where id = $1::uuid for update),
+		written as (
+			update usage_statement_invoice_exports
+			   set payment_status = $2, amount_paid_minor = $3, amount_remaining_minor = $4, due_at = $5, paid_at = $6,
+			       hosted_invoice_url = nullif($7, ''), status_synced_at = $8, next_status_sync_at = $9
+			  from prev
+			 where id = $1::uuid and (prev.status_synced_at is null or prev.status_synced_at <= $8)
+			returning id)
+		select prev.status, exists (select 1 from written) from prev`,
+		exportID, p.Status, p.AmountPaidMinor, p.AmountRemainingMinor, p.DueAt, p.PaidAt,
+		p.HostedInvoiceURL, syncedAt, next).Scan(&prev, &updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
 	if err != nil {
 		return "", fmt.Errorf("record statement invoice payment: %w", err)
+	}
+	if !updated {
+		return "", ErrStatementInvoicePaymentStale
 	}
 	return prev, nil
 }

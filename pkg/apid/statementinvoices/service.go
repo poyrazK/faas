@@ -386,6 +386,7 @@ type statementInvoiceSource struct {
 	customer          string
 	invoice           billing.StatementInvoice
 	existingHandoff   string
+	expectedReview    string
 	handoff           func(ctx context.Context, invoiceID string) error
 	draftLivemode     *bool
 	draftConnectionAt time.Time
@@ -432,83 +433,19 @@ func draftModeConflict() *api.Problem {
 // anything can be retried with another customer or provider.
 func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account, store state.StatementInvoiceExportStore,
 	src statementInvoiceSource, providerName string) (state.StatementInvoiceExport, *api.Problem) {
-	p := s.provider(providerName)
-	if p == nil {
-		return state.StatementInvoiceExport{}, providerProblem(http.StatusUnprocessableEntity, "Unknown billing provider", "provider must be stripe, paddle or lago")
-	}
-	prior, err := store.GetStatementInvoiceExport(ctx, acct.ID, src.kind, src.statementID)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return state.StatementInvoiceExport{}, api.ErrInternal("could not load the statement invoice export")
-	}
-	if err == nil && prior.Provider != providerName && !prior.Retargetable() {
-		return state.StatementInvoiceExport{}, exportConflict("the statement was already exported to " + prior.Provider)
-	}
-	if err == nil && prior.Status == state.StatementInvoiceExportCompleted {
-		if src.draftLivemode != nil {
-			if prior.Collection != "none" {
-				return state.StatementInvoiceExport{}, exportConflict("this statement already has an export configured to collect")
-			}
-			if prior.Livemode != *src.draftLivemode {
-				return state.StatementInvoiceExport{}, draftModeConflict()
-			}
-			if !src.draftConnectionAt.IsZero() && prior.Customer != src.requestedCustomer {
-				return state.StatementInvoiceExport{}, exportConflict("the Stripe customer differs from the reviewed export")
-			}
-		}
-		return prior, nil
-	}
-	if src.existingHandoff != "" && (err != nil || prior.ProviderInvoiceID != src.existingHandoff) {
-		return state.StatementInvoiceExport{}, exportConflict("the statement was already handed off to another invoice")
-	}
-	resolveDraftCustomer := src.draftLivemode != nil && src.requestedCustomer == ""
-	if !resolveDraftCustomer {
-		customer, problem := p.customer(src.requestedCustomer, src.externalRef)
-		if problem != nil {
-			return state.StatementInvoiceExport{}, problem
-		}
-		src.customer = customer
-	}
-	if problem := p.currencyProblem(src.invoice.Currency); problem != nil {
-		return state.StatementInvoiceExport{}, problem
-	}
-	if src.existingHandoff == "" {
-		if problem := s.checkHandoffAllowed(ctx, acct, src); problem != nil {
-			return state.StatementInvoiceExport{}, problem
-		}
-	}
-	conn, problem := s.openConnection(ctx, store, acct.ID, providerName, p)
+	prepared, problem := s.prepareStatementInvoice(ctx, acct, store, src, providerName)
 	if problem != nil {
 		return state.StatementInvoiceExport{}, problem
 	}
-	if src.draftLivemode != nil {
-		if conn.collection != "none" {
-			return state.StatementInvoiceExport{}, draftCollectionConflict()
-		}
-		if conn.livemode != *src.draftLivemode {
-			return state.StatementInvoiceExport{}, draftModeConflict()
-		}
+	p, conn := prepared.provider, prepared.connection
+	if prepared.terms.Status == state.StatementInvoiceExportCompleted {
+		return prepared.terms, nil
 	}
-	if !src.draftConnectionAt.IsZero() && !conn.updatedAt.Equal(src.draftConnectionAt) {
-		return state.StatementInvoiceExport{}, exportConflict("the Stripe connection changed; review the draft again")
+	if !matchesStatementInvoiceReview(src, prepared.terms, conn) {
+		return state.StatementInvoiceExport{}, statementInvoiceReviewChanged()
 	}
-	if resolveDraftCustomer {
-		if prior.Provider == providerName && !prior.Retargetable() {
-			src.customer = prior.Customer
-		} else {
-			linked, problem := s.linkedStripeCustomer(ctx, acct.ID, src.consumerID, conn.stripeAccountID, conn.livemode)
-			if problem != nil {
-				return state.StatementInvoiceExport{}, problem
-			}
-			src.customer, problem = p.customer(linked, src.externalRef)
-			if problem != nil {
-				return state.StatementInvoiceExport{}, problem
-			}
-		}
-	}
-	export, resumed, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: acct.ID, SourceKind: src.kind,
-		StatementID: src.statementID, Provider: providerName, Customer: src.customer,
-		Currency: src.invoice.Currency, AmountMinor: src.invoice.TotalMinor, Livemode: conn.livemode,
-		Collection: conn.collection, DaysUntilDue: conn.daysUntilDue, AutomaticTax: conn.automaticTax})
+	src.customer = prepared.proposed.Customer
+	export, resumed, err := store.BeginStatementInvoiceExport(ctx, prepared.proposed)
 	if errors.Is(err, state.ErrConflict) {
 		return state.StatementInvoiceExport{}, exportConflict("an export for this statement already targets another customer or provider")
 	}
@@ -544,11 +481,17 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 			return state.StatementInvoiceExport{}, exportConflict("the Stripe connection changed after this export started")
 		}
 	}
-	if export.Status == state.StatementInvoiceExportCompleted {
+	if export.Status == state.StatementInvoiceExportCompleted && src.expectedReview == "" {
 		return export, nil
 	}
 	if export.Provider != providerName || export.Customer != src.customer {
 		return state.StatementInvoiceExport{}, exportConflict("an export for this statement already targets another customer or provider")
+	}
+	if export.Status == state.StatementInvoiceExportCompleted {
+		return export, nil
+	}
+	if !matchesStatementInvoiceReview(src, export, conn) {
+		return state.StatementInvoiceExport{}, statementInvoiceReviewChanged()
 	}
 	if export.Livemode != conn.livemode {
 		return state.StatementInvoiceExport{}, exportConflict("the export started with a " + p.title() + " key in the other mode; reconnect that key to finish it")

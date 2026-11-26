@@ -19,8 +19,9 @@ import (
 
 // adr: 20261018212918 — over HTTP, an owner's overdue policy holds a customer
 // whose exported statement is overdue: the portal explains the hold, a new
-// start is a 402 that consumes no start, and clearing the policy lets the same
-// never-admitted work start.
+// start is a 402 that consumes no start. A confirmed payment moves the hold
+// to the next overdue invoice, and the last payment or clearing the policy
+// allows the same never-admitted work to start.
 func TestProductControlOverdueHold(t *testing.T) {
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
 	ctx := t.Context()
@@ -91,25 +92,33 @@ func TestProductControlOverdueHold(t *testing.T) {
 	aliceKey := access.Token
 	check(do("PUT", "/v1/apps/"+app.Slug+"/product/customers/"+alice.ID, key, map[string]any{"plan": "starter"}, ""), http.StatusOK)
 
-	doc := api.ProductBillingDocument{ID: uuid.NewString(), Kind: "statement", TenantID: alice.ID, Period: "2026-08", Currency: "EUR", AmountMillicents: 25000}
-	store.SeedProductBillingDocumentForTest(acct.ID, app.ID, doc)
-	export, _, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: acct.ID, SourceKind: state.StatementSourceProductControl,
-		StatementID: doc.ID, Provider: state.BillingProviderStripe, Customer: "cus_alice", Currency: "EUR", AmountMinor: 25})
-	if err != nil {
-		t.Fatal(err)
+	const hostedBase = "https://invoice.stripe.com/i/acct_1/"
+	seed := func(period, invoiceID string, due time.Time) state.StatementInvoiceExport {
+		t.Helper()
+		doc := api.ProductBillingDocument{ID: uuid.NewString(), Kind: "statement", TenantID: alice.ID, Period: period, Currency: "EUR", AmountMillicents: 25000}
+		store.SeedProductBillingDocumentForTest(acct.ID, app.ID, doc)
+		export, _, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: acct.ID, SourceKind: state.StatementSourceProductControl,
+			StatementID: doc.ID, Provider: state.BillingProviderStripe, Customer: "cus_alice", Currency: "EUR", AmountMinor: 25})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetStatementInvoiceExportInvoice(ctx, acct.ID, export.ID, invoiceID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CompleteStatementInvoiceExport(ctx, acct.ID, export.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.RecordStatementInvoicePayment(ctx, export.ID, state.StatementInvoicePayment{Status: state.InvoicePaymentOpen, AmountRemainingMinor: 25,
+			DueAt: &due, HostedInvoiceURL: hostedBase + invoiceID}, time.Now().UTC(), nil); err != nil {
+			t.Fatal(err)
+		}
+		return export
 	}
-	if err := store.SetStatementInvoiceExportInvoice(ctx, acct.ID, export.ID, "in_alice"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CompleteStatementInvoiceExport(ctx, acct.ID, export.ID); err != nil {
-		t.Fatal(err)
-	}
-	due := time.Now().UTC().AddDate(0, 0, -20).Truncate(time.Second)
-	hosted := "https://invoice.stripe.com/i/acct_1/in_alice"
-	if _, err := store.RecordStatementInvoicePayment(ctx, export.ID, state.StatementInvoicePayment{Status: state.InvoicePaymentOpen, AmountRemainingMinor: 25,
-		DueAt: &due, HostedInvoiceURL: hosted}, time.Now().UTC(), nil); err != nil {
-		t.Fatal(err)
-	}
+	now := time.Now().UTC().Truncate(time.Second)
+	due, nextDue := now.AddDate(0, 0, -20), now.AddDate(0, 0, -16)
+	first := seed("2026-07", "in_alice_first", due)
+	next := seed("2026-08", "in_alice_next", nextDue)
+	hosted, nextHosted := hostedBase+"in_alice_first", hostedBase+"in_alice_next"
 
 	check(do("PUT", policyPath, aliceKey, map[string]int{"block_overdue_after_days": 14}, ""), http.StatusForbidden)
 	check(do("PUT", policyPath, key, map[string]int{"block_overdue_after_days": 400}, ""), http.StatusUnprocessableEntity)
@@ -117,10 +126,16 @@ func TestProductControlOverdueHold(t *testing.T) {
 	if err := srv.ProductControl().SyncOverdueOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var holds api.ProductOverdueHolds
-	if err := json.Unmarshal(check(do("GET", holdsPath, key, nil, ""), http.StatusOK).Body.Bytes(), &holds); err != nil || len(holds.Holds) != 1 ||
-		holds.Holds[0].TenantID != alice.ID || holds.Holds[0].HostedInvoiceURL != hosted {
-		t.Fatalf("holds = %+v, %v", holds, err)
+	ownerHolds := func() []api.ProductOverdueHold {
+		t.Helper()
+		var holds api.ProductOverdueHolds
+		if err := json.Unmarshal(check(do("GET", holdsPath, key, nil, ""), http.StatusOK).Body.Bytes(), &holds); err != nil {
+			t.Fatal(err)
+		}
+		return holds.Holds
+	}
+	if holds := ownerHolds(); len(holds) != 1 || holds[0].TenantID != alice.ID || holds[0].HostedInvoiceURL != hosted {
+		t.Fatalf("holds = %+v", holds)
 	}
 	portal := func() api.ProductPortal {
 		t.Helper()
@@ -138,19 +153,59 @@ func TestProductControlOverdueHold(t *testing.T) {
 		t.Fatalf("portal guidance = %+v", view.Guidance)
 	}
 	start := api.ProductStartRequest{App: app.Slug, Feature: "export", Input: json.RawMessage(`{}`), ExpectedQuote: view.Quotes["export"]}
-	refused := check(do("POST", "/v1/platform-tenant-self/product/start", aliceKey, start, "held-work"), http.StatusPaymentRequired)
-	var problem api.Problem
-	if err := json.Unmarshal(refused.Body.Bytes(), &problem); err != nil || problem.Code != api.CodeProductInvoiceOverdue ||
-		!strings.Contains(problem.Detail, due.Format(time.DateOnly)) || !strings.Contains(problem.Detail, hosted) {
-		t.Fatalf("refusal = %+v, %v", problem, err)
+	const startPath = "/v1/platform-tenant-self/product/start"
+	refused := func(idempotency string, due time.Time, hostedURL string) {
+		t.Helper()
+		response := check(do("POST", startPath, aliceKey, start, idempotency), http.StatusPaymentRequired)
+		var problem api.Problem
+		if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || problem.Code != api.CodeProductInvoiceOverdue ||
+			!strings.Contains(problem.Detail, due.Format(time.DateOnly)) || !strings.Contains(problem.Detail, hostedURL) {
+			t.Fatalf("refusal = %+v, %v", problem, err)
+		}
 	}
+	refused("held-work", due, hosted)
+
+	paid := func(invoice state.StatementInvoiceExport) {
+		t.Helper()
+		paidAt := time.Now().UTC()
+		if _, err := store.RecordStatementInvoicePayment(ctx, invoice.ID, state.StatementInvoicePayment{
+			Status: state.InvoicePaymentPaid, AmountPaidMinor: 25, PaidAt: &paidAt,
+		}, paidAt, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// No recomputation runs between the two payment confirmations.
+	paid(first)
+	if view := portal(); view.OverdueHold == nil || !view.OverdueHold.DueAt.Equal(nextDue) || view.OverdueHold.HostedInvoiceURL != nextHosted ||
+		view.Guidance == nil || !view.Guidance.InvoiceOverdue {
+		t.Fatalf("portal after first payment = %+v, guidance %+v", view.OverdueHold, view.Guidance)
+	}
+	if holds := ownerHolds(); len(holds) != 1 || holds[0].DocumentID != next.StatementID || holds[0].HostedInvoiceURL != nextHosted {
+		t.Fatalf("owner holds after first payment = %+v", holds)
+	}
+	refused("held-work", nextDue, nextHosted)
 	if view := portal(); view.Usage == nil || len(view.Usage.Lines) != 0 {
 		t.Fatalf("refused start was consumed: %+v", view.Usage)
 	}
+	paid(next)
+	if view := portal(); view.OverdueHold != nil || view.Guidance == nil || view.Guidance.InvoiceOverdue {
+		t.Fatalf("hold survived the last payment: %+v", view.OverdueHold)
+	}
+	if holds := ownerHolds(); len(holds) != 0 {
+		t.Fatalf("owner holds after the last payment = %+v", holds)
+	}
+	check(do("POST", startPath, aliceKey, start, "held-work"), http.StatusAccepted)
 
+	seed("2026-09", "in_alice_policy", due)
+	if err := srv.ProductControl().SyncOverdueOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	start.ExpectedQuote = portal().Quotes["export"]
+	refused("policy-work", due, hostedBase+"in_alice_policy")
 	check(do("DELETE", policyPath, key, nil, ""), http.StatusNoContent)
 	if view := portal(); view.OverdueHold != nil || view.Guidance == nil || view.Guidance.InvoiceOverdue {
 		t.Fatalf("hold survived clearing the policy: %+v", view.OverdueHold)
 	}
-	check(do("POST", "/v1/platform-tenant-self/product/start", aliceKey, start, "held-work"), http.StatusAccepted)
+	check(do("POST", startPath, aliceKey, start, "policy-work"), http.StatusAccepted)
 }

@@ -49,6 +49,17 @@ func productDocumentProblem(err error) *api.Problem {
 // notes are not exported; they keep their recorded handoff.
 func (s *Service) ExportProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID,
 	provider, customer string) (api.StatementInvoiceExportResponse, *api.Problem) {
+	return s.exportProductStatement(ctx, acct, scope, documentID, provider, customer, "")
+}
+
+func (s *Service) ConfirmProductStatementExport(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer, expected string) (api.StatementInvoiceExportResponse, *api.Problem) {
+	if expected == "" {
+		return api.StatementInvoiceExportResponse{}, statementInvoiceReviewChanged()
+	}
+	return s.exportProductStatement(ctx, acct, scope, documentID, provider, customer, expected)
+}
+
+func (s *Service) exportProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer, expected string) (api.StatementInvoiceExportResponse, *api.Problem) {
 	if provider == "" {
 		provider = state.BillingProviderStripe
 	}
@@ -64,11 +75,33 @@ func (s *Service) ExportProductStatement(ctx context.Context, acct state.Account
 	if problem != nil {
 		return api.StatementInvoiceExportResponse{}, problem
 	}
+	src.expectedReview = expected
 	export, problem := s.exportStatementInvoice(ctx, acct, stores.exports, src, provider)
 	if problem != nil {
 		return api.StatementInvoiceExportResponse{}, problem
 	}
 	return statementInvoiceExportResponse(export), nil
+}
+
+// ReviewProductStatementExport resolves the exact target and collection settings
+// without opening an export attempt or calling the provider.
+func (s *Service) ReviewProductStatementExport(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer string) (api.ProductInvoiceExportReview, *api.Problem) {
+	stores, problem := s.productStores()
+	if problem != nil {
+		return api.ProductInvoiceExportReview{}, problem
+	}
+	src, problem := productStatementInvoiceSource(ctx, acct, stores, scope, documentID, customer)
+	if problem != nil {
+		return api.ProductInvoiceExportReview{}, problem
+	}
+	prepared, problem := s.prepareStatementInvoice(ctx, acct, stores.exports, src, provider)
+	if problem != nil {
+		return api.ProductInvoiceExportReview{}, problem
+	}
+	if prepared.terms.Status == state.StatementInvoiceExportCompleted {
+		return api.ProductInvoiceExportReview{}, exportConflict("this statement already has a completed invoice export")
+	}
+	return statementInvoiceReview(prepared.terms, prepared.connection), nil
 }
 
 func productStatementInvoiceSource(ctx context.Context, acct state.Account, stores productStores, scope state.ProductBillingScope,
