@@ -64,3 +64,19 @@ The built application layer, everything the image adds on top of the
 runtime base, is capped by plan: 256 MB on Free, 512 MB on Hobby, 1 GB on
 Pro and 2 GB on Scale. Use a multi-stage Dockerfile, prune development
 dependencies, or exclude build inputs from the final stage to fit.
+
+A Node app built from source on Node 24 runs on the shared Node runtime,
+and its layer holds only `/app`, when its start command is a plain command
+such as `node server.js`, or npm, pnpm or yarn running one `package.json`
+script: `start`, `run <name>`, or pnpm's and yarn's `<name>`. The script
+runs as written, without the package manager, so it must not:
+
+- have `pre` or `post` scripts, or take extra arguments;
+- call `npm`, `npx`, `pnpm`, `yarn` or `corepack`, or a script runner such
+  as `npm-run-all`, `run-p` or `concurrently`, itself or through a script
+  it runs.
+
+Yarn Plug'n'Play installs need yarn to run; set `nodeLinker: node-modules`
+in `.yarnrc.yml`. Any other app also carries Node and its package manager
+in its layer. Next.js and Bun apps have their own rules: see
+[Deploy Next.js](deploy-nextjs.md) and [Deploy Bun](deploy-bun.md).
