@@ -4542,7 +4542,7 @@ var cliCommands = []cliCommand{
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
 			}},
 			{Name: "waf-review", Short: "Group WAF detections by rule and path to find false positives", Notes: []string{
-				"Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.",
+				"Each group is assessed: likely_false_positive (a documented false positive), likely_attack (clients flagged on many paths), excluded or review (read the examples; a path flagged from many clients looks like a false positive but also like a few addresses probing it).",
 				"Detections are sampled, so counts are lower bounds.",
 			}, Examples: []string{
 				"gregale edge rule waf review --app my-api",

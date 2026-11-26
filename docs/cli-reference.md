@@ -4060,7 +4060,7 @@ gregale edge rule waf review --app my-api
 gregale edge rule waf review --app my-api --rule RULE_ID --since 24h
 ```
 
-Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.
+Each group is assessed: likely_false_positive (a documented false positive), likely_attack (clients flagged on many paths), excluded or review (read the examples; a path flagged from many clients looks like a false positive but also like a few addresses probing it).
 
 Detections are sampled, so counts are lower bounds.
 

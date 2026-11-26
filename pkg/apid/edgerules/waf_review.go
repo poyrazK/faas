@@ -165,11 +165,13 @@ func WAFReview(since time.Time, events []state.EdgeRuleEvent, rules []state.Edge
 }
 
 // clientPathBreadth counts the distinct review paths each client was
-// flagged on.
+// flagged on by a CRS rule. Oversized detections (uninspected headers or
+// URI, ADR-831 amendments 20 and 21) carry no CRS rule and do not count: a
+// client that sends long queries to many paths is not scanning.
 func clientPathBreadth(events []state.EdgeRuleEvent) map[string]int {
 	paths := map[string]map[string]bool{}
 	for _, e := range events {
-		if e.ClientIP == "" {
+		if e.ClientIP == "" || len(e.WAFRuleIDs) == 0 {
 			continue
 		}
 		if paths[e.ClientIP] == nil {
@@ -239,7 +241,11 @@ func (a *wafReviewAcc) finish() api.EdgeWAFReviewGroup {
 
 // assessWAFReviewGroup labels a group. Scanning beats the catalog: a
 // scanner that trips a rule legitimate traffic also trips is still an
-// attack.
+// attack. Only the catalog makes a likely false positive: spread across
+// clients is what a false positive looks like, but a few addresses probing
+// one endpoint look the same, and the review must not steer a customer into
+// excluding a signature an attacker is hitting (ADR-831 amendment 21). A
+// spread group stays for review, and its reason says it is spread.
 func assessWAFReviewGroup(g api.EdgeWAFReviewGroup) (string, string) {
 	switch {
 	case g.Excluded:
@@ -250,8 +256,9 @@ func assessWAFReviewGroup(g api.EdgeWAFReviewGroup) (string, string) {
 	case g.KnownFalsePositive != "":
 		return api.EdgeWAFReviewLikelyFalsePositive, "a documented false positive: " + g.KnownFalsePositive
 	case g.Clients >= api.EdgeWAFReviewMinClients && g.TopClientPercent <= 50:
-		return api.EdgeWAFReviewLikelyFalsePositive, fmt.Sprintf("%d clients were flagged on this path and none sent most of the detections; "+
-			"attacks usually come from a few clients across many paths", g.Clients)
+		return api.EdgeWAFReviewUndecided, fmt.Sprintf("%d clients were flagged on this path and none sent most of the detections, "+
+			"as with a false positive, but a few addresses probing one endpoint look the same; "+
+			"open the example requests before excluding it", g.Clients)
 	}
 	return api.EdgeWAFReviewUndecided, "too few clients to tell; open the example requests"
 }
