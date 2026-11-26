@@ -29,14 +29,14 @@ func openMCPTaskGroupSubmission(ctx context.Context, client *mcphosting.Client, 
 	}
 	parent, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
-		return nil, mcpTaskGroupManifest{}, errors.New("Task group requires an existing parent directory")
+		return nil, mcpTaskGroupManifest{}, errors.New("the Task group requires an existing parent directory")
 	}
 	defer func() { _ = parent.Close() }()
 	name := filepath.Base(path)
 	// Match the SDK's private directory publication rule.
 	info, err := parent.Stat(".")
 	if err != nil || (info.Mode().Perm()&0022 != 0 && info.Mode()&os.ModeSticky == 0) {
-		return nil, mcpTaskGroupManifest{}, errors.New("Task group requires a private or sticky parent directory")
+		return nil, mcpTaskGroupManifest{}, errors.New("the Task group requires a private or sticky parent directory")
 	}
 	if err := parent.Mkdir(name, 0700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, mcpTaskGroupManifest{}, errors.New("could not create private Task group directory")
@@ -79,7 +79,7 @@ func prepareMCPTaskGroupManifest(ctx context.Context, client *mcphosting.Client,
 	}
 	for i, item := range plan {
 		if manifest.Members[i].RequestSHA256 != item.requestSHA256 {
-			return manifest, fmt.Errorf("Task group plan member %d does not match the saved request", i)
+			return manifest, fmt.Errorf("the Task group plan member %d does not match the saved request", i)
 		}
 	}
 	return manifest, nil
@@ -136,10 +136,10 @@ func checkMCPTaskGroupOpen(dir *os.Root, manifest mcpTaskGroupManifest) error {
 	current, err := readMCPTaskGroupManifest(dir)
 	if err != nil || current.ID != manifest.ID || current.EndpointSHA256 != manifest.EndpointSHA256 ||
 		current.OwnerBinding != manifest.OwnerBinding || !slices.Equal(current.Members, manifest.Members) {
-		return errors.New("Task group plan changed")
+		return errors.New("the Task group plan changed")
 	}
 	if _, err := dir.Lstat("stopped"); !errors.Is(err, fs.ErrNotExist) {
-		return errors.New("Task group has a stop marker or its state cannot be verified")
+		return errors.New("the Task group has a stop marker or its state cannot be verified")
 	}
 	return nil
 }
@@ -163,7 +163,7 @@ func newMCPTaskGroupAttempt(manifest mcpTaskGroupManifest, index int, token stri
 		receipt.SubmissionKey = key.String()
 	}
 	if mcpTaskGroupKeyAge(key) < 0 {
-		return mcpTaskGroupReceipt{}, errors.New("Task group submission key is ahead of the local clock")
+		return mcpTaskGroupReceipt{}, errors.New("the Task group submission key is ahead of the local clock")
 	}
 	receipt.CredentialProof = hex.EncodeToString(mcpTaskGroupCredentialProof(receipt, token))
 	return receipt, nil

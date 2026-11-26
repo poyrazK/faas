@@ -157,7 +157,8 @@ func (a mcpTaskGroupAdmission) send(ctx context.Context, index int, item mcpTask
 			return mcpTaskReceiptStatusResult{Outcome: "retry_window_closed"}, nil
 		}
 	}
-	if a.client.VerifyTaskGroupTool(ctx, owner, item.tool) != nil {
+	toolAvailable := a.client.VerifyTaskGroupTool(ctx, owner, item.tool) == nil
+	if !toolAvailable {
 		return mcpTaskReceiptStatusResult{Outcome: "unavailable"}, nil
 	}
 	if attempt == nil {
