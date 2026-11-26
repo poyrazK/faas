@@ -129,6 +129,7 @@ func idleTailObservation(item pendingIdleTail, outcome string) IdleTailObservati
 func (c *UsageCollector) readIdleTails(ctx context.Context) {
 	ctx = WithBackgroundRequests(ctx)
 	c.pruneComputeActivity(ctx, api.ManagedPostgresActivityRetention)
+	c.noticeAwake(ctx)
 	budget := idleTailRequestsPerSweep
 	done := 0
 	for _, item := range c.pendingIdleTails {

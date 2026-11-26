@@ -573,6 +573,12 @@ sweep, so the latest can lag by up to an hour, and kept 30 days. Reading
 (`GET /v1/postgres/databases/{id}/activity`) and the MCP tool
 `gregale_get_postgres_activity`.
 
+Gregale also emails you once a week about a database that was awake 6 hours
+a day or more over the last week (Monday to Monday, UTC) when one cause
+other than requests started at least half of its starts. The email names
+the cause and the fix. Requests are your app's real traffic, so they never
+trigger it.
+
 ## Delete, recover and purge
 
 ```sh

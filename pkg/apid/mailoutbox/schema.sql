@@ -1393,3 +1393,92 @@ CREATE INDEX IF NOT EXISTS managed_postgres_egress_hold_notices_subject_idx
     ON managed_postgres_egress_hold_notices (subject_id);
 COMMENT ON TABLE managed_postgres_egress_hold_notices IS 'Managed PostgreSQL databases held for sending their own monthly egress allowance, one row per database and UTC month; written only by apid (ADR-20261110160000).';
 
+
+SET LOCAL lock_timeout = '5s';
+
+CREATE TABLE IF NOT EXISTS managed_postgres_compute_starts (
+    database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL,
+    provider_operation_id text NOT NULL CHECK (provider_operation_id ~ '^[A-Za-z0-9_-]{1,128}$'),
+    started_at timestamptz NOT NULL CHECK (isfinite(started_at)),
+    suspended_at timestamptz CHECK (suspended_at IS NULL OR (isfinite(suspended_at) AND suspended_at >= started_at)),
+    cause text NOT NULL CHECK (cause IN ('app_wake', 'cron', 'request', 'app_start', 'running_app', 'external')),
+    cause_app_id uuid,
+    cause_detail text NOT NULL DEFAULT '' CHECK (length(cause_detail) <= 512),
+    recorded_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(recorded_at)),
+    PRIMARY KEY (database_id, provider_operation_id),
+    CHECK ((cause IN ('app_wake', 'external')) OR cause_app_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS managed_postgres_compute_starts_started_idx
+    ON managed_postgres_compute_starts (database_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS managed_postgres_compute_starts_account_idx
+    ON managed_postgres_compute_starts (account_id, started_at DESC);
+COMMENT ON TABLE managed_postgres_compute_starts IS 'Starts of a managed PostgreSQL database''s compute with their likely cause (diagnosis, never billing); pruned after 30 days; written only by apid.';
+
+CREATE TABLE IF NOT EXISTS managed_postgres_awake_notices (
+    database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL,
+    week_start date NOT NULL,
+    awake_seconds bigint NOT NULL CHECK (awake_seconds >= 0),
+    starts integer NOT NULL CHECK (starts >= 0),
+    cause text NOT NULL CHECK (cause IN ('app_wake', 'cron', 'request', 'app_start', 'running_app', 'external')),
+    cause_app_id uuid,
+    cause_detail text NOT NULL DEFAULT '' CHECK (length(cause_detail) <= 512),
+    cause_starts integer NOT NULL CHECK (cause_starts >= 0 AND cause_starts <= starts),
+    recorded_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(recorded_at)),
+    mailed_at timestamptz CHECK (mailed_at IS NULL OR isfinite(mailed_at)),
+    PRIMARY KEY (database_id, week_start)
+);
+COMMENT ON TABLE managed_postgres_awake_notices IS 'Weekly notices that one cause kept a managed PostgreSQL database awake; mailed once; written only by apid.';
+
+
+SET lock_timeout = '5s';
+
+-- +goose StatementBegin
+DO $awake_mail$
+DECLARE
+    target record;
+    constraint_name name;
+    definition text;
+BEGIN
+    FOR target IN SELECT * FROM (VALUES
+        ('platform_mail_producer_outbox', '^platform_mail_producer_outbox_template_check$', 1),
+        ('platform_mail_producer_outbox', '^platform_mail_producer_outbox_verification(_v2)?_check$', 1),
+        ('platform_mail_producer_outbox', '^platform_mail_producer_outbox_security_alert_check$', 2),
+        ('platform_mail_outbox_reconciliations', '^platform_mail_outbox_reconciliations_template_check$', 1)) AS t(rel, pattern, lists)
+    LOOP
+        SELECT conname, pg_get_constraintdef(oid) INTO STRICT constraint_name, definition FROM pg_constraint
+            WHERE conrelid = target.rel::regclass AND conname ~ target.pattern;
+        CONTINUE WHEN position('managed_postgres_awake' IN definition) > 0;
+        -- The template ends each list that holds managed_postgres_cap, after
+        -- any template a later migration added behind it.
+        IF (SELECT count(*) FROM regexp_matches(definition, '''managed_postgres_cap''::text(, ''[a-z_]+''::text)*\]', 'g')) <> target.lists THEN
+            RAISE EXCEPTION '% has an unexpected shape: %', constraint_name, definition;
+        END IF;
+        EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', target.rel, constraint_name);
+        EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I %s NOT VALID', target.rel, constraint_name,
+            regexp_replace(definition, '(''managed_postgres_cap''::text(, ''[a-z_]+''::text)*)\]', '\1, ''managed_postgres_awake''::text]', 'g'));
+    END LOOP;
+END
+$awake_mail$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- VALIDATE takes only a SHARE UPDATE EXCLUSIVE lock, so writes continue.
+DO $awake_validate$
+DECLARE
+    target record;
+BEGIN
+    FOR target IN SELECT t.relname, c.conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+        WHERE NOT c.convalidated AND t.relnamespace = current_schema()::regnamespace
+          AND t.relname IN ('platform_mail_producer_outbox', 'platform_mail_outbox_reconciliations')
+          AND position('managed_postgres_awake' IN pg_get_constraintdef(c.oid)) > 0
+    LOOP
+        EXECUTE format('ALTER TABLE %I VALIDATE CONSTRAINT %I', target.relname, target.conname);
+    END LOOP;
+END
+$awake_validate$;
+-- +goose StatementEnd
+
+RESET lock_timeout;
+

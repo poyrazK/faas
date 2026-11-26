@@ -249,7 +249,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'agent_run_delivered' THEN 'agent-run-delivered:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'managed_postgres_cap' THEN 'managed-postgres-cap:' WHEN 'managed_postgres_restore_slot' THEN 'managed-postgres-restore-slot:' WHEN 'managed_postgres_plan_excess' THEN 'managed-postgres-plan-excess:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'agent_run_delivered' THEN 'agent-run-delivered:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'managed_postgres_cap' THEN 'managed-postgres-cap:' WHEN 'managed_postgres_restore_slot' THEN 'managed-postgres-restore-slot:' WHEN 'managed_postgres_plan_excess' THEN 'managed-postgres-plan-excess:' WHEN 'managed_postgres_awake' THEN 'managed-postgres-awake:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -512,19 +512,21 @@ WITH candidate AS (
           AND o.security_alert_key_id=ANY($33::text[]))
         OR (o.template='managed_postgres_plan_excess' AND $34::boolean
           AND o.security_alert_key_id=ANY($35::text[]))
-        OR (o.template='account_restored' AND $36::boolean
+        OR (o.template='managed_postgres_awake' AND $36::boolean
           AND o.security_alert_key_id=ANY($37::text[]))
-        OR (o.template='payment_failed' AND $38::boolean
+        OR (o.template='account_restored' AND $38::boolean
           AND o.security_alert_key_id=ANY($39::text[]))
-        OR (o.template='mfa_enabled' AND $40::boolean
+        OR (o.template='payment_failed' AND $40::boolean
           AND o.security_alert_key_id=ANY($41::text[]))
-        OR (o.template='password_changed' AND $42::boolean
+        OR (o.template='mfa_enabled' AND $42::boolean
           AND o.security_alert_key_id=ANY($43::text[]))
-        OR (o.template='mfa_disabled' AND $44::boolean
+        OR (o.template='password_changed' AND $44::boolean
           AND o.security_alert_key_id=ANY($45::text[]))
-        OR (o.template='mfa_recovery_used' AND $46::boolean
-          AND o.security_alert_key_id=ANY($47::text[])))
-      AND o.attempts<$48 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $46::boolean
+          AND o.security_alert_key_id=ANY($47::text[]))
+        OR (o.template='mfa_recovery_used' AND $48::boolean
+          AND o.security_alert_key_id=ANY($49::text[])))
+      AND o.attempts<$50 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -570,6 +572,8 @@ type ClaimParams struct {
 	ManagedPostgresRestoreSlotKeys    []string
 	ManagedPostgresPlanExcessEnabled  bool
 	ManagedPostgresPlanExcessKeys     []string
+	ManagedPostgresAwakeEnabled       bool
+	ManagedPostgresAwakeKeys          []string
 	AccountRestoredEnabled            bool
 	AccountRestoredKeys               []string
 	PaymentFailedEnabled              bool
@@ -622,6 +626,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.ManagedPostgresRestoreSlotKeys,
 		arg.ManagedPostgresPlanExcessEnabled,
 		arg.ManagedPostgresPlanExcessKeys,
+		arg.ManagedPostgresAwakeEnabled,
+		arg.ManagedPostgresAwakeKeys,
 		arg.AccountRestoredEnabled,
 		arg.AccountRestoredKeys,
 		arg.PaymentFailedEnabled,
@@ -1485,6 +1491,41 @@ func (q *Queries) CreateMagicLinkToken(ctx context.Context, db DBTX, arg CreateM
 		arg.ExpiresAt,
 		arg.Namespace,
 		arg.RecoveryID,
+	)
+	return err
+}
+
+const createManagedPostgresAwakeIntent = `-- name: CreateManagedPostgresAwakeIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_awake',1,$7,$8,$9,$10)
+`
+
+type CreateManagedPostgresAwakeIntentParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecipientAddress    string
+	ExpiresAt           pgtype.Timestamptz
+	RecoveryID          pgtype.UUID
+	SealedSecurityAlert []byte
+	SecurityAlertKeyID  string
+}
+
+func (q *Queries) CreateManagedPostgresAwakeIntent(ctx context.Context, db DBTX, arg CreateManagedPostgresAwakeIntentParams) error {
+	_, err := db.Exec(ctx, createManagedPostgresAwakeIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
 	)
 	return err
 }
@@ -3601,6 +3642,77 @@ func (q *Queries) Maintain(ctx context.Context, db DBTX, arg MaintainParams) err
 	return err
 }
 
+const managedPostgresAwakeDeliveryReady = `-- name: ManagedPostgresAwakeDeliveryReady :exec
+SELECT a.email,a.status,a.deletion_requested_at FROM accounts a
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id WHERE o.template='managed_postgres_awake' LIMIT 0
+`
+
+func (q *Queries) ManagedPostgresAwakeDeliveryReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, managedPostgresAwakeDeliveryReady)
+	return err
+}
+
+const managedPostgresAwakeKeyReferences = `-- name: ManagedPostgresAwakeKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='managed_postgres_awake' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type ManagedPostgresAwakeKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) ManagedPostgresAwakeKeyReferences(ctx context.Context, db DBTX, arg ManagedPostgresAwakeKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, managedPostgresAwakeKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const managedPostgresAwakeReady = `-- name: ManagedPostgresAwakeReady :one
+
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('managed_postgres_awake' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+// Managed PostgreSQL awake notices (ADR-20261125231222). The awake sweep
+// records one notice per database and week; its intent is queued in the same
+// transaction that marks the notice mailed, so it is mailed at most once.
+func (q *Queries) ManagedPostgresAwakeReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, managedPostgresAwakeReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const managedPostgresAwakeSchemaReady = `-- name: ManagedPostgresAwakeSchemaReady :exec
+SELECT n.database_id,n.week_start,n.mailed_at FROM managed_postgres_awake_notices n LIMIT 0
+`
+
+func (q *Queries) ManagedPostgresAwakeSchemaReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, managedPostgresAwakeSchemaReady)
+	return err
+}
+
 const managedPostgresCapDeliveryReady = `-- name: ManagedPostgresCapDeliveryReady :exec
 SELECT a.email,a.status,a.deletion_requested_at FROM accounts a
 JOIN platform_mail_producer_outbox o ON o.account_id=a.id WHERE o.template='managed_postgres_cap' LIMIT 0
@@ -3811,6 +3923,24 @@ SELECT n.database_id,n.kind,n.mail_intent_id FROM managed_postgres_restore_slot_
 func (q *Queries) ManagedPostgresRestoreSlotSchemaReady(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, managedPostgresRestoreSlotSchemaReady)
 	return err
+}
+
+const markManagedPostgresAwakeNoticeMailed = `-- name: MarkManagedPostgresAwakeNoticeMailed :execrows
+UPDATE managed_postgres_awake_notices SET mailed_at=clock_timestamp()
+WHERE database_id=$1::uuid AND week_start=$2::date AND mailed_at IS NULL
+`
+
+type MarkManagedPostgresAwakeNoticeMailedParams struct {
+	DatabaseID pgtype.UUID
+	WeekStart  pgtype.Date
+}
+
+func (q *Queries) MarkManagedPostgresAwakeNoticeMailed(ctx context.Context, db DBTX, arg MarkManagedPostgresAwakeNoticeMailedParams) (int64, error) {
+	result, err := db.Exec(ctx, markManagedPostgresAwakeNoticeMailed, arg.DatabaseID, arg.WeekStart)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const mirrorEndedSubscription = `-- name: MirrorEndedSubscription :exec
@@ -5358,6 +5488,42 @@ func (q *Queries) ShareMagicLinkToken(ctx context.Context, db DBTX, arg ShareMag
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const shareManagedPostgresAwakeSubmissionAccount = `-- name: ShareManagedPostgresAwakeSubmissionAccount :one
+SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='managed-postgres-awake:'||o.id::text AND o.template='managed_postgres_awake'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a
+`
+
+type ShareManagedPostgresAwakeSubmissionAccountParams struct {
+	Namespace string
+	ID        pgtype.UUID
+}
+
+type ShareManagedPostgresAwakeSubmissionAccountRow struct {
+	Email               string
+	Status              string
+	DeletionRequestedAt pgtype.Timestamptz
+	FromAddress         string
+	SenderAddress       string
+}
+
+func (q *Queries) ShareManagedPostgresAwakeSubmissionAccount(ctx context.Context, db DBTX, arg ShareManagedPostgresAwakeSubmissionAccountParams) (ShareManagedPostgresAwakeSubmissionAccountRow, error) {
+	row := db.QueryRow(ctx, shareManagedPostgresAwakeSubmissionAccount, arg.Namespace, arg.ID)
+	var i ShareManagedPostgresAwakeSubmissionAccountRow
+	err := row.Scan(
+		&i.Email,
+		&i.Status,
+		&i.DeletionRequestedAt,
+		&i.FromAddress,
+		&i.SenderAddress,
 	)
 	return i, err
 }

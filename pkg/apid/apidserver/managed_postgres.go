@@ -53,6 +53,8 @@ type managedPostgresHooks struct {
 	// NotifyPlanExcess queues the email for a database suspended past its
 	// plan (ADR-20261102125208).
 	NotifyPlanExcess func(context.Context, managedpostgres.PlanExcessNotice) error
+	// NotifyAwake queues the weekly awake email (ADR-20261125231222).
+	NotifyAwake func(context.Context, managedpostgres.AwakeNotice) error
 	// Egress reads a subject's plan egress allowance and its apps' egress
 	// this month, shared with its databases (ADR-20261110160000).
 	Egress managedpostgres.EgressAllowanceFunc
@@ -84,6 +86,13 @@ func (h *managedPostgresHooks) notifyRestoreSlot() func(context.Context, managed
 		return nil
 	}
 	return h.NotifyRestoreSlot
+}
+
+func (h *managedPostgresHooks) notifyAwake() func(context.Context, managedpostgres.AwakeNotice) error {
+	if h == nil {
+		return nil
+	}
+	return h.NotifyAwake
 }
 
 func (h *managedPostgresHooks) notifyPlanExcess() func(context.Context, managedpostgres.PlanExcessNotice) error {
@@ -138,7 +147,7 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 			return nil, nil, nil, nil, nil, nil, err
 		}
 	}
-	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log, Exclusive: store.TryAcquireUsageSweep}
+	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log, Exclusive: store.TryAcquireUsageSweep, NotifyAwake: hooks.notifyAwake()}
 	if metrics != nil {
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep

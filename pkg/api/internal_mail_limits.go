@@ -207,4 +207,9 @@ const (
 	// A plan excess notice is useful for a day (ADR-20261102125208).
 	InternalMailManagedPostgresPlanExcessTTL      = 24 * time.Hour
 	InternalMailManagedPostgresPlanExcessMaxBytes = 512
+
+	// A weekly awake notice is useful for two days (ADR-20261125231222); its
+	// payload carries a cron path, so it gets more room.
+	InternalMailManagedPostgresAwakeTTL      = 48 * time.Hour
+	InternalMailManagedPostgresAwakeMaxBytes = 1024
 )

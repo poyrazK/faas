@@ -238,6 +238,21 @@ type MailSuppression struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+// Weekly notices that one cause kept a managed PostgreSQL database awake; mailed once; written only by apid.
+type ManagedPostgresAwakeNotice struct {
+	DatabaseID   pgtype.UUID
+	AccountID    pgtype.UUID
+	WeekStart    pgtype.Date
+	AwakeSeconds int64
+	Starts       int32
+	Cause        string
+	CauseAppID   pgtype.UUID
+	CauseDetail  string
+	CauseStarts  int32
+	RecordedAt   pgtype.Timestamptz
+	MailedAt     pgtype.Timestamptz
+}
+
 // Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
 type ManagedPostgresCapEvent struct {
 	SubjectID            pgtype.UUID
@@ -249,6 +264,19 @@ type ManagedPostgresCapEvent struct {
 	CeilingUnitSeconds   int64
 	OverageEnabled       bool
 	MailIntentID         pgtype.UUID
+}
+
+// Starts of a managed PostgreSQL database's compute with their likely cause (diagnosis, never billing); pruned after 30 days; written only by apid.
+type ManagedPostgresComputeStart struct {
+	DatabaseID          pgtype.UUID
+	AccountID           pgtype.UUID
+	ProviderOperationID string
+	StartedAt           pgtype.Timestamptz
+	SuspendedAt         pgtype.Timestamptz
+	Cause               string
+	CauseAppID          pgtype.UUID
+	CauseDetail         string
+	RecordedAt          pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabase struct {

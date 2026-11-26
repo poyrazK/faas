@@ -146,6 +146,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	awakeGate, awakeBound := ctx.Value(managedPostgresAwakeSubmissionGateKey{}).(func() bool)
+	if awakeBound {
+		if awakeGate == nil || !awakeGate() {
+			return ErrDisabled
+		}
+		if err := s.shareManagedPostgresAwakeAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	restoredGate, restoredBound := ctx.Value(accountRestoredSubmissionGateKey{}).(func() bool)
 	if restoredBound {
 		if restoredGate == nil || !restoredGate() {

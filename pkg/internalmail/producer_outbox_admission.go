@@ -134,6 +134,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "managed_postgres_plan_excess_disabled"
 	}
+	if review.Template == ProducerOutboxManagedPostgresAwakeTemplate && !s.managedPostgresAwakeOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "managed_postgres_awake_disabled"
+	}
 	return review, err
 }
 

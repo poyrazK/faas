@@ -64,6 +64,10 @@ const (
 	// ManagedPostgresPlanExcessOutboxEnableEnv sends the managed PostgreSQL
 	// plan excess notices (ADR-20261102125208); off by default.
 	ManagedPostgresPlanExcessOutboxEnableEnv = "FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED"
+
+	// ManagedPostgresAwakeOutboxEnableEnv sends the managed PostgreSQL
+	// awake notices (ADR-20261125231222); off by default.
+	ManagedPostgresAwakeOutboxEnableEnv = "FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_AWAKE_OUTBOX_ENABLED"
 )
 
 // Enabled deliberately accepts only an explicit 1. An unset, malformed or
@@ -401,6 +405,9 @@ func ManagedPostgresRestoreSlotOutboxEnabled(getenv func(string) string) bool {
 
 func ManagedPostgresPlanExcessOutboxEnabled(getenv func(string) string) bool {
 	return getenv(ManagedPostgresPlanExcessOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
+}
+func ManagedPostgresAwakeOutboxEnabled(getenv func(string) string) bool {
+	return getenv(ManagedPostgresAwakeOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }
 
 func NonpaymentDeletionOutboxEnabled(getenv func(string) string) bool {

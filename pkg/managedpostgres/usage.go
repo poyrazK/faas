@@ -69,6 +69,9 @@ type UsageCollectorOptions struct {
 	// gets it collects and runs AfterSweep, so apid replicas neither duplicate
 	// provider requests nor overwrite each other's quota writes.
 	Exclusive func(context.Context) (release func(), acquired bool, err error)
+	// NotifyAwake queues the weekly awake email for a recorded notice
+	// (ADR-20261125231222); nil records and mails none.
+	NotifyAwake func(context.Context, AwakeNotice) error
 }
 
 // UsageCollector imports complete provider windows into the durable ledger.
@@ -94,6 +97,9 @@ type UsageCollector struct {
 	// activityPrunedAt is when the last prune of recorded compute starts
 	// ran.
 	activityPrunedAt time.Time
+	notifyAwake      func(context.Context, AwakeNotice) error
+	// awakeNoticedAt is when the last awake notice pass ran.
+	awakeNoticedAt time.Time
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {
@@ -136,6 +142,7 @@ func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollec
 		exclusive:    options.Exclusive,
 
 		idleTailObserver: options.ObserveIdleTail,
+		notifyAwake:      options.NotifyAwake,
 	}, nil
 }
 
