@@ -899,6 +899,8 @@ const (
 	ProductControlInvoiceReferenceMaxBytes                = 255
 	ProductControlOwnerPageSize                           = 100
 	ProductControlOwnerCursorMaxBytes                     = 1024
+	ProductControlBalanceRefreshBatchMax                  = 5
+	ProductControlStripeSendBatchMax                      = 5
 	ProductControlOwnerFormMaxBytes                       = 16 << 10
 	ProductControlSetupFormMaxBytes                       = 128 << 10
 	ProductControlDoctorMaxChecks                         = 1024
@@ -1939,6 +1941,9 @@ const (
 	// attempt cannot create a second provider invoice; a crashed attempt's
 	// claim expires (ADR-20261019180000).
 	StatementInvoiceExportClaimTTL = 15 * time.Minute
+	// Stripe can prune idempotency records after 24 hours. Leave a margin
+	// for request time and clock differences when retrying uncertain sends.
+	ProductStripeInvoiceSendRetryWindow = 23 * time.Hour
 	// List page sizes.
 	StatementInvoiceListDefault = 50
 	StatementInvoiceListMax     = 200

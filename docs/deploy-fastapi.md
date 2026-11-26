@@ -113,7 +113,7 @@ Values arrive as environment variables (`os.environ["API_KEY"]`). See
 ## Add PostgreSQL
 
 ```bash
-gregale add postgres --app my-api --region <region>
+gregale add postgres --app my-api
 ```
 
 The connection URL arrives as `DATABASE_URL`. It goes through a connection

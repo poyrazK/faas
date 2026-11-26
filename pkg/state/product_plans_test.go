@@ -12,11 +12,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/productcontrol"
 )
 
 type productPlanTestStore interface {
 	productContractStore
 	ProductSelfServiceStore
+	ProductOwnerStore
+	ProductBillingStore
 	SetPlatformTenantStatus(context.Context, string, string, string) (PlatformTenant, error)
 	UpdateAccountStatus(context.Context, string, AccountStatus) error
 }
@@ -83,6 +86,63 @@ func TestProductControlSelfServiceMemory(t *testing.T) { productPlansContract(t,
 func productPlansContract(t *testing.T, s productPlanTestStore) {
 	t.Helper()
 	ctx := t.Context()
+	t.Run("owner and customer pricing agree with the billing ledger", func(t *testing.T) {
+		f := newProductPlanFixture(ctx, t, s)
+		scope := f.scope
+		starter := f.spec.Plans["starter"]
+		starter.MonthlyFeeMillicents = 2_900_000
+		starter.Features["export"] = api.ProductFeatureGrant{MonthlyStarts: 3, IncludedStarts: 1, UnitPriceMillicents: 25_000}
+		f.spec.Plans["starter"] = starter
+		pro := f.spec.Plans["pro"]
+		pro.MonthlyFeeMillicents = 4_900_000
+		f.spec.Plans["pro"] = pro
+		f.spec.Plans["basic"] = api.ProductPlan{Label: "Basic", MonthlyFeeMillicents: 900_000, Features: map[string]api.ProductFeatureGrant{"export": {MonthlyStarts: 3, IncludedStarts: 2, UnitPriceMillicents: 50_000}}}
+		f.spec.SelfService.Transitions["starter"] = []string{"basic"}
+		catalog, err := s.PutProductCatalog(ctx, scope.AccountID, scope.AppID, f.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		customer := f.customer
+		customer.Revision = catalog.Revision
+		for _, plan := range []string{"pro", "starter"} {
+			customer.Plan = plan
+			if _, err := s.SetProductCustomer(ctx, scope.AccountID, scope.AppID, customer); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.admission.IdempotencyKey = "used-included-start"
+		if _, _, err := s.AdmitOperation(ctx, f.admission); err != nil {
+			t.Fatal(err)
+		}
+		preview, err := s.PreviewProductPlanChange(ctx, scope, api.ProductPlanSelection{ID: uuid.NewString(), Plan: "basic"})
+		if err != nil || preview.Pricing == nil {
+			t.Fatalf("customer pricing: %+v, %v", preview.Pricing, err)
+		}
+		customer.Plan = "basic"
+		owner, err := s.PreviewProductCustomerChange(ctx, scope.AccountID, scope.AppID, customer)
+		if err != nil || !reflect.DeepEqual(preview.Pricing, owner.Pricing) {
+			t.Fatalf("owner pricing: %+v, customer pricing: %+v, %v", owner.Pricing, preview.Pricing, err)
+		}
+		billing := ProductBillingScope{scope.AccountID, scope.AppID, scope.TenantID, preview.Period}
+		before, err := s.ReviewProductBilling(ctx, billing)
+		if err != nil || len(before.Fees) != 1 || before.Fees[0].Plan != "pro" {
+			t.Fatalf("previous higher plan fee: %+v, %v", before.Fees, err)
+		}
+		p := preview.Pricing
+		if p.ThisMonthBeforeMillicents != before.Fees[0].AmountMillicents || p.ThisMonthAfterMillicents != p.ThisMonthBeforeMillicents || p.NextMonthAfterMillicents != 900_000 {
+			t.Fatalf("projected plan fees: %+v", p)
+		}
+		if len(p.Runs) != 1 || p.Runs[0].Starts != 1 || p.Runs[0].BeforeMillicents == nil || *p.Runs[0].BeforeMillicents != 25_000 || p.Runs[0].AfterMillicents == nil || *p.Runs[0].AfterMillicents != 0 {
+			t.Fatalf("next run pricing: %+v", p.Runs)
+		}
+		if _, err := s.ApplyProductPlanChange(ctx, scope, api.ProductPlanChangeConfirmation{Request: preview.Request, ExpectedHash: preview.Hash}); err != nil {
+			t.Fatal(err)
+		}
+		after, err := s.ReviewProductBilling(ctx, billing)
+		if err != nil || len(after.Fees) != 1 || after.Fees[0].AmountMillicents != p.ThisMonthAfterMillicents {
+			t.Fatalf("fee after applying the preview: %+v, %v", after.Fees, err)
+		}
+	})
 	t.Run("reviewed concurrency, pinned prices and carried usage", func(t *testing.T) {
 		f := newProductPlanFixture(ctx, t, s)
 		a := f.admission
@@ -359,15 +419,35 @@ func productPlansContract(t *testing.T, s productPlanTestStore) {
 func TestProductControlPlanReviewBindsUTCMonth(t *testing.T) {
 	f := api.ProductFeature{Label: "Export", DefinitionID: uuid.NewString()}
 	spec := api.ProductCatalogSpec{Features: map[string]api.ProductFeature{"export": f}, Plans: map[string]api.ProductPlan{"starter": {Label: "Starter"}, "pro": {Label: "Pro"}}, SelfService: &api.ProductPlanPolicy{Transitions: map[string][]string{"starter": {"pro"}}}}
-	v := productPlanView{head: api.ProductCatalog{Revision: productOwnerHash("head"), Spec: spec}, current: api.ProductCatalog{Spec: spec}, customer: api.ProductCustomer{Plan: "starter"}, starts: map[string]int64{}, period: "2026-10"}
+	v := productPlanView{head: api.ProductCatalog{Revision: productOwnerHash("head"), Spec: spec}, current: api.ProductCatalog{Spec: spec}, customer: api.ProductCustomer{Plan: "starter"}, period: "2026-10", now: time.Date(2026, 10, 31, 23, 59, 0, 0, time.UTC)}
 	selection := api.ProductPlanSelection{ID: uuid.NewString(), Plan: "pro"}
 	before, err := productPlanPreview(ProductPlanScope{}, v, selection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v.period = time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).Format("2006-01")
+	v.now = v.now.Add(time.Minute)
+	v.period = productcontrol.Period(v.now)
 	after, err := productPlanPreview(ProductPlanScope{}, v, selection)
 	if err != nil || after.Hash == before.Hash {
 		t.Fatal("month rollover did not invalidate review", err)
+	}
+}
+
+func TestProductControlPlanPricingProjectsTrialAcrossMonths(t *testing.T) {
+	now := time.Date(2026, 1, 28, 0, 0, 0, 0, time.UTC)
+	grant := api.ProductFeatureGrant{MonthlyStarts: 3, UnitPriceMillicents: 50_000}
+	catalog := api.ProductCatalog{Revision: "test", Spec: api.ProductCatalogSpec{Plans: map[string]api.ProductPlan{
+		"free": {Features: map[string]api.ProductFeatureGrant{"export": grant}},
+		"pro":  {Features: map[string]api.ProductFeatureGrant{"export": grant}, MonthlyFeeMillicents: 2_800_000, TrialDays: 7},
+	}}}
+	history := productPlanHistory{held: []productcontrol.PlanHeld{{Revision: "test", Plan: "free", Since: now.AddDate(0, -1, 0), First: true}}, catalog: func(string) (api.ProductCatalog, bool) { return catalog, true }}
+	before := api.ProductCustomer{Plan: "free", Revision: catalog.Revision}
+	after := api.ProductCustomer{Plan: "pro", Revision: catalog.Revision}
+	p := history.pricing(before, after, catalog, catalog, nil, now)
+	if p.ThisMonthBeforeMillicents != 0 || p.ThisMonthAfterMillicents != 0 || p.NextMonthAfterMillicents != 2_500_000 || p.NextPeriod != "2026-02" {
+		t.Fatalf("trial fees: %+v", p)
+	}
+	if len(p.Runs) != 1 || p.Runs[0].BeforeMillicents == nil || *p.Runs[0].BeforeMillicents != 50_000 || p.Runs[0].AfterMillicents == nil || *p.Runs[0].AfterMillicents != 0 {
+		t.Fatalf("trial next run: %+v", p.Runs)
 	}
 }

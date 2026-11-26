@@ -58,7 +58,7 @@ func cmdDeployResume(ctx context.Context, args []string) int {
 		return s.failure("Could not verify saved app", "recovery", err)
 	}
 	if s.record.AppID != "" && remoteApp.ID != s.record.AppID {
-		return s.failure("App identity changed", "recovery", errors.New("the saved app was replaced; recovery stopped"))
+		return s.failure("App identity changed", "recovery", deployRecoveryConflict("the saved app was replaced; recovery stopped"))
 	}
 	if s.shouldCleanPolicies() {
 		if err := s.cleanPolicies(ctx, c); err != nil {
@@ -74,7 +74,7 @@ func cmdDeployResume(ctx context.Context, args []string) int {
 		return s.failure("Could not read saved deployment", "deployment", err)
 	}
 	if dep.ID != s.record.DeploymentID || remoteApp.ID == "" || dep.AppID != remoteApp.ID {
-		return s.failure("Deployment identity mismatch", "recovery", errors.New("saved deployment does not belong to the saved app"))
+		return s.failure("Deployment identity mismatch", "recovery", deployRecoveryConflict("saved deployment does not belong to the saved app"))
 	}
 	s.record.AppID = remoteApp.ID
 	ctx = context.WithValue(ctx, deploySessionContextKey{}, s)
@@ -86,7 +86,7 @@ func cmdDeployResume(ctx context.Context, args []string) int {
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
-	PrintProgress(osStderr, "Resuming deployment %s; %s", dep.ID, s.resumeCommand())
+	PrintProgress(osStderr, "Resuming deployment %s; %s", dep.ID, s.resumeCommandWithTimeout(deadline))
 	final, ok := waitForDeploymentReceiptUntil(waitCtx, c, dep, deadline)
 	stage := "deployment"
 	if ok && s.record.WaitForRollout && final.Status == statusLive && !deploymentRolloutComplete(final) {

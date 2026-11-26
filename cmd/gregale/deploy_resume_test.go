@@ -211,11 +211,28 @@ func TestDeployResumeRejectsConflicts(t *testing.T) {
 			if err := s.save(); err != nil {
 				t.Fatal(err)
 			}
+			stderr, restore := captureStderr(t)
+			defer restore()
 			if code := cmdDeployResume(context.Background(), []string{"--app", "demo"}); code == 0 {
 				t.Fatalf("unexpected success: %s", out)
 			}
 			if f.patches != 0 || f.submissions != 0 {
 				t.Fatalf("writes after conflict: patches=%d submissions=%d", f.patches, f.submissions)
+			}
+			if mode == "setting" || mode == "newer" || mode == "app" || mode == "deployment" {
+				var problem struct {
+					Recovery *deployRecovery `json:"recovery"`
+				}
+				want := "gregale --json app get demo"
+				if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil || problem.Recovery == nil || problem.Recovery.ResumeCommand != "" || problem.Recovery.NextCommand != want {
+					t.Fatalf("conflict problem=%s err=%v", stderr, err)
+				}
+				if mode == "setting" || mode == "newer" {
+					var receipt DeployReceipt
+					if err := json.Unmarshal(out.Bytes(), &receipt); err != nil || receipt.ResumeCommand != "" || receipt.Recovery == nil || receipt.Recovery.ResumeCommand != "" || receipt.Recovery.NextCommand != want {
+						t.Fatalf("conflict receipt=%s err=%v", out, err)
+					}
+				}
 			}
 		})
 	}
@@ -235,6 +252,7 @@ func TestDeployResumeRecoversLostSettingsReply(t *testing.T) {
 	if receipt.ConfigurationComplete == nil || *receipt.ConfigurationComplete || receipt.WaitStage != "configuration" {
 		t.Fatalf("false success receipt: %+v", receipt)
 	}
+	assertDeployRecoveryCommand(t, receipt.Recovery, "gregale --json release resume "+s.record.ID)
 	out.Reset()
 	if code := cmdDeployResume(context.Background(), []string{s.record.ID}); code != 0 {
 		t.Fatalf("resume exit=%d", code)

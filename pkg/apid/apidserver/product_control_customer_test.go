@@ -9,11 +9,14 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -66,6 +69,7 @@ func TestProductControlCustomerPortalPilot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	var memberWithoutBilling atomic.Bool
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/auth/v1/token" {
@@ -82,7 +86,11 @@ func TestProductControlCustomerPortalPilot(t *testing.T) {
 		}
 		for i := range tenants {
 			if r.Header.Get("Authorization") == "Bearer customer-"+strconv.Itoa(i)+".access.jwt" {
-				_ = json.NewEncoder(w).Encode(map[string]any{"organizations": []map[string]string{{"id": orgs[i], "name": tenants[i].Name, "role": "owner"}}})
+				role := "owner"
+				if i == 2 && memberWithoutBilling.Load() {
+					role = "member"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"organizations": []map[string]string{{"id": orgs[i], "name": tenants[i].Name, "role": role}}})
 				return
 			}
 		}
@@ -218,6 +226,143 @@ func TestProductControlCustomerPortalPilot(t *testing.T) {
 	}
 	start.ExpectedQuote = current.Quotes["export"]
 	check(call("POST", base+"/start", 2, start, "stale-price"), 202)
+
+	withBillingKeys(t)
+	var reads, writes atomic.Int32
+	stripe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writes.Add(1)
+			http.Error(w, "unexpected provider write", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Path == "/v1/invoices" {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+			return
+		}
+		reads.Add(1)
+		switch r.URL.Path {
+		case "/v1/invoices/in_portal_first", "/v1/invoices/in_portal_second":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": strings.TrimPrefix(r.URL.Path, "/v1/invoices/"), "status": "paid",
+				"currency": "eur", "amount_paid": 25, "amount_remaining": 0,
+			})
+		default:
+			http.Error(w, "simulated provider outage", http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(stripe.Close)
+	srv.StatementInvoices().Stripe = &stripeinvoice.Client{BaseURL: stripe.URL, HTTP: stripe.Client()}
+	if err := store.MarkAccountEmailVerified(ctx, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	key, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAPIKey(ctx, account.ID, hash, "billing-owner", api.ScopesAdminOnly); err != nil {
+		t.Fatal(err)
+	}
+	connection := httptest.NewRequest(http.MethodPut, "/v1/account/billing-connections/stripe",
+		strings.NewReader(`{"secret_key":"rk_test_portal_payment","collection":"none"}`))
+	connection.Header.Set("Authorization", "Bearer "+key)
+	connected := httptest.NewRecorder()
+	handler.ServeHTTP(connected, connection)
+	check(connected, http.StatusOK)
+
+	now := time.Now().UTC()
+	seed := func(tenant, period, invoice string, daysAgo int) state.StatementInvoiceExport {
+		t.Helper()
+		doc := api.ProductBillingDocument{ID: uuid.NewString(), Kind: "statement", TenantID: tenant, Period: period, Currency: "EUR", AmountMillicents: 25000}
+		store.SeedProductBillingDocumentForTest(account.ID, app.ID, doc)
+		export, _, err := store.BeginStatementInvoiceExport(ctx, state.StatementInvoiceExport{AccountID: account.ID, SourceKind: state.StatementSourceProductControl,
+			StatementID: doc.ID, Provider: state.BillingProviderStripe, Currency: "EUR", Customer: "cus_portal", AmountMinor: 25})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetStatementInvoiceExportInvoice(ctx, account.ID, export.ID, invoice); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CompleteStatementInvoiceExport(ctx, account.ID, export.ID); err != nil {
+			t.Fatal(err)
+		}
+		due := now.AddDate(0, 0, -daysAgo)
+		if _, err := store.RecordStatementInvoicePayment(ctx, export.ID, state.StatementInvoicePayment{
+			Status: state.InvoicePaymentOpen, AmountRemainingMinor: 25, DueAt: &due, HostedInvoiceURL: "https://invoice.stripe.com/i/" + invoice,
+		}, now.Add(-time.Hour), nil); err != nil {
+			t.Fatal(err)
+		}
+		return export
+	}
+	firstInvoice := seed(tenants[0].ID, "2026-07", "in_portal_first", 20)
+	secondInvoice := seed(tenants[0].ID, "2026-08", "in_portal_second", 16)
+	unavailableInvoice := seed(tenants[1].ID, "2026-08", "in_portal_unavailable", 16)
+	if _, err := store.PutProductOverduePolicy(ctx, state.ProductOverduePolicy{AccountID: account.ID, AppID: app.ID, BlockOverdueAfterDays: 14}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.ProductControl().SyncOverdueOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	view := func(customer int) api.ProductPortal {
+		t.Helper()
+		res := call("GET", base+"/product", customer, nil, "")
+		check(res, http.StatusOK)
+		var view api.ProductPortal
+		if err := json.Unmarshal(res.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		return view
+	}
+	const checkPath = "/billing/check-payment"
+	application := view(0)
+	if application.OverdueHold == nil || application.OverdueHold.PaymentCheckID != firstInvoice.ID {
+		t.Fatalf("portal first hold = %+v", application.OverdueHold)
+	}
+	paymentCheck := func(customer int, holdID string, status int) *httptest.ResponseRecorder {
+		t.Helper()
+		res := call("POST", base+checkPath, customer, map[string]string{"hold_id": holdID}, "")
+		check(res, status)
+		return res
+	}
+	memberWithoutBilling.Store(true)
+	paymentCheck(2, firstInvoice.ID, http.StatusForbidden)
+	paymentCheck(-1, firstInvoice.ID, http.StatusUnauthorized)
+	paymentCheck(1, firstInvoice.ID, http.StatusOK)
+	check(call("POST", base+checkPath, 0, map[string]string{"hold_id": firstInvoice.ID, "tenant_id": tenants[1].ID}, ""), http.StatusBadRequest)
+	if reads.Load() != 0 {
+		t.Fatalf("provider received %d reads for unauthorized or mismatched checks", reads.Load())
+	}
+	start.ExpectedQuote = application.Quotes["export"]
+	check(call("POST", base+"/start", 0, start, "payment-held-work"), http.StatusPaymentRequired)
+
+	// Payment checks update the effective hold with no intervening worker tick.
+	if res := paymentCheck(0, firstInvoice.ID, http.StatusOK); !strings.Contains(res.Body.String(), secondInvoice.ID) {
+		t.Fatalf("payment check did not return the successor: %s", res.Body)
+	}
+	if hold := view(0).OverdueHold; hold == nil || hold.PaymentCheckID != secondInvoice.ID ||
+		!strings.HasSuffix(hold.HostedInvoiceURL, "/in_portal_second") {
+		t.Fatalf("portal after first payment = %+v", hold)
+	}
+	paymentCheck(0, firstInvoice.ID, http.StatusOK)
+	if reads.Load() != 1 {
+		t.Fatalf("a duplicate refreshed the successor, provider reads = %d", reads.Load())
+	}
+	check(call("POST", base+"/start", 0, start, "payment-held-work"), http.StatusPaymentRequired)
+	if res := paymentCheck(0, secondInvoice.ID, http.StatusOK); !strings.Contains(res.Body.String(), `"overdue_hold":null`) {
+		t.Fatalf("payment check did not report the cleared hold: %s", res.Body)
+	}
+	paymentCheck(0, secondInvoice.ID, http.StatusOK)
+	if hold := view(0).OverdueHold; hold != nil {
+		t.Fatalf("portal hold after final payment = %+v", hold)
+	}
+	check(call("POST", base+"/start", 0, start, "payment-held-work"), http.StatusAccepted)
+
+	failed := paymentCheck(1, unavailableInvoice.ID, http.StatusServiceUnavailable)
+	paymentCheck(1, unavailableInvoice.ID, http.StatusConflict)
+	if !strings.Contains(failed.Body.String(), "Try again shortly") || view(1).OverdueHold == nil ||
+		reads.Load() != 3 || writes.Load() != 0 {
+		t.Fatalf("provider failure did not preserve the hold and coalesce the retry, response = %s, reads = %d, writes = %d", failed.Body, reads.Load(), writes.Load())
+	}
+
 	// Force an organization unlink between HTTP authentication and the
 	// Operation transaction. The transaction must reject that old identity.
 	originalStart := srv.ProductControl().StartOperation
@@ -234,4 +379,5 @@ func TestProductControlCustomerPortalPilot(t *testing.T) {
 		check(call("GET", path, -1, nil, ""), 404)
 	}
 	check(call("POST", base+"/session", -1, map[string]any{}, ""), 404)
+	check(call("POST", base+checkPath, -1, map[string]any{}, ""), 404)
 }
