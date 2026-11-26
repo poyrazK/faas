@@ -277,7 +277,9 @@ func TestSandboxResumeRefusedForItsNodeBacksOff(t *testing.T) {
 }
 
 // A pause whose answer never reached agentd may still have written its
-// capture: it is recorded used under its key, so the sweep deletes it.
+// capture: it is recorded used under its key, so the sweep deletes it. The
+// session lost its VM, not its volume: it goes back to paused and resumes
+// cold (ADR-20261122132055 §4), never failed, which would delete the volume.
 func TestSandboxPauseLostWithItsStreamIsSwept(t *testing.T) {
 	_, store := openStore(t)
 	ctx := context.Background()
@@ -291,8 +293,8 @@ func TestSandboxPauseLostWithItsStreamIsSwept(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-done
-	if sb := sandboxState(t, store, id); sb.State != agentstore.SandboxFailed {
-		t.Fatalf("session = %s", sb.State)
+	if sb := sandboxState(t, store, id); sb.State != agentstore.SandboxPaused || sb.ExpiresAt.Before(time.Now()) {
+		t.Fatalf("session = %s until %s, want paused for its retention", sb.State, sb.ExpiresAt)
 	}
 	c, ok := consumedCapture(t, store, fake.pauses[0])
 	want := "snap/sandbox-session-" + account + "/captures/" + fake.pauses[0] + "/v2/mem"
