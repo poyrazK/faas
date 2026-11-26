@@ -236,7 +236,7 @@ func TestAPISandboxSuiteReleaseRequirement(t *testing.T) {
 	}
 	params := state.CreateAppTaskParams{
 		AccountID: e.acct.ID, AppID: app.ID, DeploymentID: candidate.ID, Kind: state.AppTaskKindRelease,
-		Command: candidate.ReleaseCommand, CheckPassingSandboxSuite: true,
+		Command: candidate.ReleaseCommand, ReleaseApprovalPolicyUpdatedAt: &now,
 	}
 	block := func() {
 		t.Helper()
@@ -321,6 +321,19 @@ func TestAPISandboxSuiteReleaseRequirement(t *testing.T) {
 	gate("stale", firstPass)
 	block()
 	freshPass := rerun()
+	policy.RequiredApprovals = 2
+	if _, err := e.store.SetReleaseApprovalPolicy(ctx, policy, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateAppTask(ctx, params); !errors.Is(err, state.ErrReleaseApprovalPolicyChanged) {
+		t.Fatalf("stale approval policy admitted a release task: %v", err)
+	}
+	policy.RequiredApprovals = 1
+	current, err := e.store.SetReleaseApprovalPolicy(ctx, policy, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	params.ReleaseApprovalPolicyUpdatedAt = &current.UpdatedAt
 	if _, err := e.store.CreateAppTask(ctx, params); err != nil {
 		t.Fatalf("passing suite did not admit release task: %v", err)
 	}

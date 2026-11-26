@@ -27757,6 +27757,48 @@ END $$;
 
 
 --
+-- Name: require_api_sandbox_release_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_api_sandbox_release_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    policy app_release_approval_policies%ROWTYPE;
+BEGIN
+    SELECT * INTO policy FROM app_release_approval_policies WHERE app_id = NEW.app_id FOR SHARE;
+    IF NOT FOUND OR NOT policy.require_passing_sandbox_suite THEN
+        RETURN NULL;
+    END IF;
+
+    -- Match the existing pre-command approval boundary. A first production
+    -- release has no serving baseline and other scopes have their own lane.
+    IF EXISTS (
+        SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+        WHERE d.id = NEW.deployment_id AND d.app_id = NEW.app_id
+          AND d.status = 'snapshotting' AND cardinality(d.release_command) > 0
+          AND coalesce(nullif(d.scope, ''), 'default') IN ('default', 'production')
+          AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+          AND NOT (d.environment_workload_runtime IS NOT NULL AND d.environment_workload_held)
+          AND d.rollout_completed_at IS NULL
+          AND (d.created_at >= policy.created_at OR d.rollout_started_at >= policy.created_at)
+          AND EXISTS (
+              SELECT 1 FROM deployments live WHERE live.app_id = d.app_id AND live.status = 'live'
+                AND live.scope IN ('default', 'production')
+          )
+    ) AND NOT EXISTS (
+        SELECT 1 FROM api_sandbox_release_admissions
+        WHERE deployment_id = NEW.deployment_id AND task_id = NEW.id
+    ) THEN
+        RAISE EXCEPTION 'production release command requires a sandbox suite admission'
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'api_sandbox_release_command_requires_admission';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: require_deployment_layer_artifacts(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -66608,6 +66650,14 @@ ALTER TABLE ONLY public.api_sandbox_comparisons
 
 
 --
+-- Name: apps api_sandbox_fixed_egress; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.apps
+    ADD CONSTRAINT api_sandbox_fixed_egress CHECK (((COALESCE(preview_of_slug, ''::text) !~~ 'api-sandbox:%'::text) OR ((egress_allowlist = ARRAY['127.0.0.1/32'::cidr]) AND (cardinality(egress_ports) = 0)))) NOT VALID;
+
+
+--
 -- Name: api_sandbox_partners api_sandbox_partners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -93613,6 +93663,13 @@ CREATE TRIGGER api_key_rotation_copy_object_storage_grants AFTER INSERT ON publi
 --
 
 CREATE TRIGGER api_keys_preserve_runs_principal BEFORE INSERT ON public.api_keys FOR EACH ROW EXECUTE FUNCTION public.preserve_api_key_runs_principal();
+
+
+--
+-- Name: app_tasks api_sandbox_release_command_requires_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER api_sandbox_release_command_requires_admission AFTER INSERT ON public.app_tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((new.kind = 'release'::text)) EXECUTE FUNCTION public.require_api_sandbox_release_admission();
 
 
 --

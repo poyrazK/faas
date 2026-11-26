@@ -36,5 +36,11 @@ WHERE status = 'active' AND preview_pr_state = 'open' AND preview_expires_at > n
   AND manifest->>'api_sandbox_source_deployment_id' <> ''
 ON CONFLICT DO NOTHING;
 
+ALTER TABLE apps ADD CONSTRAINT api_sandbox_fixed_egress
+    CHECK (coalesce(preview_of_slug, '') NOT LIKE 'api-sandbox:%'
+        OR (egress_allowlist = ARRAY['127.0.0.1/32'::cidr] AND cardinality(egress_ports) = 0))
+    NOT VALID;
+
 -- +goose Down
+ALTER TABLE apps DROP CONSTRAINT api_sandbox_fixed_egress;
 DROP TABLE IF EXISTS api_sandbox_provisioning;

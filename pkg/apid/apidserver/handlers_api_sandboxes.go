@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -195,10 +194,6 @@ func (s *server) buildAPISandboxApp(acct state.Account, parent state.App, source
 	candidate.RequireAuthn = false
 	candidate.PublicAuthMode = api.AppPublicAuthModeOpen
 	candidate.ConsumerAuthMode = api.ConsumerAuthModeRequired
-	// A nonempty allowlist makes both network families default-deny.
-	// Loopback never reaches a tenant network. The managed database's
-	// bound endpoint is admitted separately by the runtime.
-	candidate.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
 	candidate.StartCommand = parent.StartCommand
 	candidate.Manifest.APISandboxSourceDeploymentID = sourceID
 	candidate.Manifest.Entrypoint = parent.Manifest.Entrypoint

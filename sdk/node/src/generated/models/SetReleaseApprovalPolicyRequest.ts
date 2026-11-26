@@ -24,6 +24,10 @@ export type SetReleaseApprovalPolicyRequest = {
    */
   allow_self_approval?: boolean;
   /**
+   * Opt in to the sandbox suite requirement. Omit to keep the current setting.
+   */
+  require_passing_sandbox_suite?: boolean;
+  /**
    * Names of Slack or email notification channels; at least one is needed, so the approvers learn a release waits, and PagerDuty channels are refused. Slack messages link to the approval page.
    */
   notify_channels?: Array<string>;

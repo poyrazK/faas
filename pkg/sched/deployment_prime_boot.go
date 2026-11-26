@@ -70,6 +70,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	if err != nil {
 		return result, fmt.Errorf("sched: prime: %w", err)
 	}
+	app = app.WithAPISandboxEgress()
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: primeLayer,
 		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),

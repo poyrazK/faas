@@ -3,6 +3,37 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AdvanceCanaryRequest } from '../models/AdvanceCanaryRequest.js';
+import type { APISandboxApprovalCheck } from '../models/APISandboxApprovalCheck.js';
+import type { APISandboxApprovalChecksResponse } from '../models/APISandboxApprovalChecksResponse.js';
+import type { APISandboxComparisonReport } from '../models/APISandboxComparisonReport.js';
+import type { APISandboxComparisonRequest } from '../models/APISandboxComparisonRequest.js';
+import type { APISandboxComparisonsResponse } from '../models/APISandboxComparisonsResponse.js';
+import type { APISandboxCreateRequest } from '../models/APISandboxCreateRequest.js';
+import type { APISandboxInviteResponse } from '../models/APISandboxInviteResponse.js';
+import type { APISandboxLibraryScenario } from '../models/APISandboxLibraryScenario.js';
+import type { APISandboxLibraryScenarioSaveRequest } from '../models/APISandboxLibraryScenarioSaveRequest.js';
+import type { APISandboxListResponse } from '../models/APISandboxListResponse.js';
+import type { APISandboxPartnerInviteResponse } from '../models/APISandboxPartnerInviteResponse.js';
+import type { APISandboxReceiverCredentials } from '../models/APISandboxReceiverCredentials.js';
+import type { APISandboxReceiverInvite } from '../models/APISandboxReceiverInvite.js';
+import type { APISandboxReceiverInviteRequest } from '../models/APISandboxReceiverInviteRequest.js';
+import type { APISandboxReceiverOutcome } from '../models/APISandboxReceiverOutcome.js';
+import type { APISandboxReceiverProof } from '../models/APISandboxReceiverProof.js';
+import type { APISandboxReceiverURL } from '../models/APISandboxReceiverURL.js';
+import type { APISandboxResponse } from '../models/APISandboxResponse.js';
+import type { APISandboxRunReport } from '../models/APISandboxRunReport.js';
+import type { APISandboxRunRequest } from '../models/APISandboxRunRequest.js';
+import type { APISandboxRunShareResponse } from '../models/APISandboxRunShareResponse.js';
+import type { APISandboxRunsResponse } from '../models/APISandboxRunsResponse.js';
+import type { APISandboxScenarioDraft } from '../models/APISandboxScenarioDraft.js';
+import type { APISandboxScenarioLibraryResponse } from '../models/APISandboxScenarioLibraryResponse.js';
+import type { APISandboxScenarioResponse } from '../models/APISandboxScenarioResponse.js';
+import type { APISandboxScenarioSaveRequest } from '../models/APISandboxScenarioSaveRequest.js';
+import type { APISandboxSuiteResponse } from '../models/APISandboxSuiteResponse.js';
+import type { APISandboxSuiteRunReport } from '../models/APISandboxSuiteRunReport.js';
+import type { APISandboxSuiteRunRequest } from '../models/APISandboxSuiteRunRequest.js';
+import type { APISandboxSuiteRunsResponse } from '../models/APISandboxSuiteRunsResponse.js';
+import type { APISandboxSuiteSaveRequest } from '../models/APISandboxSuiteSaveRequest.js';
 import type { BindingCheckFinding } from '../models/BindingCheckFinding.js';
 import type { BindingPromotionRequest } from '../models/BindingPromotionRequest.js';
 import type { BindingPromotionResponse } from '../models/BindingPromotionResponse.js';
@@ -77,6 +108,48 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DeploymentsService {
   protected static readonly clientConfig?: typeof OpenAPI;
+  /**
+   * Draft an API sandbox scenario from a retained request.
+   * Read-only endpoint for the serving release, method, and any matching declared route. Supply synthetic inputs and the desired expected status before saving.
+   * @returns APISandboxScenarioDraft Starting metadata for a private scenario draft.
+   * @throws ApiError
+   */
+  public static getDebugApiSandboxScenarioDraft({
+    slug,
+    reqId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Public request ID or internal telemetry row UUID.
+     */
+    reqId: string,
+  }): CancelablePromise<APISandboxScenarioDraft> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/requests/{req_id}/sandbox-scenario-draft',
+      path: {
+        'slug': slug,
+        'req_id': reqId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `The caller may not access the source app.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Request evidence or scenario storage is unavailable.`,
+      },
+    });
+  }
   /**
    * List named deployment aliases for an app.
    * Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
@@ -2617,6 +2690,171 @@ export class DeploymentsService {
     });
   }
   /**
+   * List recent regression suite runs for a release.
+   * @returns APISandboxSuiteRunsResponse Recent runs and their progress.
+   * @throws ApiError
+   */
+  public static listApiSandboxSuiteRuns({
+    id,
+  }: {
+    /**
+     * Held candidate deployment UUID.
+     */
+    id: string,
+  }): CancelablePromise<APISandboxSuiteRunsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/approvals/sandbox-suite-runs',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read one suite run and its scenario results.
+   * @returns APISandboxSuiteRunReport Scenario results and current verdict.
+   * @throws ApiError
+   */
+  public static getApiSandboxSuiteRun({
+    id,
+    run,
+  }: {
+    /**
+     * Held candidate deployment UUID.
+     */
+    id: string,
+    /**
+     * Client-generated run UUID.
+     */
+    run: string,
+  }): CancelablePromise<APISandboxSuiteRunReport> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/approvals/sandbox-suite-runs/{run}',
+      path: {
+        'id': id,
+        'run': run,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Queue the app's regression suite for a held build and live baseline.
+   * Pins the deployment artifacts and current library scenario revisions. Each scenario runs in a fresh pair of sandboxes. Reuse the run UUID and the same inputs to retry.
+   * @returns APISandboxSuiteRunReport Existing run for this UUID.
+   * @throws ApiError
+   */
+  public static createApiSandboxSuiteRun({
+    id,
+    run,
+    requestBody,
+  }: {
+    /**
+     * Held candidate deployment UUID.
+     */
+    id: string,
+    /**
+     * Client-generated run UUID.
+     */
+    run: string,
+    requestBody: APISandboxSuiteRunRequest,
+  }): CancelablePromise<APISandboxSuiteRunReport> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/deployments/{id}/approvals/sandbox-suite-runs/{run}',
+      path: {
+        'id': id,
+        'run': run,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List sandbox checks for a release approval.
+   * Lists prior checks and the current availability, serving baseline, and saved scenario. Inspect each check verdict for stale evidence.
+   * @returns APISandboxApprovalChecksResponse Sandbox approval evidence.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static listSandboxApprovalChecks({
+    id,
+  }: {
+    id: string,
+  }): CancelablePromise<APISandboxApprovalChecksResponse | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/approvals/sandbox-checks',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Read a sandbox approval check.
+   * Use the top-level verdict. It becomes stale if the candidate artifact, production baseline, or baseline scenario changes. The nested comparison preserves historical run receipts.
+   * @returns APISandboxApprovalCheck Sandbox approval evidence.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static getSandboxApprovalCheck({
+    id,
+    check,
+  }: {
+    id: string,
+    check: string,
+  }): CancelablePromise<APISandboxApprovalCheck | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/approvals/sandbox-checks/{check}',
+      path: {
+        'id': id,
+        'check': check,
+      },
+    });
+  }
+  /**
+   * Compare the held build with the current serving release in two sandboxes.
+   * Uses the live baseline and scenario revision returned by the list endpoint. The production release must still be waiting before its release command. Reuse the check UUID and original inputs to retry.
+   * @returns APISandboxApprovalCheck The same check already exists.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static createSandboxApprovalCheck({
+    id,
+    check,
+    requestBody,
+  }: {
+    id: string,
+    check: string,
+    requestBody: APISandboxComparisonRequest,
+  }): CancelablePromise<APISandboxApprovalCheck | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/deployments/{id}/approvals/sandbox-checks/{check}',
+      path: {
+        'id': id,
+        'check': check,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
    * Show a release's approvals.
    * The release's approval state, the decisions so far, and when its wait expires.
    * @returns ReleaseApprovalStatus The release's approval status.
@@ -3807,6 +4045,985 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The selected deployment could not be reached or evidence was unavailable.`,
+      },
+    });
+  }
+  /**
+   * List recent sandbox release comparisons and previous eligible baselines.
+   * The candidate comes from the deployment path. Baselines are retained releases of the same application, most recent first.
+   * @returns APISandboxComparisonsResponse Comparison data.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static listApiSandboxComparisons({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+  }): CancelablePromise<APISandboxComparisonsResponse | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+    });
+  }
+  /**
+   * Read the current comparison verdict and its two run receipts.
+   * Poll until verdict is passed, regression, or inconclusive. Both receipts use the same saved scenario revision.
+   * @returns APISandboxComparisonReport Comparison data.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static getApiSandboxComparison({
+    slug,
+    deployment,
+    comparison,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    comparison: string,
+  }): CancelablePromise<APISandboxComparisonReport | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'comparison': comparison,
+      },
+    });
+  }
+  /**
+   * Run the same saved sandbox scenario on two retained releases.
+   * The candidate comes from the deployment path. Choose a different retained baseline from the same application and use a current app library or candidate scenario revision. Reuse the comparison UUID with the same inputs to retry.
+   * @returns APISandboxComparisonReport An identical comparison request already exists.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static createApiSandboxComparison({
+    slug,
+    deployment,
+    comparison,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    comparison: string,
+    requestBody: APISandboxComparisonRequest,
+  }): CancelablePromise<APISandboxComparisonReport | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'comparison': comparison,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List the 25 most recent scenario runs for a release.
+   * @returns APISandboxRunsResponse Scenario runs.
+   * @throws ApiError
+   */
+  public static listApiSandboxRuns({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+  }): CancelablePromise<APISandboxRunsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        401: `Invalid credentials.`,
+        403: `The caller may not access this release.`,
+        404: `Release or run unavailable.`,
+        503: `Scenario runs are unavailable.`,
+      },
+    });
+  }
+  /**
+   * Read progress or the report for a scenario run.
+   * @returns APISandboxRunReport Scenario run.
+   * @throws ApiError
+   */
+  public static getApiSandboxRun({
+    slug,
+    deployment,
+    run,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    run: string,
+  }): CancelablePromise<APISandboxRunReport> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'run': run,
+      },
+      errors: {
+        401: `Invalid credentials.`,
+        403: `The caller may not access this release.`,
+        404: `Release or run unavailable.`,
+        503: `Scenario runs are unavailable.`,
+      },
+    });
+  }
+  /**
+   * Start a scenario run in a fresh copy of the selected release.
+   * Repeat with the same run UUID, scenario revision, and mode to recover the existing run. A partner run waits for the partner's ordered HTTP requests, then runs the final GET with its JSON assertions.
+   *
+   * @returns APISandboxRunReport Existing scenario run.
+   * @throws ApiError
+   */
+  public static createApiSandboxRun({
+    slug,
+    deployment,
+    run,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    run: string,
+    requestBody: APISandboxRunRequest,
+  }): CancelablePromise<APISandboxRunReport> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'run': run,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid run request.`,
+        401: `Invalid credentials.`,
+        403: `The caller may not access this release.`,
+        404: `Release or run unavailable.`,
+        409: `The scenario changed, the run ID is in use, or the release is ineligible.`,
+        503: `Scenario runs are unavailable.`,
+      },
+    });
+  }
+  /**
+   * Issue a one-time invitation for a partner scenario run.
+   * An unused link can be replaced. The recipient can redeem it once the pinned sandbox is ready.
+   * @returns APISandboxPartnerInviteResponse Partner invitation token.
+   * @throws ApiError
+   */
+  public static issueApiSandboxRunInvite({
+    slug,
+    deployment,
+    run,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    run: string,
+  }): CancelablePromise<APISandboxPartnerInviteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/invite',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'run': run,
+      },
+      errors: {
+        401: `Invalid credentials.`,
+        403: `The caller may not access this release.`,
+        404: `Release or run unavailable.`,
+        409: `The run is not accepting invitations or an invite was already redeemed.`,
+        410: `Sandbox has ended.`,
+        503: `Scenario runs are unavailable.`,
+      },
+    });
+  }
+  /**
+   * Issue a read-only token for a finished scenario run report.
+   * A new link replaces the previous link for this run. The token expires after 24 hours.
+   * @returns APISandboxRunShareResponse Shareable report token.
+   * @throws ApiError
+   */
+  public static shareApiSandboxRun({
+    slug,
+    deployment,
+    run,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    run: string,
+  }): CancelablePromise<APISandboxRunShareResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/report-link',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'run': run,
+      },
+      errors: {
+        401: `Invalid credentials.`,
+        403: `The caller may not access this release.`,
+        404: `Release or run unavailable.`,
+        409: `The scenario run is still in progress.`,
+        503: `Scenario runs are unavailable.`,
+      },
+    });
+  }
+  /**
+   * Invite a partner to verify a webhook receiver.
+   * Reserves a one-time invite for a new run ID and an outbound scenario revision. No sandbox is provisioned until the owner starts the run.
+   * @returns Problem The request could not be completed.
+   * @returns APISandboxReceiverInvite Setup status and one-time token.
+   * @throws ApiError
+   */
+  public static createApiSandboxReceiverInvite({
+    slug,
+    deployment,
+    run,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    run: string,
+    requestBody: APISandboxReceiverInviteRequest,
+  }): CancelablePromise<Problem | APISandboxReceiverInvite> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'run': run,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read the receiver setup status.
+   * Read readiness for this release without returning any credentials.
+   * @returns APISandboxReceiverInvite Receiver setup status.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static getApiSandboxReceiverInvite({
+    slug,
+    deployment,
+    run,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    run: string,
+  }): CancelablePromise<APISandboxReceiverInvite | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'run': run,
+      },
+    });
+  }
+  /**
+   * Read the endpoint ownership proof.
+   * Use the one-time receiver invite as the bearer token. Configure the exact HTTPS callback URL to return the proof as the GET response body.
+   * @returns APISandboxReceiverProof Ownership proof.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static getApiSandboxReceiverProof({
+    run,
+  }: {
+    run: string,
+  }): CancelablePromise<APISandboxReceiverProof | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/api-sandbox-runs/{run}/receiver-invite',
+      path: {
+        'run': run,
+      },
+    });
+  }
+  /**
+   * Verify the partner receiver and redeem the invitation.
+   * Use the one-time invite as the bearer token. The platform makes a redirect-free HTTPS GET to the submitted URL. Successful verification consumes the invite and returns the run-scoped signing secret and outcome token once.
+   * @returns APISandboxReceiverCredentials Run-scoped receiver credentials.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static verifyApiSandboxReceiver({
+    run,
+    requestBody,
+  }: {
+    run: string,
+    requestBody: APISandboxReceiverURL,
+  }): CancelablePromise<APISandboxReceiverCredentials | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/api-sandbox-runs/{run}/receiver-invite',
+      path: {
+        'run': run,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Confirm the partner is ready to receive the callback.
+   * Use the outcome token as the bearer token after installing the run signing secret in the test receiver.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static readyApiSandboxReceiver({
+    run,
+  }: {
+    run: string,
+  }): CancelablePromise<Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/api-sandbox-runs/{run}/receiver-ready',
+      path: {
+        'run': run,
+      },
+    });
+  }
+  /**
+   * Submit the processor outcome for the retried delivery.
+   * Use the outcome token as the bearer token. Submit the count of committed business effects for the stable delivery ID after the second attempt. A 409 can indicate the retry has yet to be recorded or the outcome window has closed. A repeat of the same accepted outcome is idempotent while the token is active.
+   * @returns Problem The request could not be completed.
+   * @throws ApiError
+   */
+  public static recordApiSandboxReceiverOutcome({
+    run,
+    requestBody,
+  }: {
+    run: string,
+    requestBody: APISandboxReceiverOutcome,
+  }): CancelablePromise<Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/api-sandbox-runs/{run}/receiver-outcome',
+      path: {
+        'run': run,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a finished run using its report token.
+   * @returns APISandboxRunReport Redacted scenario run report.
+   * @throws ApiError
+   */
+  public static readSharedApiSandboxRun({
+    run,
+  }: {
+    run: string,
+  }): CancelablePromise<APISandboxRunReport> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/api-sandbox-runs/{run}/report',
+      path: {
+        'run': run,
+      },
+      errors: {
+        401: `The report link is invalid or expired.`,
+        429: `Too many invalid requests.`,
+      },
+    });
+  }
+  /**
+   * Read the app's saved API regression suite.
+   * @returns APISandboxSuiteResponse Saved suite configuration.
+   * @throws ApiError
+   */
+  public static getApiSandboxSuite({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APISandboxSuiteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-suite',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Save the app's API regression suite.
+   * Choose up to five scenarios from this app's library. Their order controls the run order. An empty list clears the selection.
+   * @returns APISandboxSuiteResponse Updated suite configuration.
+   * @throws ApiError
+   */
+  public static putApiSandboxSuite({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: APISandboxSuiteSaveRequest,
+  }): CancelablePromise<APISandboxSuiteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/api-sandbox-suite',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List reusable sandbox scenarios for this app.
+   * @returns APISandboxScenarioLibraryResponse Names and current revisions of app library scenarios.
+   * @throws ApiError
+   */
+  public static listApiSandboxLibraryScenarios({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APISandboxScenarioLibraryResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Scenario library unavailable.`,
+      },
+    });
+  }
+  /**
+   * Read a reusable sandbox scenario and its private provenance.
+   * @returns APISandboxLibraryScenario Current scenario definition.
+   * @throws ApiError
+   */
+  public static getApiSandboxLibraryScenario({
+    slug,
+    scenario,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+  }): CancelablePromise<APISandboxLibraryScenario> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Scenario library unavailable.`,
+      },
+    });
+  }
+  /**
+   * Save a reusable sandbox scenario.
+   * Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision to edit. A Debugger source request can be supplied when creating. Names are unique within the app.
+   * @returns APISandboxLibraryScenario Saved scenario and its current revision.
+   * @throws ApiError
+   */
+  public static putApiSandboxLibraryScenario({
+    slug,
+    scenario,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+    requestBody: APISandboxLibraryScenarioSaveRequest,
+  }): CancelablePromise<APISandboxLibraryScenario> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Scenario library unavailable.`,
+      },
+    });
+  }
+  /**
+   * Remove a scenario from the app's library.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteApiSandboxLibraryScenario({
+    slug,
+    scenario,
+    expectedRevision,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+    expectedRevision: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      query: {
+        'expected_revision': expectedRevision,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Scenario library unavailable.`,
+      },
+    });
+  }
+  /**
+   * Read the saved API sandbox scenario for a release.
+   * @returns APISandboxScenarioResponse Saved scenario or null when the release has none.
+   * @throws ApiError
+   */
+  public static getReleaseApiSandboxScenario({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+  }): CancelablePromise<APISandboxScenarioResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        401: `Invalid credentials.`,
+        403: `The caller may not access this release.`,
+        404: `Release unavailable.`,
+        503: `Scenario storage unavailable.`,
+      },
+    });
+  }
+  /**
+   * Save the API sandbox scenario for a release.
+   * Changes the scenario used for future copies. Existing sandboxes keep their original scenario.
+   * @returns APISandboxScenarioResponse Saved scenario and its revision.
+   * @throws ApiError
+   */
+  public static putReleaseApiSandboxScenario({
+    slug,
+    deployment,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    requestBody: APISandboxScenarioSaveRequest,
+  }): CancelablePromise<APISandboxScenarioResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid scenario definition.`,
+        401: `Invalid credentials.`,
+        403: `The caller may not access this release.`,
+        404: `Release unavailable.`,
+        409: `The release is ineligible for API sandboxes or the scenario revision changed.`,
+        503: `Scenario storage unavailable.`,
+      },
+    });
+  }
+  /**
+   * List shareable API sandboxes for a release.
+   * Returns owner-visible receipts without invitation credentials.
+   * @returns APISandboxListResponse API sandbox receipts.
+   * @throws ApiError
+   */
+  public static listReleaseApiSandboxes({
+    slug,
+    deployment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+  }): CancelablePromise<APISandboxListResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandboxes',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      errors: {
+        400: `Invalid request.`,
+        401: `Invalid credentials.`,
+        403: `The caller or plan does not allow this action.`,
+        404: `Release or sandbox unavailable.`,
+        409: `The release or sandbox is ineligible.`,
+        503: `Provisioning or storage unavailable.`,
+      },
+    });
+  }
+  /**
+   * Queue or retrieve an API sandbox.
+   * Starts background provisioning of the selected artifact and an isolated PostgreSQL database. Reuse the sandbox UUID to get the existing sandbox after an interrupted response.
+   * @returns APISandboxResponse Existing sandbox provisioning receipt.
+   * @throws ApiError
+   */
+  public static ensureReleaseApiSandbox({
+    slug,
+    deployment,
+    sandbox,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    sandbox: string,
+    requestBody?: APISandboxCreateRequest,
+  }): CancelablePromise<APISandboxResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'sandbox': sandbox,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid request.`,
+        401: `Invalid credentials.`,
+        403: `The caller or plan does not allow this action.`,
+        404: `Release or sandbox unavailable.`,
+        409: `The release or sandbox is ineligible.`,
+        410: `Sandbox lease has ended.`,
+        503: `Provisioning or storage unavailable.`,
+      },
+    });
+  }
+  /**
+   * End an API sandbox.
+   * Revokes sandbox access and removes its workload and fixtures.
+   * @returns void
+   * @throws ApiError
+   */
+  public static endReleaseApiSandbox({
+    slug,
+    deployment,
+    sandbox,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    sandbox: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'sandbox': sandbox,
+      },
+      errors: {
+        400: `Invalid request.`,
+        401: `Invalid credentials.`,
+        403: `The caller or plan does not allow this action.`,
+        404: `Release or sandbox unavailable.`,
+        409: `The release or sandbox is ineligible.`,
+        503: `Provisioning or storage unavailable.`,
+      },
+    });
+  }
+  /**
+   * Issue an API sandbox invitation.
+   * Returns a sandbox-only consumer credential after public verification of the pinned release. The key expires with the sandbox.
+   * @returns APISandboxInviteResponse Sandbox invitation.
+   * @throws ApiError
+   */
+  public static createReleaseApiSandboxInvite({
+    slug,
+    deployment,
+    sandbox,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    sandbox: string,
+  }): CancelablePromise<APISandboxInviteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/invites',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'sandbox': sandbox,
+      },
+      errors: {
+        400: `Invalid request.`,
+        401: `Invalid credentials.`,
+        403: `The caller or plan does not allow this action.`,
+        404: `Release or sandbox unavailable.`,
+        409: `The release or sandbox is ineligible.`,
+        503: `Provisioning or storage unavailable.`,
+      },
+    });
+  }
+  /**
+   * Issue a one-time invite for a private partner copy.
+   * The owner can issue a link during provisioning. A new link invalidates any unredeemed link for the copy.
+   * @returns APISandboxPartnerInviteResponse One-time invite credential.
+   * @throws ApiError
+   */
+  public static issueReleaseApiSandboxPartnerInvite({
+    slug,
+    deployment,
+    sandbox,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    sandbox: string,
+  }): CancelablePromise<APISandboxPartnerInviteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner/invite',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'sandbox': sandbox,
+      },
+      errors: {
+        401: `Invalid credentials.`,
+        403: `The caller may not manage this sandbox.`,
+        404: `Partner sandbox unavailable.`,
+        409: `Revoke redeemed access before replacing the invite.`,
+        410: `The sandbox lease has ended.`,
+        503: `Partner access could not be updated.`,
+      },
+    });
+  }
+  /**
+   * Revoke this partner copy's invite and redeemed key.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeReleaseApiSandboxPartner({
+    slug,
+    deployment,
+    sandbox,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deployment: string,
+    sandbox: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+        'sandbox': sandbox,
+      },
+      errors: {
+        401: `Invalid credentials.`,
+        403: `The caller may not manage this sandbox.`,
+        404: `Partner sandbox unavailable.`,
+        503: `Partner access could not be updated.`,
+      },
+    });
+  }
+  /**
+   * Exchange a one-time partner invite for a sandbox key.
+   * Supply the invite token in the Authorization bearer header. The key and recipient guide are returned once after sandbox verification.
+   * @returns APISandboxInviteResponse Redeemed sandbox key and scenario guide.
+   * @throws ApiError
+   */
+  public static redeemApiSandboxPartnerInvite({
+    sandbox,
+  }: {
+    sandbox: string,
+  }): CancelablePromise<APISandboxInviteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/api-sandboxes/{sandbox}/redeem',
+      path: {
+        'sandbox': sandbox,
+      },
+      errors: {
+        401: `The invite is expired, invalid, revoked, or redeemed.`,
+        403: `The current plan does not allow consumer keys.`,
+        409: `The sandbox has not passed readiness checks or key quota was reached.`,
+        429: `Too many invalid redemption attempts.`,
+        503: `The invitation could not be redeemed.`,
+      },
+    });
+  }
+  /**
+   * Read an API sandbox invitation.
+   * Authenticates with the invitation credential and returns the exact sandbox URL and matching OpenAPI URL.
+   * @returns APISandboxResponse Sandbox access and release receipt.
+   * @throws ApiError
+   */
+  public static getApiSandboxInvite({
+    sandbox,
+  }: {
+    sandbox: string,
+  }): CancelablePromise<APISandboxResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/api-sandboxes/{sandbox}/invite',
+      path: {
+        'sandbox': sandbox,
+      },
+      errors: {
+        401: `Invitation unavailable.`,
       },
     });
   }

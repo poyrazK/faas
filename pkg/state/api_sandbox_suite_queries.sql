@@ -96,7 +96,8 @@ SELECT id FROM deployments WHERE app_id = $1 AND (status = 'live' OR id = $2)
 ORDER BY id FOR SHARE;
 
 -- name: LockAPISandboxReleaseApprovalPolicy :one
-SELECT require_passing_sandbox_suite FROM app_release_approval_policies WHERE app_id = $1 FOR SHARE;
+SELECT updated_at, require_passing_sandbox_suite, timeout_minutes
+FROM app_release_approval_policies WHERE app_id = $1 FOR SHARE;
 
 -- name: GetAPISandboxReleaseAdmission :one
 SELECT suite_run_id FROM api_sandbox_release_admissions WHERE deployment_id = $1;
@@ -115,6 +116,8 @@ SELECT count(*) = sqlc.arg(scenario_count)::bigint AND coalesce(bool_and(
     AND candidate.source_deployment_id = sqlc.arg(candidate_id)
     AND baseline.scenario_revision = item.scenario_revision AND candidate.scenario_revision = item.scenario_revision
     AND baseline.status = 'passed' AND candidate.status = 'passed'
+    AND baseline.finished_at < sqlc.arg(approval_deadline)::timestamptz
+    AND candidate.finished_at < sqlc.arg(approval_deadline)::timestamptz
 ), false)
 FROM api_sandbox_suite_scenarios item
 JOIN api_sandbox_approval_checks e ON e.comparison_id = item.comparison_id

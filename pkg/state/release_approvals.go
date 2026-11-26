@@ -22,6 +22,21 @@ const (
 	ReleaseApproverRolePersonal = "personal"
 )
 
+// ReleasePhaseStartedAt is when d entered its current pipeline stage (for a
+// release waiting before its release command, its release phase), or its
+// creation when the stage has no start.
+func ReleasePhaseStartedAt(d Deployment) time.Time {
+	started := d.CreatedAt
+	var stages StageState
+	if len(d.StageState) == 0 || json.Unmarshal(d.StageState, &stages) != nil || stages.CurrentStartedAt == nil {
+		return started
+	}
+	if stages.CurrentStartedAt.After(started) {
+		return *stages.CurrentStartedAt
+	}
+	return started
+}
+
 // ReleaseApprovalPolicy is an app's approval policy.
 type ReleaseApprovalPolicy struct {
 	RequirePassingSandboxSuite *bool

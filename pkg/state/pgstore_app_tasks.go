@@ -138,7 +138,7 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	if resolved.RequireLiveDeployment {
 		return s.createServiceBindingSmokeTask(ctx, resolved)
 	}
-	if resolved.Kind == AppTaskKindRelease && resolved.CheckPassingSandboxSuite {
+	if resolved.Kind == AppTaskKindRelease && resolved.ReleaseApprovalPolicyUpdatedAt != nil {
 		return s.createAppTaskWithSandboxSuite(ctx, resolved)
 	}
 	return createAppTaskOnDB(ctx, s.pool, resolved)

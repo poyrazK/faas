@@ -324,21 +324,6 @@ func ReleaseCommandStatus(policy *state.ReleaseApprovalPolicy, app state.App, d 
 	return status
 }
 
-// ReleasePhaseStartedAt is when d entered its current pipeline stage (for a
-// release waiting before its release command, its release phase), or its
-// creation when the stage has no start.
-func ReleasePhaseStartedAt(d state.Deployment) time.Time {
-	started := d.CreatedAt
-	var stages state.StageState
-	if len(d.StageState) == 0 || json.Unmarshal(d.StageState, &stages) != nil || stages.CurrentStartedAt == nil {
-		return started
-	}
-	if stages.CurrentStartedAt.After(started) {
-		return *stages.CurrentStartedAt
-	}
-	return started
-}
-
 // releaseCommandReader is what LoadReleaseCommandWait reads.
 type releaseCommandReader interface {
 	ReleaseApprovalPolicy(ctx context.Context, appID string) (state.ReleaseApprovalPolicy, error)
@@ -363,7 +348,7 @@ func (w ReleaseCommandWait) Pending() bool {
 func (w ReleaseCommandWait) SandboxSuiteWindowOpen(d state.Deployment, now time.Time) bool {
 	return w.Waits && w.Status.RequirePassingSandboxSuite &&
 		(w.Pending() || w.Status.State == api.ReleaseApprovalStateApproved) &&
-		now.Before(ReleasePhaseStartedAt(d).Add(time.Duration(w.Policy.TimeoutMinutes)*time.Minute))
+		now.Before(state.ReleasePhaseStartedAt(d).Add(time.Duration(w.Policy.TimeoutMinutes)*time.Minute))
 }
 
 // LoadReleaseCommandWait reads whether d waits for approval before its
@@ -393,6 +378,6 @@ func LoadReleaseCommandWait(ctx context.Context, store any, app state.App, d sta
 	if err != nil {
 		return ReleaseCommandWait{}, fmt.Errorf("list release approvals: %w", err)
 	}
-	status := ReleaseCommandStatus(&policy, app, d, decisions, ReleasePhaseStartedAt(d), now)
+	status := ReleaseCommandStatus(&policy, app, d, decisions, state.ReleasePhaseStartedAt(d), now)
 	return ReleaseCommandWait{Waits: true, Policy: &policy, Status: status}, nil
 }

@@ -2271,7 +2271,7 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if errors.Is(err, errReleaseDeploymentClosed) || errors.Is(err, errReleaseApprovalWait) ||
-			errors.Is(err, state.ErrPassingSandboxSuiteRequired) {
+			errors.Is(err, state.ErrPassingSandboxSuiteRequired) || errors.Is(err, state.ErrReleaseApprovalPolicyChanged) {
 			return nil
 		}
 		if err != nil {
@@ -2319,7 +2319,10 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	params := state.CreateAppTaskParams{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
 		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
-		CommandShell: dep.ReleaseCommandShell, CheckPassingSandboxSuite: wait.Waits,
+		CommandShell: dep.ReleaseCommandShell,
+	}
+	if wait.Waits {
+		params.ReleaseApprovalPolicyUpdatedAt = &wait.Policy.UpdatedAt
 	}
 	contained, err := h.prepareContainedRelease(ctx, app, dep, &params)
 	if err != nil {

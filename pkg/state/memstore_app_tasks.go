@@ -90,7 +90,10 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 				return AppTask{}, ErrConflict
 			}
 		}
-		if resolved.CheckPassingSandboxSuite {
+		if revision := resolved.ReleaseApprovalPolicyUpdatedAt; revision != nil {
+			if policy, ok := m.releaseApprovalPolicies[app.ID]; !ok || !policy.UpdatedAt.Equal(*revision) {
+				return AppTask{}, ErrReleaseApprovalPolicyChanged
+			}
 			if gate := m.sandboxReleaseGateLocked(resolved.AppID, resolved.DeploymentID); gate != nil {
 				if gate.Status != "passed" {
 					return AppTask{}, ErrPassingSandboxSuiteRequired

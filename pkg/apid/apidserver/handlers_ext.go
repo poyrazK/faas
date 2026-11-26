@@ -1105,6 +1105,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
 		return
 	}
+	if state.IsAPISandbox(app) && (req.EgressAllowlist != nil || req.EgressPorts != nil) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Sandbox egress is fixed", "API sandboxes restrict outbound traffic to their dedicated database binding"))
+		return
+	}
 	if problem := s.appUpdateSettingsProblem(r, acct, app, req); problem != nil {
 		api.WriteProblem(w, problem)
 		return

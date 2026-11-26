@@ -2449,6 +2449,7 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 // --- apps --------------------------------------------------------------------
 
 func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
+	app = app.WithAPISandboxEgress()
 	// ADR-093 / PR-E: DB call seam — propagate the inbound budget
 	// with a 10 ms overhead reservation. Hot-path Store methods
 	// follow this pattern; the wrapper is a no-op when no Budget
@@ -2760,6 +2761,7 @@ func (s *PgStore) createPRPreviewAppsIfUnderQuotaOnce(ctx context.Context, apps 
 }
 
 func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Limits) (App, error) {
+	app = app.WithAPISandboxEgress()
 
 	// 1. Lock the parent accounts row. SELECT 1 + FOR UPDATE keeps the
 	//    lock acquisition in one round-trip; the FOR UPDATE blocks any
@@ -28275,6 +28277,10 @@ func mapErr(err error) error {
 	var admission *pgconn.PgError
 	if errors.As(err, &admission) {
 		switch admission.ConstraintName {
+		case "api_sandbox_fixed_egress":
+			return ErrAPISandboxEgressPolicy
+		case "api_sandbox_release_command_requires_admission":
+			return ErrPassingSandboxSuiteRequired
 		case "environment_recovery_budget":
 			observed, _ := strconv.ParseInt(admission.Detail, 10, 64)
 			return &EnvironmentRecoveryQuotaError{Observed: observed}

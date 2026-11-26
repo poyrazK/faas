@@ -326,6 +326,7 @@ func (e *EgressDriftSubscriber) fanOut(ctx context.Context, appID, slug string) 
 			"app", appID, "slug", slug, "err", err)
 		return
 	}
+	app = app.WithAPISandboxEgress()
 	allowlist := app.EgressAllowlist
 
 	// ListInstancesForApp returns every row the app owns,

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -16,6 +17,21 @@ type APISandboxDeploymentStore interface {
 }
 
 const apiSandboxParentPrefix = "api-sandbox:"
+
+var (
+	ErrAPISandboxEgressPolicy = errors.New("state: API sandbox egress policy is fixed")
+	apiSandboxLoopback        = netip.PrefixFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), 32)
+)
+
+// WithAPISandboxEgress applies the sandbox's fixed network policy at runtime.
+// The separately pinned database binding supplies its own egress exception.
+func (app App) WithAPISandboxEgress() App {
+	if strings.HasPrefix(app.PreviewOfSlug, apiSandboxParentPrefix) {
+		app.EgressAllowlist = []netip.Prefix{apiSandboxLoopback}
+		app.EgressPorts = nil
+	}
+	return app
+}
 
 // APISandboxPreviewParent tags the lease as a developer preview while
 // keeping it outside production-slug resolution, including on older gateways.

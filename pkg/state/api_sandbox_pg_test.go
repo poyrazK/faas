@@ -240,3 +240,28 @@ func TestPgAPISandboxUsesRetainedReleaseArtifact(t *testing.T) {
 		}
 	})
 }
+
+func TestPgAPISandboxEgressCannotBeRelaxed(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, _, source := seedLiveDeploy(t, store, ctx, "sandbox-egress")
+	expiry := time.Now().Add(time.Hour)
+	app, err := store.CreateAppIfUnderQuota(ctx, state.App{
+		AccountID: accountID, Slug: "api-sbx-fixed-egress", RAMMB: 512, Type: state.AppTypeApp,
+		PreviewOfSlug: state.APISandboxPreviewParent("pg-app"), PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiry,
+		Manifest: state.AppManifest{APISandboxSourceDeploymentID: source},
+	}, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != "127.0.0.1/32" || len(app.EgressPorts) != 0 {
+		t.Fatalf("persisted sandbox egress = %v, %v", app.EgressAllowlist, app.EgressPorts)
+	}
+	_, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetEgressAllowlist: true})
+	if !errors.Is(err, state.ErrAPISandboxEgressPolicy) {
+		t.Fatalf("clearing the sandbox allowlist returned %v", err)
+	}
+	_, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetEgressPorts: true, EgressPorts: []int{5432}})
+	if !errors.Is(err, state.ErrAPISandboxEgressPolicy) {
+		t.Fatalf("adding sandbox egress ports returned %v", err)
+	}
+}

@@ -108,29 +108,29 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
-	CheckPassingSandboxSuite bool // The production release is at its pre-command approval boundary.
-	promotionMigrationID     string
-	RequireLiveDeployment    bool                    // Explicit binding probes and smoke callers must remain live at atomic admission.
-	BindingVerification      *BindingVerificationPin // Internal admission metadata, never caller-selected.
-	FailureRules             *workpolicy.FailureRules
-	Interactive              *AppTaskInteractive // ADR-1037; nil for batch tasks.
-	OccurrenceID             string
-	StartDeadlineAt          *time.Time
-	AccountID                string
-	AppID                    string
-	ExclusiveOperationID     string
-	ExclusiveGeneration      int64
-	DeploymentID             string
-	CronID                   string
-	ScheduledFor             *time.Time
-	Kind                     AppTaskKind
-	Command                  []string
-	CommandShell             bool
-	TimeoutSeconds           int
-	MaxOutputBytes           int
-	RetryMax                 int
-	RetryBackoffSeconds      int
-	CreatedAt                time.Time
+	ReleaseApprovalPolicyUpdatedAt *time.Time // The policy revision used to evaluate pre-command approval.
+	promotionMigrationID           string
+	RequireLiveDeployment          bool                    // Explicit binding probes and smoke callers must remain live at atomic admission.
+	BindingVerification            *BindingVerificationPin // Internal admission metadata, never caller-selected.
+	FailureRules                   *workpolicy.FailureRules
+	Interactive                    *AppTaskInteractive // ADR-1037; nil for batch tasks.
+	OccurrenceID                   string
+	StartDeadlineAt                *time.Time
+	AccountID                      string
+	AppID                          string
+	ExclusiveOperationID           string
+	ExclusiveGeneration            int64
+	DeploymentID                   string
+	CronID                         string
+	ScheduledFor                   *time.Time
+	Kind                           AppTaskKind
+	Command                        []string
+	CommandShell                   bool
+	TimeoutSeconds                 int
+	MaxOutputBytes                 int
+	RetryMax                       int
+	RetryBackoffSeconds            int
+	CreatedAt                      time.Time
 }
 
 // CompleteAppTaskParams is the scheduler-owned terminal compare-and-swap.

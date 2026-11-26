@@ -4828,7 +4828,7 @@ type Querier interface {
 	LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error)
 	LockAPIConsumerCreditBuyer(ctx context.Context, db DBTX, arg LockAPIConsumerCreditBuyerParams) (pgtype.UUID, error)
 	LockAPISandboxPartner(ctx context.Context, db DBTX, arg LockAPISandboxPartnerParams) (ApiSandboxPartner, error)
-	LockAPISandboxReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
+	LockAPISandboxReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (LockAPISandboxReleaseApprovalPolicyRow, error)
 	LockAPISandboxReleaseDeployments(ctx context.Context, db DBTX, arg LockAPISandboxReleaseDeploymentsParams) ([]pgtype.UUID, error)
 	LockAPISandboxReleaseProject(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockAPISandboxScenarioLibrary(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)

@@ -62,22 +62,25 @@ SELECT count(*) = $1::bigint AND coalesce(bool_and(
     AND candidate.source_deployment_id = $5
     AND baseline.scenario_revision = item.scenario_revision AND candidate.scenario_revision = item.scenario_revision
     AND baseline.status = 'passed' AND candidate.status = 'passed'
+    AND baseline.finished_at < $6::timestamptz
+    AND candidate.finished_at < $6::timestamptz
 ), false)
 FROM api_sandbox_suite_scenarios item
 JOIN api_sandbox_approval_checks e ON e.comparison_id = item.comparison_id
 JOIN api_sandbox_comparisons comparison ON comparison.id = e.comparison_id
 JOIN api_sandbox_runs baseline ON baseline.id = comparison.baseline_run_id
 JOIN api_sandbox_runs candidate ON candidate.id = comparison.candidate_run_id
-WHERE item.suite_run_id = $6
+WHERE item.suite_run_id = $7
 `
 
 type APISandboxSuiteRunPassedParams struct {
-	ScenarioCount int64
-	BaselinePin   string
-	CandidatePin  string
-	BaselineID    pgtype.UUID
-	CandidateID   pgtype.UUID
-	RunID         pgtype.UUID
+	ScenarioCount    int64
+	BaselinePin      string
+	CandidatePin     string
+	BaselineID       pgtype.UUID
+	CandidateID      pgtype.UUID
+	ApprovalDeadline pgtype.Timestamptz
+	RunID            pgtype.UUID
 }
 
 func (q *Queries) APISandboxSuiteRunPassed(ctx context.Context, db DBTX, arg APISandboxSuiteRunPassedParams) (pgtype.Bool, error) {
@@ -87,6 +90,7 @@ func (q *Queries) APISandboxSuiteRunPassed(ctx context.Context, db DBTX, arg API
 		arg.CandidatePin,
 		arg.BaselineID,
 		arg.CandidateID,
+		arg.ApprovalDeadline,
 		arg.RunID,
 	)
 	var column_1 pgtype.Bool
@@ -551,14 +555,21 @@ func (q *Queries) ListAPISandboxSuiteScenarios(ctx context.Context, db DBTX, sui
 }
 
 const lockAPISandboxReleaseApprovalPolicy = `-- name: LockAPISandboxReleaseApprovalPolicy :one
-SELECT require_passing_sandbox_suite FROM app_release_approval_policies WHERE app_id = $1 FOR SHARE
+SELECT updated_at, require_passing_sandbox_suite, timeout_minutes
+FROM app_release_approval_policies WHERE app_id = $1 FOR SHARE
 `
 
-func (q *Queries) LockAPISandboxReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error) {
+type LockAPISandboxReleaseApprovalPolicyRow struct {
+	UpdatedAt                  pgtype.Timestamptz
+	RequirePassingSandboxSuite bool
+	TimeoutMinutes             int32
+}
+
+func (q *Queries) LockAPISandboxReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (LockAPISandboxReleaseApprovalPolicyRow, error) {
 	row := db.QueryRow(ctx, lockAPISandboxReleaseApprovalPolicy, appID)
-	var require_passing_sandbox_suite bool
-	err := row.Scan(&require_passing_sandbox_suite)
-	return require_passing_sandbox_suite, err
+	var i LockAPISandboxReleaseApprovalPolicyRow
+	err := row.Scan(&i.UpdatedAt, &i.RequirePassingSandboxSuite, &i.TimeoutMinutes)
+	return i, err
 }
 
 const lockAPISandboxReleaseDeployments = `-- name: LockAPISandboxReleaseDeployments :many

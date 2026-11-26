@@ -5424,6 +5424,7 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 }
 
 func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
+	app = app.WithAPISandboxEgress()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
@@ -5579,6 +5580,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []A
 }
 
 func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, limits api.Limits) (App, error) {
+	app = app.WithAPISandboxEgress()
 	if IsAPISandbox(app) {
 		for _, existing := range m.apps {
 			if existing.Slug == app.Slug {
@@ -7649,6 +7651,11 @@ func (m *MemStore) updateAppLocked(ctx context.Context, id string, p UpdateAppPa
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
+	}
+	if IsAPISandbox(a) &&
+		((p.SetEgressAllowlist && !slices.Equal(derefPrefixes(p.EgressAllowlist), a.WithAPISandboxEgress().EgressAllowlist)) ||
+			(p.SetEgressPorts && len(p.EgressPorts) != 0)) {
+		return App{}, ErrAPISandboxEgressPolicy
 	}
 	var guardErr error
 	p, guardErr = prepareServiceBindingPlanUpdate(a, p)
