@@ -157,6 +157,7 @@ var routeActions = map[string]authz.OrgAction{
 	// Binding a callback's webhook verification secret manages a secret. Run
 	// URLs name no app, so indirectlyAddressedApp resolves the run's app.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/workflows/run-starts/{name}":                        authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/workflows/runs":                                     authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                     authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                      authz.OrgActionDeployApp,

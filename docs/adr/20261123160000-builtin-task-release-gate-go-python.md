@@ -80,3 +80,47 @@ gate and its admission schema into both starters.
 - Weaker than Node's admission proof: a handler version the web could admit
   but no Task uses yet is not checked. Porting admission remains possible later
   without changing the CLI contract.
+
+## Amendment 1 (2026-11-26): the gate runs through the platform
+
+The first prod trial (2026-11-25) could not run the gate: it opened the Task
+database from the operator's machine (`DATABASE_URL`,
+`MCP_TASK_MIGRATION_DATABASE_URL`), and production managed Postgres does not
+hand those credentials to a laptop (`postgres connect --proxy` answers
+"Interactive sessions unavailable"). The owner chose (2026-11-25) to move the
+gate onto the platform rather than open database access. Decision 1 changes:
+
+- **Migration runs in the web release command.** The starters already declare
+  `release.command` (`/app/out tasks-migrate apply`,
+  `python task_schema.py apply`). The gate's `migrations` stage checks that the
+  web project's `gregale.yaml` declares that command, and for a Go or Python
+  worker the native adapter deploys the staged web (`--no-traffic`) **before**
+  the candidate worker, so the schema is applied before any replacement
+  starts. Node keeps worker-first order and its own migration.
+- **Readiness comes from the observer's compatibility report**
+  (`GET /v1/apps/{observer_metric_app}/mcp-task-compatibility`), not from the
+  worker registry. The observer already publishes, per unfinished
+  `(tool, handler_version)`, the live non-draining workers grouped by trusted
+  deployment ID. Replacements are ready when a report that is published, not
+  stale, not truncated and observed **after the release started** (the
+  observer's latest report when the gate began, so both times come from the
+  observer's clock and a skewed operator clock cannot stall or weaken the
+  check) shows the
+  candidate deployment with at least as many workers as replacements for every
+  listed version. A worker on a deployment outside the candidate and the
+  journal's previous deployments fails the release. After the drain the gate
+  waits until the report no longer lists a previous deployment or a worker
+  without a deployment identity. The same report check replaces
+  `tasks-release-readiness.js` before promotion and each park.
+- **No namespace advisory lock.** The gate cannot take a database lock without
+  database credentials. Concurrent releases are still refused by the existing
+  guards: the release journal and its gate checkpoint, compare-and-swap web
+  promotion, and parks conditioned on the recorded deployment
+  (`ParkIfDeployment`). The checkpoint records no previous worker IDs (the
+  adapter checks previous generations by deployment).
+
+Consequences: the operator's machine needs only a Gregale API key and the
+`MCP_TASK_NAMESPACE`; no database binding and no starter toolchain. Readiness
+is proven per deployment rather than per worker ID, and only as fresh as the
+observer's publish interval (reports older than 45 s are stale), so a release
+takes at least one observer cycle after the candidate starts.

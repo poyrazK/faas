@@ -28,9 +28,11 @@ const providerMaxItems = 100
 
 // connection is an opened billing connection.
 type connection struct {
-	key      string
-	apiURL   string
-	livemode bool
+	key             string
+	apiURL          string
+	stripeAccountID string
+	livemode        bool
+	updatedAt       time.Time
 	// collection and daysUntilDue are the connection's collection mode
 	// (ADR-1311).
 	collection   string
@@ -293,6 +295,10 @@ func (p stripeProvider) payment(ctx context.Context, conn connection, invoiceID 
 	if err != nil {
 		return state.StatementInvoicePayment{}, false, err
 	}
+	return stripeInvoicePayment(invoice)
+}
+
+func stripeInvoicePayment(invoice stripeinvoice.InvoiceState) (state.StatementInvoicePayment, bool, error) {
 	if invoice.Deleted {
 		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
 	}

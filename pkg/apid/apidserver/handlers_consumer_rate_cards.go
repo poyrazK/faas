@@ -336,45 +336,50 @@ func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consu
 }
 
 func (s *server) quoteConsumerUsageWithBreakdown(ctx context.Context, accountID, appID, consumerID string, since, until time.Time, breakdown bool) (billing.APIConsumerUsageQuote, error) {
+	quote, _, err := s.quoteConsumerUsageWithLedger(ctx, accountID, appID, consumerID, since, until, breakdown)
+	return quote, err
+}
+
+func (s *server) quoteConsumerUsageWithLedger(ctx context.Context, accountID, appID, consumerID string, since, until time.Time, breakdown bool) (billing.APIConsumerUsageQuote, []state.APIConsumerUsageBucket, error) {
 	usageStore, okUsage := s.store.(state.ConsumerUsageStore)
 	cardsStore, okCards := s.store.(state.APIConsumerRateCardStore)
 	if !okUsage || !okCards {
-		return billing.APIConsumerUsageQuote{}, errors.New("consumer pricing is unavailable")
+		return billing.APIConsumerUsageQuote{}, nil, errors.New("consumer pricing is unavailable")
 	}
 	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, accountID, appID)
 	if err == nil {
 		cards, err = s.consumerPriceHistory(ctx, cards, accountID, appID, consumerID)
 	}
 	if err != nil {
-		return billing.APIConsumerUsageQuote{}, fmt.Errorf("load rate cards: %w", err)
+		return billing.APIConsumerUsageQuote{}, nil, fmt.Errorf("load rate cards: %w", err)
 	}
 	// A same-day window on the 1st snaps to an empty one, which the ledger
 	// rejects; it has no usage to price (hunt #9 H9-57).
 	var usage []state.APIConsumerUsageBucket
 	if until.After(billing.MonthStart(since)) {
 		if usage, err = usageStore.ListAPIConsumerUsage(ctx, accountID, appID, consumerID, billing.MonthStart(since), until); err != nil {
-			return billing.APIConsumerUsageQuote{}, fmt.Errorf("list usage: %w", err)
+			return billing.APIConsumerUsageQuote{}, nil, fmt.Errorf("list usage: %w", err)
 		}
 	}
 	inputs, err := s.consumerUsageInputs(ctx, cards, accountID, appID, consumerID, billing.MonthStart(since), until, breakdown)
 	if err != nil {
-		return billing.APIConsumerUsageQuote{}, fmt.Errorf("load route and meter usage: %w", err)
+		return billing.APIConsumerUsageQuote{}, usage, fmt.Errorf("load route and meter usage: %w", err)
 	}
 	opts, err := s.consumerQuoteOptions(ctx, accountID, appID, consumerID)
 	if err != nil {
-		return billing.APIConsumerUsageQuote{}, err
+		return billing.APIConsumerUsageQuote{}, usage, err
 	}
 	if billing.ConsumerModelRatesBefore(cards, until) && until.After(since) {
 		opts.ModelWaivers, err = s.consumerUsageWaivers(ctx, accountID, appID, consumerID, since, until)
 		if err != nil {
-			return billing.APIConsumerUsageQuote{}, err
+			return billing.APIConsumerUsageQuote{}, usage, err
 		}
 	}
 	quote, err := billing.QuoteConsumerUsage(cards, usage, inputs, since, opts)
 	if err == nil && breakdown {
 		quote.RouteBreakdown, quote.MeterBreakdown, err = billing.ConsumerQuoteBreakdown(quote, cards, usage, inputs.Routes)
 	}
-	return quote, err
+	return quote, usage, err
 }
 
 func isUpperASCIICurrency(currency string) bool {
