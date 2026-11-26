@@ -19,25 +19,46 @@ import (
 func TestRouteSplitRuleScope(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	acct, _ := store.CreateAccount(ctx, "owner@example.test", api.PlanPro)
-	shop, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "shop", Status: state.AppActive})
-	exports, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "shop-exports", Status: state.AppActive})
-	deny := func(cidrs ...string) state.EdgeRuleAction {
-		return state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Deny: cidrs}}
+	acct, err := store.CreateAccount(ctx, "owner@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
 	}
-	rule := func(app state.App, host, path string) state.EdgeRule {
+	shop, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exports, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "shop-exports", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	denyAll := state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Deny: []string{"0.0.0.0/0", "::/0"}}}
+	rule := func(app state.App, host, path string, action state.EdgeRuleAction) state.EdgeRule {
 		t.Helper()
 		created, err := store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{AccountID: acct.ID, AppID: app.ID,
-			MatchHost: host, MatchPath: path, Priority: 10, Enabled: true, Kind: state.EdgeRuleKindIP, Action: deny("0.0.0.0/0", "::/0")})
+			MatchHost: host, MatchPath: path, Priority: 10, Enabled: true, Kind: action.Kind, Action: action})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return created
 	}
-	sourceHost := rule(shop, "shop.gregale.dev", "/admin/**")
-	sourceAppWide := rule(shop, api.EdgeRuleAppHosts, "/internal/**")
-	block := rule(exports, "shop-exports.gregale.dev", "/**")
-	selectorBlock := rule(exports, "shop-exports--*.gregale.dev", "/**")
+	sourceHost := rule(shop, "shop.gregale.dev", "/admin/**", denyAll)
+	sourceAppWide := rule(shop, api.EdgeRuleAppHosts, "/internal/**", denyAll)
+	block := rule(exports, "shop-exports.gregale.dev", "/**", denyAll)
+	selectorBlock := rule(exports, "shop-exports--*.gregale.dev", "/**", denyAll)
+
+	// The other protective kinds a source may carry on its host.
+	hostRules := map[state.EdgeRuleKind]state.EdgeRule{
+		state.EdgeRuleKindJWT: rule(shop, "shop.gregale.dev", "/jwt/**", state.EdgeRuleAction{Kind: state.EdgeRuleKindJWT,
+			JWT: &state.EdgeRuleJWTAction{Issuer: "https://issuer.example.test", JWKSURL: "https://issuer.example.test/jwks", Algorithms: []string{"RS256"}}}),
+		state.EdgeRuleKindLimit: rule(shop, "shop.gregale.dev", "/limit/**", state.EdgeRuleAction{Kind: state.EdgeRuleKindLimit,
+			Limit: &state.EdgeRuleLimitAction{MaxBodyBytes: 1024}}),
+		state.EdgeRuleKindThrottle: rule(shop, "shop.gregale.dev", "/throttle/**", state.EdgeRuleAction{Kind: state.EdgeRuleKindThrottle,
+			Throttle: &state.EdgeRuleThrottleAction{RequestsPerSecond: 1, Burst: 1}}),
+		state.EdgeRuleKindWAF: rule(shop, "shop.gregale.dev", "/waf/**", state.EdgeRuleAction{Kind: state.EdgeRuleKindWAF,
+			WAF: &state.EdgeRuleWAFAction{Mode: "block"}}),
+		state.EdgeRuleKindChallenge: rule(shop, "shop.gregale.dev", "/challenge/**", state.EdgeRuleAction{Kind: state.EdgeRuleKindChallenge,
+			Challenge: &state.EdgeRuleChallengeAction{Difficulty: 16}}),
+	}
 
 	matcher := newGatewaydEdgeRules(store, testLogger(), nil, nil)
 	servedAs := func(app state.App) context.Context {
@@ -66,5 +87,46 @@ func TestRouteSplitRuleScope(t *testing.T) {
 	}
 	if got := matchID(exports, "shop-exports--8080.gregale.dev", "/admin/users"); got != selectorBlock.ID {
 		t.Fatalf("selector host request = %q, want the selector block", got)
+	}
+
+	// Every protective kind on the source's host runs on a routed request.
+	routed := servedAs(exports)
+	const host = "shop.gregale.dev"
+	matches := map[state.EdgeRuleKind]func(path string) string{
+		state.EdgeRuleKindJWT: func(p string) string {
+			if r := matcher.MatchJWT(routed, host, p, "GET"); r != nil {
+				return r.ID
+			}
+			return ""
+		},
+		state.EdgeRuleKindLimit: func(p string) string {
+			if r := matcher.MatchLimit(routed, host, p, "GET"); r != nil {
+				return r.ID
+			}
+			return ""
+		},
+		state.EdgeRuleKindThrottle: func(p string) string {
+			if r := matcher.MatchThrottle(routed, host, p, "GET"); r != nil {
+				return r.ID
+			}
+			return ""
+		},
+		state.EdgeRuleKindWAF: func(p string) string {
+			if r := matcher.MatchWAF(routed, host, p, "GET"); r != nil {
+				return r.ID
+			}
+			return ""
+		},
+		state.EdgeRuleKindChallenge: func(p string) string {
+			if r := matcher.MatchChallenge(routed, host, p, "GET"); r != nil {
+				return r.ID
+			}
+			return ""
+		},
+	}
+	for kind, match := range matches {
+		if got, want := match("/"+string(kind)+"/x"), hostRules[kind].ID; got != want {
+			t.Errorf("routed %s match = %q, want the source's host rule %q", kind, got, want)
+		}
 	}
 }

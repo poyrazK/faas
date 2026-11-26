@@ -135,9 +135,12 @@ func (s *Service) advanceDeploying(ctx context.Context, acct state.Account, spli
 		}
 		return
 	}
-	// The block goes first: the route's app is never reachable on its own
-	// hostname once it serves the route.
+	// Apply made the block; make sure it is whole (a host added since, a
+	// rule removed) before any route rule.
 	if prob := s.ensureBlock(ctx, acct, source, target, split); prob != nil {
+		if transient(prob) && !expired {
+			return // a later pass retries
+		}
 		s.rollBack(ctx, acct, split, "could not block direct access to the route's app: "+prob.Detail)
 		return
 	}
@@ -308,7 +311,11 @@ func (s *Service) rollBack(ctx context.Context, acct state.Account, split state.
 		return
 	}
 	if target, ok := s.target(ctx, acct, split); ok {
-		if prob := s.deleteApp(ctx, acct, target); prob != nil {
+		prob := s.removeRules(ctx, acct, target, split)
+		if prob == nil {
+			prob = s.deleteApp(ctx, acct, target)
+		}
+		if prob != nil {
 			if !abandon {
 				s.log().Warn("route split: rollback could not delete the route's app", "split", split.ID, "detail", prob.Detail)
 				return
@@ -375,6 +382,10 @@ func (s *Service) Undo(ctx context.Context, acct state.Account, source state.App
 		return state.RouteSplit{}, prob
 	}
 	if target, ok := s.target(ctx, acct, split); ok {
+		// Deleting an app keeps its rules: the block goes first.
+		if prob := s.removeRules(ctx, acct, target, split); prob != nil {
+			return state.RouteSplit{}, prob
+		}
 		if prob := s.deleteApp(ctx, acct, target); prob != nil {
 			return state.RouteSplit{}, prob
 		}

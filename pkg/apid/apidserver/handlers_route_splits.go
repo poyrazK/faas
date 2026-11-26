@@ -153,6 +153,10 @@ func (h routeSplitHost) DirectHosts(_ context.Context, app state.App) []string {
 	return hosts
 }
 
+func (h routeSplitHost) RuleKindProblem(acct state.Account, kind string) *api.Problem {
+	return h.s.edgeRules.KindProblem(acct, kind)
+}
+
 func (h routeSplitHost) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem) {
 	rule, prob := h.s.edgeRules.CreateRule(ctx, acct, app, req)
 	if prob != nil {

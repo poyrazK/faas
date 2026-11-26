@@ -3490,7 +3490,7 @@ HTTP 409 Conflict · Split in flight; Undo in progress
 
 ### `route_split_unsupported`
 
-HTTP 409 Conflict or 422 Unprocessable Entity · No live build; Split not supported for this app
+HTTP 409 Conflict or 422 Unprocessable Entity · Split not supported for this app; No live build
 
 ### `run_artifact_destination_limit`
 
