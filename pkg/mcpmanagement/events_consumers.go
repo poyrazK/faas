@@ -90,6 +90,7 @@ func registerEventsConsumers(s *mcp.Server, m *management) {
 	register(s, m, "gregale_plan_event_change", "Review pausing or resuming a subscription's deliveries, recovering (replaying) matched events, cancelling a recovery, or setting which event schema versions a subscription accepts. A recover plan shows how many events match. Changes nothing; apply with gregale_apply_operation. On a production app, pauses, recoveries and schema version changes ask a person first.", m.planEventChange)
 	register(s, m, "gregale_list_api_consumers", "List the app's API consumers (your customers calling the app): name, external ref and status. Read-only.", m.listAPIConsumers)
 	register(s, m, "gregale_get_api_consumer", "Read one API consumer with its usage, spend cap and plan assignments. Key values are never shown. Read-only.", m.getAPIConsumer)
+	register(s, m, "gregale_get_mcp_seller_stats", "Read a sold MCP server's seller stats over 1 to 12 UTC calendar months: sign-ups by source (oauth, signup, owner), active, paying and closed customers, units, billed revenue (finalized statements before credits) and this month's estimate, units and revenue per tool, and customers at 80% or more of their plan's monthly units. Needs API monetization. Read-only.", m.getMCPSellerStats)
 	register(s, m, "gregale_plan_api_consumer_change", "Review creating, revoking, capping the monthly spend of, or assigning a plan to an API consumer. Changes nothing; apply with gregale_apply_operation. Revoking, plans and spend caps ask a person first.", m.planAPIConsumerChange)
 }
 
@@ -296,6 +297,22 @@ func (m *management) runEventChange(ctx context.Context, p *releasePlan) (any, e
 		return m.client.ResetEventSubscriptionSchemaVersions(ctx, p.App, req.Subscription)
 	}
 	return nil, invalid("invalid_plan", "unsupported event change")
+}
+
+// mcpSellerStatsArgs reads seller stats (ADR-20261126082046).
+type mcpSellerStatsArgs struct {
+	appArgs
+	Months int `json:"months,omitempty" jsonschema:"UTC calendar months to read, 1 (this month, the default) to 12"`
+}
+
+func (m *management) getMCPSellerStats(ctx context.Context, a mcpSellerStatsArgs) (any, error) {
+	if a.Months < 0 || a.Months > api.MCPSellerStatsMaxMonths {
+		return nil, fmt.Errorf("months must be from 1 to %d", api.MCPSellerStatsMaxMonths)
+	}
+	if _, err := m.consentedApp(ctx, a.App, false); err != nil {
+		return nil, err
+	}
+	return m.client.GetMCPSellerStats(ctx, a.App, a.Months)
 }
 
 func (m *management) listAPIConsumers(ctx context.Context, a appArgs) (any, error) {

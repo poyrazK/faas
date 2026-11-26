@@ -59,14 +59,8 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if app.PinnedDeploymentID != "" || hasDevBridgeScope(r.Context()) {
 		return false, nil
 	}
-	// Method gate is a cheap pre-flight: only {GET, HEAD} are
-	// cacheable per ADR-122 D3. We DO NOT count this as
-	// bypass_uncacheable here — that label only fires when a
-	// cache rule actually matched the path AND the verb is
-	// outside {GET, HEAD}, otherwise every POST-heavy app with
-	// no cache rule would inflate the counter (the
-	// counter's load-bearing meaning is "rule matched, wrong
-	// verb mix").
+	// Only GET and HEAD can use shared response caching. Count bypasses
+	// after matching a rule so unrelated traffic doesn't inflate the metric.
 	method := r.Method
 	if method != "GET" && method != "HEAD" {
 		return false, nil
@@ -103,6 +97,12 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if hasCacheCredentials(r) {
 		recordTrafficCache(r.Context(), "bypass_authed")
 		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
+		return false, nil
+	}
+	if rule.DataAPIPublicRead && !dataAPIAllowsCacheLookup(r.Header) {
+		recordTrafficCache(r.Context(), "bypass_uncacheable")
+		h.metricsIncCacheOutcome(app.ID, "bypass_uncacheable")
+		// A nil rule also skips capture and stale responses later in ServeHTTP.
 		return false, nil
 	}
 	// Snapshot routing partitions every request by its admitted deployment

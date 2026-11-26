@@ -39,6 +39,7 @@ type deploySourceFilesReport struct {
 	SelectedPath        string             `json:"selected_path"`
 	ContextRoot         string             `json:"context_root"`
 	SourceRoot          string             `json:"source_root,omitempty"`
+	ContextReason       string             `json:"context_reason,omitempty"`
 	FileCount           int                `json:"file_count"`
 	IncludedBytes       int64              `json:"included_bytes"`
 	CompressedBytes     int64              `json:"compressed_bytes"`
@@ -148,6 +149,9 @@ func cmdDeploySourceFiles(ctx context.Context, o deploySourceFilesOptions, expli
 	if report.Commit != "" {
 		_, _ = fmt.Fprintf(osStdout, " (%s)", report.Commit)
 	}
+	if report.ContextReason != "" {
+		_, _ = fmt.Fprintf(osStdout, "\nBuild context: %s", report.ContextReason)
+	}
 	_, _ = fmt.Fprintf(osStdout, "\n%d files, %d source bytes, %d compressed bytes\n", report.FileCount, report.IncludedBytes, report.CompressedBytes)
 	for _, row := range report.Files {
 		action := "include"
@@ -221,10 +225,12 @@ func prepareDeploySourceFiles(ctx context.Context, o deploySourceFilesOptions, e
 	workspace := ""
 	if o.path != "" {
 		if gitRoot, rootErr := gitRootFromCwd(root); rootErr == nil {
-			contextRoot, sourceRoot, member, err := resolveWorkspaceContext(gitRoot, root)
+			tree := deployContextTree(gitRoot, root, mode == deploySourceWorktree, mode == deploySourceHEAD)
+			contextRoot, sourceRoot, member, reason, err := resolveWorkspaceContextReason(gitRoot, root, tree)
 			if err != nil {
 				return nil, "", nil, err
 			}
+			report.ContextReason = reason
 			if member {
 				workspace, report.ContextRoot, report.SourceRoot = contextRoot, contextRoot, sourceRoot
 			}

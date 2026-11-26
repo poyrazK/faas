@@ -2118,6 +2118,94 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/roles:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      tags: [managed_postgres]
+      operationId: listManagedPostgresCustomRoles
+      summary: List a database's custom roles.
+      description: |
+        Beta (postgres-custom-roles capability). The
+        NOLOGIN group roles declared on the database, with the access modes
+        whose logins may SET ROLE to each, the roles each is a member of, the
+        access modes whose logins start every session as it, and whether it
+        is applied (state ready) yet. Requires postgres read scope and MFA.
+      responses:
+        '200':
+          description: The database's custom roles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedPostgresCustomRoleList'
+        default:
+          description: Missing sign-in, scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/roles/{name}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: name
+        in: path
+        required: true
+        description: "The role name: a lowercase letter or underscore, then at most 62 lowercase letters, digits and underscores. Names starting with gregale, pg_, neon, cloudsql, rds, azure, supabase or cron_, and PostgreSQL's reserved role names, are refused."
+        schema: {type: string}
+    put:
+      tags: [managed_postgres]
+      operationId: putManagedPostgresCustomRole
+      summary: Declare or replace a custom role.
+      description: |
+        Beta (postgres-custom-roles capability). Creates
+        the NOLOGIN role on the database, or corrects it to this declaration,
+        and grants it, SET only, to the database's logins of the granted
+        access modes, including logins issued later. The role and the
+        read_write logins can run the schema owner's functions in public.
+        bypass_rls is refused on a database with Data
+        API or Auth. Hobby and above; at most 16 roles per database. Requires
+        postgres manage scope, MFA and a verified email. Answers 200 when the
+        role is already applied and 202 while it is being applied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutManagedPostgresCustomRoleRequest'
+      responses:
+        '200':
+          description: The role, applied.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+        '202':
+          description: The role, saved and being applied (state pending).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+        default:
+          description: An invalid declaration, a plan without custom roles, the role limit, a BYPASSRLS conflict with Data API or Auth, another default role for the access mode, a backend without custom roles, missing sign-in, scope, MFA or verified email, a database this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      tags: [managed_postgres]
+      operationId: deleteManagedPostgresCustomRole
+      summary: Drop a custom role.
+      description: |
+        Beta (postgres-custom-roles capability). Marks the role deleting;
+        the platform then hands what it owns to the schema owner, removes its
+        grants and drops it. Requires postgres manage scope and MFA.
+      responses:
+        '202':
+          description: The role, deleting.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+        default:
+          description: An unknown role, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/postgres/databases/{id}/query:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2165,6 +2253,33 @@ paths:
               schema: {$ref: '#/components/schemas/Problem'}
         default:
           description: Missing sign-in, data:read scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/data-api-catalog-preview:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      tags: [managed_postgres]
+      operationId: previewManagedPostgresDataAPICatalog
+      summary: Inspect public-schema metadata for a Data API connection.
+      description: |
+        Requires data:read (or admin) and MFA. Runs a fixed catalog-only
+        statement as the provider-managed read-only query identity, in a
+        bounded read-only transaction. No request body, customer table rows,
+        SQL expressions or credentials are returned. The query identity may
+        be created or refreshed and a suspended database can wake. Results
+        describe that identity, not a future Data API binding. At most 1000
+        rows and 1 MiB of values are returned; truncated marks partial results.
+        Cache-Control no-store.
+      responses:
+        '200':
+          description: Bounded public-schema catalog metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresQueryResponse'}
+        default:
+          description: Invalid request, unavailable database, insufficient access, unsupported backend or rate limit.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -2341,6 +2456,59 @@ paths:
               schema: {$ref: '#/components/schemas/ManagedPostgresWakeWithApp'}
         default:
           description: "Problem while setting whether the company database starts with its app."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/activity:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: since
+        in: query
+        required: false
+        description: Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day; anything older than 30 days is clamped to 30 days.
+        schema: {type: string, maxLength: 64}
+    get:
+      operationId: getManagedPostgresActivity
+      summary: Show what kept a database awake
+      description: Lists a database's recorded compute starts in the period, newest first (at most 200), each with a likely cause, plus each cause's starts and awake time and hints that name the command acting on the largest causes. A cause is the first of app_wake (wake-with-app started it), cron (a cron of a bound app fired just before), request (a request woke a bound app), app_start (a bound app started without a request), running_app (a bound app was running) and external (none of these, so a client outside Gregale) that matches the start's timing; it is a best guess, never billing. Starts are recorded from the usage sweep, so the latest can lag by up to an hour, and kept 30 days. Reading never wakes the database.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Why the database was awake in the period
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresActivity'}
+        default:
+          description: Invalid period, unknown database, or managed PostgreSQL not configured
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/orgs/{organization}/postgres/databases/{id}/activity:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read what kept a company database awake."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: since
+        in: query
+        required: false
+        description: Start of the period, as a duration back from now such as 24h or 7d, or an RFC 3339 time. Defaults to the last day.
+        schema: {type: string, maxLength: 64}
+    get:
+      operationId: getOrgManagedPostgresActivity
+      summary: "Show what kept a company database awake."
+      description: "A member who can read the organization's databases lists a company database's recorded compute starts with their likely causes, each cause's awake time, and hints."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Why the company database was awake in the period."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresActivity'}
+        default:
+          description: "Problem while reading the company database's activity."
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -3579,6 +3747,60 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/data-api-inspections:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [runs]
+      operationId: createDataAPIInspection
+      summary: Inspect a managed Data API binding from its app deployment.
+      description: |
+        Admits a read-only task pinned to the selected binding and a single
+        current deployment. Requires deployment write and managed PostgreSQL
+        read access. Binding identity stays unknown until evidence is checked.
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDataAPIInspectionRequest'}
+      responses:
+        '202':
+          description: Inspection admitted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataAPIInspectionResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '501': {$ref: '#/components/responses/NotImplemented'}
+  /v1/apps/{slug}/data-api-inspections/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: getDataAPIInspection
+      summary: Get a point-in-time Data API binding inspection.
+      description: |
+        A verified identity matches the provider's expected target and CA
+        trust at inspection time. It does not establish row authorization.
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Current inspection status and binding identity.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataAPIInspectionResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '501': {$ref: '#/components/responses/NotImplemented'}
   /v1/account:
     get:
       tags: [account]
@@ -17115,10 +17337,12 @@ paths:
         (detected, warned and blocked events) and groups
         them by edge rule, CRS rule and path, with id-like path segments read
         as {id}. Each group is assessed: likely_false_positive (a documented
-        false positive, or at least 3 clients flagged on the path with none
-        sending most of the detections), likely_attack (most detections from
+        false positive), likely_attack (most detections from
         clients flagged on 5 or more paths), excluded (the rule already
-        excludes the CRS rule) or review. The newest 5,000 detections of each
+        excludes the CRS rule) or review (including groups flagged from at
+        least 3 clients with none sending most of the detections, which look
+        like a false positive but also like a few addresses probing one
+        endpoint; read the examples). The newest 5,000 detections of each
         outcome are read and at most 50 groups returned, largest first.
         Detections are sampled, so counts are lower bounds. The window
         defaults to 7 days and is clamped to the plan's event window.
@@ -27636,6 +27860,12 @@ components:
       required: true
       schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       description: 32-hex-char opaque ID (NOT canonical UUID).
+    AppTaskID:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+      description: Canonical UUID for a deployment-attached app task.
     ManagedPostgresID:
       name: id
       in: path
@@ -32831,6 +33061,73 @@ components:
       properties:
         database_id: {type: string}
         enabled: {type: boolean}
+    ManagedPostgresActivity:
+      description: Why a database was awake in a period. Causes are best guesses from timing.
+      type: object
+      required: [database_id, database_name, since, until, starts, awake_seconds, causes, compute_starts, hints, docs_url]
+      properties:
+        database_id: {type: string}
+        database_name: {type: string}
+        since: {type: string, format: date-time, description: "Start of the period after clamping to the 30-day retention."}
+        until: {type: string, format: date-time}
+        starts: {type: integer, description: "Recorded compute starts in the period."}
+        awake_seconds: {type: integer, format: int64, description: "Seconds the compute was up in the period; a start still running counts to until."}
+        suspend_timeout_seconds: {type: integer, format: int64, description: "The suspend timeout in force; omitted for an always-on database or when it could not be read."}
+        causes:
+          type: array
+          items: {$ref: '#/components/schemas/ManagedPostgresActivityCause'}
+        compute_starts:
+          type: array
+          description: The latest starts, newest first, at most 200.
+          items: {$ref: '#/components/schemas/ManagedPostgresActivityComputeStart'}
+        truncated: {type: boolean, description: "True when the period had more starts than compute_starts lists; the totals and causes count them all."}
+        hints:
+          type: array
+          items: {$ref: '#/components/schemas/ManagedPostgresActivityHint'}
+        docs_url: {type: string, format: uri}
+    ManagedPostgresActivityCause:
+      description: One cause's share of a period's starts and awake time.
+      type: object
+      required: [cause, starts, awake_seconds, first_started_at]
+      properties:
+        cause: {type: string, enum: [app_wake, cron, request, app_start, running_app, external]}
+        app_id: {type: string}
+        app_slug: {type: string}
+        detail: {type: string, description: "The cron's path for a cron cause."}
+        starts: {type: integer}
+        awake_seconds: {type: integer, format: int64}
+        first_started_at: {type: string, format: date-time}
+    ManagedPostgresActivityComputeStart:
+      description: One recorded start of a database's compute.
+      type: object
+      required: [started_at, cause]
+      properties:
+        started_at: {type: string, format: date-time}
+        suspended_at: {type: string, format: date-time, description: "Omitted while the compute runs or its suspend has not been read yet."}
+        cause: {type: string, enum: [app_wake, cron, request, app_start, running_app, external]}
+        app_id: {type: string}
+        app_slug: {type: string}
+        detail: {type: string}
+    ManagedPostgresActivityHint:
+      description: A suggestion for a cause that keeps the database awake.
+      type: object
+      required: [code, cause, message]
+      properties:
+        code: {type: string, enum: [cron_wakes_database, app_wake_starts_database, app_start_wakes_database, running_app_holds_connections, external_client]}
+        cause: {type: string}
+        app_slug: {type: string}
+        message: {type: string}
+        command: {type: string, description: "The CLI command that acts on the hint, when there is one."}
+    ManagedPostgresDatabaseUsage:
+      description: One database's share of the month's compute, with its recorded starts and awake time this month.
+      type: object
+      required: [database_id, name, compute_unit_seconds, starts, awake_seconds]
+      properties:
+        database_id: {type: string}
+        name: {type: string, description: "Empty for a database deleted since."}
+        compute_unit_seconds: {type: integer, format: int64}
+        starts: {type: integer}
+        awake_seconds: {type: integer, format: int64}
     SetManagedPostgresSuspendTimeoutRequest:
       description: How long a scale-to-zero database stays up after its last activity before it suspends.
       type: object
@@ -32875,6 +33172,57 @@ components:
         last_error_code: {type: string, description: "Safe diagnostic code. A failed resize retains the confirmed source configuration; uncertain outcomes remain pending."}
         created_at: {type: string, format: date-time}
         completed_at: {type: string, format: date-time}
+    ManagedPostgresCustomRole:
+      type: object
+      description: A custom group role declared on a managed database.
+      required: [database_id, name, bypass_rls, granted_to, member_of, default_for, state, created_at, updated_at]
+      properties:
+        database_id: {type: string}
+        name: {type: string}
+        bypass_rls: {type: boolean}
+        granted_to:
+          type: array
+          description: Access modes whose logins may SET ROLE to it (migration, read_write, read_only); read_write includes session logins.
+          items: {type: string, enum: [migration, read_write, read_only]}
+        member_of:
+          type: array
+          description: Other custom roles of the database it is a member of.
+          items: {type: string}
+        default_for:
+          type: array
+          description: Access modes whose logins start every session as this role.
+          items: {type: string, enum: [read_write, read_only]}
+        state:
+          type: string
+          enum: [pending, ready, deleting]
+          description: pending until applied to the database, ready after, deleting until a deleted role is dropped.
+        last_error_code: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ManagedPostgresCustomRoleList:
+      type: object
+      description: A database's custom roles.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/ManagedPostgresCustomRole'}
+    PutManagedPostgresCustomRoleRequest:
+      type: object
+      description: The declaration of a custom role; absent fields take their defaults.
+      properties:
+        bypass_rls: {type: boolean, default: false}
+        granted_to:
+          type: array
+          description: Access modes whose logins may SET ROLE to it; session is stored as read_write.
+          items: {type: string, enum: [migration, read_write, read_only, session]}
+        member_of:
+          type: array
+          items: {type: string}
+        default_for:
+          type: array
+          description: When present, replaces the access modes whose logins start as this role; absent keeps the current ones that are still granted.
+          items: {type: string, enum: [read_write, read_only]}
     ManagedPostgresDatabase:
       description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
       type: object
@@ -33049,6 +33397,10 @@ components:
           description: Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
           type: string
           enum: [compute_ceiling, egress, inactive]
+        databases:
+          description: The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it could not be read.
+          type: array
+          items: {$ref: '#/components/schemas/ManagedPostgresDatabaseUsage'}
     ManagedPostgresOverage:
       description: An account's managed PostgreSQL compute overage setting.
       type: object
@@ -46247,6 +46599,40 @@ components:
           type: integer
           enum: [250, 500, 1000]
           description: "App CPU share."
+    WorkloadUses:
+      description: "A service's cross-app grants from gregale.yaml: what its workload token may call on other apps of the same account."
+      type: object
+      properties:
+        queues:
+          type: array
+          items:
+            type: object
+            required: [app]
+            properties:
+              app: {type: string, description: "Project service name, app slug, or self."}
+              queue: {type: string, description: 'Queue name, or "*" for any.'}
+        realtime:
+          type: array
+          items:
+            type: object
+            required: [app]
+            properties:
+              app: {type: string}
+              channels: {type: string, description: "Channel glob with one trailing *."}
+        delayed_tasks:
+          type: array
+          items: {type: string}
+          description: "Apps the service may schedule delayed tasks on."
+        buckets:
+          type: array
+          items:
+            type: object
+            required: [bucket]
+            properties:
+              bucket: {type: string}
+              app: {type: string, description: "Owning app (default self)."}
+              prefix: {type: string, description: "Key prefix the grant is limited to."}
+              access: {type: string, enum: [read, write, read_write]}
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -46319,6 +46705,8 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        uses:
+          $ref: '#/components/schemas/WorkloadUses'
         release_command:
           type: string
           description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
@@ -52983,6 +53371,37 @@ components:
         previous_run_id: {type: string, format: uuid}
         status: {type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled]}
         failure_code: {type: string}
+    CreateDataAPIInspectionRequest:
+      description: Identifies the database binding and table to inspect.
+      type: object
+      additionalProperties: false
+      required: [database_id, binding_id, table]
+      properties:
+        database_id: {type: string, format: uuid}
+        binding_id: {type: string, format: uuid}
+        table: {type: string, pattern: '^[A-Za-z_][A-Za-z0-9_]{0,62}$'}
+    DataAPIInspectionResponse:
+      description: Reports the status and verified identity of a Data API inspection.
+      type: object
+      required: [task_id, app_id, deployment_id, database_id, binding_id, credential_generation, task_status, binding_identity]
+      properties:
+        task_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        database_id: {type: string, format: uuid}
+        binding_id: {type: string, format: uuid}
+        credential_generation: {type: integer, format: int64, minimum: 1}
+        task_status: {type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, cancelled]}
+        binding_identity:
+          type: object
+          required: [status, reason]
+          properties:
+            status: {type: string, enum: [verified, mismatch, unknown]}
+            reason: {type: string}
+        observation:
+          type: object
+          description: Bounded catalog metadata, present only when execution and TLS trust were verified.
+          additionalProperties: true
     AppTaskAttachInfo:
       description: One-time attach credential for an interactive app task. Returned only in the create response.
       type: object

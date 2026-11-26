@@ -22,5 +22,9 @@ export type CommitSourceResponse = {
   blocked_events?: number;
   oldest_pending_at?: string;
   destination?: 'operation' | 'event';
+  /**
+   * Configured poll interval in milliseconds for Postgres row-change sources.
+   */
+  poll_interval_ms?: number;
 };
 

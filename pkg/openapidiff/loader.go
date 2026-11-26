@@ -38,7 +38,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/apid"
 	"gopkg.in/yaml.v3"
@@ -287,8 +289,44 @@ type Schema struct {
 // invariant violation that [pkg/apid.spec_compliance_test.go] is
 // designed to catch at PR time, so production deployments never
 // reach this error path.
+//
+// The embedded spec is fixed for the life of the binary, so it is parsed
+// once (several MB of YAML; every deploy diff used to re-parse it). Each
+// call gets its own Spec, path-item and method maps, so a caller may add
+// or replace paths and operations; schemas, operations and Raw documents
+// stay shared and read-only, as [GenerateFromEdgeRules] already assumes.
 func Load() (*Spec, error) {
-	return LoadBytes(apid.OpenAPIYAML())
+	embeddedSpec.once.Do(func() {
+		embeddedSpec.spec, embeddedSpec.err = LoadBytes(apid.OpenAPIYAML())
+	})
+	if embeddedSpec.err != nil {
+		return nil, embeddedSpec.err
+	}
+	return embeddedSpec.spec.copyMaps(), nil
+}
+
+var embeddedSpec struct {
+	once sync.Once
+	spec *Spec
+	err  error
+}
+
+// copyMaps returns a Spec with its own Paths, Components and per-path
+// Methods maps over the same schemas and operations.
+func (s *Spec) copyMaps() *Spec {
+	out := *s
+	out.Paths = make(map[string]*PathItem, len(s.Paths))
+	for k, pi := range s.Paths {
+		if pi == nil {
+			out.Paths[k] = nil
+			continue
+		}
+		cp := *pi
+		cp.Methods = maps.Clone(pi.Methods)
+		out.Paths[k] = &cp
+	}
+	out.Components = maps.Clone(s.Components)
+	return &out
 }
 
 // LoadBytes parses a raw OpenAPI 3.x YAML document and returns a

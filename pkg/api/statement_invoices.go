@@ -34,6 +34,13 @@ type PutBillingConnectionRequest struct {
 	AutomaticTax bool `json:"automatic_tax,omitempty"`
 }
 
+// PutStripeSetupRequest creates a Stripe connection if absent, or rotates
+// the exact version reviewed by the operator.
+type PutStripeSetupRequest struct {
+	SecretKey         string     `json:"secret_key"`
+	ExpectedUpdatedAt *time.Time `json:"expected_updated_at,omitempty"`
+}
+
 // BillingConnectionResponse describes a stored payment-provider key without
 // revealing it.
 type BillingConnectionResponse struct {
@@ -90,6 +97,25 @@ type StatementInvoiceExportResponse struct {
 	HostedInvoiceURL     string     `json:"hosted_invoice_url,omitempty"`
 	Overdue              bool       `json:"overdue"`
 	StatusSyncedAt       *time.Time `json:"status_synced_at,omitempty"`
+	StripeSendPending    bool       `json:"stripe_send_pending,omitempty"`
+	StripeIssuedAt       *time.Time `json:"stripe_issued_at,omitempty"`
+	StripeSentAt         *time.Time `json:"stripe_sent_at,omitempty"`
+}
+
+// StripeInvoiceSendReview binds the recipient and terms seen by the owner.
+type StripeInvoiceSendReview struct {
+	InvoiceID      string    `json:"invoice_id"`
+	StripeCustomer string    `json:"stripe_customer"`
+	RecipientEmail string    `json:"recipient_email"`
+	Currency       string    `json:"currency"`
+	AmountDueMinor int64     `json:"amount_due_minor"`
+	DueAt          time.Time `json:"due_at"`
+	Livemode       bool      `json:"livemode"`
+	ReviewToken    string    `json:"review_token"`
+}
+
+type SendStripeInvoiceRequest struct {
+	ReviewToken string `json:"review_token"`
 }
 
 // StatementInvoiceListResponse pages an account's exported invoices.

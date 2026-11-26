@@ -380,3 +380,16 @@ const WorkloadObjectCredentialsEndpoint = "http://127.0.0.1:2773" + WorkloadObje
 // WorkloadCredentialsEnv is the AWS SDK variable project apply sets to
 // WorkloadObjectCredentialsEndpoint for a service with a bucket grant.
 const WorkloadCredentialsEnv = "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+
+// WorkloadS3EndpointEnv is the AWS SDKs' service-specific endpoint variable,
+// which schedd sets beside WorkloadCredentialsEnv (with AWS_REGION) so an
+// SDK reaches the platform's S3 API without code. The gateway serves
+// path-style addressing only, so clients still set forcePathStyle.
+const WorkloadS3EndpointEnv = "AWS_ENDPOINT_URL_S3"
+
+// DefaultObjectStoragePublicEndpoint and DefaultObjectStoragePublicRegion
+// are the public S3 API's address when the installation configures none.
+const (
+	DefaultObjectStoragePublicEndpoint = "https://s3.gregale.dev"
+	DefaultObjectStoragePublicRegion   = "us-east-1"
+)

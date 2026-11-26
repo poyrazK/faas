@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -33,6 +34,9 @@ func TestIdleTailCountsTheWindowsIdleSuspends(t *testing.T) {
 		noOps     bool
 		// maxRequests defaults to 4.
 		maxRequests int
+		// events are the returned starts and suspends as id:kind, in any
+		// order; nil skips the check.
+		events []string
 	}{
 		{
 			name:      "idle suspends over two pages; restarts, other computes and other windows are not",
@@ -50,6 +54,8 @@ func TestIdleTailCountsTheWindowsIdleSuspends(t *testing.T) {
 			// the window closed: (120 + 120 + 90) × 0.25. Read with the
 			// endpoints and two pages.
 			want: managedpostgres.IdleTail{Suspends: 2, ComputeUnitSeconds: 83, Requests: 3},
+			// Only the primary's finished operations inside the window.
+			events: []string{"o11:start", "o10:suspend", "o9:start", "o8:suspend", "o3:suspend"},
 		},
 		{
 			name:      "a suspend forced soon after a wake is not idle; an idle stretch from before the window is clipped",
@@ -75,6 +81,8 @@ func TestIdleTailCountsTheWindowsIdleSuspends(t *testing.T) {
 			pages:     [][]map[string]any{{op("o2", "apply_config", "finished", "ep-primary", 5400), op("o1", "suspend_compute", "finished", "ep-primary", 600)}},
 			want:      managedpostgres.IdleTail{Requests: 2},
 			err:       managedpostgres.ErrUnsupported,
+			// Unpriced, but its starts and suspends still come back.
+			events: []string{"o1:suspend"},
 		},
 		{
 			name:      "more operations than the request ceiling is unsupported",
@@ -152,9 +160,20 @@ func TestIdleTailCountsTheWindowsIdleSuspends(t *testing.T) {
 			if maxRequests == 0 {
 				maxRequests = 4
 			}
-			got, err := provider.IdleTail(context.Background(), "quiet-river-12345678", window, maxRequests)
+			got, events, err := provider.IdleTail(context.Background(), "quiet-river-12345678", window, maxRequests)
 			if !errors.Is(err, tt.err) || got != tt.want {
 				t.Fatalf("IdleTail = %+v, %v; want %+v, %v", got, err, tt.want, tt.err)
+			}
+			if tt.events != nil {
+				var ids []string
+				for _, event := range events {
+					ids = append(ids, event.OperationID+":"+string(event.Kind))
+				}
+				slices.Sort(ids)
+				want := slices.Sorted(slices.Values(tt.events))
+				if !slices.Equal(ids, want) {
+					t.Fatalf("events = %v; want %v", ids, want)
+				}
 			}
 		})
 	}
@@ -165,10 +184,10 @@ func TestIdleTailRefusesBranchesAndBadWindows(t *testing.T) {
 		t.Errorf("unexpected request %s", r.URL)
 	}))
 	from := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
-	if _, err := provider.IdleTail(context.Background(), "quiet-river-12345678/br-restore-1234", managedpostgres.UsageWindow{From: from, To: from.Add(time.Hour)}, 4); !errors.Is(err, managedpostgres.ErrUnsupported) {
+	if _, _, err := provider.IdleTail(context.Background(), "quiet-river-12345678/br-restore-1234", managedpostgres.UsageWindow{From: from, To: from.Add(time.Hour)}, 4); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Fatalf("branch: %v", err)
 	}
-	if _, err := provider.IdleTail(context.Background(), "quiet-river-12345678", managedpostgres.UsageWindow{From: from, To: from}, 4); !errors.Is(err, managedpostgres.ErrInvalid) {
+	if _, _, err := provider.IdleTail(context.Background(), "quiet-river-12345678", managedpostgres.UsageWindow{From: from, To: from}, 4); !errors.Is(err, managedpostgres.ErrInvalid) {
 		t.Fatalf("empty window: %v", err)
 	}
 }

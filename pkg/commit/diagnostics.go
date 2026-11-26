@@ -7,9 +7,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ObservationMaxAge bounds how long diagnostics and alerts trust a source scan.
+// ObservationGracePeriod is how long diagnostics and alerts allow a source to
+// be overdue. Sources without a configured poll interval use the grace period alone.
 // A stale or absent observation is unknown, never an empty backlog.
-const ObservationMaxAge = 5 * time.Minute
+const ObservationGracePeriod = 5 * time.Minute
+
+// ObservationFresh reports whether a source observation is within its poll window.
+func ObservationFresh(checked *time.Time, now time.Time, pollIntervalMS int32) bool {
+	maxAge := time.Duration(pollIntervalMS)*time.Millisecond + ObservationGracePeriod
+	return checked != nil && !checked.After(now.Add(time.Minute)) && now.Sub(*checked) <= maxAge
+}
 
 type DiagnosticCheck struct {
 	Name   string `json:"name"`

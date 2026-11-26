@@ -86,6 +86,21 @@ gregale app health my-api --errors
 gregale logs my-api
 ```
 
+## Deploy on every push from GitHub
+
+Bind the app to its GitHub repository and every push to the repository's
+default branch builds and deploys it; each pull request into that branch gets
+its own preview:
+
+```bash
+gregale github connect                          # once per account: install the Gregale GitHub App
+gregale github link my-api --repo acme/my-api   # production branch: the repository's default
+git push                                        # builds and deploys my-api
+```
+
+See [Deploy from GitHub](deploys.md#deploy-from-github) for other branches,
+previews and deploying from GitHub Actions instead.
+
 ## Configuration and secrets
 
 ```bash
@@ -128,3 +143,11 @@ release: alembic upgrade head
 Point the migration tool at `MIGRATION_DATABASE_URL`. A failed release
 command leaves the previous version serving. See
 [Managed PostgreSQL](postgres.md#connect-an-app).
+
+## Example repository
+
+[gregale-dev/fastapi-postgres-jobs](https://github.com/gregale-dev/fastapi-postgres-jobs)
+is a complete FastAPI app with a durable job queue in PostgreSQL, with no
+Redis and no always-on worker. Its `gregale.yaml` creates the database and
+runs the migration as the release command. Clone it, or create your own
+repository from it as a GitHub template.

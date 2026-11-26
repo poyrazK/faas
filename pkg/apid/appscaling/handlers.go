@@ -133,7 +133,7 @@ func validateSettings(account state.Account, app state.App, req api.UpdateAppReq
 	ram, concurrency := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
 		ram = *req.RAMMB
-		if ram <= 0 {
+		if ram < api.AppMinRAMMB {
 			return api.ErrInvalidAppRAM(ram)
 		}
 	}

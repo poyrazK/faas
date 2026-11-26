@@ -1472,3 +1472,7 @@ var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch
 
 // InvocationErrorText is the last_error text of a failed invocation.
 var InvocationErrorText = invocationErrorText
+
+func (e *Engine) XWithWorkloadS3Env(app state.App, env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	return e.withWorkloadS3Env(app, env)
+}

@@ -12,13 +12,13 @@ import (
 
 const apiConsumerSignupSettingsCols = `app_id::text, account_id::text, enabled, provider, plan_ids::text[], key_scopes,
 	display_name, terms_url, return_url, trial_days, daily_limit, customer_plan_changes, customer_closing,
-	coalesce(free_plan_id::text, ''), oauth_consumers, created_at, updated_at`
+	coalesce(free_plan_id::text, ''), oauth_consumers, account_tools, created_at, updated_at`
 
 func scanAPIConsumerSignupSettings(row pgx.Row) (APIConsumerSignupSettings, error) {
 	var s APIConsumerSignupSettings
 	err := row.Scan(&s.AppID, &s.AccountID, &s.Enabled, &s.Provider, &s.PlanIDs, &s.KeyScopes, &s.DisplayName, &s.TermsURL,
 		&s.ReturnURL, &s.TrialDays, &s.DailyLimit, &s.CustomerPlanChanges, &s.CustomerClosing, &s.FreePlanID, &s.OAuthConsumers,
-		&s.CreatedAt, &s.UpdatedAt)
+		&s.AccountTools, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerSignupSettings{}, ErrNotFound
 	}
@@ -55,18 +55,19 @@ func (s *PgStore) PutAPIConsumerSignupSettings(ctx context.Context, in APIConsum
 	in = cloneAPIConsumerSignupSettings(in)
 	out, err := scanAPIConsumerSignupSettings(s.pool.QueryRow(ctx, `insert into api_consumer_signup_settings
 			(app_id, account_id, enabled, provider, plan_ids, key_scopes, display_name, terms_url, return_url, trial_days, daily_limit,
-			 customer_plan_changes, customer_closing, free_plan_id, oauth_consumers)
-		select a.id, a.account_id, $3, $4, $5::uuid[], $6, $7, $8, $9, $10, $11, $12, $13, nullif($14::text, '')::uuid, $15 from apps a
+			 customer_plan_changes, customer_closing, free_plan_id, oauth_consumers, account_tools)
+		select a.id, a.account_id, $3, $4, $5::uuid[], $6, $7, $8, $9, $10, $11, $12, $13, nullif($14::text, '')::uuid, $15, $16 from apps a
 		 where a.id = $1::uuid and a.account_id = $2::uuid
 		on conflict (app_id) do update
 		   set enabled = excluded.enabled, provider = excluded.provider, plan_ids = excluded.plan_ids, key_scopes = excluded.key_scopes,
 		       display_name = excluded.display_name, terms_url = excluded.terms_url, return_url = excluded.return_url,
 		       trial_days = excluded.trial_days, daily_limit = excluded.daily_limit,
 		       customer_plan_changes = excluded.customer_plan_changes, customer_closing = excluded.customer_closing,
-		       free_plan_id = excluded.free_plan_id, oauth_consumers = excluded.oauth_consumers, updated_at = now()
+		       free_plan_id = excluded.free_plan_id, oauth_consumers = excluded.oauth_consumers,
+		       account_tools = excluded.account_tools, updated_at = now()
 		returning `+apiConsumerSignupSettingsCols, in.AppID, in.AccountID, in.Enabled, in.Provider, in.PlanIDs, in.KeyScopes,
 		in.DisplayName, in.TermsURL, in.ReturnURL, in.TrialDays, in.DailyLimit, in.CustomerPlanChanges, in.CustomerClosing,
-		in.FreePlanID, in.OAuthConsumers))
+		in.FreePlanID, in.OAuthConsumers, in.AccountTools))
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return APIConsumerSignupSettings{}, fmt.Errorf("put consumer sign-up settings: %w", err)
 	}

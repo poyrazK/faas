@@ -114,6 +114,14 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"DELETE /v1/apps/{slug}/consumer-billing-policy": authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumer-billing-policy":    authz.OrgActionManageAppSecurity,
 	"PUT /v1/apps/{slug}/consumer-billing-policy":    authz.OrgActionManageAppSecurity,
+	// consumer-credit-packs
+	"GET /v1/apps/{slug}/consumer-credit-packs": authz.OrgActionManageAppSecurity,
+	"PUT /v1/apps/{slug}/consumer-credit-packs": authz.OrgActionManageAppSecurity,
+	// consumer-identities: OAuth sign-in identities linked to key consumers;
+	// unlinking one lets it enroll a fresh consumer, so it manages app security
+	// like the consumers themselves.
+	"DELETE /v1/apps/{slug}/consumer-identities/{id}": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/consumer-identities":         authz.OrgActionManageAppSecurity,
 	// consumer-overdue-holds
 	"GET /v1/apps/{slug}/consumer-overdue-holds": authz.OrgActionReadApp,
 	// consumer-plans
@@ -126,6 +134,9 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"PUT /v1/apps/{slug}/consumer-signup":    authz.OrgActionManageAppSecurity,
 	// consumer-signups
 	"GET /v1/apps/{slug}/consumer-signups": authz.OrgActionReadApp,
+	// mcp-stats (ADR-20261126082046) names customers and revenue, like
+	// monetization-funnel.
+	"GET /v1/apps/{slug}/mcp-stats": authz.OrgActionManageAppSecurity,
 	// consumers
 	"POST /v1/apps/{slug}/consumers":                                                        authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/credits":                                   authz.OrgActionManageAppSecurity,
@@ -151,6 +162,11 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice":   authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice":  authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote":                               authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/monetization-funnel":                                               authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/billing-progress":                          authz.OrgActionManageAppSecurity,
+
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft": authz.OrgActionManageAppSecurity,
+
 	// crash-snapshots
 	"GET /v1/apps/{slug}/crash-snapshots":            authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/crash-snapshots":           authz.OrgActionManageAppSecurity,
@@ -170,6 +186,8 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/data-api/runtime":             authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/status":              authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/data-api/usage":               authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/data-api-inspections":        authz.OrgActionConfigureApp,
+	"GET /v1/apps/{slug}/data-api-inspections/{id}":    authz.OrgActionReadApp,
 	// Binding metadata contains no credentials or live database access.
 	"GET /v1/apps/{slug}/postgres-bindings": authz.OrgActionReadApp,
 	// data-repair

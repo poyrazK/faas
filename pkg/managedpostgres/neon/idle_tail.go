@@ -35,18 +35,18 @@ const (
 // apply_config operation is not seen, and that window is priced with the new
 // settings. It sends at most maxRequests requests and reports how many it
 // sent, also on error.
-func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, window managedpostgres.UsageWindow, maxRequests int) (managedpostgres.IdleTail, error) {
+func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, window managedpostgres.UsageWindow, maxRequests int) (managedpostgres.IdleTail, []managedpostgres.ComputeEvent, error) {
 	ref, err := parseResourceRef(providerResourceID)
 	if err != nil || window.From.IsZero() || !window.To.After(window.From) || maxRequests < 2 {
-		return managedpostgres.IdleTail{}, managedpostgres.ErrInvalid
+		return managedpostgres.IdleTail{}, nil, managedpostgres.ErrInvalid
 	}
 	if ref.branchID != "" {
-		return managedpostgres.IdleTail{}, managedpostgres.ErrUnsupported
+		return managedpostgres.IdleTail{}, nil, managedpostgres.ErrUnsupported
 	}
 	tail := managedpostgres.IdleTail{Requests: 1}
 	var endpoints endpointsResponse
 	if err := p.doJSON(ctx, http.MethodGet, "/projects/"+url.PathEscape(ref.projectID)+"/endpoints", nil, nil, &endpoints, http.StatusOK); err != nil {
-		return tail, err
+		return tail, nil, err
 	}
 	var compute endpoint
 	for _, candidate := range endpoints.Endpoints {
@@ -54,7 +54,7 @@ func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, wind
 			continue
 		}
 		if compute.ID != "" || candidate.ProjectID != ref.projectID || candidate.ID == "" {
-			return tail, managedpostgres.ErrUnsupported
+			return tail, nil, managedpostgres.ErrUnsupported
 		}
 		compute = candidate
 	}
@@ -65,10 +65,10 @@ func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, wind
 	// No compute, or an always-on one, has no idle tail. A held compute was
 	// suspended by the platform, not for idleness.
 	if compute.ID == "" || timeout < 0 || compute.MinimumCU <= 0 {
-		return tail, nil
+		return tail, nil, nil
 	}
 	if endpointDisabled(compute) {
-		return tail, managedpostgres.ErrUnsupported
+		return tail, nil, managedpostgres.ErrUnsupported
 	}
 	idle := time.Duration(timeout) * time.Second
 	// An idle suspend's idle stretch can start before the window, and one
@@ -76,15 +76,16 @@ func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, wind
 	ops, pages, err := p.operationsSince(ctx, ref.projectID, window.From.Add(-idle), maxRequests-1)
 	tail.Requests += pages
 	if err != nil {
-		return tail, err
+		return tail, nil, err
 	}
+	events := computeEvents(ops, compute.ID, window)
 	var idleSeconds float64
 	for i, op := range ops {
 		if op.endpointID != compute.ID {
 			continue
 		}
 		if op.action == "apply_config" {
-			return tail, managedpostgres.ErrUnsupported
+			return tail, events, managedpostgres.ErrUnsupported
 		}
 		if op.action != "suspend_compute" || op.status != "finished" || !idleSuspend(ops, i, idle) {
 			continue
@@ -106,7 +107,26 @@ func (p *Provider) IdleTail(ctx context.Context, providerResourceID string, wind
 		}
 	}
 	tail.ComputeUnitSeconds = int64(math.Round(idleSeconds * compute.MinimumCU))
-	return tail, nil
+	return tail, events, nil
+}
+
+// computeEvents are the compute's finished starts and suspends inside the
+// window (ADR-20261125231222).
+func computeEvents(ops []timedOperation, endpointID string, window managedpostgres.UsageWindow) []managedpostgres.ComputeEvent {
+	var events []managedpostgres.ComputeEvent
+	for _, op := range ops {
+		if op.endpointID != endpointID || op.status != "finished" || op.id == "" ||
+			op.at.Before(window.From) || !op.at.Before(window.To) {
+			continue
+		}
+		switch op.action {
+		case "start_compute":
+			events = append(events, managedpostgres.ComputeEvent{OperationID: op.id, Kind: managedpostgres.ComputeEventStart, At: op.at})
+		case "suspend_compute":
+			events = append(events, managedpostgres.ComputeEvent{OperationID: op.id, Kind: managedpostgres.ComputeEventSuspend, At: op.at})
+		}
+	}
+	return events
 }
 
 // idleSuspend reports whether the suspend at ops[i] ended an idle stretch:
@@ -133,8 +153,8 @@ func idleSuspend(ops []timedOperation, i int, idle time.Duration) bool {
 }
 
 type timedOperation struct {
-	at                         time.Time
-	endpointID, action, status string
+	at                             time.Time
+	id, endpointID, action, status string
 }
 
 // operationsSince returns the project's operations created at or after since,
@@ -170,7 +190,7 @@ func (p *Provider) operationsSince(ctx context.Context, projectID string, since 
 			if created.Before(since) {
 				return ops, page, nil
 			}
-			ops = append(ops, timedOperation{at: created, endpointID: op.EndpointID, action: op.Action, status: op.Status})
+			ops = append(ops, timedOperation{at: created, id: op.ID, endpointID: op.EndpointID, action: op.Action, status: op.Status})
 		}
 		// A short page is the last one, whatever its cursor says.
 		if len(response.Operations) < pageSize || response.Pagination.Cursor == "" {

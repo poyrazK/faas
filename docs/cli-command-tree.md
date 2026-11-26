@@ -273,6 +273,8 @@ touch them. The tables below map each earlier name.
 | `gregale data-api rotation preflight` | `gregale data-api rotation check` |
 | `gregale data-api storage sql` | `gregale data-api storage export` |
 | `gregale data-api verify release` | `gregale data-api release verify` |
+| `gregale data-api write-check` | `gregale data-api write check` |
+| `gregale data-api write-readiness` | `gregale data-api write readiness` |
 | `gregale debug capture-diff` | `gregale debug capture diff` |
 | `gregale debug rollout` | `gregale debug explain` |
 | `gregale delayed-task add` | `gregale cron create --at` |
@@ -497,6 +499,14 @@ touch them. The tables below map each earlier name.
 | `gregale mcp retirements acknowledge-manual` | `gregale mcp server retirements ack` |
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
+| `gregale mcp task-group-ack` | `gregale mcp client group ack` |
+| `gregale mcp task-group-respond` | `gregale mcp client group respond` |
+| `gregale mcp task-group-review` | `gregale mcp client group review` |
+| `gregale mcp task-group-status` | `gregale mcp client group status` |
+| `gregale mcp task-group-stop` | `gregale mcp client group stop` |
+| `gregale mcp task-group-submit` | `gregale mcp client group submit` |
+| `gregale mcp task-group-watch` | `gregale mcp client group watch` |
+| `gregale mcp task-inbox` | `gregale mcp client inbox` |
 | `gregale mcp task-respond` | `gregale mcp client respond` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
 | `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |

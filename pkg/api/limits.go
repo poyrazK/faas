@@ -305,6 +305,28 @@ const (
 	ObsGatewayTrafficLongWindowBudget = 10 * time.Second
 )
 
+// Operator disk pressure report (ADR-20261124150000). Filesystems are graded
+// with the FaasHostDisk* alert thresholds: free space under
+// ObsDiskCriticalFreePercent is critical, under ObsDiskFillingFreePercent
+// and predicted full within ObsDiskFillingHorizonHours (deriv over
+// ObsDiskGrowthWindow) is filling, under ObsDiskLowFreePercent is low, and
+// inodes under ObsDiskInodesLowFreePercent are inodes_low. A predicted time
+// to full beyond ObsDiskHoursToFullMax is not shown. The report lists up to
+// ObsDiskFilesystemsMax filesystems and the ObsDiskGuestsMax fullest guest
+// disks, read under ObsDiskPrometheusBudget.
+const (
+	ObsDiskCriticalFreePercent  = 5
+	ObsDiskLowFreePercent       = 15
+	ObsDiskFillingFreePercent   = 25
+	ObsDiskFillingHorizonHours  = 4
+	ObsDiskInodesLowFreePercent = 10
+	ObsDiskHoursToFullMax       = 7 * 24
+	ObsDiskGrowthWindow         = 6 * time.Hour
+	ObsDiskFilesystemsMax       = 500
+	ObsDiskGuestsMax            = 25
+	ObsDiskPrometheusBudget     = 3 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -1312,6 +1334,24 @@ const (
 // ManagedPostgresSuspendTimeoutDocsURL is cited by the out-of-range error.
 const ManagedPostgresSuspendTimeoutDocsURL = "https://gregale.dev/docs/postgres#plans"
 
+// Why a managed PostgreSQL database is awake (ADR-20261125231222).
+// ManagedPostgresActivityRetention is how long recorded compute starts are
+// kept, and so the longest period `postgres activity` covers.
+// ManagedPostgresActivityMaxStarts bounds the starts one activity response
+// lists. ManagedPostgresAwakeNoticeHoursPerDay is the 7-day average awake
+// time at which the weekly notice names the cause, when one cause holds at
+// least ManagedPostgresAwakeNoticeCauseSharePercent of the starts.
+const (
+	ManagedPostgresActivityRetention            = 30 * 24 * time.Hour
+	ManagedPostgresActivityDefaultPeriod        = 24 * time.Hour
+	ManagedPostgresActivityMaxStarts            = 200
+	ManagedPostgresAwakeNoticeHoursPerDay       = 6
+	ManagedPostgresAwakeNoticeCauseSharePercent = 50
+)
+
+// ManagedPostgresActivityDocsURL documents `postgres activity`.
+const ManagedPostgresActivityDocsURL = "https://gregale.dev/docs/postgres#why-is-my-database-awake"
+
 // ManagedPostgresWakeWithAppDocsURL is cited by wake-with-app refusals.
 const ManagedPostgresWakeWithAppDocsURL = "https://gregale.dev/docs/postgres#plans"
 
@@ -1966,6 +2006,34 @@ const (
 	ConsumerUpgradeLinkCacheTTL = 10 * time.Minute
 	// The owner's sign-up list shows at most this many.
 	ConsumerSignupListMax = 100
+	// A consumer may call the gateway's MCP account tools this many times a
+	// minute (ADR-20261125194510); the calls are not metered or billed.
+	MCPAccountToolCallsPerMinute = 30
+	// The gateway edits a tools/list answer for account tools only up to
+	// this size; a larger answer passes through unchanged.
+	MCPAccountToolsListMaxBytes = 1 << 20
+	// The gateway remembers an MCP session whose initialize declared URL
+	// elicitation this long, and at most this many sessions per app, per
+	// gateway process (ADR-20261125230541).
+	MCPSessionCapabilityTTL      = 24 * time.Hour
+	MCPSessionCapabilitiesPerApp = 1024
+	// Seller stats (ADR-20261126082046): GET /v1/apps/{slug}/mcp-stats reads
+	// at most this many calendar months, prices this month for at most
+	// MCPSellerStatsMaxQuotes customers (most units first) and lists at most
+	// MCPSellerStatsNearLimitMax customers near their limit, those at
+	// MCPSellerStatsNearLimitPercent of their monthly units or more.
+	MCPSellerStatsMaxMonths        = 12
+	MCPSellerStatsMaxQuotes        = 500
+	MCPSellerStatsNearLimitMax     = 50
+	MCPSellerStatsNearLimitPercent = 80
+	// It reads at most MCPSellerStatsMaxSignups sign-ups to tell where
+	// customers came from, and prices MCPSellerStatsQuoteParallelism
+	// customers at a time for at most MCPSellerStatsQuoteBudget, well inside
+	// DefaultClientTimeout; customers left unpriced mark the estimate
+	// incomplete.
+	MCPSellerStatsMaxSignups       = 100_000
+	MCPSellerStatsQuoteParallelism = 8
+	MCPSellerStatsQuoteBudget      = 20 * time.Second
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
@@ -9660,6 +9728,13 @@ const (
 	// cold-boots a VM that cannot start.
 	JobMinRAMMB = 64
 
+	// AppMinRAMMB is the smallest ram_mb an app or function accepts, for the
+	// same reason: `gregale app <slug> --ram 8` was saved on prod and every
+	// later wake would cold-boot a guest that cannot start (prod hunt r53).
+	// Checked only when ram_mb is set, so an older app below it can still
+	// change other settings.
+	AppMinRAMMB = JobMinRAMMB
+
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
@@ -10250,6 +10325,14 @@ const (
 	// (ADR-831 amendment 19).
 	EdgeWAFMaxInspectHeaderBytes      = 16 << 10
 	EdgeWAFMaxInspectHeaderValueBytes = 4 << 10
+	// EdgeWAFMaxInspectURIBytes bounds the request URI (path and query) a
+	// WAF check scores, for the same reason (ADR-831 amendment 21): a check
+	// on a 100 KiB query took about 165 ms and one on 900 KiB 1.5 s, and the
+	// app's check budget is charged after the check, so a few long URIs a
+	// second emptied an app's budget and let every other request to it pass
+	// a block rule unchecked. Warn and block count a longer URI as a
+	// detection; a sampled check scores its first 8 KiB.
+	EdgeWAFMaxInspectURIBytes = 8 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -10275,7 +10358,9 @@ const (
 	EdgeWAFReviewMaxGroups = 50
 	// EdgeWAFReviewMinClients is how many distinct clients one CRS rule
 	// must flag on one path, none of them sending most of the detections,
-	// before the review calls it a likely false positive.
+	// before the review says the group is spread like a false positive. It
+	// stays `review`: a few addresses probing one endpoint look the same
+	// (ADR-831 amendment 21).
 	EdgeWAFReviewMinClients = 3
 	// EdgeWAFReviewScannerPaths is how many distinct paths a client must be
 	// flagged on in the window before the review treats it as a scanner.
@@ -11975,6 +12060,9 @@ var (
 	// AgentRunConcurrentPerAccount and AgentRunQueuedPerAccount together with
 	// runs. SandboxMaxLifetimeSec is a session's longest life.
 	SandboxMaxLifetimeSec = [4]int{0, 3600, 14_400, 86_400}
+	// SandboxCodeContextsMax bounds a session's code contexts, each its own
+	// Jupyter kernel, the default one included (ADR-20261027090013 step 14).
+	SandboxCodeContextsMax = 8
 	// SandboxBrowserRAMMBMin is the least RAM a session created with
 	// browser: true may have (ADR-20261116182615 §1): Chromium needs about
 	// 1 GB for ordinary pages.
@@ -12808,11 +12896,12 @@ const AgentBudgetHoursPerMonth = 730
 // class's smallest compute size, in quarter compute units: what a database
 // that never scales to zero keeps running, so what an agent's budget pays
 // for it (ADR-20261111114059 slice 3). It mirrors the Neon class profiles
-// (pkg/managedpostgres/neon/config.go; a test there keeps them equal).
+// (pkg/managedpostgres/neon/config.go; a test there keeps them equal), not the
+// older accepted ranges (ADR-20261124221402).
 var ManagedPostgresMinimumQuarterComputeUnits = map[string]int64{
 	"development": 1,
 	"burstable":   1,
-	"production":  4,
+	"production":  2,
 }
 
 // Self-service spend cap ceilings per paid plan, in cents (ADR-20261105120000,

@@ -10228,6 +10228,14 @@ ON CONFLICT (cache_app_id, app_id) DO NOTHING;
 DELETE FROM managed_valkey_cache_grants
 WHERE cache_app_id = sqlc.arg(cache_app_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
+-- name: ListManagedValkeyCacheGrantees :many
+-- The live apps bound to a cache, so deleting it can name them.
+SELECT a.slug FROM managed_valkey_cache_grants g
+JOIN apps a ON a.id = g.app_id
+WHERE g.cache_app_id = sqlc.arg(cache_app_id)::uuid
+  AND a.status <> 'deleted' AND a.deleted_at IS NULL
+ORDER BY a.slug;
+
 -- name: ReadServicePolicyProject :one
 SELECT preview_service_policy FROM github_deploy_policies
 WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
@@ -18428,7 +18436,8 @@ FROM commit_receipts WHERE account_id=sqlc.arg(account_id)::text::uuid
 
 -- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at,
+ (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END)::integer AS poll_interval_ms
 FROM commit_sources WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
 -- name: SetCommitSourceEnabled :exec
@@ -18438,7 +18447,12 @@ UPDATE commit_sources SET
  last_checked_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE last_checked_at END,
  pending_events=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE pending_events END,
  blocked_events=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE blocked_events END,
+ cleanup_eligible_events=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE cleanup_eligible_events END,
+ cleanup_observed_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE cleanup_observed_at END,
  oldest_pending_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN NULL ELSE oldest_pending_at END,
+ relay_next_poll_at=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN '-infinity'::timestamptz ELSE relay_next_poll_at END,
+ relay_poll_backoff_ms=CASE WHEN sqlc.arg(enabled)::boolean AND NOT enabled THEN 0 ELSE relay_poll_backoff_ms END,
+ relay_poll_token=CASE WHEN NOT sqlc.arg(enabled)::boolean OR NOT enabled THEN NULL ELSE relay_poll_token END,
  enabled=sqlc.arg(enabled)::boolean
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
@@ -18453,13 +18467,23 @@ SELECT EXISTS(SELECT 1 FROM commit_sources c
 -- name: SetCommitSourceConnection :execrows
 UPDATE commit_sources SET sealed_connection=sqlc.arg(connection)::bytea,
  credential_revision=credential_revision+1,relay_status='unconfigured',
- last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL
+ relay_next_poll_at='-infinity',relay_poll_backoff_ms=0,relay_poll_token=NULL,
+ last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL,cleanup_eligible_events=NULL,cleanup_observed_at=NULL
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(source_id)::text::uuid;
 
 -- name: CommitRelayObservationSummary :one
 WITH observations AS (
- SELECT relay_status,pending_events,blocked_events,oldest_pending_at,COALESCE(last_checked_at>=sqlc.arg(fresh_after)::timestamptz
-   AND last_checked_at<=now()+interval '1 minute',false) AS fresh
+ SELECT relay_status,pending_events,blocked_events,oldest_pending_at,cleanup_eligible_events,COALESCE(last_checked_at>=sqlc.arg(fresh_after)::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND last_checked_at<=now()+interval '1 minute',false) AS fresh,
+ -- Keep the failure visible through the scheduled retry and one lease window.
+ -- relay_next_poll_at also stores active leases, so use the last completed poll.
+ COALESCE(relay_poll_backoff_ms>0 AND last_checked_at<=now()+interval '1 minute'
+   AND last_checked_at + (poll_interval_ms::bigint + relay_poll_backoff_ms + sqlc.arg(source_lease_ms)::bigint)
+     * interval '1 millisecond'>=now(),false) AS failure_retry_fresh,
+ COALESCE(cleanup_observed_at>=sqlc.arg(fresh_after)::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND cleanup_observed_at<=now()+interval '1 minute',false) AS cleanup_fresh
  FROM commit_sources WHERE enabled
 ), snapshots AS (
  SELECT *,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
@@ -18467,7 +18491,9 @@ WITH observations AS (
 )
 SELECT count(*)::bigint AS enabled_sources,
  count(*) FILTER(WHERE NOT known)::bigint AS unknown_sources,
- count(*) FILTER(WHERE fresh AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
+ count(*) FILTER(WHERE NOT cleanup_fresh OR cleanup_eligible_events IS NULL)::bigint AS cleanup_unknown_sources,
+ COALESCE(sum(cleanup_eligible_events) FILTER(WHERE cleanup_fresh),0)::bigint AS cleanup_eligible_events,
+ count(*) FILTER(WHERE (fresh OR failure_retry_fresh) AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
  COALESCE(sum(pending_events) FILTER(WHERE known),0)::bigint AS pending_events,
  COALESCE(sum(blocked_events) FILTER(WHERE known),0)::bigint AS blocked_events,
  COALESCE(extract(epoch FROM min(oldest_pending_at) FILTER(WHERE known AND (pending_events>0 OR blocked_events>0))),0)::double precision AS oldest_pending_timestamp
@@ -18478,14 +18504,18 @@ SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt
 FROM app_resource_accounts WHERE id=sqlc.arg(account_id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid;
 
 -- name: LockRoutePolicyAccount :one
+-- FOR NO KEY UPDATE, not FOR UPDATE: the snapshot then locks the app row, and
+-- a child insert's foreign-key checks take KEY SHARE on the app before the
+-- namespace (request_id_journal), so FOR UPDATE here deadlocked them. Route
+-- policy writers, plan/status updates and deletes still conflict with it.
 WITH namespace AS MATERIALIZED (
- SELECT id FROM resource_namespaces WHERE id=sqlc.arg(account_id)::text::uuid FOR UPDATE
+ SELECT id FROM resource_namespaces WHERE id=sqlc.arg(account_id)::text::uuid FOR NO KEY UPDATE
 ), owner AS MATERIALIZED (
  SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o JOIN apps a ON a.org_id=o.id
  JOIN namespace n ON n.id=a.account_id WHERE a.id=sqlc.arg(app_id)::text::uuid FOR SHARE OF o
 ), legacy AS MATERIALIZED (
  SELECT ac.id FROM accounts ac JOIN namespace n ON n.id=ac.id
- JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR UPDATE OF ac
+ JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR NO KEY UPDATE OF ac
 )
 SELECT jsonb_build_object('ID', a.id, 'Plan', a.plan, 'Status', a.status, 'AbuseHoldAt', a.abuse_hold_at) AS snapshot
 FROM app_resource_accounts a JOIN namespace n ON n.id=a.id JOIN owner o ON true
@@ -24109,7 +24139,10 @@ SELECT (jsonb_build_object(
     'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     -- Project deploy rollbacks (#7923) record each deployment's deploy group.
-    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
+    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    -- Verification leases (ADR-20261122220000 amendment 2) hold a deployment
+    -- only while unexpired; an expired one opens no secrets.
+    'deployment_verification_leases_deployment_id_fkey', (SELECT count(*) FROM deployment_verification_leases WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND expires_at > now())
 ))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one
@@ -30991,7 +31024,8 @@ VALUES (sqlc.arg(id), sqlc.arg(account_id), sqlc.arg(bucket_id), sqlc.arg(caller
 -- still exists, the instance it was issued to still holds a VM, its bucket is
 -- ready and the bucket's resource owner may use object storage: the same
 -- owner rule object_storage_credential_live applies to compute keys. A grant
--- that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
+-- that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete);
+-- one whose access or prefix changed is rescoped (ObjectWorkloadCredentialRegrant).
 SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
        c.created_at, c.expires_at,
        b.app_id, b.org_id, b.name AS bucket_name, b.scope AS bucket_scope,
@@ -31024,6 +31058,14 @@ WHERE caller_app_id = sqlc.arg(caller_app_id) AND expires_at > now();
 
 -- name: ObjectWorkloadCredentialDelete :execrows
 DELETE FROM object_storage_workload_credentials
+WHERE caller_app_id = sqlc.arg(caller_app_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
+
+-- name: ObjectWorkloadCredentialRegrant :execrows
+-- A grant whose access or prefix changed moves the caller's live credentials
+-- for that bucket to the new scope, so a guest's (and its SDK's) cached key
+-- keeps working within what uses: still allows and loses the rest at once.
+UPDATE object_storage_workload_credentials
+SET permission = sqlc.arg(permission), key_prefix = sqlc.narg(key_prefix)
 WHERE caller_app_id = sqlc.arg(caller_app_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: ObjectWorkloadCredentialCountLive :one

@@ -30,6 +30,11 @@ clock:
 | Pro | 75 CU-h | 0.25 CU | about 12 |
 | Scale (production class) | 200 CU-h | 1 CU | about 8 |
 
+Since [ADR-20261124221402](20261124221402-neon-production-class-half-cu-floor.md)
+a new production database's smallest size is 0.5 CU, so the Scale allowance
+lasts about 16 days of steady traffic; one created at 1 CU before keeps the
+8-day figure.
+
 Neon can enforce a monthly compute limit itself. A project's
 `settings.quota.compute_time_seconds` caps compute seconds per billing month.
 When a project reaches it, Neon suspends every compute in the project and keeps

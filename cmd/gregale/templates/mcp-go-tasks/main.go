@@ -361,6 +361,8 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		serveTaskGet(w, r, request.ID, request.Params, auth, identity, tasks)
 	case taskSubmissionLookupMethod:
 		serveTaskSubmissionLookup(w, r, request, auth, identity, tasks, version)
+	case taskInboxMethod, taskInputReviewMethod, taskRespondReviewedMethod, taskCheckReviewedMethod:
+		serveTaskInboxRequest(w, r, request, auth, identity, tasks, version)
 	case "tasks/cancel":
 		serveTaskCancel(w, r, request.ID, request.Params, auth, identity, tasks)
 	case "tasks/update":
@@ -409,6 +411,7 @@ func serverCapabilities(tasks *mcpTaskRuntime, auth *authenticator, modern bool)
 			extensions[taskSubmissionExtension] = map[string]any{}
 			extensions[taskSubmissionLookupExtension] = map[string]any{}
 		}
+		tasks.addTaskInboxCapabilities(auth, extensions)
 		capabilities["extensions"] = extensions
 	}
 	return capabilities

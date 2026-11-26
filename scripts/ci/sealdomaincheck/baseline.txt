@@ -69,6 +69,7 @@ plain cli_auth_codes.token_hash
 plain cli_auth_codes.verifier_hash
 plain consumer_keys.hashed_secret
 plain customer_operation_webhook_receipts.body_sha256
+plain data_api_inspection_executions.stdout_sha256
 plain deploy_tokens.token_sha256
 plain deployment_openapi_docs.doc_sha256
 plain deployment_registry_verifications.payload

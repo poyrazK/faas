@@ -21,7 +21,7 @@ func mcpGatewayPreviewCLI() bool {
 }
 
 // mcpGatewayPreviewSubcommands are the mcp subcommands the preview adds.
-var mcpGatewayPreviewSubcommands = map[string]bool{"auth": true, "replay": true, "insights": true, "keys": true}
+var mcpGatewayPreviewSubcommands = map[string]bool{"auth": true, "replay": true, "insights": true, "keys": true, "stats": true}
 
 // withoutMCPGatewayPreview is command as the CLI shows it while the preview
 // is hidden. It never modifies the shared manifest.

@@ -62,7 +62,16 @@ export function createScopePolicy(auth, field, { resource = false } = {}) {
 }
 
 export function createToolPolicy(auth) {
-  return createScopePolicy(auth, 'tool_scopes');
+  const policy = createScopePolicy(auth, 'tool_scopes');
+  const names = Object.hasOwn(auth, 'tool_scopes') ? Object.keys(auth.tool_scopes) : null;
+  return {
+    ...policy,
+    // A null list admits all tool names under the default policy.
+    visibleNames(authInfo) {
+      if (names === null) return policy.canAccess('', authInfo) ? null : [];
+      return names.filter(name => policy.canAccess(name, authInfo));
+    },
+  };
 }
 
 export function createResourcePolicy(auth) {

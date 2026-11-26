@@ -254,6 +254,14 @@ func (s *PgStore) ListAPIConsumerUsageStatementRevisions(ctx context.Context, ac
 }
 
 func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID, statementID string) (APIConsumerUsageStatement, bool, error) {
+	return s.finalizeAPIConsumerUsageStatement(ctx, accountID, appID, consumerID, statementID, nil)
+}
+
+func (s *PgStore) FinalizeReviewedAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID, statementID string, due int64) (APIConsumerUsageStatement, bool, error) {
+	return s.finalizeAPIConsumerUsageStatement(ctx, accountID, appID, consumerID, statementID, &due)
+}
+
+func (s *PgStore) finalizeAPIConsumerUsageStatement(ctx context.Context, accountID, appID, consumerID, statementID string, expectedDue *int64) (APIConsumerUsageStatement, bool, error) {
 	if accountID == "" || appID == "" || consumerID == "" || statementID == "" {
 		return APIConsumerUsageStatement{}, false, ErrNotFound
 	}
@@ -273,6 +281,9 @@ func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, account
 	if err == nil {
 		if statement, err = applyAPIConsumerCredits(ctx, tx, statement); err != nil {
 			return APIConsumerUsageStatement{}, false, err
+		}
+		if expectedDue != nil && statement.AmountDueMillicents() != *expectedDue {
+			return APIConsumerUsageStatement{}, false, ErrConflict
 		}
 		payload, payloadErr := usageStatementFinalizedWebhookPayload(statement)
 		if payloadErr != nil {
@@ -307,6 +318,9 @@ func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, account
 		return APIConsumerUsageStatement{}, false, getErr
 	}
 	if current.Status == APIConsumerUsageStatementFinalized {
+		if expectedDue != nil && current.AmountDueMillicents() != *expectedDue {
+			return APIConsumerUsageStatement{}, false, ErrConflict
+		}
 		return current, false, nil
 	}
 	return APIConsumerUsageStatement{}, false, ErrConflict

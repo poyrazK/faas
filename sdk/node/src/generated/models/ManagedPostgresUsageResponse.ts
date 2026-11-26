@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ManagedPostgresDatabaseUsage } from './ManagedPostgresDatabaseUsage.js';
 /**
  * Customer-safe current UTC-month managed PostgreSQL usage and guardrail state.
  */
@@ -72,5 +73,9 @@ export type ManagedPostgresUsageResponse = {
    * Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
    */
   hold?: 'compute_ceiling' | 'egress' | 'inactive';
+  /**
+   * The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it could not be read.
+   */
+  databases?: Array<ManagedPostgresDatabaseUsage>;
 };
 

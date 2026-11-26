@@ -77,23 +77,52 @@ type OAuthConsumers struct {
 	Auth *AuthClientImpl
 }
 
+// OAuthConsumer is the consumer an OAuth caller is enrolled as.
+type OAuthConsumer struct {
+	ID string
+	// Active is false for a revoked or closed consumer.
+	Active bool
+	// AccountTools is the app's opt-in to MCP account tools
+	// (ADR-20261125194510); an older apid never sets it.
+	AccountTools bool
+}
+
 // EnrollOAuthConsumer returns the consumer issuer and subject are on the
-// app, and whether it is active. ErrOAuthConsumersOff and
-// ErrOAuthConsumerSignupLimit are refusals; any other error means apid could
-// not answer.
-func (c OAuthConsumers) EnrollOAuthConsumer(ctx context.Context, accountID, appID, issuer, subject, email string) (string, bool, error) {
+// app. ErrOAuthConsumersOff and ErrOAuthConsumerSignupLimit are refusals;
+// any other error means apid could not answer.
+func (c OAuthConsumers) EnrollOAuthConsumer(ctx context.Context, accountID, appID, issuer, subject, email string) (OAuthConsumer, error) {
 	resp, err := c.Auth.cli.EnrollOAuthConsumer(ctx, &apidpb.EnrollOAuthConsumerRequest{
 		AccountId: accountID, AppId: appID, Issuer: issuer, Subject: subject, Email: email})
 	switch status.Code(err) {
 	case codes.OK:
-		return resp.GetConsumerId(), resp.GetActive(), nil
+		return OAuthConsumer{ID: resp.GetConsumerId(), Active: resp.GetActive(), AccountTools: resp.GetAccountTools()}, nil
 	case codes.FailedPrecondition, codes.Unimplemented:
 		// An apid older than the RPC enrolls nobody (ADR-20261124094745).
-		return "", false, ErrOAuthConsumersOff
+		return OAuthConsumer{}, ErrOAuthConsumersOff
 	case codes.ResourceExhausted:
-		return "", false, ErrOAuthConsumerSignupLimit
+		return OAuthConsumer{}, ErrOAuthConsumerSignupLimit
 	case codes.NotFound, codes.InvalidArgument:
-		return "", false, ErrOAuthConsumerRefused
+		return OAuthConsumer{}, ErrOAuthConsumerRefused
 	}
-	return "", false, fmt.Errorf("apidgrpc: EnrollOAuthConsumer: %w", err)
+	return OAuthConsumer{}, fmt.Errorf("apidgrpc: EnrollOAuthConsumer: %w", err)
+}
+
+// ErrAccountToolsOff: apid will not answer the app's account tools for
+// this consumer (the opt-in is off, the consumer is gone, or apid predates
+// the RPC).
+var ErrAccountToolsOff = errors.New("apidgrpc: account tools are off for the app")
+
+// AccountTool returns an MCP account tool's JSON answer for a consumer
+// (ADR-20261125194510). ErrAccountToolsOff is a refusal; any other error
+// means apid could not answer.
+func (c OAuthConsumers) AccountTool(ctx context.Context, accountID, appID, consumerID, tool string) ([]byte, error) {
+	resp, err := c.Auth.cli.ConsumerAccountTool(ctx, &apidpb.ConsumerAccountToolRequest{
+		AccountId: accountID, AppId: appID, ConsumerId: consumerID, Tool: tool})
+	switch status.Code(err) {
+	case codes.OK:
+		return resp.GetResultJson(), nil
+	case codes.FailedPrecondition, codes.Unimplemented, codes.NotFound, codes.InvalidArgument:
+		return nil, ErrAccountToolsOff
+	}
+	return nil, fmt.Errorf("apidgrpc: ConsumerAccountTool: %w", err)
 }

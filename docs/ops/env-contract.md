@@ -119,11 +119,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BILLING_PROVIDER` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BILLING_USAGE_SOURCE` | meterd | `default` |  |  | `` | overrides [meter] billing_usage_source (off\|ledger_shadow\|ledger, default ledger_shadow; ADR-20261107105126) |
 | `FAAS_BRIDGED_ROLE` | bridged, shared | `envfile` |  |  | `` | optional control-plane relay; delivered by dev-bridge.env |
+| `FAAS_BRIDGE_CONTROL_SOCKET` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd (FAAS_INSTANCE_BRIDGE_CONTROL=1) on a bridge unit: the 0600 control socket in the bridge's own socket directory where it serves its activity counters (connection-survival ADR P1d); unset serves none |
 | `FAAS_BRIDGE_DROP_TO_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for a bridge unit (FAAS_INSTANCE_BRIDGE_UNIT=1), which systemd starts as root because User= refuses a uid with no account; the bridge drops to this uid before reading anything (pkg/bridgeproc) |
 | `FAAS_BRIDGE_EXPECT_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc) |
 | `FAAS_BRIDGE_GUEST_HEADROOM` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set to 1 by vmmd when bridge_stream_headroom is on: the bridge keeps one idle guest connection per accepted stream (100) and dials the guest with a 5 s timeout (ADR-20261026120000) |
 | `FAAS_BRIDGE_HEADERS` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_HOST` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
+| `FAAS_BRIDGE_INSTANCE` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd with FAAS_BRIDGE_CONTROL_SOCKET: the instance the bridge names in its control hello, which vmmd checks before trusting a counter (connection-survival ADR P1d) |
 | `FAAS_BRIDGE_METHOD` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_PARENT_PID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits with that process (pkg/bridgeproc) |
 | `FAAS_BRIDGE_PROTOCOL` | vmmd-stream-bridge, shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
@@ -169,7 +171,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMMIT_DATABASE_CIDRS` | schedd | `default` |  |  | `` | operator-approved database address prefixes; required when the Commit relay is enabled |
 | `FAAS_COMMIT_DATABASE_HOSTS` | schedd | `default` |  |  | `` | exact operator-approved database hostnames; required when the Commit relay is enabled |
 | `FAAS_COMMIT_PUBLIC_DATABASES` | schedd | `default` |  | false | `` | ADR-20261112140000 §6: true lets Postgres changes sources reach customer databases at any globally reachable address; other Commit sources keep the FAAS_COMMIT_DATABASE_HOSTS/CIDRS allowlist; true or false only |
+| `FAAS_COMMIT_RELAY_ADAPTIVE_RESERVED_CONNECT` | schedd | `default` |  |  | `` | Opt-in adaptive deadline for reserved workers. Requires the fast reserved connection budget. |
+| `FAAS_COMMIT_RELAY_ADAPTIVE_RESERVED_CONNECT_MAX_MS` | schedd | `default` |  |  | `` | Optional adaptive connection cap from 750 to 2000 milliseconds. Adaptive mode uses 2000 when this setting is unset. |
 | `FAAS_COMMIT_RELAY_ENABLED` | schedd | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
+| `FAAS_COMMIT_RELAY_FAST_RESERVED_CONNECT` | schedd | `default` |  |  | `` | Opt-in 750 ms connection budget. Requires the reserved healthy worker. |
+| `FAAS_COMMIT_RELAY_RESERVE_HEALTHY_WORKER` | schedd | `default` |  |  | `` | Opt-in reservation of one relay worker per scheduler for recently healthy sources. |
 | `FAAS_COMMIT_SHA` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_COMMIT_TLS_PG_BIN_DIR` | shared | `dev-only` |  |  | `` | PostgreSQL server binaries for the private TLS acceptance fixture |
 | `FAAS_COMMIT_TLS_PG_TMPDIR` | shared | `dev-only` |  |  | `` | short traversable parent directory for private PostgreSQL TLS fixture sockets |
@@ -535,6 +541,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |
 | `FAAS_IMAGE_RUNS` | apid, shared | `dropin` |  | 0 | `` | operator gate for POST /v1/image-runs (gregale run --image); 99-faas-image-runs.conf drop-in from control_plane_service (faas_image_runs_enabled); enable after the image-run migration and imaged are deployed (ADR-1161) |
 | `FAAS_INCIDENTS_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261022193512 operator gate for /v1/incidents (unified incident list); explicit 1 enables the internal preview |
+| `FAAS_INSTANCE_BRIDGE_CONTROL` | vmmd, shared | `default` |  | 0 | `` | 1 gives each instance bridge unit a control socket and reads its activity counters in shadow: vmmd compares them with its own activity tracker (instance_bridge_activity_checks_total) and decides nothing from them yet (connection-survival ADR P1d slice 1); needs FAAS_INSTANCE_BRIDGE_UNIT=1; default off |
 | `FAAS_INSTANCE_BRIDGE_SESSIONS` | vmmd, shared | `dropin` |  | 0 | `` | 1 carries raw, TCP and UDP forwards as sessions on the instance's persistent bridge instead of a bridge process per connection (connection-survival ADR P1b); needs the persistent v2 bridge; ansible vmmd_instance_bridge_sessions, default off |
 | `FAAS_INSTANCE_BRIDGE_UNIT` | vmmd, shared | `dropin` |  | 0 | `` | 1 runs each instance's persistent bridge as a transient systemd service (faas-ibridge-<instance>-<gen>.service in faas-tenant-ibridge.slice, sandboxed, as its bridge uid) that lives as long as the instance (connection-survival ADR P1c); applies to namespace bridges with FAAS_BRIDGE_UNPRIVILEGED=1 and the persistent v2 bridge; off, vmmd stops any bridge unit it finds at startup; ansible vmmd_instance_bridge_unit, default off |
 | `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
@@ -855,6 +862,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `unit` |  |  | `` | matches faas-gatewayd-public.socket ListenStream; explicit loopback satisfies ADR-126's multi-host check |
 | `FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND` | gatewayd-public | `dropin` |  |  | `` | ADR-20261031122757 step 7; a compute-node edge with FAAS_OBJECT_STORAGE_CONFIG serves public bucket reads itself, paced to this part of the node's port share; s3_gateway_compute_service's 50-faas-object-public-reads.conf sets both from the manifest's object_storage.compute_public_reads |
 | `FAAS_PUBLIC_PRIVATE_LISTEN_ADDR` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a second listener for the public handler on the control plane's private address, for compute-node edges; unset means none |
+| `FAAS_PUBLIC_S3_ENDPOINT` | schedd | `default` |  |  | `` | optional public S3 endpoint schedd hands apps with a workload bucket grant as AWS_ENDPOINT_URL_S3 (ADR-20261122191423) unless the app sets it; unset uses https://s3.gregale.dev, matching object-storage.json public_endpoint |
+| `FAAS_PUBLIC_S3_REGION` | schedd | `default` |  |  | `` | optional public S3 region schedd hands apps with a workload bucket grant as AWS_REGION (ADR-20261122191423) unless the app sets AWS_REGION or AWS_DEFAULT_REGION; unset uses us-east-1, matching object-storage.json public_region |
 | `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
 | `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
@@ -987,6 +996,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SALES_STALE_DAYS` | apid, shared | `dropin` |  | 14 | `` | Ansible control_plane_service sales drop-in: Days without a recorded conversation before an open lead is marked stalled |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SANDBOX_BROWSER` | apid | `default` |  |  | `` | ADR-20261116182615 rollout: 1 admits sandbox create with browser: true once vmmd, schedd and agentd carry it |
+| `FAAS_SANDBOX_CODE_INTERPRETER_IMAGE` | apid | `default` |  |  | `` | ADR-20261027090013 step 14: the code interpreter's OCI image, pinned by digest (images/sandbox-code-interpreter.Dockerfile); preset code-interpreter boots it as an image session. Unset refuses the preset with sandbox_unsupported |
 | `FAAS_SANDBOX_EGRESS_POLICY` | apid | `default` |  |  | `` | ADR-20261117091026 §3: 1 admits sandbox web-mode domain policies (account default and per session); set only after vmmd, schedd and agentd enforce them |
 | `FAAS_SANDBOX_PREVIEW_DOMAIN` | apid, gatewayd-internal | `default` |  |  | `` | ADR-20261027090013 §11 sandbox previews: the domain preview hosts <port>-<sandbox id>.<domain> live under (a wildcard DNS name routed to the nodes' public gateways); apid writes preview URLs with it and gatewayd-internal serves them; unset turns previews off |
 | `FAAS_SANDBOX_WEB_NETWORK` | apid | `default` |  |  | `` | ADR-20261112121456 §6: 1 admits sandbox network.mode web; set only on a fleet whose manifest declares egress.tenant_gateway, after the owner's production test |

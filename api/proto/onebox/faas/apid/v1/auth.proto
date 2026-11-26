@@ -118,6 +118,28 @@ service Auth {
   // AlreadyExists (the identity is linked to another key's consumer; the
   // owner unlinks it first) and Unavailable.
   rpc LinkOAuthConsumer(LinkOAuthConsumerRequest) returns (LinkOAuthConsumerResponse);
+
+  // ConsumerAccountTool answers one of the account tools the gateway adds
+  // to an MCP server for its OAuth consumers (ADR-20261125194510):
+  // account_usage or account_plans. The result is the tool's JSON. Errors
+  // are InvalidArgument (an unknown tool or bad IDs), NotFound (no such app
+  // or consumer on the account), FailedPrecondition (the app's account
+  // tools are off) and Unavailable.
+  rpc ConsumerAccountTool(ConsumerAccountToolRequest) returns (ConsumerAccountToolResponse);
+}
+
+message ConsumerAccountToolRequest {
+  string account_id = 1;
+  string app_id = 2;
+  string consumer_id = 3;
+  // tool is account_usage or account_plans.
+  string tool = 4;
+}
+
+message ConsumerAccountToolResponse {
+  // result_json is the tool's answer: pkg/api MCPAccountUsage or
+  // MCPAccountPlans.
+  bytes result_json = 1;
 }
 
 message LinkOAuthConsumerRequest {
@@ -166,6 +188,9 @@ message EnrollOAuthConsumerResponse {
   bool active = 2;
   // created reports a new consumer.
   bool created = 3;
+  // account_tools reports the app's opt-in to account tools
+  // (ADR-20261125194510).
+  bool account_tools = 4;
 }
 
 message DecideAgentRequestRequest {

@@ -36,6 +36,8 @@ func mcpStarterCapabilities() []mcpStarterCapability {
 		all("cors_preflight", "Browser CORS preflight and protocol header exposure", "supported"),
 		all("durable_tasks", "Encrypted PostgreSQL Tasks and separate web/worker/observer roles", "opt-in; Tasks use modern protocol"),
 		all("task_input", "Durable task form input and resume", "opt-in; requires client form support"),
+		{"task_inbox", "Caller-scoped retained Task inbox", "modern external OAuth; requires inbox index", "modern external OAuth; requires inbox index", "modern external OAuth; requires inbox index"},
+		{"task_review_by_id", "Reviewed Task form input by Task ID", "modern external OAuth", "modern external OAuth", "modern external OAuth"},
 		all("subscriptions", "Task/resource updates and catalog list-change subscriptions", "modern protocol"),
 		all("catalog_integrity", "Runtime catalog revision, digest and expected-digest readiness gate", "supported; process-local catalog"),
 		all("shared_resource_updates", "Updates across web replicas for application-owned resources", "requires application-supplied shared adapter"),

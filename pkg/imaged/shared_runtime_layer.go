@@ -171,7 +171,7 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 				reason = sharedruntime.ReasonPackageManagerStart
 				break
 			}
-			argv := []string{"/bin/sh", "-c", command}
+			argv := sharedruntime.ShellStart(command)
 			if strings.TrimSpace(app.StartCommand) == "" && !shellEntrypoint(manifest.Entrypoint) {
 				// Exec form keeps its words as the image gave them.
 				argv = manifest.Entrypoint
