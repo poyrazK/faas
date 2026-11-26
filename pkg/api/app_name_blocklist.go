@@ -13,6 +13,10 @@ import (
 // suffixed alternative, everything else asks for another name.
 const CodeAppNameUnavailable = "app_name_unavailable"
 
+// AppNameBlocklistConfigKey is the global runtime setting that holds the app
+// name blocklist (ParseAppNameBlocklist).
+const AppNameBlocklistConfigKey = "app_name_blocklist"
+
 // App name blocklist bounds.
 const (
 	AppNameBlocklistMaxEntries  = 5000

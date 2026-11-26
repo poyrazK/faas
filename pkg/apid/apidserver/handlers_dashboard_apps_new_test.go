@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -462,5 +463,32 @@ func TestCreateAppFromGitHubWizard_RequiresVerifiedEmail(t *testing.T) {
 	}
 	if gh.bindCalls != 0 {
 		t.Fatalf("BindAppRepo calls = %d, want 0", gh.bindCalls)
+	}
+}
+
+// Another account holds the name: the wizard creates the suffixed app a CLI
+// deploy of the same name would take, and opens it.
+func TestCreateAppFromGitHubWizard_TakenNameGetsSuffixedApp(t *testing.T) {
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", bindReturn: "bind-created"}
+	h, store, mgr, acct, sessionValue := newGitHubWizardPostServerAs(t, gh, true, "")
+	other, err := store.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{Email: "bob@example.com", Plan: "free"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateApp(t.Context(), state.App{AccountID: other.Account.ID, Slug: "taken-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive}); err != nil {
+		t.Fatal(err)
+	}
+	want := api.SuffixedAppSlugs(acct.ID, "taken-app", 3)[0]
+
+	rec := postGitHubWizard(t, h, mgr, acct, sessionValue, url.Values{
+		"installation_id": {"42"}, "repo_full_name": {"octocat/hello"}, "slug": {"taken-app"},
+	})
+	if got := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || got != "/dashboard/apps/"+want+"?github=connected" {
+		t.Fatalf("code = %d Location = %q, want the suffixed app %s\nbody = %s", rec.Code, got, want, rec.Body.String())
+	}
+	app, err := store.AppBySlug(t.Context(), want)
+	if err != nil || app.AccountID != acct.ID || gh.bindCalls != 1 || gh.gotAppID != app.ID {
+		t.Fatalf("suffixed app %+v (%v), bind calls %d app %q; want it created in the account and bound", app, err, gh.bindCalls, gh.gotAppID)
 	}
 }

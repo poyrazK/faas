@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -66,11 +67,14 @@ type envChangePlan struct {
 }
 
 type planLocalDeployArgs struct {
-	uploaded   bool
-	Path       string `json:"path" jsonschema:"Absolute project directory"`
-	App        string `json:"app" jsonschema:"App slug; created on apply if missing"`
-	Reason     string `json:"reason" jsonschema:"Reviewable release reason; at most 280 characters"`
-	CreateOnly bool   `json:"create_only,omitempty" jsonschema:"Create the app without deploying"`
+	uploaded bool
+	// suffixedFrom is the app name asked for when the plan targets the
+	// caller's suffixed app for it instead (ownSuffixedApp).
+	suffixedFrom string
+	Path         string `json:"path" jsonschema:"Absolute project directory"`
+	App          string `json:"app" jsonschema:"App slug; created on apply if missing"`
+	Reason       string `json:"reason" jsonschema:"Reviewable release reason; at most 280 characters"`
+	CreateOnly   bool   `json:"create_only,omitempty" jsonschema:"Create the app without deploying"`
 }
 
 type planEnvChangeArgs struct {
@@ -130,12 +134,25 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 	}
 	app, err := m.client.GetApp(ctx, args.App)
 	switch {
+	case notFound(err) && args.suffixedFrom == "":
+		// An earlier deploy of the name took a suffixed app because another
+		// account held the name: deploy to that app, as the CLI does.
+		alt, ok, altErr := m.ownSuffixedApp(ctx, account, args.App)
+		if altErr != nil {
+			return nil, altErr
+		}
+		if ok {
+			args.suffixedFrom, args.App = args.App, alt
+			return m.planDirDeploy(ctx, dir, args)
+		}
+		fallthrough
 	case notFound(err):
 		source.NewApp = true
 		effect := "Create app " + args.App + " and serve its first release."
 		if args.CreateOnly {
 			effect = "Create app " + args.App + " without deploying."
 		}
+		effect += " If another account holds the name or it is not available, the app gets the name " + args.App + "-<5 characters> instead."
 		p := &releasePlan{Action: "local_deploy", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: effect, ExpiresAt: time.Now().Add(releasePlanTTL), LocalSource: source}
 		if m.budgeted(account) && !args.CreateOnly {
 			p.AgentBudget = m.previewDeploySettings(ctx, dir, args.App, true)
@@ -158,7 +175,7 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 		budget = m.previewDeploySettings(ctx, dir, args.App, false)
 	}
 	if len(health.ServingDeploymentIDs) == 0 {
-		return m.savePlan(&releasePlan{Action: "local_deploy", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, AppID: app.ID, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: "Deploy the first serving release of " + args.App + ".", ExpiresAt: time.Now().Add(releasePlanTTL), LocalSource: source, latestID: health.LatestDeploymentID, AgentBudget: budget})
+		return m.savePlan(&releasePlan{Action: "local_deploy", AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, AppID: app.ID, App: args.App, Scope: api.DefaultEnvScope, Reason: args.Reason, TrafficEffect: args.suffixNote() + "Deploy the first serving release of " + args.App + ".", ExpiresAt: time.Now().Add(releasePlanTTL), LocalSource: source, latestID: health.LatestDeploymentID, AgentBudget: budget})
 	}
 	// A serving app gets the image releases' plan, so wait and atomic
 	// promotion work unchanged; staging never moves traffic.
@@ -166,7 +183,7 @@ func (m *management) planDirDeploy(ctx context.Context, dir string, args planLoc
 	if err != nil {
 		return nil, err
 	}
-	p.LocalSource, p.TrafficEffect = source, "Upload the directory and stage a new revision at 0% traffic. Explicit promotion sends 100% to it only if the original serving release is unchanged."
+	p.LocalSource, p.TrafficEffect = source, args.suffixNote()+"Upload the directory and stage a new revision at 0% traffic. Explicit promotion sends 100% to it only if the original serving release is unchanged."
 	p.AgentBudget = budget
 	return m.savePlan(p)
 }
@@ -313,8 +330,17 @@ func (m *management) runLocalDeploy(ctx context.Context, p *releasePlan) (any, e
 		} else if !notFound(err) {
 			return nil, err
 		}
-		if _, err := m.runCLI(ctx, append(args, "--create-only"), nil); err != nil {
+		out, err := m.runCLI(ctx, append(args, "--create-only"), nil)
+		if err != nil {
 			return nil, err
+		}
+		// Another account's name or a blocked one gives the app a suffixed
+		// name; the plan follows the app.
+		var created struct {
+			Slug string `json:"slug"`
+		}
+		if json.Unmarshal(out, &created) == nil && created.Slug != p.App && slices.Contains(m.suffixedAppSlugs(ctx, p.App), created.Slug) {
+			p.App = created.Slug
 		}
 		app, err := m.client.GetApp(ctx, p.App)
 		if err != nil {
@@ -355,16 +381,22 @@ type localDeployReceipt struct {
 }
 
 func (m *management) localDeployResult(ctx context.Context, p *releasePlan, receipt localDeployReceipt) (any, error) {
+	d, err := m.client.GetDeployment(ctx, receipt.ID)
+	if err != nil {
+		return nil, err
+	}
 	app, err := m.client.GetApp(ctx, p.App)
+	if notFound(err) && p.AppID == "" {
+		// A new app whose name another account holds, or that is not
+		// available, was created under a suffixed name.
+		app, err = m.suffixedAppWithID(ctx, p.App, d.AppID)
+		p.App = app.Slug
+	}
 	if err != nil {
 		return nil, err
 	}
 	if p.AppID == "" {
 		p.AppID = app.ID
-	}
-	d, err := m.client.GetDeployment(ctx, receipt.ID)
-	if err != nil {
-		return nil, err
 	}
 	if app.ID != p.AppID || d.AppID != p.AppID || normalizedScope(d.Scope) != api.DefaultEnvScope || (p.Action == "deploy" && d.TrafficPercent != 0) {
 		return nil, invalid("invalid_response", "the deployment belongs to another app or scope, or carries traffic; inspect deployments before retrying")
@@ -466,6 +498,63 @@ func cliProblem(result LocalCLIResult) error {
 	}
 	first, _, _ := bytes.Cut(stderr, []byte("\n"))
 	return invalid("cli_failed", fmt.Sprintf("gregale exited with code %d: %s", result.ExitCode, first))
+}
+
+// suffixNote is the plan's note that it targets the caller's suffixed app
+// for the name asked for.
+func (a planLocalDeployArgs) suffixNote() string {
+	if a.suffixedFrom == "" {
+		return ""
+	}
+	return "The name " + a.suffixedFrom + " deploys to your app " + a.App + ", which an earlier deploy created when " + a.suffixedFrom + " was taken. "
+}
+
+// suffixedAppSlugs is the names `gregale deploy --name name` falls back to
+// when another account holds name or it is not available
+// (api.SuffixedAppSlugs); nil when the caller cannot be read.
+func (m *management) suffixedAppSlugs(ctx context.Context, name string) []string {
+	account, err := m.client.Whoami(ctx)
+	if err != nil {
+		return nil
+	}
+	return accountSuffixedAppSlugs(account, name)
+}
+
+func accountSuffixedAppSlugs(account api.AccountResponse, name string) []string {
+	owner := account.ID
+	if account.KeyOrg != nil && account.KeyOrg.ID != "" {
+		owner = "org:" + account.KeyOrg.ID
+	}
+	if owner == "" {
+		return nil
+	}
+	return api.SuffixedAppSlugs(owner, name, api.AppSlugAlternatives)
+}
+
+// ownSuffixedApp is the caller's app under one of name's suffixed names, if
+// an earlier deploy took one.
+func (m *management) ownSuffixedApp(ctx context.Context, account api.AccountResponse, name string) (string, bool, error) {
+	for _, alt := range accountSuffixedAppSlugs(account, name) {
+		_, err := m.client.GetApp(ctx, alt)
+		if err == nil {
+			return alt, true, nil
+		}
+		if !notFound(err) {
+			return "", false, err
+		}
+	}
+	return "", false, nil
+}
+
+// suffixedAppWithID is the caller's app with id under one of name's suffixed
+// names.
+func (m *management) suffixedAppWithID(ctx context.Context, name, id string) (api.AppResponse, error) {
+	for _, alt := range m.suffixedAppSlugs(ctx, name) {
+		if app, err := m.client.GetApp(ctx, alt); err == nil && app.ID == id {
+			return app, nil
+		}
+	}
+	return api.AppResponse{}, invalid("invalid_response", "the deployment's app is neither "+name+" nor one of its suffixed names; inspect the account's apps before retrying")
 }
 
 func notFound(err error) bool {

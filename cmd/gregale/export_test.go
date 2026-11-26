@@ -1227,8 +1227,8 @@ var CreateOrFetchApp = createOrFetchApp
 // caller's suffixed alternative when another owner holds slug.
 func DeployAppWithAlternatives(ctx context.Context, client *Client, slug, sourceDir string) (string, error) {
 	req := api.CreateAppRequest{Slug: slug}
-	got, _, err := createOrFetchAppWithAlternatives(ctx, client, req, req, sourceDir, nil, nil, nil, nil, nil)
-	return got, err
+	got, err := createOrFetchAppWithAlternatives(ctx, client, req, req, sourceDir, nil, nil, nil, nil, nil)
+	return got.Slug, err
 }
 
 var CreateTestAsyncRoutes = createTestAsyncRoutes

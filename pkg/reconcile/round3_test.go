@@ -14,7 +14,7 @@ func TestAllocateAppSlugsAppliesPrefixToNewAppsOnly(t *testing.T) {
 	workloads := []reposcan.Workload{{Name: "ui", SlugPrefix: "shop-"}, {Name: "cart", SlugPrefix: "shop-"}}
 	existing := []state.App{{Slug: "cart", ProjectID: "p1", WorkloadName: "cart", AccountID: "a1", Status: state.AppActive}}
 	lookup := func(context.Context, string) (state.App, error) { return state.App{}, state.ErrNotFound }
-	out, err := AllocateAppSlugs(context.Background(), lookup, workloads, existing, "a1", "p1", "shop")
+	out, err := AllocateAppSlugs(context.Background(), lookup, workloads, existing, "a1", "p1", "shop", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// AppSlugAlternatives is how many suffixed names a create that falls back
+// from a taken or blocked name tries: the CLI's deploy, the dashboard's
+// GitHub wizard and the hosted MCP's local deploys agree on it, so each finds
+// the app another made.
+const AppSlugAlternatives = 3
+
 // appSlugSuffixLen is the length of the suffix SuffixedAppSlugs adds.
 const appSlugSuffixLen = 5
 

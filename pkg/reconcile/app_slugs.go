@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -79,11 +80,12 @@ func SuggestedAppSlug(project, name string) string {
 
 // AllocateAppSlugs preserves existing members' slugs and gives a new workload
 // a project-prefixed slug when its bare name cannot be one: reserved, not a
-// valid slug, or held by another app (ADR-20261022120205). A workload with an
-// explicit slug is left alone. A name held by one of the account's own apps in
-// its delete grace window is not stepped around, so admission keeps offering
-// the restore.
-func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposcan.Workload, accountApps []state.App, accountID, projectID, projectSlug string) ([]reposcan.Workload, error) {
+// valid slug, held by another app (ADR-20261022120205), or matched by
+// blocklist (the app_name_blocklist setting, AppNameBlocklist). A workload
+// with an explicit slug is left alone. A name held by one of the account's
+// own apps in its delete grace window is not stepped around, so admission
+// keeps offering the restore.
+func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposcan.Workload, accountApps []state.App, accountID, projectID, projectSlug string, blocklist []string) ([]reposcan.Workload, error) {
 	out := PreserveAppSlugs(workloads, accountApps, projectID)
 	// A declared prefix names every new app <prefix><service>; existing
 	// members kept their slugs above (retail-store feedback A1).
@@ -110,7 +112,7 @@ func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposc
 			out[i].AppSlug = SuggestedAppSlug(projectSlug, out[i].Name)
 			continue
 		}
-		free, err := bareAppSlugFree(ctx, lookup, out[i].Name, accountSlugs, accountID, projectID)
+		free, err := bareAppSlugFree(ctx, lookup, out[i].Name, accountSlugs, accountID, projectID, blocklist)
 		if err != nil {
 			return nil, err
 		}
@@ -121,7 +123,7 @@ func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposc
 	return out, nil
 }
 
-func bareAppSlugFree(ctx context.Context, lookup SlugLookup, name string, accountSlugs map[string]state.App, accountID, projectID string) (bool, error) {
+func bareAppSlugFree(ctx context.Context, lookup SlugLookup, name string, accountSlugs map[string]state.App, accountID, projectID string, blocklist []string) (bool, error) {
 	if !api.ValidAppSlug(name) || api.IsReservedAppSlug(name) {
 		return false, nil
 	}
@@ -133,9 +135,30 @@ func bareAppSlugFree(ctx context.Context, lookup SlugLookup, name string, accoun
 		}
 		holder, held = app, err == nil
 	}
+	if _, blocked := api.MatchAppNameBlocklist(name, blocklist); blocked && !held {
+		return false, nil
+	}
 	// Only this project's own deleted member is kept for a restore; restoring
 	// an app deleted from another project (or from none) brings it back
 	// outside this project, so the plan blocked on a name it could never use
 	// (prod hunt 2026-11-21: a new project's "web" held by an old app).
 	return !held || holder.AccountID == accountID && holder.Status == state.AppDeleted && projectID != "" && holder.ProjectID == projectID, nil
+}
+
+// AppNameBlocklist reads the app_name_blocklist runtime setting as apid last
+// applied it; nil when it is unset or unreadable, like apid's own reader.
+func AppNameBlocklist(ctx context.Context, store state.Store) []string {
+	row, err := store.GetRuntimeConfig(ctx, api.AppNameBlocklistConfigKey, state.RuntimeConfigScopeGlobal, "")
+	if err != nil {
+		return nil
+	}
+	var raw string
+	if err := json.Unmarshal(row.EffectiveValue, &raw); err != nil {
+		return nil
+	}
+	entries, err := api.ParseAppNameBlocklist(raw)
+	if err != nil {
+		return nil
+	}
+	return entries
 }

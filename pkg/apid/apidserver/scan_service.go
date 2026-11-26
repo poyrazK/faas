@@ -1719,7 +1719,7 @@ func (s *server) scanService(
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
 	}
 	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
-	allocated, allocErr := reconcile.AllocateAppSlugs(r.Context(), s.store.AppBySlugIncludingDeleted, result.Workloads, acctApps, acct.ID, projectID, req.ProjectSlug)
+	allocated, allocErr := reconcile.AllocateAppSlugs(r.Context(), s.store.AppBySlugIncludingDeleted, result.Workloads, acctApps, acct.ID, projectID, req.ProjectSlug, s.runtimeConfig.appNameBlocklist())
 	if allocErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "allocate project app names",
 			"Gregale could not check app name availability.", "Retry the scan before deploying.", allocErr)
