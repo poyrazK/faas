@@ -196,10 +196,11 @@ func previewBulkPlanCustomer(ctx context.Context, c *ownerContext, selection bul
 	row.Name = tenant.Name
 	target := api.ProductCustomer{TenantID: tenantID, Plan: selection.Plan, Revision: selection.Target, Suspended: current.Suspended}
 	preview, err := c.owner.PreviewProductCustomerChange(ctx, c.account.ID, c.app.ID, target)
-	if err != nil && !bulkPlanNeedsReview(err) {
+	needsReview := bulkPlanNeedsReview(err)
+	if err != nil && !needsReview {
 		return row, change, err
 	}
-	if err != nil || preview.Before == nil || !selection.matches(*preview.Before) || preview.Before.Suspended != target.Suspended || preview.HeadRevision != selection.Target {
+	if needsReview || preview.Before == nil || !selection.matches(*preview.Before) || preview.Before.Suspended != target.Suspended || preview.HeadRevision != selection.Target {
 		row.Message = "Skipped. This workspace or the current catalog changed during review."
 		return row, change, nil
 	}

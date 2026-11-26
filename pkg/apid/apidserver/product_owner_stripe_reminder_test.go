@@ -64,7 +64,7 @@ func testProductControlOwnerStripeReminder(t *testing.T, paidAfterReview bool) {
 
 	started := fixture.now
 	dashboard.connectStripe(t, fixture.owner, "rk_test_stripe_rotated")
-	page = dashboard.call(t, "", nil, http.StatusOK, "Stripe reminder pending")
+	dashboard.call(t, "", nil, http.StatusOK, "Stripe reminder pending")
 	fixture.now = started.Add(api.ProductStripeInvoiceSendRetryWindow)
 	page = dashboard.call(t, "", nil, http.StatusOK, "Stripe reminder needs review", "Open invoice in Stripe")
 	if strings.Contains(page, "Review and send reminder") {
