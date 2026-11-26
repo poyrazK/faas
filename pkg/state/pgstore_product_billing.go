@@ -43,6 +43,18 @@ func productBillingScopePG(ctx context.Context, db sqlc.DBTX, scope ProductBilli
 // Execution writers take invocation/operation rows before the receipt, and never
 // need this account lock. Billing must never acquire execution or code-pin rows.
 func (s *PgStore) productBillingTx(ctx context.Context, scope ProductBillingScope) (pgx.Tx, error) {
+	tx, err := s.productBillingLockedTx(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyDueProductPlanPG(ctx, tx, scope, time.Now()); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+func (s *PgStore) productBillingLockedTx(ctx context.Context, scope ProductBillingScope) (pgx.Tx, error) {
 	if err := validateProductBillingScope(scope); err != nil {
 		return nil, err
 	}
@@ -123,15 +135,27 @@ func reviewProductBillingPG(ctx context.Context, db sqlc.DBTX, scope ProductBill
 // productMonthFeePG prices the plans a customer held in the month
 // (ADR-20261021154511).
 func productMonthFeePG(ctx context.Context, db sqlc.DBTX, scope ProductBillingScope) (*api.ProductBillingFee, error) {
+	history, err := productPlanHistoryPG(ctx, db, scope)
+	if err != nil {
+		return nil, err
+	}
+	customer, err := productCustomerTx(ctx, db, scope.AccountID, scope.AppID, scope.TenantID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	return productMonthFee(history.held, scope.Period, productTrial(customer), history.catalog), nil
+}
+
+func productPlanHistoryPG(ctx context.Context, db sqlc.DBTX, scope ProductBillingScope) (productPlanHistory, error) {
 	start, end := productMonthBounds(scope.Period)
 	p := productBillingParams(scope)
 	rows, err := sqlc.New().ProductControlMonthPlans(ctx, db, sqlc.ProductControlMonthPlansParams{AccountID: p.AccountID, AppID: p.AppID, TenantID: p.TenantID,
 		MonthStart: pgtype.Timestamptz{Time: start, Valid: true}, MonthEnd: pgtype.Timestamptz{Time: end, Valid: true}, PageLimit: api.ProductControlPlanHistoryMonthMaxPlans + 1})
 	if err != nil {
-		return nil, err
+		return productPlanHistory{}, err
 	}
 	if len(rows) > api.ProductControlPlanHistoryMonthMaxPlans {
-		return nil, NewOperationLimitError("product_plan_history", api.ProductControlPlanHistoryMonthMaxPlans, int64(len(rows)))
+		return productPlanHistory{}, NewOperationLimitError("product_plan_history", api.ProductControlPlanHistoryMonthMaxPlans, int64(len(rows)))
 	}
 	held := make([]productcontrol.PlanHeld, 0, len(rows))
 	catalogs := map[string]api.ProductCatalog{}
@@ -146,25 +170,18 @@ func productMonthFeePG(ctx context.Context, db sqlc.DBTX, scope ProductBillingSc
 		}
 		catalog, err := productCatalogTx(ctx, db, scope.AccountID, scope.AppID, r.Revision)
 		if err != nil {
-			return nil, err
+			return productPlanHistory{}, err
 		}
 		catalogs[r.Revision] = catalog
 	}
-	// The trial's minutes owe no fee (ADR-20261021195901).
-	var trial *productcontrol.Trial
-	if customer, err := productCustomerTx(ctx, db, scope.AccountID, scope.AppID, scope.TenantID); err == nil {
-		trial = productTrial(customer)
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-	return productMonthFee(held, scope.Period, trial, func(revision string) (api.ProductCatalog, bool) {
+	return productPlanHistory{held: held, catalog: func(revision string) (api.ProductCatalog, bool) {
 		c, ok := catalogs[revision]
 		return c, ok
-	}), nil
+	}}, nil
 }
 
 func (s *PgStore) ReviewProductBilling(ctx context.Context, scope ProductBillingScope) (api.ProductBillingReview, error) {
-	if err := validateProductBillingScope(scope); err != nil {
+	if err := s.ensureProductPlanAt(ctx, scope, time.Now()); err != nil {
 		return api.ProductBillingReview{}, err
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
@@ -449,6 +466,15 @@ func (s *PgStore) HandoffProductBilling(ctx context.Context, scope ProductBillin
 	}
 	if _, err := sqlc.New().ProductBillingDocument(ctx, tx, productBillingDocumentParams(scope, id)); err != nil {
 		return api.ProductInvoiceHandoff{}, mapErr(err)
+	}
+	invoice, err := sqlc.New().ProductBillingExportInvoice(ctx, tx, sqlc.ProductBillingExportInvoiceParams{
+		AccountID: mustPgUUID(scope.AccountID), StatementID: mustPgUUID(id),
+	})
+	if err == nil && invoice != external {
+		return api.ProductInvoiceHandoff{}, ErrConflict
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return api.ProductInvoiceHandoff{}, err
 	}
 	if err := sqlc.New().ProductBillingInsertHandoff(ctx, tx, sqlc.ProductBillingInsertHandoffParams{DocumentID: mustPgUUID(id), AccountID: mustPgUUID(scope.AccountID), ExternalInvoiceID: external}); err != nil {
 		return api.ProductInvoiceHandoff{}, mapErr(err)

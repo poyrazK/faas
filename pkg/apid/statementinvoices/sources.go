@@ -52,7 +52,7 @@ func (s *Service) writeAppConsumerStatementInvoice(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, problem)
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
+	httpkit.WriteJSON(w, http.StatusOK, s.statementInvoiceExportResponse(export))
 }
 
 // ExportAppConsumer exports a finalized app consumer statement to provider
@@ -178,7 +178,7 @@ func (s *Service) writeStatementInvoiceExport(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrInternal("could not load the statement invoice export"))
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
+	httpkit.WriteJSON(w, http.StatusOK, s.statementInvoiceExportResponse(export))
 }
 
 // ExportPlatformTenantStatement exports a finalized cross-app statement as
@@ -215,7 +215,7 @@ func (s *Service) ExportPlatformTenantStatement(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, problem)
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
+	httpkit.WriteJSON(w, http.StatusOK, s.statementInvoiceExportResponse(export))
 }
 
 // ExportPlatformTenant exports a finalized platform tenant statement to

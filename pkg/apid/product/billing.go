@@ -87,10 +87,20 @@ func (s *Service) FinalizeStatement(ctx context.Context, acct state.Account, sco
 // the endpoint and billing runs share it.
 func (s *Service) ExportStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, document, provider,
 	customer string) (api.StatementInvoiceExportResponse, *api.Problem) {
-	if s.ExportInvoice == nil {
-		return api.StatementInvoiceExportResponse{}, api.ErrCapacity("statement invoice exports are unavailable")
+	return s.exportStatement(ctx, acct, scope, document, provider, customer, "")
+}
+
+func (s *Service) exportStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, document, provider, customer, expected string) (api.StatementInvoiceExportResponse, *api.Problem) {
+	var value api.StatementInvoiceExportResponse
+	var problem *api.Problem
+	switch {
+	case expected != "" && s.ConfirmInvoice != nil:
+		value, problem = s.ConfirmInvoice(ctx, acct, scope, document, provider, customer, expected)
+	case expected == "" && s.ExportInvoice != nil:
+		value, problem = s.ExportInvoice(ctx, acct, scope, document, provider, customer)
+	default:
+		return value, api.ErrCapacity("statement invoice exports are unavailable")
 	}
-	value, problem := s.ExportInvoice(ctx, acct, scope, document, provider, customer)
 	if problem == nil {
 		s.Host.EmitAudit(ctx, "product.billing.invoice_exported", &acct.ID, map[string]any{"app_id": scope.AppID, "tenant_id": scope.TenantID,
 			"document_id": value.StatementID, "provider": value.Provider, "invoice_id": value.InvoiceID, "livemode": value.Livemode})

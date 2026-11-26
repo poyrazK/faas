@@ -222,10 +222,22 @@ func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f state.Pro
 	if _, err = s.ListProductOwnerAttention(ctx, uuid.NewString(), scope.AppID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign attention: %v", err)
 	}
-	for _, name := range []string{"unknown", "expired"} {
+	for i, name := range []string{"unknown", "expired"} {
+		focused, err := s.ListProductOwnerReviewRuns(ctx, scope, "")
+		if err != nil || len(focused.Runs) != 2-i || focused.NextCursor != "" {
+			t.Fatalf("run review: %+v %v", focused, err)
+		}
+		for _, run := range focused.Runs {
+			if run.Evidence.ResolvedState != "" || run.Evidence.WaivedAt != nil || run.Evidence.TenantID != scope.TenantID || run.State != "" {
+				t.Fatalf("run review returned unrelated or invented evidence: %+v", run)
+			}
+		}
 		if _, err = s.WaiveProductReceipt(ctx, scope, (*f.Ops())[name].ID, "console write-off"); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if focused, err := s.ListProductOwnerReviewRuns(ctx, scope, ""); err != nil || len(focused.Runs) != 0 {
+		t.Fatalf("resolved charges still need review: %+v %v", focused, err)
 	}
 	review, err := s.ReviewProductBilling(ctx, scope)
 	if err != nil {
@@ -291,6 +303,9 @@ func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f state.Pro
 	}
 	if _, err = s.ListProductOwnerRuns(ctx, scope, "invalid"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid cursor: %v", err)
+	}
+	if _, err = s.ListProductOwnerReviewRuns(ctx, scope, first.NextCursor); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("unfiltered cursor accepted by run review: %v", err)
 	}
 	// Independently retained receipts in many closed months exercise the
 	// attention cursor separately from the recent-run cursor.

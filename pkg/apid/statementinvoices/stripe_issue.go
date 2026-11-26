@@ -82,7 +82,7 @@ func (s *Service) SendReviewedStripeInvoice(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, problem)
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(out))
+	httpkit.WriteJSON(w, http.StatusOK, s.statementInvoiceExportResponse(out))
 }
 
 func validStripeSendToken(token string) bool {

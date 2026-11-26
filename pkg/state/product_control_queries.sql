@@ -25,7 +25,10 @@ SELECT EXISTS(SELECT 1 FROM product_control_heads WHERE account_id=$1 AND app_id
 -- statement, so every writer records it (ADR-20261021154511). A customer
 -- without a trial starts one when assigned a plan offering it, and keeps
 -- any trial they had (ADR-20261021195901).
-WITH prior AS (
+-- Reviewed assignments use the same effective time as their fee projection.
+WITH timing AS (
+  SELECT COALESCE(sqlc.narg(effective_at)::timestamptz, now()) AS at
+), prior AS (
   SELECT c.revision, c.plan FROM product_control_customers c
   WHERE c.app_id=sqlc.arg(app_id)::uuid AND c.tenant_id=sqlc.arg(tenant_id)::uuid
 ), offer AS (
@@ -35,15 +38,16 @@ WITH prior AS (
   INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at)
   SELECT sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,sqlc.arg(revision)::text,sqlc.arg(plan)::text,
     sqlc.arg(suspended)::boolean,sqlc.narg(auth_organization_id)::uuid,
-    CASE WHEN o.days > 0 THEN now() END, CASE WHEN o.days > 0 THEN now() + make_interval(days => o.days) END
-  FROM (SELECT 1) AS one LEFT JOIN offer o ON true
+    CASE WHEN o.days > 0 THEN t.at END, CASE WHEN o.days > 0 THEN t.at + make_interval(hours => 24 * o.days) END
+  FROM timing t LEFT JOIN offer o ON true
   ON CONFLICT(app_id,tenant_id) DO UPDATE
   SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id,
     trial_starts_at=COALESCE(product_control_customers.trial_starts_at,EXCLUDED.trial_starts_at),
     trial_ends_at=CASE WHEN product_control_customers.trial_starts_at IS NULL THEN EXCLUDED.trial_ends_at ELSE product_control_customers.trial_ends_at END
 )
-INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment)
-SELECT sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,sqlc.arg(revision)::text,sqlc.arg(plan)::text,NOT EXISTS(SELECT 1 FROM prior)
+INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment,effective_at)
+SELECT sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,sqlc.arg(revision)::text,sqlc.arg(plan)::text,NOT EXISTS(SELECT 1 FROM prior),t.at
+FROM timing t
 WHERE NOT EXISTS(SELECT 1 FROM prior p WHERE p.revision=sqlc.arg(revision)::text AND p.plan=sqlc.arg(plan)::text);
 
 -- name: ProductControlMonthPlans :many
@@ -95,6 +99,9 @@ FROM product_control_customers c
 JOIN product_control_revisions v ON v.app_id=c.app_id AND v.revision=c.revision
 JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.trial_ends_at IS NOT NULL AND c.trial_resolved_at IS NULL AND c.trial_ends_at <= sqlc.arg(resolved_at)::timestamptz AND a.status<>'deleted'
+AND NOT EXISTS (SELECT FROM product_control_customer_changes s
+    WHERE s.account_id=c.account_id AND s.app_id=c.app_id AND s.tenant_id=c.tenant_id
+      AND s.schedule_status='pending' AND s.scheduled_for < c.trial_ends_at)
 ORDER BY c.trial_ends_at, c.tenant_id
 LIMIT sqlc.arg(page_limit)::int
 FOR UPDATE OF c SKIP LOCKED;

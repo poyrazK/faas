@@ -19,6 +19,7 @@ type productMemory struct {
 	documents         map[string]productMemoryDocument
 	handoffs          map[string]api.ProductInvoiceHandoff
 	changes           map[string]productMemoryChange
+	schedules         map[string]string
 	onboardings       map[string]productMemoryOnboarding
 	planChanges       map[string]productMemoryPlanChange
 	help              map[string]productHelpRow
@@ -41,20 +42,23 @@ type productMemoryPlanEntry struct {
 // plan changed, appends it to the plan history, as the Postgres upsert does
 // (ADR-20261021154511).
 func (m *MemStore) assignProductCustomerLocked(account, app string, customer api.ProductCustomer) api.ProductCustomer {
+	return m.assignProductCustomerAtLocked(account, app, customer, time.Now().UTC().Truncate(time.Microsecond))
+}
+
+func (m *MemStore) assignProductCustomerAtLocked(account, app string, customer api.ProductCustomer, now time.Time) api.ProductCustomer {
 	d := m.productLocked()
 	key := app + "/" + customer.TenantID
 	prior, existed := d.customers[key]
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	if existed && !sameProductAssignment(prior, customer) {
+		m.invalidateProductPlanScheduleLocked(key)
+	}
 	// A customer keeps any trial they had, and without one starts the
 	// plan's trial (ADR-20261021195901).
-	customer.TrialStartsAt, customer.TrialEndsAt = prior.TrialStartsAt, prior.TrialEndsAt
+	days := d.revisions[app+"/"+customer.Revision].Spec.Plans[customer.Plan].TrialDays
+	customer = productAssignmentTrial(customer, prior, days, now)
 	// The store records the payment method and trial resolution; an
 	// assignment never sets them (ADR-20261022180921).
 	customer.PaymentMethodAt, customer.TrialResolvedAt = prior.PaymentMethodAt, prior.TrialResolvedAt
-	if days := d.revisions[app+"/"+customer.Revision].Spec.Plans[customer.Plan].TrialDays; customer.TrialStartsAt == nil && days > 0 {
-		end := now.AddDate(0, 0, int(days))
-		customer.TrialStartsAt, customer.TrialEndsAt = &now, &end
-	}
 	d.customers[key] = customer
 	if existed && prior.Revision == customer.Revision && prior.Plan == customer.Plan {
 		return customer
@@ -200,6 +204,7 @@ func (m *MemStore) SetProductCustomer(_ context.Context, account, appID string, 
 	if customer.Revision == "" {
 		customer.Revision = d.heads[appID]
 	}
+	m.applyDueProductPlanLocked(account, appID, customer.TenantID, time.Now())
 	catalog, exists := d.revisions[appID+"/"+customer.Revision]
 	if _, ok := catalog.Spec.Plans[customer.Plan]; !exists || !ok {
 		return api.ProductCustomer{}, ErrNotFound
@@ -219,6 +224,7 @@ func (m *MemStore) GetProductCustomer(_ context.Context, account, appID, tenantI
 	if !ok || app.AccountID != account || app.Status == AppDeleted {
 		return api.ProductCustomer{}, ErrNotFound
 	}
+	m.applyDueProductPlanLocked(account, appID, tenantID, time.Now())
 	customer, ok := m.productLocked().customers[appID+"/"+tenantID]
 	if !ok {
 		return api.ProductCustomer{}, ErrNotFound
@@ -258,6 +264,7 @@ func (m *MemStore) GetProductUsage(_ context.Context, account, appID, tenantID, 
 	if app, ok := m.apps[appID]; !ok || app.AccountID != account || app.Status == AppDeleted {
 		return api.ProductUsage{}, ErrNotFound
 	}
+	m.applyDueProductPlanLocked(account, appID, tenantID, time.Now())
 	d := m.productLocked()
 	catalog, ok := d.revisions[appID+"/"+d.heads[appID]]
 	if !ok {
@@ -299,6 +306,7 @@ func (m *MemStore) prepareProductOperationLocked(op *Operation, def OperationDef
 	if !managed && admission.ProductFeature == "" {
 		return nil
 	}
+	m.applyDueProductPlanLocked(op.AccountID, op.AppID, op.PlatformTenantID, now)
 	customer, ok := d.customers[op.AppID+"/"+op.PlatformTenantID]
 	if !ok {
 		return ErrProductAccess
@@ -308,7 +316,7 @@ func (m *MemStore) prepareProductOperationLocked(op *Operation, def OperationDef
 	if err != nil {
 		return err
 	}
-	if hold, held := m.productOverdueHoldLocked(op.AccountID, op.AppID, op.PlatformTenantID); held {
+	if hold, held := m.productOverdueHoldLocked(op.AccountID, op.AppID, op.PlatformTenantID, now); held {
 		return productOverdueRefusal(hold)
 	}
 	if customer.AwaitsPaymentMethod(catalog.Spec.Plans[customer.Plan], now) {
@@ -365,7 +373,8 @@ func (m *MemStore) ProductCustomerByAuthOrganization(_ context.Context, account,
 	}
 	for key, customer := range m.productLocked().customers {
 		if key == appID+"/"+customer.TenantID && customer.AuthOrganizationID == org {
-			return customer, nil
+			m.applyDueProductPlanLocked(account, appID, customer.TenantID, time.Now())
+			return m.productLocked().customers[key], nil
 		}
 	}
 	return api.ProductCustomer{}, ErrNotFound
