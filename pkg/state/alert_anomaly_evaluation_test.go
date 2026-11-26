@@ -29,7 +29,7 @@ type alertAnomalyTestStore interface {
 	CreateAlertRule(context.Context, state.AlertRule) (state.AlertRule, error)
 	AlertRuleByID(context.Context, string) (state.AlertRule, error)
 	UpdateAlertRule(context.Context, string, state.UpdateAlertRuleParams) (state.AlertRule, error)
-	ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, AlertFireRecipients, error)
+	ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, state.AlertFireRecipients, error)
 	SetAlertRuleState(context.Context, string, state.AlertState, time.Time) (bool, error)
 }
 
