@@ -193,6 +193,14 @@ func (c *Client) GetTaskBySubmissionKey(ctx context.Context, key string) (Task, 
 	return task, x, err
 }
 
+// IsTaskSubmissionNotFound identifies a definitive lookup response. The Node
+// starter uses a server-defined code because the modern MCP codec rewrites
+// the older resource-not-found code used by the Go and Python starters.
+func IsTaskSubmissionNotFound(err error) bool {
+	var rpc *RPCError
+	return errors.As(err, &rpc) && (rpc.Code == -32002 || rpc.Code == -32004)
+}
+
 func validateTaskSubmissionKey(value string) error {
 	key, err := uuid.Parse(value)
 	if err != nil || key.Version() != 7 || key.Variant() != uuid.RFC4122 || key.String() != value {

@@ -35,6 +35,45 @@ export * from './job-pipeline-live.js';
 export type { ManagedFileBucket, FileHelpers } from './file-client.js';
 export { pathFileSource } from './file-client.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export {
+  listTaskInbox, watchTaskInbox, McpTaskInboxError, type McpTaskInboxConnection,
+  type McpTaskInboxEntry, type McpTaskInboxPage, type McpTaskInboxStatus,
+  type McpTaskInboxListOptions, type McpTaskInboxWatchOptions, type McpTaskInboxFailureCode,
+} from './mcp-task-inbox.js';
+export {
+  getTaskInputReview, respondToReviewedTaskInput, McpTaskInputReviewError,
+  type McpTaskInputReviewConnection, type McpTaskInputReview, type McpTaskInputReviewOptions,
+  type McpTaskInputReviewFailureCode, type McpTaskReviewForm, type McpTaskReviewJSON, type McpTaskReviewJSONObject,
+  type McpTaskReviewAnswer, type McpTaskReviewAnswers, type McpTaskReviewOutcome,
+} from './mcp-task-input-review.js';
+export { createMcpTaskReviewFetch, McpTaskReviewNumber } from './mcp-task-review-json.js';
+export {
+  getMcpTask, waitForMcpTask, cancelMcpTask, McpTaskReadError, McpTaskCancellationError,
+  type McpTaskConnection, type McpTaskReadOptions, type McpTaskReadFailureCode,
+  type McpTaskCancellationConnection, type McpTaskCancellationOutcome, type McpTaskSnapshot, type McpTaskWaitResult,
+} from './mcp-task-result.js';
+export {
+  createMcpTaskSubmissionFetch, submitMcpTask, lookupMcpTaskBySubmissionKey, McpTaskSubmissionError,
+  type McpTaskArgument, type McpTaskArguments, type McpTaskSubmission, type McpTaskSubmissionOptions,
+  type McpTaskSubmissionConnection, type McpTaskSubmissionFailureCode, type McpTaskSubmissionOutcome,
+} from './mcp-task-submission.js';
+export {
+  createMcpTaskTransport, createMcpTaskReceiptTransport, submitMcpTaskWithReceipt, resumeMcpTaskFromReceipt, retryMcpTaskFromReceipt, McpTaskReceiptError,
+  type McpTaskReceiptConnection, type McpTaskReceiptFailureCode, type McpTaskReceiptSubmission,
+  type McpTaskReceiptSubmissionOutcome,
+} from './mcp-task-receipt.js';
+export {
+  watchMcpTask, watchMcpTasks, type McpTaskWatchConnection, type McpTaskWatchEvent, type McpTaskWatchOptions,
+} from './mcp-task-watch.js';
+export {
+  createMcpTaskGroup, getMcpTaskGroupResults, watchMcpTaskGroup, McpTaskGroupError,
+  type McpTaskGroupConnection, type McpTaskGroupEvent, type McpTaskGroupFailureCode, type McpTaskGroupResultEntry,
+  type McpTaskGroupWatchOptions,
+} from './mcp-task-group.js';
+export {
+  submitMcpTaskGroup, resumeMcpTaskGroupSubmission, continueMcpTaskGroupSubmission, type McpTaskGroupSubmissionEntry,
+} from './mcp-task-group-submission.js';
+export { stopMcpTaskGroup, type McpTaskGroupStopConnection, type McpTaskGroupStopEntry } from './mcp-task-group-stop.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 

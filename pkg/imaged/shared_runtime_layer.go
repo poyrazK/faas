@@ -80,6 +80,9 @@ type sharedRuntimeLayers struct {
 	// Reason names why the layer keeps everything above the base; empty
 	// when it holds only /app.
 	Reason string
+	// OutsideApp names the first files outside /app that are not toolchain
+	// when Reason is content_outside_app.
+	OutsideApp []string
 }
 
 // sharedRuntimeAppLayers splits a build artifact at its runner base and
@@ -181,6 +184,12 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 			reason = sharedruntime.ReasonBunInScript
 			break
 		}
+		if nodeRunner && report.YarnPnP {
+			// ADR-20261125170000: only yarn's loader resolves a Plug'n'Play
+			// install, and the runner base has no yarn.
+			reason = sharedruntime.ReasonYarnPnP
+			break
+		}
 		argv, why := sharedRuntimeStart(*manifest, app, runtime, report)
 		if why != "" {
 			reason = why
@@ -206,7 +215,7 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 		allCleanup()
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(all))
 	}
-	return sharedRuntimeLayers{layers: layersAsReaders(all[start:]), cleanup: allCleanup, Reason: reason}, nil
+	return sharedRuntimeLayers{layers: layersAsReaders(all[start:]), cleanup: allCleanup, Reason: reason, OutsideApp: report.Unexpected}, nil
 }
 
 // setSharedRuntimeStart points manifest at argv with PATH path.
@@ -245,7 +254,16 @@ func sharedRuntimeStart(manifest api.AppManifest, app state.App, runtime string,
 	resolve := func(command string) ([]string, string) {
 		return sharedruntime.ResolveStart(command, report.PackageJSON)
 	}
-	needsTool := func(name string) bool { return name == "npm" }
+	// An exec-form start through a package manager resolves like the shell
+	// form: npm, pnpm and yarn run a script (ADR-20261125170000), and the
+	// others are not on the runner base.
+	needsTool := func(name string) bool {
+		switch name {
+		case "npm", "pnpm", "yarn", "npx", "corepack":
+			return true
+		}
+		return false
+	}
 	if sharedruntime.PythonRuntime(runtime) {
 		resolve = func(command string) ([]string, string) {
 			return sharedruntime.ResolvePythonStart(command, &report.Python)

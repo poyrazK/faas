@@ -3,9 +3,13 @@ import { createMcpTaskLeaseDeadline } from './task-lease.js';
 import { snapshotTaskOutputSchema, validateTaskOutput } from './task-output.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { ProtocolError } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import { TASK_INBOX_METHOD, TASK_INBOX_DEFAULT_LIMIT, TASK_INBOX_MAX_LIMIT, TASK_INBOX_STATUSES, TASK_INBOX_CURSOR_PATTERN } from './task-inbox.js';
+export { TASK_INBOX_EXTENSION } from './task-inbox.js';
 
 export const MCP_TASKS_EXTENSION_ID = 'io.modelcontextprotocol/tasks';
+export const MCP_TASK_INPUT_REVIEW_EXTENSION_ID = 'io.gregale/task-input-review';
 const TASK_HANDLER_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 5_000;
@@ -29,6 +33,48 @@ const MAX_WATCHED_TASKS = 512;
 const TASK_INPUT_REQUIRED = Symbol('task input required');
 const INPUT_METHODS = new Set(['elicitation/create', 'sampling/createMessage', 'roots/list']);
 const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RESPOND_REVIEWED = 'gregale/tasks/respond-reviewed';
+const CHECK_REVIEWED = 'gregale/tasks/check-reviewed-response';
+// The modern MCP codec maps the older resource-not-found code -32002 to
+// invalid params. Use a distinct server-defined error for submission lookup.
+const TASK_SUBMISSION_NOT_FOUND = -32004;
+
+function normalizedDecimal(source) {
+  const number = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(source);
+  if (!number) return undefined;
+  const fraction = number[3] ?? '';
+  const digits = (number[2] + fraction).replace(/^0+/, '');
+  if (!digits) return '0';
+  let end = digits.length;
+  while (digits[end - 1] === '0') end--;
+  const exponent = Number(number[4] ?? 0) - fraction.length + digits.length - end;
+  if (Number.isSafeInteger(exponent)) return `${number[1]}${digits.slice(0, end)}e${exponent}`;
+}
+
+function preservesJSONNumber(value, source) {
+  if (!source || !Number.isFinite(value) || Object.is(value, -0)
+      || (Number.isInteger(value) && !Number.isSafeInteger(value))) return false;
+  const serialized = JSON.stringify(value);
+  return source === serialized || normalizedDecimal(source) === normalizedDecimal(serialized);
+}
+
+// Node's Task store serializes native JSON values. Reject a reviewed answer
+// before either writing it or comparing it with recorded evidence if any
+// number would change on that round trip.
+export function reviewedInputNumbersAreExact(body, raw) {
+  if (body?.method !== RESPOND_REVIEWED && body?.method !== CHECK_REVIEWED) return true;
+  if (!raw) return false;
+  const inexact = new WeakSet();
+  try {
+    const parsed = JSON.parse(new TextDecoder(raw.encoding, { fatal: true }).decode(raw.body), function (_, value, context) {
+      if (typeof value === 'number' ? !preservesJSONNumber(value, context?.source) : inexact.has(value)) inexact.add(this);
+      return value;
+    });
+    return !inexact.has(parsed?.params?.responses);
+  } catch {
+    return false;
+  }
+}
 
 export function clientSupportsMcpTasks(ctx) {
   const capabilities = ctx?.mcpReq?.envelope?.['io.modelcontextprotocol/clientCapabilities'];
@@ -491,6 +537,29 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       return stopping;
     },
     supportsTaskSubmission: () => store.supportsTaskSubmission === true,
+    supportsTaskGroupOwnerBinding: () => typeof store.taskGroupOwnerBinding === 'function',
+    taskGroupOwnerBinding: (...args) => store.taskGroupOwnerBinding(...args),
+    supportsTaskInbox: () => store.supportsTaskInbox === true,
+    supportsReviewedInput: () => typeof store.getInputReview === 'function' && typeof store.reviewedInputResponse === 'function',
+    async inputReview(taskID, authInfo, authMode, canAccessTool) {
+      const review = await store.getInputReview({ taskID, authInfo, authMode, canAccessTool });
+      if (!review) throw new Error('Task not found');
+      return { resultType: 'complete', task: wireTaskMetadata(review.row, pollIntervalMs),
+        ...(review.revision ? { reviewRevision: review.revision, inputRequests: review.requests } : {}) };
+    },
+    async reviewedResponse({ taskId, reviewRevision, responses }, authInfo, authMode, canAccessTool, apply) {
+      const response = await store.reviewedInputResponse({
+        taskID: taskId, revision: reviewRevision, inputResponses: responses, authInfo, authMode, canAccessTool, apply,
+      });
+      if (!response) throw new Error('Task not found');
+      if (response.changed && workerEnabled) void drain();
+      return { resultType: 'complete', task: wireTaskMetadata(response.row, pollIntervalMs), outcome: response.outcome };
+    },
+    async inbox({ status, limit, cursor }, authInfo, authMode, toolNames) {
+      const page = await store.inbox({ status, limit, cursor, authInfo, authMode, toolNames });
+      return { resultType: 'complete', tasks: page.tasks.map(task => wireTaskMetadata(task, pollIntervalMs)),
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+    },
     async create(toolName, args, authInfo, authMode, clientCapabilities = {}, outputSchema, submissionKey) {
       if (stopping) throw new Error('MCP task runtime is draining');
       const handler = handlers[toolName];
@@ -517,7 +586,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
     },
     async getBySubmissionKey(submissionKey, authInfo, authMode, canAccessTool) {
       const task = await store.getBySubmissionKey({ submissionKey, authInfo, authMode });
-      if (!task || !canAccessTool(task.tool_name)) throw new Error('Task not found');
+      if (!task || !canAccessTool(task.tool_name)) throw new ProtocolError(TASK_SUBMISSION_NOT_FOUND, 'Task not found');
       return wireTaskMetadata(task, pollIntervalMs);
     },
     async cancel(taskID, authInfo, authMode, canAccessTool) {
@@ -591,11 +660,33 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
   };
 }
 
-export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canAccessTool, keyedTasks = false) {
+export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canAccessTool, { keyedTasks, inboxTools, reviewedInput } = {}) {
   if (typeof canAccessTool !== 'function') throw new Error('MCP task handlers require the tool authorization policy');
   if (keyedTasks) server.server.setRequestHandler('gregale/tasks/lookup', {
     params: z.object({ submissionKey: z.string().uuid() }),
   }, ({ submissionKey }) => runtime.getBySubmissionKey(submissionKey, authInfo, authMode, canAccessTool));
+  if (inboxTools !== undefined) server.server.setRequestHandler(TASK_INBOX_METHOD, {
+    params: z.object({
+      status: z.enum(TASK_INBOX_STATUSES).optional(),
+      limit: z.number().int().min(1).max(TASK_INBOX_MAX_LIMIT).default(TASK_INBOX_DEFAULT_LIMIT),
+      cursor: z.string().regex(TASK_INBOX_CURSOR_PATTERN).optional(),
+    }),
+  }, params => runtime.inbox(params, authInfo, authMode, inboxTools));
+  if (reviewedInput) {
+    const taskId = z.string().uuid();
+    const reviewedResponse = z.object({
+      taskId,
+      reviewRevision: z.string().regex(/^[0-9a-f]{64}$/),
+      responses: z.unknown(),
+    });
+    server.server.setRequestHandler('gregale/tasks/input-review', {
+      params: z.object({ taskId }),
+    }, params => runtime.inputReview(params.taskId, authInfo, authMode, canAccessTool));
+    server.server.setRequestHandler(RESPOND_REVIEWED, { params: reviewedResponse },
+      params => runtime.reviewedResponse(params, authInfo, authMode, canAccessTool, true));
+    server.server.setRequestHandler(CHECK_REVIEWED, { params: reviewedResponse },
+      params => runtime.reviewedResponse(params, authInfo, authMode, canAccessTool, false));
+  }
   server.server.setRequestHandler('tasks/get', {
     params: z.object({ taskId: z.string().uuid() }),
   }, ({ taskId }, ctx) => runtime.get(

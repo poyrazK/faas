@@ -103,6 +103,12 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 	if !runtime.taskSubmissionReady {
 		t.Fatal("migrated queue did not enable keyed submission for the restricted web role")
 	}
+	if !runtime.taskInboxReady {
+		t.Fatal("migrated queue did not enable the inbox for the restricted web role")
+	}
+	if _, err := migration.Exec(ctx, `DROP INDEX gregale_mcp_tasks_inbox_idx`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := migration.Exec(ctx, `ALTER TABLE gregale_mcp_tasks DROP COLUMN submission_key`); err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +117,8 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 		t.Fatalf("ordinary Tasks cannot start on the previous schema: %v", err)
 	}
 	defer oldSchema.close()
-	if oldSchema.taskSubmissionReady {
-		t.Fatal("previous schema enabled keyed submission")
+	if oldSchema.taskSubmissionReady || oldSchema.taskInboxReady {
+		t.Fatal("previous schema advertised unavailable Task capabilities")
 	}
 	accepted, err := oldSchema.create(ctx, "build_report", map[string]any{"report": "previous schema", "steps": float64(1)}, nil, nil)
 	if err != nil || accepted["taskId"] == "" || accepted["resultType"] != "task" {
