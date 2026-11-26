@@ -64,6 +64,12 @@ func TestClassifyNode(t *testing.T) {
 			d := p["deploy"].(map[string]any)
 			d["inputs"] = append(d["inputs"].([]any), map[string]any{"step": "build", "include": []string{"/usr/share/fonts"}})
 		}), pkg: pkg, wantReason: ReasonExtraDeployInput},
+		{name: "yarn through corepack", plan: platformPlan(t, func(p map[string]any) {
+			// Railpack 0.38 with a packageManager field (usesCorepack).
+			d := p["deploy"].(map[string]any)
+			d["startCommand"] = "yarn start"
+			d["inputs"] = append(d["inputs"].([]any), map[string]any{"step": "build", "include": []string{"/root/.cache", ".", "/opt/corepack", "/mise/installs", "/mise/shims"}})
+		}), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec node worker.js"}},
 		{name: "toolchain step reaching outside mise", plan: platformPlan(t, func(p map[string]any) {
 			d := p["deploy"].(map[string]any)
 			d["inputs"] = append(d["inputs"].([]any), map[string]any{"step": "packages:mise", "include": []string{"/opt/chrome"}})
@@ -71,7 +77,25 @@ func TestClassifyNode(t *testing.T) {
 		{name: "lifecycle hook", plan: platformPlan(t, nil), pkg: `{"scripts":{"prestart":"node migrate.js","start":"node worker.js"}}`, wantReason: ReasonNPMLifecycleHooks},
 		{name: "missing script", plan: platformPlan(t, nil), pkg: `{"scripts":{}}`, wantReason: ReasonMissingScript},
 		{name: "forwarded npm arguments", plan: platformPlan(t, setStart("npm run start -- --port 3000")), pkg: pkg, wantReason: ReasonNPMArguments},
-		{name: "other package manager", plan: platformPlan(t, setStart("yarn start")), pkg: pkg, wantReason: ReasonPackageManagerStart},
+		// ADR-20261125170000: pnpm and yarn starts resolve like npm's.
+		{name: "yarn start", plan: platformPlan(t, setStart("yarn start")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec node worker.js"}},
+		{name: "yarn run script", plan: platformPlan(t, setStart("yarn run dev")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec node --watch worker.js"}},
+		{name: "yarn script shorthand", plan: platformPlan(t, setStart("yarn dev")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec node --watch worker.js"}},
+		{name: "pnpm start", plan: platformPlan(t, setStart("pnpm start")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec node worker.js"}},
+		{name: "pnpm run script", plan: platformPlan(t, setStart("pnpm run dev")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec node --watch worker.js"}},
+		{name: "pnpm script shorthand", plan: platformPlan(t, setStart("pnpm dev")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec node --watch worker.js"}},
+		{name: "pnpm shorthand without that script", plan: platformPlan(t, setStart("pnpm serve")), pkg: pkg, wantReason: ReasonPackageManagerStart},
+		{name: "pnpm command, not a script", plan: platformPlan(t, setStart("pnpm exec node worker.js")), pkg: pkg, wantReason: ReasonPackageManagerStart},
+		{name: "yarn shorthand with arguments", plan: platformPlan(t, setStart("yarn dev --inspect")), pkg: pkg, wantReason: ReasonNPMArguments},
+		{name: "pnpm forwarded arguments", plan: platformPlan(t, setStart("pnpm run start -- --port 3000")), pkg: pkg, wantReason: ReasonNPMArguments},
+		{name: "pnpm lifecycle hook", plan: platformPlan(t, setStart("pnpm start")), pkg: `{"scripts":{"prestart":"node migrate.js","start":"node worker.js"}}`, wantReason: ReasonNPMLifecycleHooks},
+		{name: "npx start", plan: platformPlan(t, setStart("npx serve")), pkg: pkg, wantReason: ReasonPackageManagerStart},
+		// The runner base ships no package manager: a start script that calls
+		// one, directly or through a script it reaches, would exit 127.
+		{name: "start script calling pnpm", plan: platformPlan(t, setStart("pnpm start")), pkg: `{"scripts":{"start":"pnpm run serve","serve":"node worker.js"}}`, wantReason: ReasonScriptPackageManager},
+		{name: "start script calling npm", plan: platformPlan(t, setStart("npm start")), pkg: `{"scripts":{"start":"npm run build && node worker.js","build":"tsc"}}`, wantReason: ReasonScriptPackageManager},
+		{name: "start script reaching a script runner", plan: platformPlan(t, setStart("yarn start")), pkg: `{"scripts":{"start":"run-p api web","api":"node api.js","web":"node web.js"}}`, wantReason: ReasonScriptPackageManager},
+		{name: "start script running node only", plan: platformPlan(t, setStart("yarn start")), pkg: `{"scripts":{"start":"NODE_ENV=production node --enable-source-maps dist/main.js"}}`, wantStart: []string{"/bin/sh", "-c", "NODE_ENV=production node --enable-source-maps dist/main.js"}},
 		{name: "bun keeps its own install", plan: platformPlan(t, setStart("bun run start")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "exec bun run start"}},
 		{name: "env-prefixed bun", plan: platformPlan(t, setStart("PORT=3000 bun run start")), pkg: pkg, wantStart: []string{"/bin/sh", "-c", "PORT=3000 bun run start"}},
 		{name: "bun script calling npm", plan: platformPlan(t, setStart("bun run --bun start")), pkg: `{"scripts":{"start":"npm run serve"}}`, wantReason: ReasonPackageManagerStart},
@@ -106,6 +130,8 @@ func TestDroppableOutsideApp(t *testing.T) {
 		"etc/mise/config.toml":                true,
 		"root/.local/state/mise/x":            true,
 		"root/.cache/npm/_cacache/x":          true,
+		"opt/corepack/v1/yarn/1.22.22/x.js":   true,
+		"opt/corepacked/x":                    false,
 		"usr/lib/x86_64-linux-gnu/libvips.so": false,
 		"etc/passwd":                          false,
 		"misery/file":                         false,
