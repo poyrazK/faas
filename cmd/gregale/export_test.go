@@ -3211,3 +3211,9 @@ var ErrDeployStreamIdle = errDeployStreamIdle
 func StreamDeployLogsWait(ctx context.Context, c *Client, dep api.DeploymentResponse, slug string, wait, idle time.Duration) int {
 	return streamDeployLogsContextWithOptions(ctx, c, dep, slug, streamDeployOptions{waitTimeout: wait, streamIdleTimeout: idle})
 }
+
+// LinkedAppAsArgument exposes linkedAppAsArgument.
+var LinkedAppAsArgument = linkedAppAsArgument
+
+// JobReplayCommandNote exposes jobReplayCommandNote.
+var JobReplayCommandNote = jobReplayCommandNote

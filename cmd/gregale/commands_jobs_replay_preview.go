@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -121,14 +122,22 @@ func previewJobReplay(ctx context.Context, client *api.Client, name, runID strin
 		PollInterval       string                    `json:"poll_interval,omitempty"`
 		ResultsTemplate    string                    `json:"results_directory_template,omitempty"`
 		ReplayCommand      string                    `json:"replay_command,omitempty"`
+		RunCommand         []string                  `json:"run_command,omitempty"`
+		CommandNote        string                    `json:"command_note,omitempty"`
 		NextSteps          []jobRecoveryPreviewStep  `json:"next_steps,omitempty"`
 		Note               string                    `json:"note"`
-	}{true, false, name, runID, run.AggregateStatus, true, len(blockers) == 0, blockers, run.Tasks, unsuccessful, counts, run.ImageResolvedDigestSnapshot, run.Parallelism, run.TaskTimeoutSec, run.RetryMax, options, waitTimeout, pollInterval, resultsTemplate, command, nextSteps,
+	}{true, false, name, runID, run.AggregateStatus, true, len(blockers) == 0, blockers, run.Tasks, unsuccessful, counts, run.ImageResolvedDigestSnapshot, run.Parallelism, run.TaskTimeoutSec, run.RetryMax, options, waitTimeout, pollInterval, resultsTemplate, command, run.Command, jobReplayCommandNote(name, job.Command, run.Command), nextSteps,
 		"This is a read-only observation, not a reservation. Replayed inputs execute again and may repeat effects. The server rechecks eligibility and current limits when replay is requested. No run, record, or results file was created."}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(report))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Job replay preview; no run created.\nJob: %s\nSource run: %s (%s)\nUnsuccessful tasks: %d of %d\nImage digest: %s\nParallelism: %d; task timeout: %ds; retries: %d\nObserved eligible: %s\n", name, runID, oneLine(run.AggregateStatus), unsuccessful, run.Tasks, oneLine(run.ImageResolvedDigestSnapshot), run.Parallelism, run.TaskTimeoutSec, run.RetryMax, strconv.FormatBool(report.ObservedEligible))
+	if len(run.Command) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Command: %s\n", oneLine(strings.Join(run.Command, " ")))
+	}
+	if report.CommandNote != "" {
+		_, _ = fmt.Fprintln(osStdout, report.CommandNote)
+	}
 	for _, blocker := range blockers {
 		_, _ = fmt.Fprintln(osStdout, blocker)
 	}

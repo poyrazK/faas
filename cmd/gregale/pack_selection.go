@@ -23,7 +23,9 @@ func (r packRules) selection(rel string, isDir bool) packSelection {
 		return packSelection{excluded: true, reason: "VCS metadata is always excluded"}
 	}
 	result := packSelection{reason: "source file"}
-	if isDir {
+	if cliLocalContext(rel, isDir) {
+		result = packSelection{excluded: true, reason: "CLI local context"}
+	} else if isDir {
 		switch {
 		case r.dockerfile && buildOutputDirs[base]:
 			result.reason = "Dockerfile build output"

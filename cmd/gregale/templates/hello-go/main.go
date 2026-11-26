@@ -41,7 +41,7 @@ func main() {
 }
 
 func handleRoot(w http.ResponseWriter, _ *http.Request) {
-	// This URL is public: do not echo environment variable names here
+	// This URL may be made public (access: public): do not echo env names
 	// (secret names reveal integrations). `gregale secrets list --app
 	// <slug>` shows which keys the app has.
 	w.Header().Set("Content-Type", "application/json")

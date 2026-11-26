@@ -172,6 +172,9 @@ func followAppRestart(ctx, signalCtx context.Context, client restartStatusClient
 			return code
 		}
 	}
+	if errors.Is(err, errRestartStartupCrash) {
+		return printErr("Restart is not taking effect", err)
+	}
 	if err != nil && options.wait && last.Status != "failed" {
 		_, _ = fmt.Fprintf(osStderr, "Resume following this request: %s\n", restartStatusCommand(slug, options.wakeID))
 	}
@@ -186,6 +189,13 @@ func followAppRestart(ctx, signalCtx context.Context, client restartStatusClient
 	}
 	return checkedRollbackCLIError(signalCtx, "Restart status could not establish completion", err)
 }
+
+// errRestartStartupCrash ends a restart wait whose replacement instance
+// crashed during startup. The server retries up to its outbox limit, but a
+// crash under the config the restart applies repeats on every attempt, so
+// `app restart --fresh --wait` printed "running"/"retrying" until its 10 min
+// timeout (prod hunt r52, rc.381).
+var errRestartStartupCrash = errors.New("the new instance crashed during startup with the current config, which retrying will not fix; the running instance keeps serving")
 
 func pollAppRestartStatus(ctx context.Context, client restartStatusClient, slug, wakeID string, wait bool, interval time.Duration, update func(api.RuntimeConfigRestartStatusResponse)) (api.RuntimeConfigRestartStatusResponse, error) {
 	var last api.RuntimeConfigRestartStatusResponse
@@ -209,6 +219,12 @@ func pollAppRestartStatus(ctx context.Context, client restartStatusClient, slug,
 		}
 		if row.Status == "completed" || !wait {
 			return last, nil
+		}
+		// One crash can be transient (a dependency not up yet) and the
+		// server's retry may succeed; a second one under the same config is
+		// the crash loop.
+		if row.Status == "retrying" && row.FailureReason == api.CodeAppStartupCrash && row.Attempts >= 2 {
+			return last, fmt.Errorf("%w. %s", errRestartStartupCrash, row.ProgressNextStep())
 		}
 		timer := time.NewTimer(interval)
 		select {
