@@ -67,6 +67,9 @@ The `go` line in `go.mod` picks the Go release the build uses. See
 
 ## Deploy
 
+From the module's root, preview what Gregale detects, then deploy the Go
+HTTP API:
+
 ```bash
 gregale deploy --dry-run
 gregale deploy --name my-api
