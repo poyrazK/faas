@@ -1941,6 +1941,7 @@ func NewMetrics() *Metrics {
 			[]string{"plan", "direction"},
 		),
 	}
+	m.deploymentLabels.onAdmit = m.preInstantiateDeploymentClasses
 	// Pre-instantiate the WS closed label cross-product (issue
 	// #676 / ADR-080 follow-up, PR-B). Same precedent as
 	// tlsOnDemandDenied / accountRateLimited above. The
@@ -2835,6 +2836,22 @@ func (m *Metrics) ObserveNotificationPayloadRejected() {
 		return
 	}
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache").Inc()
+}
+
+// preInstantiateDeploymentClasses creates an admitted deployment's
+// status-class series at zero. Created on first observation instead, a
+// release's 5xx series appeared with its first errors already counted, and
+// increase() dropped them: app health read "10 of 41 requests returned 5xx
+// (24.39%), too few to classify" while 30 of 62 had failed (prod hunt r58).
+// The admitted set is capped per app, so this adds at most four series per
+// admitted deployment.
+func (m *Metrics) preInstantiateDeploymentClasses(appID, deploymentID string) {
+	if m == nil || m.requestDurationByDeployment == nil {
+		return
+	}
+	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
+		m.requestDurationByDeployment.WithLabelValues(appID, class, deploymentID)
+	}
 }
 
 // PreInstantiateDeployment is a no-op helper for symmetry with

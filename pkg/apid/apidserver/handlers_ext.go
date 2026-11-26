@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -406,8 +407,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		dirty := false
 		for _, raw := range *req.EgressAllowlist {
 			prefix, err := netip.ParsePrefix(raw)
-			if err != nil || prefix.Bits() == 0 {
-				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
+			if err != nil {
+				return api.ErrInvalidEgressAllowlist(raw, err)
+			}
+			if prefix.Bits() == 0 {
+				// "parse failed" for a valid CIDR read as a typo (prod
+				// hunt r58). /0 is every address: no allowlist at all.
+				return api.ErrInvalidEgressAllowlist(raw, errors.New("a /0 entry allows every address; `gregale app <slug> egress-allowlist clear` removes the allowlist instead"))
 			}
 			// Allowlisted destinations skip the SMTP block, the port
 			// policy and the DNS gate, so 0.0.0.0/1 plus 128.0.0.0/1
@@ -438,6 +444,14 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				// silently produces `::/24` instead of `1.2.3.0/24`.
 				prefix = netip.PrefixFrom(prefix.Masked().Addr().Unmap(), v4Bits).Masked()
 				dirty = true
+			}
+			// A range apps can never reach (RFC1918, link-local and the
+			// rest of the platform denylist) was saved and reported as
+			// "updated", though no allowlist opens it (prod hunt r58:
+			// 10.0.0.0/8). Only new entries are refused, so an app that
+			// already holds one can still change its list.
+			if blocked, ok := egressAllowlistBlockedRange(prefix); ok && !slices.Contains(app.EgressAllowlist, prefix) {
+				return api.ErrInvalidEgressAllowlist(raw, fmt.Errorf("it is inside %s, which apps can never reach; an allowlist entry does not open it (see https://gregale.dev/docs/egress-denylist)", blocked))
 			}
 			key := prefix.String()
 			if _, ok := seen[key]; ok {
@@ -1028,6 +1042,18 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 	// field stays on the wire shape (UpdateAppRequest) for SDK
 	// stability but is honoured only on the admin route.
 	return nil
+}
+
+// egressAllowlistBlockedRange reports the platform deny range that holds
+// every address of p, if any.
+func egressAllowlistBlockedRange(p netip.Prefix) (netip.Prefix, bool) {
+	deny := netns.NewDefaultDenySet()
+	for _, d := range append(append([]netip.Prefix{}, deny.V4DenyCIDRs...), deny.V6DenyCIDRs...) {
+		if d.Bits() <= p.Bits() && d.Contains(p.Addr()) {
+			return d, true
+		}
+	}
+	return netip.Prefix{}, false
 }
 
 // errOrZero shapes the error message in api.ErrInvalidEgressAllowlist.

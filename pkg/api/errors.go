@@ -7009,7 +7009,7 @@ func ErrAccountEgressAllowlistExtraOutOfRange(got, maxExtra int) *Problem {
 func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
 		"Invalid egress allowlist entry",
-		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
+		fmt.Sprintf("entry %q is refused: %v.", entry, reason)).
 		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
