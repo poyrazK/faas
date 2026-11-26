@@ -598,6 +598,19 @@ func doctorCheckStartupTimeout() doctorCheck {
 	return doctorCheck{Name: "startup-timeout", Status: "skipped", Reason: "requires a deployed-app cold-boot probe"}
 }
 
+// doctorIgnorePatterns is the exclusion set doctor applies when it walks a
+// checkout: the root .gitignore first, then .gregaleignore, so a
+// project-specific override wins. Packaging ships a git archive, which
+// carries only tracked files; doctor walks the working tree and must apply
+// .gitignore itself to inspect the same file set (issue #2669).
+func doctorIgnorePatterns(root string) []gregaleignorePattern {
+	var patterns []gregaleignorePattern
+	if data, err := os.ReadFile(filepath.Join(root, ".gitignore")); err == nil {
+		patterns = append(patterns, parseIgnoreFile(data, ".gitignore")...)
+	}
+	return append(patterns, loadGregaleignore(root)...)
+}
+
 // scanSource walks path looking for files matching re. The match
 // is per-line and capped at maxHits results to keep the report
 // readable on large repos. Returns "file:line" strings (line is
@@ -635,7 +648,7 @@ func scanSourceFiltered(root string, re *regexp.Regexp, maxHits int, extensions 
 // skip, when skip is not empty.
 func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}, skip string) []string {
 	out := []string{}
-	patterns := loadGregaleignore(root)
+	patterns := doctorIgnorePatterns(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		// filepath.Walk delivers (path, nil, err) when it can't even
 		// stat the entry (permission-denied, broken symlink, mid-walk
@@ -713,7 +726,7 @@ func scanOptionalEnvRefs(root string, re *regexp.Regexp) []string {
 
 func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []int) bool) []string {
 	seen := map[string]bool{}
-	patterns := loadGregaleignore(root)
+	patterns := doctorIgnorePatterns(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		// Mirror scanSource's nil-info guard: filepath.Walk delivers
 		// (path, nil, err) for unreadable nodes (permission-denied,
@@ -805,7 +818,7 @@ func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregalei
 }
 
 func scanArchitecture(root string, maxHits int) []string {
-	patterns := loadGregaleignore(root)
+	patterns := doctorIgnorePatterns(root)
 	out := make([]string, 0, maxHits)
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if info == nil {
