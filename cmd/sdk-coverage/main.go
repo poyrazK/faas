@@ -2333,6 +2333,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/consumer-signup":                                                 "PutConsumerSignup",
 	"DELETE /v1/apps/{slug}/consumer-signup":                                              "DeleteConsumerSignup",
 	"GET /v1/apps/{slug}/consumer-signups":                                                "ListConsumerSignups",
+	"GET /v1/apps/{slug}/mcp-stats":                                                       "GetMCPSellerStats",
 	"GET /v1/apps/{slug}/consumer-identities":                                             "ListConsumerIdentities",
 	"DELETE /v1/apps/{slug}/consumer-identities/{id}":                                     "DeleteConsumerIdentity",
 	"GET /v1/consumer-signup/{slug}/upgrade/plans":                                        "GetConsumerUpgrade",

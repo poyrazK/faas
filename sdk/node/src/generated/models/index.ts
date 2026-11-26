@@ -1602,6 +1602,12 @@ export type { MCPReadinessReminderPolicy } from './MCPReadinessReminderPolicy.js
 export type { MCPReadinessRole } from './MCPReadinessRole.js';
 export type { MCPReadinessSnapshot } from './MCPReadinessSnapshot.js';
 export type { MCPResourcePolicy } from './MCPResourcePolicy.js';
+export type { MCPSellerCustomerTotals } from './MCPSellerCustomerTotals.js';
+export type { MCPSellerNearLimit } from './MCPSellerNearLimit.js';
+export type { MCPSellerStatsAmount } from './MCPSellerStatsAmount.js';
+export type { MCPSellerStatsMonth } from './MCPSellerStatsMonth.js';
+export type { MCPSellerStatsResponse } from './MCPSellerStatsResponse.js';
+export type { MCPSellerStatsTool } from './MCPSellerStatsTool.js';
 export type { MCPTaskCompatibilityReportRequest } from './MCPTaskCompatibilityReportRequest.js';
 export type { MCPTaskCompatibilityReportResponse } from './MCPTaskCompatibilityReportResponse.js';
 export type { MCPTaskHandlerCompatibility } from './MCPTaskHandlerCompatibility.js';

@@ -7657,7 +7657,9 @@ ADR-20261118161500.
   allocations; read one app's costs with `gregale_get_costs`. Budget and flag
   plans live only in the server's memory: after a release restarts the hosted
   server, plan again.
-- API consumers (toolset `operate`): `gregale_list_api_consumers`,
+- API consumers (toolset `operate`): `gregale_get_mcp_seller_stats` (a
+  sold MCP server's customers, revenue, tools and customers near their
+  limit; `gregale mcp server stats`), `gregale_list_api_consumers`,
   `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
   revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans
   and spend caps ask a person first.
