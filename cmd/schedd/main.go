@@ -801,6 +801,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Workloads reach this installation's API through GREGALE_API_URL; unset
 	// leaves the SDK default, https://api.gregale.dev.
 	engine.WithPublicAPIURL(os.Getenv("FAAS_PUBLIC_API_URL"))
+	engine.WithWorkloadS3(os.Getenv("FAAS_PUBLIC_S3_ENDPOINT"), os.Getenv("FAAS_PUBLIC_S3_REGION"))
 	if leaseGuard != nil {
 		engine.WithTakeoverGuard(leaseGuard)
 	}

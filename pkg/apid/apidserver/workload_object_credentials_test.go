@@ -130,22 +130,23 @@ func TestWorkloadObjectCredentialsFollowBucketGrants(t *testing.T) {
 		return resp.AccessKeyID
 	}
 	// An apply that leaves the grant alone keeps the credential; one that
-	// narrows its prefix or drops it revokes it.
+	// narrows its prefix or access rescopes the same key, so a guest's cached
+	// copy keeps working within the new grant; one that drops it revokes it.
 	kept := fresh()
-	(*e.S()).RevokeUngrantedWorkloadCredentials([]state.App{web})
+	(*e.S()).ReconcileWorkloadCredentials([]state.App{web})
 	if !resolves(kept) {
 		t.Fatal("unchanged grant revoked")
 	}
 	narrowed := web
-	narrowed.Manifest.Uses = &capgrant.Uses{Buckets: []capgrant.BucketGrant{{Bucket: "assets", App: "worker", Prefix: "rooms/a/", Access: "read"}}}
-	(*e.S()).RevokeUngrantedWorkloadCredentials([]state.App{narrowed})
-	if resolves(kept) {
-		t.Fatal("credential outlived a narrowed grant")
+	narrowed.Manifest.Uses = &capgrant.Uses{Buckets: []capgrant.BucketGrant{{Bucket: "assets", App: "worker", Prefix: "rooms/a/", Access: "write"}}}
+	(*e.S()).ReconcileWorkloadCredentials([]state.App{narrowed})
+	if rescoped, _, err := store.ResolveObjectS3Credential(ctx, kept); err != nil || rescoped.KeyPrefix != "rooms/a/" || rescoped.Permission != "write" {
+		t.Fatalf("narrowed grant: credential = %+v (%v), want the same key at rooms/a/ write", rescoped, err)
 	}
 	dropped := fresh()
 	withoutGrant := web
 	withoutGrant.Manifest.Uses = nil
-	(*e.S()).RevokeUngrantedWorkloadCredentials([]state.App{withoutGrant})
+	(*e.S()).ReconcileWorkloadCredentials([]state.App{withoutGrant})
 	if resolves(dropped) {
 		t.Fatal("credential outlived a dropped grant")
 	}
