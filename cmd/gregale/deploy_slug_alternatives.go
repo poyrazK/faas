@@ -36,6 +36,9 @@ var errDeployToAlternativeDeclined = errors.New("deploy cancelled")
 // requested name is not offered (app_name_blocklist) rather than held by
 // another owner.
 func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, sourceDir string, confirmExisting func(slug string) bool, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved *api.AppResponse) (slug string, unavailable bool, err error) {
+	// A deploy without an account names its app with the account's suffix;
+	// apid refuses any other name for it.
+	req.Slug, existingReq.Slug = anonymousAppSlug(req.Slug), anonymousAppSlug(existingReq.Slug)
 	err = createOrFetchAppWith(ctx, client, req, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
 	var taken *slugTakenError
 	if !errors.As(err, &taken) {
@@ -83,6 +86,10 @@ func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, 
 // from the one they asked for, and how to change it.
 func printSlugAlternativeNotice(requested, got string, unavailable bool) {
 	if jsonOutput || requested == got {
+		return
+	}
+	if got == anonymousAppSlug(requested) {
+		_, _ = fmt.Fprintf(osStderr, "Note: an app deployed without an account gets a suffixed name, so this app is %s (%s). The name stays after it is claimed.\n", got, deployedAppURL(got))
 		return
 	}
 	if unavailable {
