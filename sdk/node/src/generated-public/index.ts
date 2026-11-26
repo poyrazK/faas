@@ -1629,6 +1629,7 @@ export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
 export type { WorkloadDependency } from './models/WorkloadDependency.js';
 export type { WorkloadPort } from './models/WorkloadPort.js';
+export type { WorkloadUses } from './models/WorkloadUses.js';
 
 export { AccountService } from './services/AccountService.js';
 export { AlertRulesService } from './services/AlertRulesService.js';

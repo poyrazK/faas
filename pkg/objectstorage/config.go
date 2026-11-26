@@ -150,10 +150,10 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		return nil, errors.New("object storage: invalid single PUT or multipart part limit")
 	}
 	if c.PublicEndpoint == "" {
-		c.PublicEndpoint = "https://s3.gregale.dev"
+		c.PublicEndpoint = api.DefaultObjectStoragePublicEndpoint
 	}
 	if c.PublicRegion == "" {
-		c.PublicRegion = "us-east-1"
+		c.PublicRegion = api.DefaultObjectStoragePublicRegion
 	}
 	if c.MaxBucketsPerApp < 1 || c.MaxBucketsPerApp > api.MaxObjectBucketsPerApp || c.MaxUploadBytes < 1 || c.MaxUploadBytes > api.MaxObjectUploadBytes {
 		return nil, errors.New("object storage: invalid bucket or upload limit")

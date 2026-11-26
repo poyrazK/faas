@@ -124393,6 +124393,41 @@ components:
           type: integer
           enum: [250, 500, 1000]
           description: "App CPU share."
+    WorkloadUses:
+      description: "A service's cross-app grants from gregale.yaml: what its workload token may call on other apps of the same account."
+      type: object
+      properties:
+        queues:
+          type: array
+          items:
+            type: object
+            required: [app]
+            properties:
+              app: { type: string, description: "Project service name, app slug, or self." }
+              queue: { type: string, description: 'Queue name, or "*" for any.' }
+        realtime:
+          type: array
+          items:
+            type: object
+            required: [app]
+            properties:
+              app: { type: string }
+              channels: { type: string, description: "Channel glob with one trailing *." }
+        delayed_tasks:
+          type: array
+          items: { type: string }
+          description: "Apps the service may schedule delayed tasks on."
+        buckets:
+          type: array
+          items:
+            type: object
+            required: [bucket]
+            properties:
+              bucket: { type: string }
+              app: { type: string, description: "Owning app (default self)." }
+              prefix: { type: string, description: "Key prefix the grant is limited to." }
+              access: { type: string, enum: [read, write, read_write] }
+
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -124465,6 +124500,8 @@ components:
             type: string
             enum: [service_started, service_healthy]
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
+        uses:
+          $ref: '#/components/schemas/WorkloadUses'
         release_command:
           type: string
           description: "Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none."
