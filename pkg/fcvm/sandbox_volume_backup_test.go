@@ -133,3 +133,35 @@ func TestSandboxVolumePendingBackupSurvivesAndKeepsTheNewest(t *testing.T) {
 		t.Fatalf("restored %q", got[:8])
 	}
 }
+
+// A pause's backup is the node's copy before its upload finishes, and after
+// it is given up: a resume on the node uses its own volume
+// (ADR-20261122132055 §4).
+func TestSandboxVolumeTookBackupBeforeUpload(t *testing.T) {
+	v, _, path, write := volumeFixture(t)
+	write(0, "at-pause")
+	if v.TookBackup(backupAccount, backupSandbox, "pause") {
+		t.Fatal("a backup never taken is the node's")
+	}
+	p, err := v.PrepareBackup(backupAccount, backupSandbox, "pause")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := v.LastBackup(backupAccount, backupSandbox); ok {
+		t.Fatal("an unuploaded backup became the last one")
+	}
+	if !v.TookBackup(backupAccount, backupSandbox, "pause") {
+		t.Fatal("the pause backup is not the node's before its upload")
+	}
+	p.Discard()
+	if !v.TookBackup(backupAccount, backupSandbox, "pause") || v.TookBackup(backupAccount, backupSandbox, "other") ||
+		v.TookBackup(backupAccount, backupSandbox, "") {
+		t.Fatal("a given-up pause backup is not the node's, or another backup is")
+	}
+	if err := v.Remove(backupAccount, backupSandbox); err != nil {
+		t.Fatal(err)
+	}
+	if v.TookBackup(backupAccount, backupSandbox, "pause") || len(backupFiles(t, path, ".backup*")) != 0 {
+		t.Fatal("a removed volume left its backup mark")
+	}
+}

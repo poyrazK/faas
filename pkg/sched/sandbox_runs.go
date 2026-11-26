@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -78,6 +79,11 @@ type SandboxVolume struct {
 	GB          int
 	BackupID    string
 	BackupEvery time.Duration
+	// NodeID holds the volume's newest copy; StoredBackupID is the newest
+	// backup the shared store holds, which a resume restores once NodeID
+	// has left the pool and taken its copy and unuploaded backups with it.
+	NodeID         string
+	StoredBackupID string
 }
 
 // SandboxVolumeBackup is vmmd's report of a stored volume backup.
@@ -324,6 +330,28 @@ type sandboxRouter interface {
 	RunSandbox(ctx context.Context, nodeID string, spec SandboxSpec, hooks SandboxHooks, control <-chan SandboxControl) error
 }
 
+// placeVolume points a session with a volume at the node holding its newest
+// copy (ADR-20261122132055 §4). Once that node left the pool, its copy and
+// the backups only it held are gone: vmmd restores the newest stored backup
+// instead of waiting for an upload that will never land.
+func (r *AgentRunner) placeVolume(ctx context.Context, a *SandboxAdmission, req *Request) {
+	if a.Volume.GB == 0 || a.Volume.NodeID == "" {
+		return
+	}
+	if known, _ := r.poolNodeState(ctx, a.Volume.NodeID); !known {
+		if a.Volume.BackupID != a.Volume.StoredBackupID {
+			slog.Default().Warn("sched: sandbox volume node left the pool; restoring the newest stored backup",
+				"sandbox_id", a.SandboxID, "node", a.Volume.NodeID, "backup_id", a.Volume.BackupID,
+				"stored_backup_id", a.Volume.StoredBackupID)
+		}
+		a.Volume.BackupID = a.Volume.StoredBackupID
+		return
+	}
+	if len(req.PreferredNodeIDs) == 0 {
+		req.PreferredNodeIDs = []string{a.Volume.NodeID}
+	}
+}
+
 // SandboxInstanceID names a session's VM; the session ID is a UUID.
 func SandboxInstanceID(sandboxID string) string { return "sandbox-" + sandboxID }
 
@@ -362,6 +390,7 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 			}
 		}
 	}
+	r.placeVolume(ctx, &a, &req)
 	placement, release, err := r.admit(ctx, req)
 	if err != nil {
 		return err

@@ -74,7 +74,7 @@ func (s *Sandboxes) sweepVolumes(ctx context.Context) error {
 		return nil
 	}
 	var errs []error
-	superseded, err := s.store.SupersededSandboxVolumeBackups(ctx, sandboxVolumeSweepBatch)
+	superseded, err := s.store.SupersededSandboxVolumeBackups(ctx, sandboxVolumeSweepBatch, sandboxCaptureUploadWindow)
 	if err != nil {
 		return err
 	}

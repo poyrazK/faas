@@ -3627,8 +3627,14 @@ type SandboxRunStart struct {
 	VolumeGb               int32  `protobuf:"varint,20,opt,name=volume_gb,json=volumeGb,proto3" json:"volume_gb,omitempty"`
 	VolumeBackupId         string `protobuf:"bytes,21,opt,name=volume_backup_id,json=volumeBackupId,proto3" json:"volume_backup_id,omitempty"`
 	VolumeBackupIntervalMs int64  `protobuf:"varint,22,opt,name=volume_backup_interval_ms,json=volumeBackupIntervalMs,proto3" json:"volume_backup_interval_ms,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// volume_node_id is the node holding the volume's newest copy, which the
+	// session prefers; volume_stored_backup_id is its newest backup the
+	// shared store holds. When that node left the pool, its copy and the
+	// backups only it held are gone, so vmmd restores the stored one.
+	VolumeNodeId         string `protobuf:"bytes,23,opt,name=volume_node_id,json=volumeNodeId,proto3" json:"volume_node_id,omitempty"`
+	VolumeStoredBackupId string `protobuf:"bytes,24,opt,name=volume_stored_backup_id,json=volumeStoredBackupId,proto3" json:"volume_stored_backup_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SandboxRunStart) Reset() {
@@ -3813,6 +3819,20 @@ func (x *SandboxRunStart) GetVolumeBackupIntervalMs() int64 {
 		return x.VolumeBackupIntervalMs
 	}
 	return 0
+}
+
+func (x *SandboxRunStart) GetVolumeNodeId() string {
+	if x != nil {
+		return x.VolumeNodeId
+	}
+	return ""
+}
+
+func (x *SandboxRunStart) GetVolumeStoredBackupId() string {
+	if x != nil {
+		return x.VolumeStoredBackupId
+	}
+	return ""
 }
 
 // SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
@@ -8824,7 +8844,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"fc_version\x18\x03 \x01(\tR\tfcVersion\x12\x1b\n" +
 	"\tmem_bytes\x18\x04 \x01(\x03R\bmemBytes\x12\x17\n" +
 	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12!\n" +
-	"\frequire_node\x18\x06 \x01(\bR\vrequireNode\"\xa0\x06\n" +
+	"\frequire_node\x18\x06 \x01(\bR\vrequireNode\"\xfd\x06\n" +
 	"\x0fSandboxRunStart\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
@@ -8853,7 +8873,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x06resume\x18\x13 \x01(\v2'.onebox.faas.schedd.v1.SandboxRunResumeR\x06resume\x12\x1b\n" +
 	"\tvolume_gb\x18\x14 \x01(\x05R\bvolumeGb\x12(\n" +
 	"\x10volume_backup_id\x18\x15 \x01(\tR\x0evolumeBackupId\x129\n" +
-	"\x19volume_backup_interval_ms\x18\x16 \x01(\x03R\x16volumeBackupIntervalMs\"\x9c\x01\n" +
+	"\x19volume_backup_interval_ms\x18\x16 \x01(\x03R\x16volumeBackupIntervalMs\x12$\n" +
+	"\x0evolume_node_id\x18\x17 \x01(\tR\fvolumeNodeId\x125\n" +
+	"\x17volume_stored_backup_id\x18\x18 \x01(\tR\x14volumeStoredBackupId\"\x9c\x01\n" +
 	"\x0eSandboxRunTask\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12\x1b\n" +

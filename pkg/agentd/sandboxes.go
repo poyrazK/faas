@@ -47,6 +47,7 @@ type SandboxStore interface {
 	SetSandboxFrozen(ctx context.Context, id, token string, frozen bool) error
 	RequeueSandbox(ctx context.Context, id, token string) error
 	FinishSandbox(ctx context.Context, id, token, state, code, message string) error
+	PauseLostSandbox(ctx context.Context, id, token string, retention time.Duration) (bool, error)
 	ExpireSandboxLeases(ctx context.Context) (requeued, failed, expired int64, err error)
 	ReserveSandboxSnapshot(ctx context.Context, r agentstore.SnapshotReservation) (agentstore.SandboxSnapshot, error)
 	CompleteSandboxSnapshot(ctx context.Context, id string, bytes int64, sha256 string) error
@@ -71,7 +72,7 @@ type SandboxStore interface {
 	MarkSandboxVolumeNode(ctx context.Context, id, token, nodeID string, sizeGB int) (string, error)
 	RecordSandboxVolumeBackup(ctx context.Context, id, token string, b agentstore.SandboxVolumeBackup) (bool, error)
 	MarkSandboxVolumeBackupStored(ctx context.Context, backupID string) error
-	SupersededSandboxVolumeBackups(ctx context.Context, limit int) ([]agentstore.SandboxVolumeRef, error)
+	SupersededSandboxVolumeBackups(ctx context.Context, limit int, uploadWindow time.Duration) ([]agentstore.SandboxVolumeRef, error)
 	EndedSandboxVolumes(ctx context.Context, limit int) ([]agentstore.SandboxVolumeRef, error)
 	SandboxVolumeBackupIDs(ctx context.Context, sessionID string) ([]string, error)
 	MarkSandboxVolumeBackupDeleted(ctx context.Context, backupID string) error
@@ -383,6 +384,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		// (ADR-20261122132055 §4).
 		start.VolumeGb, start.VolumeBackupId = int32(claim.VolumeGB), claim.VolumeBackupID //nolint:gosec // G115: bounded by the plan's volume cap.
 		start.VolumeBackupIntervalMs = int64(api.SandboxVolumeBackupSec) * 1000
+		start.VolumeNodeId, start.VolumeStoredBackupId = claim.VolumeNodeID, claim.VolumeStoredBackupID
 	}
 	if claim.Resuming {
 		// A resumed session's workspace is in its capture; one without a
@@ -451,6 +453,9 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		// refused one waits for the next request.
 		s.returnResume(ctx, claim, code != codes.FailedPrecondition && code != codes.InvalidArgument && code != codes.DataLoss, recvErr)
 	case ready:
+		if s.pauseLost(ctx, claim) {
+			return
+		}
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeVMLost, "the session's VM ended unexpectedly"})
 	case code == codes.DataLoss:
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeWorkspace, "the session's persisted workspace could not be unpacked"})
@@ -955,6 +960,9 @@ func (s *Sandboxes) sweepDurability(ctx context.Context) error {
 			// Another node restores the capture only with the session's
 			// volume as the capture left it (ADR-20261122132055 §4).
 			if c.VolumeBackupID == "" {
+				// The pause could not clone its volume, so it never turns
+				// remote; touched like the rest, it never blocks the batch.
+				waiting = append(waiting, c.ID)
 				continue
 			}
 			keys = append(keys, volbackup.ManifestKey(c.AccountID, c.SessionID, c.VolumeBackupID))
@@ -962,6 +970,7 @@ func (s *Sandboxes) sweepDurability(ctx context.Context) error {
 		held, err := s.storeHoldsAll(ctx, keys)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("check capture %s: %w", c.ID, err))
+			waiting = append(waiting, c.ID)
 			continue
 		}
 		if !held {
@@ -1014,6 +1023,27 @@ func (s *Sandboxes) finish(ctx context.Context, claim agentstore.SandboxClaim, e
 		return
 	}
 	s.log.Info("agentd: sandbox ended", "sandbox_id", claim.ID, "state", end.state, "outcome", end.code)
+}
+
+// pauseLost returns a persistent session whose VM ended unexpectedly to
+// paused when its volume holds its files; it resumes cold
+// (ADR-20261122132055 §4). It reports whether it did.
+func (s *Sandboxes) pauseLost(ctx context.Context, claim agentstore.SandboxClaim) bool {
+	if claim.Kind != api.SandboxKindPersistent || claim.VolumeGB == 0 {
+		return false
+	}
+	s.actions.remove(claim.ID)
+	s.endOpenActions(ctx, claim, agentstore.SandboxActionPending, agentstore.SandboxActionRunning)
+	retention := time.Duration(api.SandboxPausedRetentionDays[api.Plan(claim.Plan).PlanIndex()]) * 24 * time.Hour
+	paused, err := s.store.PauseLostSandbox(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken, retention)
+	if err != nil {
+		s.log.Warn("agentd: pause a lost sandbox failed", "sandbox_id", claim.ID, "err", err)
+		return false
+	}
+	if paused {
+		s.log.Warn("agentd: sandbox VM lost; paused to resume cold from its volume", "sandbox_id", claim.ID)
+	}
+	return paused
 }
 
 // requeue returns a session that never booted, after a capacity refusal or

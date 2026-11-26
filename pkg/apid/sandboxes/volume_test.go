@@ -29,6 +29,15 @@ func TestGrowAPausedSessionsVolume(t *testing.T) {
 		t.Fatalf("a running session's grow = %d %+v", code, p)
 	}
 	setState(agentstore.SandboxPaused)
+	// A refused timeout leaves the volume as it was.
+	if code := f.call(t, f.h.Update, pro(), http.MethodPatch, "", `{"volume_gb":20,"idle_timeout_s":60}`, sb.ID, &p); code < 400 {
+		t.Fatalf("a grow with a persistent session's timeout = %d", code)
+	}
+	for _, s := range f.store.sessions {
+		if s.ID == sb.ID && s.VolumeGB != 10 {
+			t.Fatalf("a refused PATCH grew the volume to %d GB", s.VolumeGB)
+		}
+	}
 	var got api.Sandbox
 	if code := f.call(t, f.h.Update, pro(), http.MethodPatch, "", `{"volume_gb":20}`, sb.ID, &got); code != http.StatusOK || got.VolumeGB != 20 {
 		t.Fatalf("grow = %d %+v", code, got)

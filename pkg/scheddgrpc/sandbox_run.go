@@ -61,7 +61,8 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		EgressAllow: start.GetEgressAllow(), EgressDeny: start.GetEgressDeny(), WebDomainLog: start.GetWebDomainLog(),
 		Persistent: start.GetPersistent(),
 		Volume: sched.SandboxVolume{GB: int(start.GetVolumeGb()), BackupID: start.GetVolumeBackupId(),
-			BackupEvery: time.Duration(start.GetVolumeBackupIntervalMs()) * time.Millisecond}}
+			BackupEvery: time.Duration(start.GetVolumeBackupIntervalMs()) * time.Millisecond,
+			NodeID:      start.GetVolumeNodeId(), StoredBackupID: start.GetVolumeStoredBackupId()}}
 	if r := start.GetResume(); r != nil {
 		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
 			VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}

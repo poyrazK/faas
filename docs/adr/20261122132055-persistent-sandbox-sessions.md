@@ -69,7 +69,7 @@ The parts exist. Firecracker captures and restores a VM's memory. Captures are s
 - **Point in time.** A pause's capture names the backup that matches it, so a cold resume and a fork get the workspace as it was at the capture.
 - **Fork** clones the volume with a reflink on the source's node, or restores the backup elsewhere.
 - **Ephemeral sessions** keep the scratch drive and `workspace:persist` archives (ADR-382). `workspace:persist` also works on a persistent session and makes an archive snapshot as today.
-- **Growing a volume:** `PATCH {volume_gb}` grows it while paused, never shrinks.
+- **Growing a volume:** `PATCH {volume_gb}` grows it while paused, never shrinks; the next resume is cold.
 
 ### 5. Large shapes
 
@@ -204,7 +204,7 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **When.** vmmd backs a running volume up every `SandboxVolumeBackupSec` and reports each (`volume_backup`); a pause clones the volume as the capture left it and uploads that in the background with the capture, naming it in `paused`. A clone a restart left is uploaded at start.
 - **Which copy.** agentd records the node holding the newest copy and the newest backup. vmmd keeps the node's copy when it is that backup or newer, and otherwise restores the backup before the boot; a volume it cannot prepare leaves the session paused to try again, never booted without its files. A session that moved deletes the copy on the node it left.
 - **Durability.** A capture of a session with a volume is `remote` only once its volume backup's manifest is in the shared store too; until then it resumes only on its node. A cold resume on another node therefore gets the workspace as the newest backup left it (losing at most `SandboxVolumeBackupSec` of writes when the node was lost).
-- **Grow.** `PATCH {volume_gb}` grows a paused session's volume within the plan and never shrinks it; vmmd grows the file and the filesystem offline (`e2fsck`, `resize2fs`) before the resume boots.
+- **Grow.** `PATCH {volume_gb}` grows a paused session's volume within the plan and never shrinks it; vmmd grows the file and the filesystem offline (`e2fsck`, `resize2fs`) before the resume boots. A capture's memory holds the mounted filesystem at its old size, so a grow uses the session's capture up and the session resumes cold (`resumed_cold`): files kept, processes started again (review fix, 2026-11-26).
 - **Cleanup.** The sweep deletes the manifests of backups a newer one superseded (none a live capture names), and when a session ends its node copy (through schedd's `DeleteSandboxVolume`), every manifest and its row.
 - **Metrics.** `sandbox_volume_backup_seconds` and `sandbox_volume_backup_bytes` (running backups); vmmd's operations `SandboxVolumeBackup` and `SandboxVolumeRestore`.
 - **Not yet:** collecting chunks no manifest refers to (they stay in the store); backups sealed to the account (with captures, after 3d-3); a `sync` in the guest before a running backup (a backup is crash-consistent, as after a power cut).

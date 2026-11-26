@@ -38,6 +38,10 @@ const (
 	volumeBackupPendingInfix   = ".backup-pending-"
 	volumeBackupBaseInfix      = ".backup-base-"
 	volumeBackupManifestSuffix = ".backup.json"
+	// volumeBackupTakenSuffix names the newest backup this node cloned the
+	// volume for, uploaded or not: until the volume changes, the node's
+	// copy is that backup.
+	volumeBackupTakenSuffix = ".backup-taken"
 )
 
 // SandboxVolumeBackup is one backup as the node reports it.
@@ -88,6 +92,12 @@ func (v *SandboxVolumes) PrepareBackup(accountID, sandboxID, id string) (*Pendin
 	taken := time.Now().UTC()
 	if _, err := storage.CloneFile(clone, path); err != nil {
 		return nil, fmt.Errorf("fcvm: sandbox volume backup: %w", err)
+	}
+	// Best effort: without the mark a resume here restores the backup from
+	// the store once it is uploaded, as before.
+	tmp := path + volumeBackupTakenSuffix + ".tmp"
+	if os.WriteFile(tmp, []byte(id), 0o600) == nil {
+		_ = os.Rename(tmp, path+volumeBackupTakenSuffix)
 	}
 	return &PendingVolumeBackup{v: v, AccountID: accountID, SandboxID: sandboxID, ID: id, TakenAt: taken, volume: path, clone: clone}, nil
 }
@@ -171,6 +181,18 @@ func (v *SandboxVolumes) LastBackup(accountID, sandboxID string) (volbackup.Mani
 		return volbackup.Manifest{}, false
 	}
 	return localManifest(path)
+}
+
+// TookBackup reports whether backup id is the newest this node cloned the
+// session's volume for: the node's copy is that backup, whether or not its
+// upload finished (ADR-20261122132055 §4).
+func (v *SandboxVolumes) TookBackup(accountID, sandboxID, id string) bool {
+	path, err := v.Path(accountID, sandboxID)
+	if err != nil || id == "" {
+		return false
+	}
+	raw, err := os.ReadFile(path + volumeBackupTakenSuffix) //nolint:forbidigo // a node-owned file beside the volume.
+	return err == nil && string(raw) == id
 }
 
 // Exists reports whether this node holds the session's volume.

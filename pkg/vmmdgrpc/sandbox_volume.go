@@ -82,7 +82,9 @@ func (s *Server) prepareSandboxVolume(ctx context.Context, wake *fcvm.SandboxWak
 	local := v.Exists(wake.AccountID, wake.SandboxID)
 	if local && backupID != "" {
 		last, ok := v.LastBackup(wake.AccountID, wake.SandboxID)
-		if !ok || last.ID != backupID {
+		// A backup this node cloned the volume for (a pause's, still
+		// uploading or given up) is the node's copy itself.
+		if (!ok || last.ID != backupID) && !v.TookBackup(wake.AccountID, wake.SandboxID, backupID) {
 			if s.sandboxStorage == nil {
 				return unavailable(errors.New("no store"))
 			}

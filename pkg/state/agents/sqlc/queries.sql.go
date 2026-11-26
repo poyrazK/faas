@@ -1662,7 +1662,10 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
   coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id,
   coalesce(sb.durability, '')::text AS durability,
-  coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id
+  coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id,
+  coalesce(vol.node_id, '')::text AS volume_node_id,
+  coalesce((SELECT b.id::text FROM sandbox_volume_backups b WHERE b.session_id=sb.id AND b.state='stored'
+    ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
  LEFT JOIN sandbox_volumes vol ON vol.session_id=sb.id
@@ -1709,6 +1712,8 @@ type GetSandboxSessionClaimRow struct {
 	Durability               string
 	VolumeGb                 int32
 	VolumeBackupID           string
+	VolumeNodeID             string
+	VolumeStoredBackupID     string
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1750,6 +1755,8 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.Durability,
 		&i.VolumeGb,
 		&i.VolumeBackupID,
+		&i.VolumeNodeID,
+		&i.VolumeStoredBackupID,
 	)
 	return i, err
 }
@@ -1901,22 +1908,35 @@ func (q *Queries) GetTenantStatus(ctx context.Context, db DBTX, arg GetTenantSta
 }
 
 const growPausedSandboxVolume = `-- name: GrowPausedSandboxVolume :one
-UPDATE sandbox_sessions SET volume_gb=$1::integer, updated_at=now()
- WHERE id=$2::text::uuid AND account_id=$3::text::uuid
-   AND kind='persistent' AND state='paused' AND coalesce(volume_gb, 0) <= $1::integer
-RETURNING id::text AS id
+WITH old AS (
+  SELECT id, coalesce(volume_gb, 0) AS volume_gb FROM sandbox_sessions
+   WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+     AND kind='persistent' AND state='paused' AND coalesce(volume_gb, 0) <= $3::integer
+   FOR UPDATE
+), grown AS (
+  UPDATE sandbox_sessions sb SET volume_gb=$3::integer, updated_at=now()
+    FROM old WHERE sb.id=old.id
+  RETURNING sb.id, old.volume_gb < $3::integer AS larger
+), used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id IN (SELECT id FROM grown WHERE larger) AND state='live'
+)
+SELECT id::text AS id FROM grown
 `
 
 type GrowPausedSandboxVolumeParams struct {
-	VolumeGb  int32
 	SessionID string
 	AccountID string
+	VolumeGb  int32
 }
 
 // PATCH {volume_gb} on a paused persistent session (ADR-20261122132055 §4):
-// the volume grows when the session resumes, never shrinks.
+// the volume grows when the session resumes, never shrinks. The capture's
+// memory holds the filesystem at its old size, so a grow uses the capture
+// up: the session resumes cold onto the grown volume, its files kept and
+// its processes started again.
 func (q *Queries) GrowPausedSandboxVolume(ctx context.Context, db DBTX, arg GrowPausedSandboxVolumeParams) (string, error) {
-	row := db.QueryRow(ctx, growPausedSandboxVolume, arg.VolumeGb, arg.SessionID, arg.AccountID)
+	row := db.QueryRow(ctx, growPausedSandboxVolume, arg.SessionID, arg.AccountID, arg.VolumeGb)
 	var id string
 	err := row.Scan(&id)
 	return id, err
@@ -3532,10 +3552,15 @@ SELECT b.id::text AS id, b.session_id::text AS session_id, b.account_id::text AS
   JOIN sandbox_volumes v ON v.session_id=b.session_id
   JOIN sandbox_volume_backups l ON l.id=v.latest_backup_id
  WHERE b.state <> 'deleted' AND b.id <> l.id AND b.created_at < l.created_at
-   AND (b.state='stored' OR b.created_at < now() - interval '25 hours')
+   AND (b.state='stored' OR b.created_at < now() - make_interval(secs=>$1::double precision))
    AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id AND c.state='live')
- ORDER BY b.created_at, b.id LIMIT $1::integer
+ ORDER BY b.created_at, b.id LIMIT $2::integer
 `
+
+type ListSupersededSandboxVolumeBackupsParams struct {
+	UploadWindowSeconds float64
+	MaxRows             int32
+}
 
 type ListSupersededSandboxVolumeBackupsRow struct {
 	ID        string
@@ -3545,9 +3570,10 @@ type ListSupersededSandboxVolumeBackupsRow struct {
 
 // Backups older than their session's newest that no live capture names: the
 // sweep deletes their manifests. A pause's upload still running is left
-// until vmmd would have given it up.
-func (q *Queries) ListSupersededSandboxVolumeBackups(ctx context.Context, db DBTX, maxRows int32) ([]ListSupersededSandboxVolumeBackupsRow, error) {
-	rows, err := db.Query(ctx, listSupersededSandboxVolumeBackups, maxRows)
+// until vmmd would have given it up (upload_window_seconds, from
+// api.SandboxCaptureUploadSec).
+func (q *Queries) ListSupersededSandboxVolumeBackups(ctx context.Context, db DBTX, arg ListSupersededSandboxVolumeBackupsParams) ([]ListSupersededSandboxVolumeBackupsRow, error) {
+	rows, err := db.Query(ctx, listSupersededSandboxVolumeBackups, arg.UploadWindowSeconds, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -4250,6 +4276,61 @@ func (q *Queries) NextSandboxActions(ctx context.Context, db DBTX, sessionIds []
 		return nil, err
 	}
 	return items, nil
+}
+
+const pauseExpiredPersistentSandboxSessions = `-- name: PauseExpiredPersistentSandboxSessions :execrows
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
+  durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(days=>($1::integer[])[array_position($2::text[], a.plan)]),
+  updated_at=now()
+  FROM accounts a
+ WHERE a.id=sb.account_id
+   AND coalesce(($1::integer[])[array_position($2::text[], a.plan)], 0) > 0
+   AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing') AND sb.lease_expires_at < now()
+   AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id)
+`
+
+type PauseExpiredPersistentSandboxSessionsParams struct {
+	RetentionDays []int32
+	Plans         []string
+}
+
+// A persistent session with a volume whose replica stopped renewing lost
+// its VM, not its files: it goes back to paused without a capture and
+// resumes cold from its volume (ADR-20261122132055 §4), kept for its plan's
+// paused retention. Run before FailExpiredLiveSandboxSessions.
+func (q *Queries) PauseExpiredPersistentSandboxSessions(ctx context.Context, db DBTX, arg PauseExpiredPersistentSandboxSessionsParams) (int64, error) {
+	result, err := db.Exec(ctx, pauseExpiredPersistentSandboxSessions, arg.RetentionDays, arg.Plans)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pauseLostSandboxSession = `-- name: PauseLostSandboxSession :execrows
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
+  durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(secs=>$1::double precision), updated_at=now()
+ WHERE sb.id=$2::text::uuid AND sb.lease_token=$3::text
+   AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing')
+   AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id)
+`
+
+type PauseLostSandboxSessionParams struct {
+	RetentionSeconds float64
+	SessionID        string
+	LeaseToken       string
+}
+
+// A held persistent session with a volume whose VM ended unexpectedly goes
+// back to paused without a capture; it resumes cold from its volume
+// (ADR-20261122132055 §4).
+func (q *Queries) PauseLostSandboxSession(ctx context.Context, db DBTX, arg PauseLostSandboxSessionParams) (int64, error) {
+	result, err := db.Exec(ctx, pauseLostSandboxSession, arg.RetentionSeconds, arg.SessionID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const putSandboxEgressPolicy = `-- name: PutSandboxEgressPolicy :one

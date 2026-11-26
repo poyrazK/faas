@@ -607,7 +607,10 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
   coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id,
   coalesce(sb.durability, '')::text AS durability,
-  coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id
+  coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id,
+  coalesce(vol.node_id, '')::text AS volume_node_id,
+  coalesce((SELECT b.id::text FROM sandbox_volume_backups b WHERE b.session_id=sb.id AND b.state='stored'
+    ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
  LEFT JOIN sandbox_volumes vol ON vol.session_id=sb.id
@@ -792,6 +795,32 @@ UPDATE sandbox_sessions SET state=sqlc.arg(state)::text, outcome_code=sqlc.arg(o
 UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
  WHERE state='starting' AND lease_expires_at < now();
 
+-- name: PauseExpiredPersistentSandboxSessions :execrows
+-- A persistent session with a volume whose replica stopped renewing lost
+-- its VM, not its files: it goes back to paused without a capture and
+-- resumes cold from its volume (ADR-20261122132055 §4), kept for its plan's
+-- paused retention. Run before FailExpiredLiveSandboxSessions.
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
+  durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(days=>(sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)]),
+  updated_at=now()
+  FROM accounts a
+ WHERE a.id=sb.account_id
+   AND coalesce((sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)], 0) > 0
+   AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing') AND sb.lease_expires_at < now()
+   AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id);
+
+-- name: PauseLostSandboxSession :execrows
+-- A held persistent session with a volume whose VM ended unexpectedly goes
+-- back to paused without a capture; it resumes cold from its volume
+-- (ADR-20261122132055 §4).
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
+  durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(secs=>sqlc.arg(retention_seconds)::double precision), updated_at=now()
+ WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.lease_token=sqlc.arg(lease_token)::text
+   AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing')
+   AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id);
+
 -- name: FailExpiredLiveSandboxSessions :execrows
 -- A live session whose replica stopped renewing has lost its VM with the
 -- replica's stream; it is never booted again.
@@ -899,13 +928,14 @@ UPDATE sandbox_volume_backups SET state='stored' WHERE id=sqlc.arg(backup_id)::t
 -- name: ListSupersededSandboxVolumeBackups :many
 -- Backups older than their session's newest that no live capture names: the
 -- sweep deletes their manifests. A pause's upload still running is left
--- until vmmd would have given it up.
+-- until vmmd would have given it up (upload_window_seconds, from
+-- api.SandboxCaptureUploadSec).
 SELECT b.id::text AS id, b.session_id::text AS session_id, b.account_id::text AS account_id
   FROM sandbox_volume_backups b
   JOIN sandbox_volumes v ON v.session_id=b.session_id
   JOIN sandbox_volume_backups l ON l.id=v.latest_backup_id
  WHERE b.state <> 'deleted' AND b.id <> l.id AND b.created_at < l.created_at
-   AND (b.state='stored' OR b.created_at < now() - interval '25 hours')
+   AND (b.state='stored' OR b.created_at < now() - make_interval(secs=>sqlc.arg(upload_window_seconds)::double precision))
    AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id AND c.state='live')
  ORDER BY b.created_at, b.id LIMIT sqlc.arg(max_rows)::integer;
 
@@ -932,11 +962,24 @@ DELETE FROM sandbox_volumes v USING sandbox_sessions sb
 
 -- name: GrowPausedSandboxVolume :one
 -- PATCH {volume_gb} on a paused persistent session (ADR-20261122132055 §4):
--- the volume grows when the session resumes, never shrinks.
-UPDATE sandbox_sessions SET volume_gb=sqlc.arg(volume_gb)::integer, updated_at=now()
- WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
-   AND kind='persistent' AND state='paused' AND coalesce(volume_gb, 0) <= sqlc.arg(volume_gb)::integer
-RETURNING id::text AS id;
+-- the volume grows when the session resumes, never shrinks. The capture's
+-- memory holds the filesystem at its old size, so a grow uses the capture
+-- up: the session resumes cold onto the grown volume, its files kept and
+-- its processes started again.
+WITH old AS (
+  SELECT id, coalesce(volume_gb, 0) AS volume_gb FROM sandbox_sessions
+   WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+     AND kind='persistent' AND state='paused' AND coalesce(volume_gb, 0) <= sqlc.arg(volume_gb)::integer
+   FOR UPDATE
+), grown AS (
+  UPDATE sandbox_sessions sb SET volume_gb=sqlc.arg(volume_gb)::integer, updated_at=now()
+    FROM old WHERE sb.id=old.id
+  RETURNING sb.id, old.volume_gb < sqlc.arg(volume_gb)::integer AS larger
+), used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id IN (SELECT id FROM grown WHERE larger) AND state='live'
+)
+SELECT id::text AS id FROM grown;
 
 -- name: DeleteSandboxSessionCapture :execrows
 DELETE FROM sandbox_session_captures WHERE id=sqlc.arg(capture_id)::text::uuid AND state='consumed';

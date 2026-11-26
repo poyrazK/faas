@@ -238,20 +238,27 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
 		return
 	}
+	// The timeouts are checked before the volume grows, so a refused
+	// request changes nothing.
+	timed := body.IdleTimeoutS != nil || body.LifetimeS != nil
+	var idle int
+	var expires time.Time
+	if timed {
+		var prob *api.Problem
+		if idle, expires, prob = h.timeouts(acct, sb, body); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if body.VolumeGB != nil {
 		if sb, err = h.growVolume(r.Context(), acct, sb, *body.VolumeGB); err != nil {
 			api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
 			return
 		}
-		if body.IdleTimeoutS == nil && body.LifetimeS == nil {
+		if !timed {
 			httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
 			return
 		}
-	}
-	idle, expires, prob := h.timeouts(acct, sb, body)
-	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
 	}
 	if sb, err = h.Store.UpdateSandboxTimeouts(r.Context(), acct.ID, sb.ID, idle, expires); err != nil {
 		api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
@@ -261,7 +268,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Acco
 }
 
 // growVolume sets a paused persistent session's volume size: never
-// smaller, within the plan.
+// smaller, within the plan. The session then resumes cold (resumed_cold):
+// its files are kept, its processes start again.
 func (h *Handler) growVolume(ctx context.Context, acct state.Account, sb agentstore.Sandbox, gb int) (agentstore.Sandbox, error) {
 	idx := acct.Plan.PlanIndex()
 	switch {

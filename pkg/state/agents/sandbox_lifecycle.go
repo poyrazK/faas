@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/agents/sqlc"
 )
 
@@ -62,7 +63,11 @@ type SandboxClaim struct {
 	// and VolumeBackupID its newest backup (ADR-20261122132055 §4).
 	VolumeGB       int
 	VolumeBackupID string
-	LeaseToken     string
+	// VolumeNodeID holds the volume's newest copy; VolumeStoredBackupID is
+	// its newest backup the shared store holds.
+	VolumeNodeID         string
+	VolumeStoredBackupID string
+	LeaseToken           string
 	SandboxLease
 }
 
@@ -153,7 +158,8 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 			Remote: row.Durability == "remote"}
 	}
 	return SandboxClaim{Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume,
-		VolumeGB: int(row.VolumeGb), VolumeBackupID: row.VolumeBackupID, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
+		VolumeGB: int(row.VolumeGb), VolumeBackupID: row.VolumeBackupID, VolumeNodeID: row.VolumeNodeID,
+		VolumeStoredBackupID: row.VolumeStoredBackupID, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
 		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
@@ -324,6 +330,19 @@ func (s *Store) RequeueSandbox(ctx context.Context, id, token string) error {
 	return fenced(n, err, "requeue session")
 }
 
+// PauseLostSandbox returns a held persistent session whose VM ended
+// unexpectedly to paused without a capture, kept for retention: its volume
+// holds its files, so it resumes cold (ADR-20261122132055 §4). It reports
+// false for a session with no volume, which FinishSandbox ends instead.
+func (s *Store) PauseLostSandbox(ctx context.Context, id, token string, retention time.Duration) (bool, error) {
+	n, err := s.q.PauseLostSandboxSession(ctx, s.pool, sqlc.PauseLostSandboxSessionParams{RetentionSeconds: retention.Seconds(),
+		SessionID: id, LeaseToken: token})
+	if err != nil {
+		return false, fmt.Errorf("pause lost session: %w", err)
+	}
+	return n == 1, nil
+}
+
 // FinishSandbox ends a held session in state, one of SandboxClosed,
 // SandboxExpired and SandboxFailed, with its outcome.
 func (s *Store) FinishSandbox(ctx context.Context, id, token, state, code, message string) error {
@@ -335,8 +354,9 @@ func (s *Store) FinishSandbox(ctx context.Context, id, token, state, code, messa
 	return fenced(n, err, "finish session")
 }
 
-// ExpireSandboxLeases queues expired starting sessions again, fails expired
-// live ones, whose VM ended with their replica's stream, and expires queued
+// ExpireSandboxLeases queues expired starting sessions again, pauses
+// expired persistent ones with a volume and fails the other expired live
+// ones, whose VM ended with their replica's stream, and expires queued
 // sessions past their end.
 func (s *Store) ExpireSandboxLeases(ctx context.Context) (requeued, failed, expired int64, err error) {
 	if requeued, err = s.q.RequeueExpiredStartingSandboxSessions(ctx, s.pool); err != nil {
@@ -349,6 +369,20 @@ func (s *Store) ExpireSandboxLeases(ctx context.Context) (requeued, failed, expi
 		return requeued, 0, 0, fmt.Errorf("return expired resumes: %w", err)
 	}
 	requeued += returned
+	// A persistent session with a volume lost its VM, not its files: it
+	// goes back to paused and resumes cold (ADR-20261122132055 §4).
+	plans := make([]string, 0, len(api.SandboxPausedRetentionDays))
+	days := make([]int32, 0, len(api.SandboxPausedRetentionDays))
+	for _, p := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		plans = append(plans, string(p))
+		days = append(days, int32(api.SandboxPausedRetentionDays[p.PlanIndex()])) //nolint:gosec // G115: days of retention.
+	}
+	paused, err := s.q.PauseExpiredPersistentSandboxSessions(ctx, s.pool, sqlc.PauseExpiredPersistentSandboxSessionsParams{
+		RetentionDays: days, Plans: plans})
+	if err != nil {
+		return requeued, 0, 0, fmt.Errorf("pause expired persistent sessions: %w", err)
+	}
+	requeued += paused
 	if failed, err = s.q.FailExpiredLiveSandboxSessions(ctx, s.pool); err != nil {
 		return requeued, 0, 0, fmt.Errorf("fail expired sessions: %w", err)
 	}

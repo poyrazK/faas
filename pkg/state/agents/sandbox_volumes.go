@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -85,9 +86,11 @@ func (s *Store) MarkSandboxVolumeBackupStored(ctx context.Context, backupID stri
 }
 
 // SupersededSandboxVolumeBackups lists at most limit backups older than
-// their session's newest that no live capture names.
-func (s *Store) SupersededSandboxVolumeBackups(ctx context.Context, limit int) ([]SandboxVolumeRef, error) {
-	rows, err := s.q.ListSupersededSandboxVolumeBackups(ctx, s.pool, int32(limit)) //nolint:gosec // G115: a small batch size.
+// their session's newest that no live capture names; one still uploading
+// is listed only once uploadWindow has passed.
+func (s *Store) SupersededSandboxVolumeBackups(ctx context.Context, limit int, uploadWindow time.Duration) ([]SandboxVolumeRef, error) {
+	rows, err := s.q.ListSupersededSandboxVolumeBackups(ctx, s.pool, sqlc.ListSupersededSandboxVolumeBackupsParams{
+		UploadWindowSeconds: uploadWindow.Seconds(), MaxRows: int32(limit)}) //nolint:gosec // G115: a small batch size.
 	if err != nil {
 		return nil, fmt.Errorf("list superseded volume backups: %w", err)
 	}
@@ -139,7 +142,9 @@ func (s *Store) DeleteSandboxVolume(ctx context.Context, sessionID string) error
 
 // GrowPausedSandboxVolume sets a paused persistent session's volume to
 // volumeGB, which is never smaller than it was; it reports false when the
-// session is not paused, not persistent, or the size would shrink.
+// session is not paused, not persistent, or the size would shrink. A larger
+// size uses the session's capture up, so it resumes cold: the capture's
+// memory holds the filesystem at its old size.
 func (s *Store) GrowPausedSandboxVolume(ctx context.Context, accountID, id string, volumeGB int) (bool, error) {
 	_, err := s.q.GrowPausedSandboxVolume(ctx, s.pool, sqlc.GrowPausedSandboxVolumeParams{SessionID: id, AccountID: accountID,
 		VolumeGb: int32(volumeGB)}) //nolint:gosec // G115: bounded by the plan's volume cap.
