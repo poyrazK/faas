@@ -138,10 +138,13 @@ func (s *Server) PersistSandboxWorkspace(ctx context.Context, req *vmmdpb.Persis
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(api.SandboxPersistTimeoutSec)*time.Second)
 	defer cancel()
+	// A pause capturing the VM refuses the persist, as it does a call.
+	if !act.tryBegin() {
+		return nil, status.Error(codes.Unavailable, "the sandbox is pausing; resume it and retry")
+	}
+	defer func() { act.end(time.Now()) }()
 	s.beginActivity(instance)
 	defer s.endActivity(instance)
-	act.begin()
-	defer func() { act.end(time.Now()) }()
 	if err := s.thawSandbox(ctx, instance, act); err != nil {
 		s.log.Warn("sandbox: thaw failed", "instance", instance, "err", err)
 		return nil, status.Error(codes.Unavailable, "the sandbox could not be thawed; retry")

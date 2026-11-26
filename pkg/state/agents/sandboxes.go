@@ -24,9 +24,21 @@ const (
 	SandboxStarting = "starting"
 	SandboxReady    = "ready"
 	SandboxFrozen   = "frozen"
+	// SandboxPausing, SandboxPaused and SandboxResuming are a persistent
+	// session's (ADR-20261122132055 §1): a paused session has no VM and
+	// keeps a memory capture and its workspace volume.
+	SandboxPausing  = "pausing"
+	SandboxPaused   = "paused"
+	SandboxResuming = "resuming"
 	SandboxClosed   = "closed"
 	SandboxExpired  = "expired"
 	SandboxFailed   = "failed"
+)
+
+// Session kinds (ADR-20261027090014 §5).
+const (
+	SandboxEphemeral  = "ephemeral"
+	SandboxPersistent = "persistent"
 )
 
 // SandboxTerminal reports a state no session leaves.
@@ -70,6 +82,18 @@ type Sandbox struct {
 	// was admitted under (ADR-20261117091026 §2); empty is none.
 	EgressAllow []string
 	EgressDeny  []string
+	// Persistent sessions (ADR-20261122132055): the shape and volume asked
+	// for (0: the defaults), the pending pause and resume requests, when the
+	// session paused, where its capture is (node or remote), whether its
+	// last resume cold-booted, and the session it was forked from.
+	VCPU              int
+	VolumeGB          int
+	PauseRequestedAt  *time.Time
+	ResumeRequestedAt *time.Time
+	PausedAt          *time.Time
+	Durability        string
+	ResumedCold       bool
+	ForkedFrom        string
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -106,6 +130,12 @@ type SandboxAdmission struct {
 	// policy (ADR-20261117091026 §2), fixed at admission.
 	EgressAllow []string
 	EgressDeny  []string
+	// VCPU and VolumeGB size a persistent session (0: the defaults), and
+	// PersistentMax is the plan's SandboxPersistentMax, checked under the
+	// account's agent lock.
+	VCPU          int
+	VolumeGB      int
+	PersistentMax int
 }
 
 // SandboxFilter narrows a session listing. Before pages backwards from a
@@ -154,11 +184,20 @@ func (s *Store) insertSandbox(ctx context.Context, tx pgx.Tx, a SandboxAdmission
 	if queued := int(runs + sessions); queued >= a.QueuedMax {
 		return "", &LimitError{Limit: "AgentRunQueuedPerAccount", Max: a.QueuedMax, Observed: queued}
 	}
+	if a.Kind == SandboxPersistent {
+		persistent, err := s.q.CountPersistentSandboxSessions(ctx, tx, a.AccountID)
+		if err != nil {
+			return "", fmt.Errorf("count persistent sessions: %w", err)
+		}
+		if int(persistent) >= a.PersistentMax {
+			return "", &LimitError{Limit: "SandboxPersistentMax", Max: a.PersistentMax, Observed: int(persistent)}
+		}
+	}
 	params := sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
 		Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
 		ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID),
 		ImageRef: optText(a.ImageRef), ImageJobID: optText(a.ImageJobID), TemplateID: optText(a.TemplateID), Browser: a.Browser,
-		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny)}
+		EgressAllow: optRules(a.EgressAllow), EgressDeny: optRules(a.EgressDeny), Vcpu: optInt16(a.VCPU), VolumeGb: optInt(a.VolumeGB)}
 	if a.Task != nil {
 		params.TaskKind, params.TaskUrl, params.TaskMaxChars = optText(a.Task.Kind), optText(a.Task.URL), optInt(a.Task.MaxChars)
 	}
@@ -271,6 +310,57 @@ func (s *Store) CloseSandbox(ctx context.Context, accountID, id string) (Sandbox
 	return s.Sandbox(ctx, accountID, id)
 }
 
+// ErrSandboxNotPausable is a pause of a session that is not a running
+// persistent one, or a resume of one that is not paused.
+var ErrSandboxNotPausable = errors.New("sandbox session cannot be paused or resumed in its state")
+
+// PauseSandbox asks agentd to pause a running persistent session
+// (ADR-20261122132055 §1). A session already pausing or paused is answered
+// as it is.
+func (s *Store) PauseSandbox(ctx context.Context, accountID, id string) (Sandbox, error) {
+	return s.requestPauseOrResume(ctx, accountID, id, true)
+}
+
+// ResumeSandbox asks agentd to resume a paused persistent session. A
+// session already resuming or running is answered as it is.
+func (s *Store) ResumeSandbox(ctx context.Context, accountID, id string) (Sandbox, error) {
+	return s.requestPauseOrResume(ctx, accountID, id, false)
+}
+
+func (s *Store) requestPauseOrResume(ctx context.Context, accountID, id string, pause bool) (Sandbox, error) {
+	if !isUUID(id) {
+		return Sandbox{}, ErrNotFound
+	}
+	sb, err := s.Sandbox(ctx, accountID, id)
+	if err != nil {
+		return Sandbox{}, err
+	}
+	if sb.Kind != SandboxPersistent || SandboxTerminal(sb.State) || sb.CloseRequestedAt != nil {
+		return sb, ErrSandboxNotPausable
+	}
+	var n int64
+	if pause {
+		switch sb.State {
+		case SandboxPausing, SandboxPaused:
+			return sb, nil
+		}
+		n, err = s.q.RequestSandboxSessionPause(ctx, s.pool, sqlc.RequestSandboxSessionPauseParams{SessionID: id, AccountID: accountID})
+	} else {
+		switch sb.State {
+		case SandboxResuming, SandboxReady, SandboxFrozen, SandboxQueued, SandboxStarting:
+			return sb, nil
+		}
+		n, err = s.q.RequestSandboxSessionResume(ctx, s.pool, sqlc.RequestSandboxSessionResumeParams{SessionID: id, AccountID: accountID})
+	}
+	if err != nil {
+		return Sandbox{}, fmt.Errorf("request sandbox pause or resume: %w", err)
+	}
+	if n == 0 {
+		return sb, ErrSandboxNotPausable
+	}
+	return s.Sandbox(ctx, accountID, id)
+}
+
 func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 	sb := Sandbox{ID: row.ID, AccountID: row.AccountID, TenantID: row.TenantID, Kind: row.Kind, Preset: row.Preset,
 		RAMMB: int(row.RamMb), NetworkMode: row.NetworkMode, State: row.State, IdleTimeoutSec: int(row.IdleTimeoutSec),
@@ -278,7 +368,9 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
 		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID, ImageRef: row.ImageRef, Browser: row.Browser,
-		EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny}
+		EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, VCPU: int(row.Vcpu), VolumeGB: int(row.VolumeGb),
+		PauseRequestedAt: optTime(row.PauseRequestedAt), ResumeRequestedAt: optTime(row.ResumeRequestedAt), PausedAt: optTime(row.PausedAt),
+		Durability: row.Durability, ResumedCold: row.ResumedCold, ForkedFrom: row.ForkedFrom}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}
