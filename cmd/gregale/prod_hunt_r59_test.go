@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	main "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -51,14 +52,17 @@ func TestWakeTimelineSlugInLinkedCheckoutShowsLatestWake(t *testing.T) {
 // Prod hunt r59: an unknown `app scale` flag pointed at 'gregale app
 // --help', which does not list scale's flags.
 func TestAppScaleUnknownFlagPointsAtScaleHelp(t *testing.T) {
-	linkedAppServer(t, nil)
-	for _, args := range [][]string{
-		{"app", "scale", "web", "--max", "3"},
-		{"app", "web", "scale", "--max", "3"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"app", "scale", "web", "--max", "3"}, "app scale"},
+		{[]string{"app", "web", "scale", "--max", "3"}, "app scale"},
+		{[]string{"app", "web", "--visibility"}, "app"},
+		{[]string{"app", "--ram", "512"}, "app"},
 	} {
-		code, stdout, stderr := runCLI(t, args...)
-		if code == 0 || !strings.Contains(stderr, "gregale app scale") || strings.Contains(stderr, "gregale app --help") {
-			t.Fatalf("%v = %d:\n%s%s", args, code, stdout, stderr)
+		if got := main.PublicCommandPath(tc.args); got != tc.want {
+			t.Fatalf("publicCommandPath(%v) = %q, want %q", tc.args, got, tc.want)
 		}
 	}
 }
