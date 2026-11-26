@@ -400,3 +400,53 @@ func TestNoParkedFailoverWithoutTheStandbysNode(t *testing.T) {
 		})
 	}
 }
+
+type replicaProbeVMM struct {
+	VMM
+	probe func(Node, string) (dbguest.ReplicationStatus, error)
+}
+
+func (v replicaProbeVMM) Replication(_ context.Context, node Node, id string, mode dbguest.ReplicationMode, peer string) (dbguest.ReplicationStatus, error) {
+	return v.probe(node, id)
+}
+
+func TestReadReplicaRequiresRunningPlacementAndFreshReplay(t *testing.T) {
+	s, store, _ := newStandbyScheduler(t, "db-a", "db-b")
+	vm := wakeReplicated(t, s)
+	ctx := t.Context()
+	probes := 0
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	lag := int64(32)
+	s.vmm = replicaProbeVMM{VMM: s.vmm, probe: func(node Node, id string) (dbguest.ReplicationStatus, error) {
+		probes++
+		if node.ID != vm.NodeID || id != vm.DatabaseID {
+			t.Errorf("probed %v for %s", node, id)
+		}
+		sample := lag
+		return dbguest.ReplicationStatus{Streaming: true, Synchronous: true, ReplayLagBytes: &sample}, nil
+	}}
+	first, err := s.ReadReplica(ctx, vm.DatabaseID)
+	if err != nil || !first.Available || first.ReplayLagBytes == nil || *first.ReplayLagBytes != 32 ||
+		first.ObservedAt != now || first.StandbyNode != vm.StandbyNode || first.ReplicaTarget != vm.ReplicaTarget {
+		t.Fatalf("first replica sample = %+v, %v", first, err)
+	}
+	second, err := s.ReadReplica(ctx, vm.DatabaseID)
+	if err != nil || second != first || probes != 1 {
+		t.Fatalf("second sample = %+v, %v after %d probes", second, err, probes)
+	}
+	now = now.Add(replicaSampleInterval)
+	lag = 0
+	caughtUp, err := s.ReadReplica(ctx, vm.DatabaseID)
+	if err != nil || !caughtUp.Available || caughtUp.ReplayLagBytes == nil || *caughtUp.ReplayLagBytes != 0 || caughtUp.ObservedAt != now {
+		t.Fatalf("caught-up sample = %+v, %v", caughtUp, err)
+	}
+
+	if err := store.MarkStandbySynced(ctx, vm.DatabaseID, false); err != nil {
+		t.Fatal(err)
+	}
+	unavailable, err := s.ReadReplica(ctx, vm.DatabaseID)
+	if err != nil || unavailable.Available || unavailable.ReplayLagBytes != nil || probes != 2 {
+		t.Fatalf("unsynchronized standby used cached evidence: %+v, %v after %d probes", unavailable, err, probes)
+	}
+}

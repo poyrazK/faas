@@ -2626,7 +2626,7 @@ paths:
         '200':
           description: Bounded credential-free planning and explicit unknown coverage
           headers:
-            Cache-Control: {schema: {type: string}, description: Always no-store}
+            Cache-Control: {schema: {type: string}, description: Connection budget metadata is served with Cache-Control no-store.}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ManagedPostgresConnectionBudget'}
@@ -8838,8 +8838,8 @@ paths:
     get:
       tags: [deployments]
       operationId: getDatabaseSwitch
-      summary: Read a rollback that restores the database.
-      description: The switch's phase, restore point, databases, drain counts and outcome.
+      summary: Read a managed PostgreSQL binding switch.
+      description: The switch's phase, databases, drain counts and outcome.
       responses:
         '200':
           description: The switch.
@@ -33453,7 +33453,7 @@ components:
         point_in_time:
           type: string
           format: date-time
-          description: A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds before the request.
+          description: A time inside the source's restore_range. Omit it to use the latest point.
         ttl_seconds:
           type: integer
           format: int64
@@ -33581,7 +33581,7 @@ components:
         app_id: {type: string, minLength: 1, maxLength: 128}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
-        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Credential mode. Unsupported modes are rejected before a binding is reserved.}
     ObjectBucket:
       description: Logical bucket metadata without upstream credentials or placement details.
       type: object

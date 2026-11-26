@@ -59,6 +59,8 @@ class ManagedPostgresDatabase:
     """True when the database starts when an app bound to it wakes."""
     restore_source_database_id: None | str | Unset = UNSET
     restore_point_in_time: datetime.datetime | None | Unset = UNSET
+    masked_branch: bool | Unset = UNSET
+    """True for a branch created by a masked logical copy."""
     last_error_code: None | str | Unset = UNSET
     deleted_at: datetime.datetime | None | Unset = UNSET
     restorable_until: datetime.datetime | Unset = UNSET
@@ -133,6 +135,8 @@ class ManagedPostgresDatabase:
         else:
             restore_point_in_time = self.restore_point_in_time
 
+        masked_branch = self.masked_branch
+
         last_error_code: None | str | Unset
         if isinstance(self.last_error_code, Unset):
             last_error_code = UNSET
@@ -201,6 +205,8 @@ class ManagedPostgresDatabase:
             field_dict["restore_source_database_id"] = restore_source_database_id
         if restore_point_in_time is not UNSET:
             field_dict["restore_point_in_time"] = restore_point_in_time
+        if masked_branch is not UNSET:
+            field_dict["masked_branch"] = masked_branch
         if last_error_code is not UNSET:
             field_dict["last_error_code"] = last_error_code
         if deleted_at is not UNSET:
@@ -289,6 +295,8 @@ class ManagedPostgresDatabase:
 
         restore_point_in_time = _parse_restore_point_in_time(d.pop("restore_point_in_time", UNSET))
 
+        masked_branch = d.pop("masked_branch", UNSET)
+
         def _parse_last_error_code(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -376,6 +384,7 @@ class ManagedPostgresDatabase:
             wake_with_app=wake_with_app,
             restore_source_database_id=restore_source_database_id,
             restore_point_in_time=restore_point_in_time,
+            masked_branch=masked_branch,
             last_error_code=last_error_code,
             deleted_at=deleted_at,
             restorable_until=restorable_until,

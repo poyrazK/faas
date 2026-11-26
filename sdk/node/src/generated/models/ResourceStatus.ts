@@ -3,6 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { Condition } from './Condition.js';
+import type { ManagedPostgresBackupStatus } from './ManagedPostgresBackupStatus.js';
+import type { ManagedPostgresMaintenanceStatus } from './ManagedPostgresMaintenanceStatus.js';
+import type { ManagedPostgresReplicaStatus } from './ManagedPostgresReplicaStatus.js';
+import type { ManagedPostgresStorageStatus } from './ManagedPostgresStorageStatus.js';
 /**
  * A resource's status subresource: conditions derived when read, never stored.
  */
@@ -17,5 +21,9 @@ export type ResourceStatus = {
    */
   observed_at: string;
   conditions: Array<Condition>;
+  storage?: ManagedPostgresStorageStatus;
+  maintenance?: ManagedPostgresMaintenanceStatus;
+  backup?: ManagedPostgresBackupStatus;
+  replica?: ManagedPostgresReplicaStatus;
 };
 

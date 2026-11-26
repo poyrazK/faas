@@ -32,7 +32,15 @@ var (
 	postgresConditions = resourceConditions{
 		kind: api.ResourceKindDatabase, noun: "postgres", ref: "<name|id>",
 		resolve: func(ctx context.Context, client *Client, ref string) (string, error) {
-			return postgresDatabaseID(ctx, client, ref)
+			if projectOrganization == "" {
+				return postgresDatabaseID(ctx, client, ref)
+			}
+			catalog, err := client.ListOrgManagedPostgresDatabases(ctx, projectOrganization)
+			if err != nil {
+				return "", err
+			}
+			database, err := resolveManagedPostgresDatabase(ctx, managedPostgresCatalog{items: catalog.Items}, ref)
+			return database.ID, err
 		},
 		read:     (*Client).GetManagedPostgresDatabaseStatus,
 		fallback: "gregale postgres get",

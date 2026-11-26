@@ -6,9 +6,12 @@ import (
 	"io"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgproto3"
+
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 // Read-only endpoints (ADR-1027 amendment 2026-11-11). <id>-ro names a
@@ -27,20 +30,25 @@ const readOnlySuffix = "-ro"
 
 // endpoint is what a client's label asked for.
 type endpoint struct {
-	databaseID string
-	pooled     bool
-	readOnly   bool
+	databaseID  string
+	pooled      bool
+	readOnly    bool
+	replicaOnly bool
 }
 
-// parseEndpoint reads <id>[-ro][-pooler].
+// parseEndpoint reads <id>[-ro|-replica][-pooler].
 func parseEndpoint(label string) (endpoint, bool) {
 	label = strings.ToLower(label)
 	id, pooled := strings.CutSuffix(label, pooledSuffix)
+	id, replicaOnly := strings.CutSuffix(id, dbguest.ReplicaOnlySuffix)
 	id, readOnly := strings.CutSuffix(id, readOnlySuffix)
+	if replicaOnly && readOnly {
+		return endpoint{}, false
+	}
 	if _, err := uuid.Parse(id); err != nil || len(id) != 36 {
 		return endpoint{}, false
 	}
-	return endpoint{databaseID: id, pooled: pooled, readOnly: readOnly}, true
+	return endpoint{databaseID: id, pooled: pooled, readOnly: readOnly || replicaOnly, replicaOnly: replicaOnly}, true
 }
 
 // readOnlyParams are a read-only endpoint's startup parameters.
@@ -51,7 +59,9 @@ func readOnlyParams(params map[string]string) map[string]string {
 }
 
 // primary is the backend without its replica.
-func (b Backend) primary() Backend { return Backend{Target: b.Target, Node: b.Node} }
+func (b Backend) primary() Backend {
+	return Backend{Target: b.Target, Node: b.Node, PrimaryEpochMicros: b.PrimaryEpochMicros}
+}
 
 // replica is where the database's read sessions go, if schedd named one.
 func (b Backend) replica() (Backend, bool) {
@@ -107,6 +117,57 @@ func (p *Proxy) loginEndpoint(ctx context.Context, woken Backend, readOnly bool,
 		p.cfg.Metrics.readSession("primary")
 	}
 	return l, err
+}
+
+// A missing or stale sample cannot satisfy strict routing. The scheduler
+// refreshes its control-plane observation on demand and shares it briefly.
+const replicaMaxSampleAge = 5 * time.Second
+
+var errReplicaUnavailable = &fatal{"57P03", "the read replica is unavailable or behind; retry shortly"}
+
+type replicaRouteReader interface {
+	ReplicaRoute(context.Context, string) (Backend, *int64, time.Time, error)
+}
+
+func (p *Proxy) strictReplica(ctx context.Context, id string) (Backend, error) {
+	reader, ok := p.waker.(replicaRouteReader)
+	if !ok {
+		return Backend{}, errReplicaUnavailable
+	}
+	probe, cancel := context.WithTimeout(ctx, p.cfg.ReplicaLoginTimeout)
+	defer cancel()
+	replica, lag, observed, err := reader.ReplicaRoute(probe, id)
+	age := time.Since(observed)
+	if err != nil || replica.Target == "" || replica.Node == "" || lag == nil || *lag < 0 ||
+		*lag > *p.cfg.ReplicaMaxReplayLagBytes || age < -time.Second || age > replicaMaxSampleAge {
+		return Backend{}, errReplicaUnavailable
+	}
+	replica.replicaOnly = true
+	return replica, nil
+}
+
+// loginRoute is shared by direct sessions and pooled server connections.
+func (p *Proxy) loginRoute(ctx context.Context, databaseID string, readOnly bool, strict Backend, params map[string]string, clientKey, serverKey []byte) (backendLogin, error) {
+	if strict.replicaOnly {
+		login, err := p.loginReplica(ctx, strict, databaseID, readOnlyParams(params), clientKey, serverKey)
+		if err != nil {
+			p.log.Debug("pgproxy: standby-only login refused", "database_id", databaseID, "err", err)
+			return backendLogin{}, errReplicaUnavailable
+		}
+		p.cfg.Metrics.readSession("replica")
+		return login, nil
+	}
+
+	started := time.Now()
+	woken, err := p.waker.Wake(ctx, databaseID)
+	p.cfg.Metrics.woke(time.Since(started))
+	if err != nil {
+		if f := wakeRefused(err); f != nil {
+			return backendLogin{}, f
+		}
+		return backendLogin{}, err
+	}
+	return p.loginEndpoint(ctx, woken, readOnly, databaseID, params, clientKey, serverKey)
 }
 
 // loginReplica tries the replica within ReplicaLoginTimeout, so a replica

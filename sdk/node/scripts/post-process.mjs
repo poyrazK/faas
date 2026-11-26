@@ -59,6 +59,17 @@ export async function patchClientServices(dir) {
   });
 }
 
+/** Put the small manifest first so the API can preflight before reading the archive. */
+export async function patchPostgresArchiveUploads(dir) {
+  const path = join(dir, 'services', 'ManagedPostgresService.ts');
+  const source = await readFile(path, 'utf8');
+  const patched = source.replace(
+    /(url: '[^']*\/postgres\/databases\/\{id\}\/imports\/\{operation_id\}\/archive',\n[^;]*?)(formData: formData,)/g,
+    '$1formData: { manifest: formData.manifest, archive: formData.archive },',
+  );
+  if (patched !== source) await writeFile(path, patched, 'utf8');
+}
+
 /** Stored workflow names are single path segments, including names with reserved
  * characters. Keep the pinned generator's encoding for other route families.
  */

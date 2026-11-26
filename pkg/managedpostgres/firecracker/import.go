@@ -3,8 +3,13 @@ package firecracker
 import (
 	"context"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbguest/extensionpb"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -23,20 +28,50 @@ var _ managedpostgres.Importer = (*Provider)(nil)
 // refused with ErrConflict; the target records a finished import's
 // operation, so this holds across VM restarts.
 func (p *Provider) Import(ctx context.Context, req managedpostgres.ImportRequest) (managedpostgres.ImportStatus, error) {
-	src := req.Source
-	if req.ResourceID == "" || src.Host == "" || src.Port < 1 || src.Port > 65535 || !dbguest.ValidOperationID(req.OperationID) {
-		return managedpostgres.ImportStatus{}, managedpostgres.ErrInvalid
+	request, err := p.importRequest(req)
+	if err != nil {
+		return managedpostgres.ImportStatus{}, err
 	}
-	progress, err := p.scheduler.ImportDatabase(ctx, &scheddpb.ImportDatabaseRequest{
-		DatabaseId: resourceUUID(req.ResourceID), Host: src.Host, Port: int32(src.Port), //nolint:gosec // port checked
-		SourceDatabase: src.Database, User: src.User, Password: src.Password,
-		TargetDatabase: p.cfg.Database, Owner: schemaOwner, SkipExtensions: src.SkipExtensions,
-		OperationId: req.OperationID,
-	})
+	progress, err := p.scheduler.ImportDatabase(ctx, request)
 	if err != nil {
 		return managedpostgres.ImportStatus{}, providerError(err)
 	}
 	return importStatus(progress), nil
+}
+
+// CustomerImport exercises the guarded RPC for both checks and starts.
+func (p *Provider) CustomerImport(ctx context.Context, req managedpostgres.ImportRequest, checkOnly bool) (managedpostgres.ImportStatus, error) {
+	request, err := p.importRequest(req)
+	if err != nil {
+		return managedpostgres.ImportStatus{}, err
+	}
+	client, ok := p.scheduler.(interface {
+		CustomerDatabaseImport(context.Context, *scheddpb.CustomerDatabaseImportRequest, ...grpc.CallOption) (*scheddpb.DatabaseImportProgress, error)
+	})
+	if !ok {
+		return managedpostgres.ImportStatus{}, managedpostgres.ErrUnsupported
+	}
+	progress, err := client.CustomerDatabaseImport(ctx, &scheddpb.CustomerDatabaseImportRequest{Source: request, CheckOnly: checkOnly})
+	if status.Code(err) == codes.Unimplemented {
+		return managedpostgres.ImportStatus{}, managedpostgres.ErrUnsupported
+	}
+	if err != nil {
+		return managedpostgres.ImportStatus{}, providerError(err)
+	}
+	return importStatus(progress), nil
+}
+
+func (p *Provider) importRequest(req managedpostgres.ImportRequest) (*scheddpb.ImportDatabaseRequest, error) {
+	src := req.Source
+	if req.ResourceID == "" || src.Host == "" || src.Port < 1 || src.Port > 65535 || !dbguest.ValidOperationID(req.OperationID) {
+		return nil, managedpostgres.ErrInvalid
+	}
+	return &scheddpb.ImportDatabaseRequest{
+		DatabaseId: resourceUUID(req.ResourceID), Host: src.Host, Port: int32(src.Port), //nolint:gosec // port checked
+		SourceDatabase: src.Database, User: src.User, Password: src.Password,
+		TargetDatabase: p.cfg.Database, Owner: schemaOwner, SkipExtensions: src.SkipExtensions,
+		OperationId: req.OperationID,
+	}, nil
 }
 
 // ImportStatus reports the database's import without waking it: a
@@ -57,7 +92,8 @@ func (p *Provider) ImportStatus(ctx context.Context, resourceID string) (managed
 func importStatus(in *scheddpb.DatabaseImportProgress) managedpostgres.ImportStatus {
 	out := managedpostgres.ImportStatus{State: managedpostgres.ImportState(in.GetState()), ErrorCode: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor()),
 		OperationID: in.GetOperationId(), MissingExtensions: dbguest.ReportableExtensions(in.GetMissingExtensions()),
-		RequiredVolumeBytes: max(in.GetRequiredVolumeBytes(), 0)}
+		RequiredVolumeBytes:    max(in.GetRequiredVolumeBytes(), 0),
+		IncompatibleExtensions: extensionpb.DecodeInstalled(in.GetIncompatibleExtensions())}
 	if out.State == "" {
 		out.State = managedpostgres.ImportNone
 	}

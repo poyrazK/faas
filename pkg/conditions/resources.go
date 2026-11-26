@@ -47,6 +47,42 @@ func Database(d api.ManagedPostgresDatabase, observedAt time.Time) api.ResourceS
 	}
 }
 
+// WithDatabaseStorage adds fresh pressure to the database's Degraded
+// condition while preserving a provider-reported degradation.
+func WithDatabaseStorage(status api.ResourceStatus, storage *api.ManagedPostgresStorageStatus) api.ResourceStatus {
+	status.Storage = storage
+	reason, message := DatabaseStorageWarning(storage)
+	if reason == "" {
+		return status
+	}
+	for i := range status.Conditions {
+		c := &status.Conditions[i]
+		if c.Type == api.ConditionDegraded && c.Status != api.ConditionTrue {
+			c.Status, c.Reason, c.Message = api.ConditionTrue, reason, message
+		}
+	}
+	return status
+}
+
+// DatabaseStorageWarning reports the most urgent current storage condition.
+func DatabaseStorageWarning(storage *api.ManagedPostgresStorageStatus) (reason, message string) {
+	if storage == nil {
+		return "", ""
+	}
+	if p := storage.Primary; p != nil && p.Fresh {
+		if p.ReadOnly {
+			return api.ConditionReasonStorageReadOnly, "The primary is read-only because its volume is low on space. Free space or grow storage to resume writes."
+		}
+		if p.Low {
+			return api.ConditionReasonStorageLow, "The primary is low on space. Free space or grow storage before writes are interrupted."
+		}
+	}
+	if standby := storage.Standby; standby != nil && standby.Fresh && standby.Low {
+		return api.ConditionReasonStandbyStorageLow, "The standby is low on space. Replication can stop if the volume fills."
+	}
+	return "", ""
+}
+
 func databaseReadyCondition(d api.ManagedPostgresDatabase) api.Condition {
 	c := api.Condition{Type: api.ConditionReady, Status: api.ConditionFalse, Reason: d.State}
 	switch d.State {

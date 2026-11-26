@@ -10,3 +10,11 @@ type RestoreManagedPostgresDatabaseRequest = api.RestoreManagedPostgresDatabaseR
 type ManagedPostgresBinding = api.ManagedPostgresBinding
 type ManagedPostgresBindingList = api.ManagedPostgresBindingList
 type CreateManagedPostgresBindingRequest = api.CreateManagedPostgresBindingRequest
+
+type ManagedPostgresBindingTimeouts = api.ManagedPostgresBindingTimeouts
+type ManagedPostgresBackupSchedule = api.ManagedPostgresBackupSchedule
+type ManagedPostgresErrorHistory = api.ManagedPostgresErrorHistory
+type ManagedPostgresQueryError = api.ManagedPostgresQueryError
+type SetManagedPostgresErrorHistoryRequest = api.SetManagedPostgresErrorHistoryRequest
+type SetManagedPostgresBackupScheduleRequest = api.SetManagedPostgresBackupScheduleRequest
+type SetManagedPostgresBindingTimeoutsRequest = api.SetManagedPostgresBindingTimeoutsRequest

@@ -59,6 +59,7 @@ def sync_detailed(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:
@@ -96,6 +97,7 @@ def sync(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:
@@ -128,6 +130,7 @@ async def asyncio_detailed(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:
@@ -163,6 +166,7 @@ async def asyncio(
     never stored. Ready follows the lifecycle state; a database whose
     compute scaled to zero is Ready=True with reason suspended. Failed,
     deleting and deleted databases report terminal conditions.
+    Reading this endpoint leaves parked databases asleep.
     Cache-Control no-store.
 
     Args:

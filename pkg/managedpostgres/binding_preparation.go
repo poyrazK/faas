@@ -40,7 +40,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 	if err != nil {
 		return "", "", err
 	}
-	if err := backend.Capabilities.SupportsCredentialAccess(binding.Access); err != nil {
+	if err := backend.SupportsBindingAccess(database.Spec, binding.Access); err != nil {
 		return "", "", err
 	}
 	request := bindingCredentialRequest(binding, databaseDataResource(database))

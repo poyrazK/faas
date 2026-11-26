@@ -37,6 +37,13 @@ db_url_path = "/u"
 	if _, err := LoadConfig(write(full + "verifier_cache_ttl = \"1h\"\n")); err == nil {
 		t.Fatal("an hour-long verifier cache was accepted")
 	}
+	strict, err := LoadConfig(write(full + "replica_max_replay_lag_bytes = 0\n"))
+	if err != nil || strict.ReplicaMaxReplayLagBytes == nil || *strict.ReplicaMaxReplayLagBytes != 0 {
+		t.Fatalf("zero replay backlog limit was lost: %v, %v", strict, err)
+	}
+	if _, err := LoadConfig(write(full + "replica_max_replay_lag_bytes = -1\n")); err == nil {
+		t.Fatal("negative replay backlog limit was accepted")
+	}
 	peered, err := LoadConfig(write(full + "instance_id = 2\n[cancel_peers]\n\"1\" = \"100.64.0.11:5432\"\n\"3\" = \"[fd00::3]:5432\"\n"))
 	if err != nil || peered.InstanceID != 2 || len(peered.peers) != 2 || peered.peers[1] != "100.64.0.11:5432" || peered.peers[3] != "[fd00::3]:5432" {
 		t.Fatalf("cancel peers = %+v, %v", peered, err)

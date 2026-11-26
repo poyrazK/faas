@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -156,6 +158,45 @@ func TestDatabaseSwitchRollbackRecordsTheSwitchWithoutTouchingTheRelease(t *test
 	}
 	if w = f.do(t, http.MethodGet, "/v1/apps/"+f.slug+"/database-switches/00000000-0000-4000-8000-000000000000", nil); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown switch = %d", w.Code)
+	}
+}
+
+func TestMigrationSwitchUsesPreviewHistoryAndCancellation(t *testing.T) {
+	f := newSwitchFixture(t)
+	store := *f.env.Store()
+	sw, err := store.CreateDatabaseSwitch(t.Context(), state.DatabaseSwitch{
+		ID: uuid.NewString(), AccountID: *f.env.AcctID(), AppID: *f.env.AppID(), Scope: state.DefaultEnvScope,
+		SourceDatabaseID: f.sourceID, TargetDatabaseID: uuid.NewString(), TargetName: "orders-native",
+		MigrationOperationID: uuid.NewString(), FromDeploymentID: f.v3.ID, TargetDeploymentID: f.v3.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/apps/" + f.slug + "/database-switches"
+	stable := f.do(t, http.MethodGet, path, nil)
+	var stableList api.DatabaseSwitchList
+	if stable.Code != http.StatusOK || json.Unmarshal(stable.Body.Bytes(), &stableList) != nil || len(stableList.Items) != 0 {
+		t.Fatalf("stable history = %d %s", stable.Code, stable.Body)
+	}
+	for method, suffix := range map[string]string{http.MethodGet: "", http.MethodPost: "/cancel"} {
+		w := f.do(t, method, path+"/"+sw.ID+suffix, nil)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("stable %s = %d %s", method, w.Code, w.Body)
+		}
+	}
+	preview := f.do(t, http.MethodGet, path+"/migration", nil)
+	var list api.MigrationDatabaseSwitchList
+	if preview.Code != http.StatusOK || json.Unmarshal(preview.Body.Bytes(), &list) != nil || len(list.Items) != 1 ||
+		list.Items[0].ID != sw.ID || list.Items[0].RestorePoint != "" || list.Items[0].MigrationOperationID != sw.MigrationOperationID {
+		t.Fatalf("migration history = %d %s", preview.Code, preview.Body)
+	}
+	w := f.do(t, http.MethodGet, path+"/migration/"+sw.ID, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("migration get = %d %s", w.Code, w.Body)
+	}
+	w = f.do(t, http.MethodPost, path+"/migration/"+sw.ID+"/cancel", nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("migration cancel = %d %s", w.Code, w.Body)
 	}
 }
 

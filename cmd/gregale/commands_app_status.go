@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -232,8 +233,69 @@ func renderResourceStatus(status api.ResourceStatus) int {
 		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", c.Type, c.Status, c.Reason, message)
 	}
 	_ = tw.Flush()
+	if status.Storage != nil {
+		renderDatabaseStorageStatus(osStdout, status.Storage)
+	}
+	if status.Maintenance != nil {
+		renderPostgresMaintenance(osStdout, *status.Maintenance)
+	}
+	if status.Backup != nil {
+		renderPostgresBackupStatus(osStdout, *status.Backup)
+	}
+	if r := status.Replica; r != nil {
+		state := "unavailable"
+		if r.Available {
+			state = "available"
+		}
+		lag := "unknown"
+		if r.ReplayLagBytes != nil {
+			lag = fmt.Sprintf("%d bytes", *r.ReplayLagBytes)
+		}
+		age := "no sample"
+		if r.SampleAgeMillis != nil {
+			age = fmt.Sprintf("sample age %s", time.Duration(*r.SampleAgeMillis)*time.Millisecond)
+		}
+		_, _ = fmt.Fprintf(osStdout, "  Read replica: %s, WAL replay backlog %s (%s)\n", state, lag, age)
+	}
 	if status.Kind == api.ResourceKindApp {
 		_, _ = fmt.Fprintf(osStdout, "Evidence: gregale app health %s\n", status.Name)
 	}
 	return 0
+}
+
+func renderDatabaseStorageStatus(w io.Writer, storage *api.ManagedPostgresStorageStatus) {
+	_, _ = fmt.Fprintf(w, "  Storage allocation: %s per volume\n", formatPostgresStorage(storage.AllocatedBytes))
+	renderDatabaseVolume(w, "Primary", storage.Primary)
+	if storage.StandbyExpected || storage.Standby != nil {
+		renderDatabaseVolume(w, "Standby", storage.Standby)
+	}
+	if storage.AutoGrow != nil {
+		renderPostgresAutoGrow(w, *storage.AutoGrow)
+	}
+	if len(storage.Alerts) > 0 {
+		_, _ = fmt.Fprintln(w, "  Storage alert history:")
+		for _, alert := range storage.Alerts {
+			_, _ = fmt.Fprintf(w, "    %s  %s (%s free of %s)\n", alert.SampledAt.Format(time.RFC3339),
+				alert.Title(), formatPostgresStorage(alert.FreeBytes), formatPostgresStorage(alert.TotalBytes))
+		}
+	}
+}
+
+func renderDatabaseVolume(w io.Writer, role string, volume *api.ManagedPostgresVolumeStatus) {
+	if volume == nil {
+		_, _ = fmt.Fprintf(w, "  %s storage: no sample available\n", role)
+		return
+	}
+	state := "healthy"
+	switch {
+	case volume.ReadOnly:
+		state = "read-only"
+	case volume.Low:
+		state = "low space"
+	}
+	if !volume.Fresh {
+		state = "historical, last state " + state
+	}
+	_, _ = fmt.Fprintf(w, "  %s storage: %s free of %s, %s (sampled %s)\n", role,
+		formatPostgresStorage(volume.FreeBytes), formatPostgresStorage(volume.TotalBytes), state, volume.SampledAt.Format(time.RFC3339))
 }

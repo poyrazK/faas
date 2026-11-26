@@ -10,6 +10,7 @@ package sandboxes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -35,6 +36,7 @@ type Store interface {
 	CloseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
 	PauseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
 	ResumeSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
+	GrowPausedSandboxVolume(ctx context.Context, accountID, id string, volumeGB int) (bool, error)
 	SandboxSnapshot(ctx context.Context, accountID, id string) (agentstore.SandboxSnapshot, error)
 	SandboxSnapshots(ctx context.Context, accountID string, f agentstore.SandboxSnapshotFilter) ([]agentstore.SandboxSnapshot, error)
 	RequestSandboxSnapshotDelete(ctx context.Context, accountID, id string) error
@@ -217,7 +219,8 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 }
 
 // Update handles PATCH /v1/sandboxes/{id}: a live session's idle timeout
-// or lifetime, within the plan's limits.
+// or lifetime, within the plan's limits, or a paused persistent session's
+// volume size (ADR-20261122132055 §4).
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !h.configured(w) {
 		return
@@ -226,8 +229,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !httpkit.DecodeJSONLimit(w, r, &body, requestMaxBytes) {
 		return
 	}
-	if body.IdleTimeoutS == nil && body.LifetimeS == nil {
-		api.WriteProblem(w, api.ErrValidation("give idle_timeout_s, lifetime_s or both"))
+	if body.IdleTimeoutS == nil && body.LifetimeS == nil && body.VolumeGB == nil {
+		api.WriteProblem(w, api.ErrValidation("give idle_timeout_s, lifetime_s or volume_gb"))
 		return
 	}
 	sb, err := h.Store.Sandbox(r.Context(), acct.ID, r.PathValue("id"))
@@ -235,16 +238,60 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
 		return
 	}
-	idle, expires, prob := h.timeouts(acct, sb, body)
-	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
+	// The timeouts are checked before the volume grows, so a refused
+	// request changes nothing.
+	timed := body.IdleTimeoutS != nil || body.LifetimeS != nil
+	var idle int
+	var expires time.Time
+	if timed {
+		var prob *api.Problem
+		if idle, expires, prob = h.timeouts(acct, sb, body); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
+	if body.VolumeGB != nil {
+		if sb, err = h.growVolume(r.Context(), acct, sb, *body.VolumeGB); err != nil {
+			api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
+			return
+		}
+		if !timed {
+			httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
+			return
+		}
 	}
 	if sb, err = h.Store.UpdateSandboxTimeouts(r.Context(), acct.ID, sb.ID, idle, expires); err != nil {
 		api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
+}
+
+// growVolume sets a paused persistent session's volume size: never
+// smaller, within the plan. The session then resumes cold (resumed_cold):
+// its files are kept, its processes start again.
+func (h *Handler) growVolume(ctx context.Context, acct state.Account, sb agentstore.Sandbox, gb int) (agentstore.Sandbox, error) {
+	idx := acct.Plan.PlanIndex()
+	switch {
+	case sb.Kind != api.SandboxKindPersistent:
+		return sb, api.ErrValidation("volume_gb sizes persistent sessions only")
+	case gb < sb.VolumeGB:
+		return sb, api.ErrValidation(fmt.Sprintf("volume_gb never shrinks: the volume is %d GB; got %d", sb.VolumeGB, gb))
+	case gb > api.SandboxVolumeMaxGB[idx]:
+		return sb, api.ErrAgentLimit(acct.Plan, "SandboxVolumeMaxGB", api.SandboxVolumeMaxGB[idx], gb)
+	case gb == sb.VolumeGB:
+		return sb, nil
+	}
+	grown, err := h.Store.GrowPausedSandboxVolume(ctx, acct.ID, sb.ID, gb)
+	if err != nil {
+		return sb, err
+	}
+	if !grown {
+		return sb, api.NewProblem(http.StatusConflict, api.CodeSandboxNotPausable, "Pause the session first",
+			"a volume grows only while its session is paused; pause it, set volume_gb, then resume it")
+	}
+	h.audit(ctx, "sandbox.volume_grown", sb)
+	return h.Store.Sandbox(ctx, acct.ID, sb.ID)
 }
 
 // Close handles DELETE /v1/sandboxes/{id}. A queued session closes at once;
@@ -386,7 +433,10 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 // problem maps a store error to the customer's problem.
 func (h *Handler) problem(acct state.Account, operation string, err error) *api.Problem {
 	var limit *agentstore.LimitError
+	var problem *api.Problem
 	switch {
+	case errors.As(err, &problem):
+		return problem
 	case errors.As(err, &limit):
 		return api.ErrAgentLimit(acct.Plan, limit.Limit, limit.Max, limit.Observed)
 	case errors.Is(err, agentstore.ErrNotFound):

@@ -6953,6 +6953,75 @@ $$;
 
 
 --
+-- Name: capture_native_postgres_storage_alert(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_native_postgres_storage_alert() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        DECLARE
+            previous native_postgres_storage_alerts%ROWTYPE;
+            next_state text;
+            next_incident uuid;
+            db_name text;
+            growth text;
+        BEGIN
+            IF NEW.sampled_at < statement_timestamp() - interval '5 minutes' THEN
+                RETURN NEW;
+            END IF;
+
+            -- The upsert of the primary sample serializes this decision per VM.
+            SELECT * INTO previous FROM native_postgres_storage_alerts
+            WHERE database_id = NEW.database_id ORDER BY sampled_at DESC LIMIT 1;
+
+            IF NEW.sampled_at <= previous.sampled_at THEN
+                RETURN NEW;
+            END IF;
+            IF NEW.read_only AND previous.state IS DISTINCT FROM 'read_only' THEN
+                next_state := 'read_only';
+            ELSIF NEW.low AND NOT NEW.read_only AND NEW.low_since < NEW.sampled_at
+                AND (previous.state IS NULL OR previous.state = 'recovered') THEN
+                next_state := 'low_space';
+            ELSIF NOT NEW.low AND NOT NEW.read_only AND previous.state IN ('low_space', 'read_only') THEN
+                next_state := 'recovered';
+            ELSE
+                RETURN NEW;
+            END IF;
+
+            -- Native managed databases use the same UUID for the resource and VM.
+            SELECT d.name, CASE
+                WHEN next_state = 'recovered' THEN ''
+                WHEN EXISTS (SELECT 1 FROM managed_postgres_resizes r WHERE r.database_id = d.id
+                    AND r.state = 'pending' AND r.target_storage_limit_bytes > NEW.allocated_bytes) THEN 'resize_queued'
+                WHEN next_state = 'read_only' THEN 'manual_resize_required'
+                WHEN COALESCE(p.max_bytes, 0) = 0 THEN 'disabled'
+                WHEN p.max_bytes <= NEW.allocated_bytes THEN 'ceiling_reached'
+                WHEN p.reason IN ('storage_allowance', 'resize_conflict', 'resize_unavailable', 'node_capacity')
+                    AND p.checked_at >= NEW.state_changed_at THEN p.reason
+                WHEN d.scale_to_zero THEN 'waiting_for_idle'
+                WHEN EXISTS (SELECT 1 FROM native_postgres_maintenance_windows w WHERE w.database_id = NEW.database_id)
+                    THEN 'waiting_for_maintenance_window'
+                ELSE 'maintenance_window_required'
+            END INTO db_name, growth
+            FROM managed_postgres_databases d LEFT JOIN native_postgres_auto_grow p ON p.database_id = d.id
+            WHERE d.id = NEW.database_id AND d.provider_resource_id = NEW.database_id::text
+                AND d.state IN ('ready', 'updating') AND d.clone_resource_role = 'target';
+            IF NOT FOUND THEN
+                RETURN NEW;
+            END IF;
+
+            next_incident := CASE WHEN previous.state IN ('low_space', 'read_only')
+                THEN previous.incident_id ELSE gen_random_uuid() END;
+            INSERT INTO native_postgres_storage_alerts (database_id, incident_id, state, sampled_at,
+                total_bytes, free_bytes, growth_reason, database_name)
+            VALUES (NEW.database_id, next_incident, next_state, NEW.sampled_at,
+                NEW.total_bytes, NEW.free_bytes, growth, db_name);
+            RETURN NEW;
+        END;
+        $$;
+
+
+--
 -- Name: capture_queue_canary_invocation_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7960,7 +8029,7 @@ BEGIN
   END IF;
  ELSIF TG_TABLE_NAME='managed_postgres_bindings' THEN
   PERFORM 1 FROM managed_postgres_databases WHERE id=NEW.database_id FOR UPDATE;
-  IF NEW.access<>'read_only' AND EXISTS(SELECT 1 FROM data_pipelines WHERE database_id=NEW.database_id AND state<>'deleted') THEN
+  IF NEW.access NOT IN ('read_only','replica_only') AND EXISTS(SELECT 1 FROM data_pipelines WHERE database_id=NEW.database_id AND state<>'deleted') THEN
    RAISE EXCEPTION 'pipeline mirrors permit only read-only application bindings';
   END IF;
  ELSIF TG_TABLE_NAME='managed_postgres_databases' THEN
@@ -10198,7 +10267,7 @@ BEGIN
  FOR b IN SELECT * FROM managed_postgres_bindings WHERE app_id=q.app_id AND scope=release_scope AND state<>'deleted' ORDER BY id LOOP
   -- data_api and auth logins are qualified by their own evidence.
   IF b.access IN ('data_api','auth') THEN CONTINUE; END IF;
-  IF b.access NOT IN ('read_write','read_only','migration','session') OR b.state<>'ready' OR b.rotation_previous_generation IS NOT NULL OR b.cutover_id IS NOT NULL THEN RETURN NULL; END IF;
+  IF b.access NOT IN ('read_write','read_only','migration','session','replica_only') OR b.state<>'ready' OR b.rotation_previous_generation IS NOT NULL OR b.cutover_id IS NOT NULL THEN RETURN NULL; END IF;
   SELECT * INTO s FROM app_secrets WHERE app_id=q.app_id AND scope=release_scope AND key=b.environment_key;
   IF s.managed_postgres_binding_id IS DISTINCT FROM b.id OR s.managed_credential_generation IS DISTINCT FROM b.credential_generation OR s.delivery_version IS NULL THEN RETURN NULL; END IF;
   SELECT * INTO receipt FROM environment_qualification_postgres_receipts WHERE request_id=q.id AND attempt=q.attempt AND binding_id=b.id
@@ -11062,7 +11131,7 @@ CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_
    (s.managed_postgres_binding_id IS NULL OR EXISTS (
     SELECT 1 FROM managed_postgres_bindings b WHERE b.id=s.managed_postgres_binding_id
      AND b.account_id=s.account_id AND b.app_id=s.app_id AND b.scope=s.scope
-     AND b.environment_key=s.key AND b.access IN ('read_write','read_only','data_api','auth','session')))
+     AND b.environment_key=s.key AND b.access IN ('read_write','read_only','data_api','auth','session','replica_only')))
  ),
  baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs,
   coalesce(jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version),'{}'::jsonb) AS versions FROM eligible s)
@@ -19098,6 +19167,45 @@ END $$;
 
 
 --
+-- Name: guard_native_postgres_masked_branch_ready(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_native_postgres_masked_branch_ready() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            -- Logical branches have a source database but no physical restore point.
+            IF NEW.state = 'ready' AND NEW.restore_source_database_id IS NOT NULL
+                AND NEW.restore_source_resource_id IS NULL AND NEW.restore_point_in_time IS NULL
+                AND NOT EXISTS (SELECT FROM native_postgres_masked_branches b
+                    WHERE b.database_id = NEW.id AND b.validated_at IS NOT NULL) THEN
+                RAISE EXCEPTION 'masked branch validation is incomplete' USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+
+
+--
+-- Name: guard_native_postgres_masked_preview_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_native_postgres_masked_preview_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            IF EXISTS (SELECT FROM managed_postgres_databases s
+                WHERE s.id = NEW.preview_source_database_id AND s.previews = 'masked')
+                AND (NEW.restore_source_database_id IS DISTINCT FROM NEW.preview_source_database_id
+                    OR NEW.restore_source_resource_id IS NOT NULL OR NEW.restore_point_in_time IS NOT NULL) THEN
+                RAISE EXCEPTION 'masked preview requires a logical copy' USING ERRCODE = '23514';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+
+
+--
 -- Name: guard_node_migration_admissions(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -23156,6 +23264,74 @@ $$;
 
 
 --
+-- Name: native_postgres_auto_grow_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.native_postgres_auto_grow_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.volume_bytes > OLD.volume_bytes AND EXISTS (
+        SELECT 1 FROM managed_postgres_resizes r
+        LEFT JOIN native_postgres_auto_grow p ON p.database_id = r.database_id
+        WHERE r.provider_resource_id = OLD.database_id::text
+            AND r.state = 'pending' AND r.automatic AND r.target_storage_limit_bytes = NEW.volume_bytes
+            AND (OLD.state <> 'parked' OR OLD.replicated OR
+                CASE WHEN OLD.always_on THEN NOT EXISTS (
+                    SELECT 1 FROM native_postgres_base_refreshes a
+                    WHERE a.resize_id = r.id AND a.database_id = OLD.database_id
+                        AND a.node_id = OLD.node_id AND a.finished_at IS NULL
+                        AND a.target_volume_bytes = NEW.volume_bytes
+                ) ELSE (
+                    OLD.held OR OLD.idle_parked_at IS DISTINCT FROM OLD.state_changed_at
+                    OR OLD.idle_parked_at IS DISTINCT FROM r.auto_grow_idle_at
+                    OR p.max_bytes IS NULL OR p.max_bytes < NEW.volume_bytes
+                ) END)
+    ) THEN
+        RAISE EXCEPTION 'automatic storage growth requires an authorized park'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.state = 'waking' AND (
+        EXISTS (
+            SELECT 1 FROM native_postgres_base_refreshes a
+            WHERE a.database_id = OLD.database_id AND a.finished_at IS NULL
+                AND a.resize_id IS NOT NULL AND a.target_volume_bytes > OLD.volume_bytes
+        ) OR (OLD.resize_pending AND EXISTS (
+            SELECT 1 FROM managed_postgres_resizes r
+            WHERE r.provider_resource_id = OLD.database_id::text
+                AND r.state = 'pending' AND r.automatic AND r.target_storage_limit_bytes = OLD.volume_bytes
+        ))
+    ) THEN
+        RAISE EXCEPTION 'automatic storage growth must finish before waking'
+            USING ERRCODE = 'lock_not_available';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: native_postgres_open_window(integer, integer, integer, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.native_postgres_open_window(weekday integer, start_minute integer, duration_minutes integer, at_time timestamp with time zone) RETURNS timestamp with time zone
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+            WITH clock AS (SELECT at_time AT TIME ZONE 'UTC' AS now_utc),
+            opening AS (
+                SELECT now_utc, date_trunc('day', now_utc)
+                  - make_interval(days => (extract(dow FROM now_utc)::int - weekday + 7) % 7)
+                  + make_interval(mins => start_minute) AS today FROM clock
+            ), latest AS (
+                SELECT now_utc, CASE WHEN today > now_utc THEN today - interval '7 days' ELSE today END AS opened
+                FROM opening
+            )
+            SELECT opened AT TIME ZONE 'UTC' FROM latest
+            WHERE now_utc < opened + make_interval(mins => duration_minutes)
+        $$;
+
+
+--
 -- Name: node_admission_lock_capacity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -25033,6 +25209,30 @@ $$;
 
 
 --
+-- Name: project_database_handoff_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_database_handoff_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    reserved bigint;
+BEGIN
+    SELECT COALESCE(sum(handoff_reserved_mb), 0) INTO reserved
+    FROM native_postgres_base_refreshes
+    WHERE node_id = NEW.id AND finished_at IS NULL AND handoff_reserved_mb > 0;
+
+    NEW.configured_admission_ceiling_mb := NULL;
+    IF reserved > 0 AND NEW.admission_ceiling_mb > 0 THEN
+        NEW.configured_admission_ceiling_mb := NEW.admission_ceiling_mb;
+        NEW.admission_ceiling_mb := greatest(1, NEW.admission_ceiling_mb - reserved)::integer;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: project_environment_clone_inventory_present(uuid, uuid, text[], uuid[], uuid[], jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -25044,6 +25244,7 @@ DECLARE
     hop jsonb;
     live jsonb;
     alias text;
+    live_alias text;
     query text;
     hops integer;
     present boolean;
@@ -25068,15 +25269,16 @@ BEGIN
         IF query IS NULL OR probe->>'table' IS NULL THEN
             RAISE EXCEPTION 'clone inventory probe is invalid: %', probe USING ERRCODE = '22023';
         END IF;
+        live_alias := CASE WHEN (probe->>'live_on_owner')::boolean IS TRUE THEN alias ELSE 't0' END;
         FOR live IN SELECT value FROM jsonb_array_elements(COALESCE(probe->'live', '[]'::jsonb)) LOOP
             IF live->>'column' IS NULL THEN
                 RAISE EXCEPTION 'clone inventory live condition is invalid: %', live USING ERRCODE = '22023';
             ELSIF (live->>'null')::boolean IS TRUE THEN
-                query := query || format(' AND t0.%I IS NULL', live->>'column');
+                query := query || format(' AND %s.%I IS NULL', live_alias, live->>'column');
             ELSIF live->>'not' IS NOT NULL THEN
-                query := query || format(' AND t0.%I IS DISTINCT FROM %L', live->>'column', live->>'not');
+                query := query || format(' AND %s.%I IS DISTINCT FROM %L', live_alias, live->>'column', live->>'not');
             ELSIF (live->>'source_scope')::boolean IS TRUE THEN
-                query := query || format(' AND coalesce(nullif(t0.%I::text, ''''), ''default'') = ANY ($3)', live->>'column');
+                query := query || format(' AND coalesce(nullif(%s.%I::text, ''''), ''default'') = ANY ($3)', live_alias, live->>'column');
             ELSE
                 RAISE EXCEPTION 'clone inventory live condition is invalid: %', live USING ERRCODE = '22023';
             END IF;
@@ -39608,11 +39810,14 @@ CREATE TABLE public.database_nodes (
     lifecycle text DEFAULT 'active'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    recovery_region text DEFAULT ''::text NOT NULL,
+    configured_admission_ceiling_mb integer,
     CONSTRAINT database_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT database_nodes_boot_slots_check CHECK (((boot_slots >= 1) AND (boot_slots <= 256))),
     CONSTRAINT database_nodes_id_check CHECK ((id ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT database_nodes_lifecycle_check CHECK ((lifecycle = ANY (ARRAY['active'::text, 'draining'::text, 'unavailable'::text]))),
     CONSTRAINT database_nodes_postgres_majors_check CHECK ((postgres_majors <@ ARRAY[14, 15, 16, 17, 18])),
+    CONSTRAINT database_nodes_recovery_region_check CHECK (((recovery_region = ''::text) OR (recovery_region ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT database_nodes_target_url_check CHECK ((target_url <> ''::text)),
     CONSTRAINT database_nodes_volume_capacity_bytes_check CHECK ((volume_capacity_bytes > 0))
 );
@@ -39632,9 +39837,12 @@ CREATE TABLE public.database_restore_drills (
     result text DEFAULT 'running'::text NOT NULL,
     recovered_to timestamp with time zone,
     error_code text,
+    request_id uuid,
+    pending_outcome text,
     CONSTRAINT database_restore_drills_error_code CHECK (((error_code IS NULL) OR (error_code ~ '^[a-z0-9_]{1,64}$'::text))),
-    CONSTRAINT database_restore_drills_finished CHECK (((result = 'running'::text) = (finished_at IS NULL))),
-    CONSTRAINT database_restore_drills_result_check CHECK ((result = ANY (ARRAY['running'::text, 'ok'::text, 'failed'::text, 'skipped'::text])))
+    CONSTRAINT database_restore_drills_finished_v2 CHECK (((result = ANY (ARRAY['queued'::text, 'running'::text])) = (finished_at IS NULL))),
+    CONSTRAINT database_restore_drills_pending_outcome_check CHECK ((pending_outcome = ANY (ARRAY['ok'::text, 'failed'::text, 'skipped'::text]))),
+    CONSTRAINT database_restore_drills_result_check_v2 CHECK ((result = ANY (ARRAY['queued'::text, 'running'::text, 'ok'::text, 'failed'::text, 'skipped'::text])))
 );
 
 
@@ -39647,8 +39855,29 @@ CREATE TABLE public.database_role_verifiers (
     role_name text NOT NULL,
     verifier text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    pool_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT database_role_verifiers_role_name_check CHECK ((role_name ~ '^[a-z_][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT database_role_verifiers_verifier_check CHECK ((verifier ~ '^SCRAM-SHA-256\$[0-9]+:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$'::text))
+);
+
+
+--
+-- Name: database_upgrade_rehearsals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.database_upgrade_rehearsals (
+    drill_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    restore_started boolean DEFAULT false NOT NULL,
+    source_major integer NOT NULL,
+    target_major integer NOT NULL,
+    database_name text NOT NULL,
+    phase text DEFAULT 'restore'::text NOT NULL,
+    recovery_timeline bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT database_upgrade_rehearsals_check CHECK ((target_major > source_major)),
+    CONSTRAINT database_upgrade_rehearsals_phase_check CHECK ((phase = ANY (ARRAY['restore'::text, 'mark'::text, 'upgrade'::text, 'verify'::text]))),
+    CONSTRAINT database_upgrade_rehearsals_recovery_timeline_check CHECK (((recovery_timeline >= 0) AND (recovery_timeline <= '4294967295'::bigint))),
+    CONSTRAINT database_upgrade_rehearsals_source_major_check CHECK ((source_major >= 15))
 );
 
 
@@ -39710,16 +39939,24 @@ CREATE TABLE public.database_vms (
     major_history jsonb DEFAULT '[]'::jsonb NOT NULL,
     held boolean DEFAULT false NOT NULL,
     compute_quota_unit_seconds bigint,
+    idle_parked_at timestamp with time zone,
+    idle_parked_from timestamp with time zone,
+    recovery_region text DEFAULT ''::text NOT NULL,
+    restore_from_recovery boolean DEFAULT false NOT NULL,
+    restore_timeline bigint DEFAULT 0 NOT NULL,
     CONSTRAINT database_vms_compute_quota_check CHECK (((compute_quota_unit_seconds IS NULL) OR (compute_quota_unit_seconds > 0))),
     CONSTRAINT database_vms_last_error_check CHECK (((last_error IS NULL) OR (last_error ~ '^[a-z_]{1,64}$'::text))),
     CONSTRAINT database_vms_major_history CHECK ((jsonb_typeof(major_history) = 'array'::text)),
     CONSTRAINT database_vms_mem_mib_check CHECK (((mem_mib >= 128) AND (mem_mib <= 65536))),
     CONSTRAINT database_vms_move CHECK ((((state = 'moving'::text) = (move_node IS NOT NULL)) AND ((move_node IS NULL) OR ((move_node <> node_id) AND (move_lease_until IS NOT NULL))))),
     CONSTRAINT database_vms_postgres_major_check CHECK (((postgres_major >= 14) AND (postgres_major <= 18))),
+    CONSTRAINT database_vms_recovery_region_check CHECK (((recovery_region = ''::text) OR (recovery_region ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))),
+    CONSTRAINT database_vms_restore_from_recovery_check CHECK (((NOT restore_from_recovery) OR ((recovery_region <> ''::text) AND (restore_source IS NOT NULL)))),
     CONSTRAINT database_vms_restore_lineage CHECK ((((restore_source IS NULL) = (restore_target IS NULL)) AND (restore_source IS DISTINCT FROM database_id))),
+    CONSTRAINT database_vms_restore_timeline_check CHECK ((((restore_timeline >= 0) AND (restore_timeline <= '4294967295'::bigint)) AND ((restore_timeline = 0) OR (restore_source IS NOT NULL)))),
     CONSTRAINT database_vms_restore_window_seconds_check CHECK ((restore_window_seconds >= 0)),
     CONSTRAINT database_vms_standby CHECK ((((standby_node IS NULL) OR (replicated AND (standby_node <> node_id))) AND ((NOT standby_running) OR (standby_node IS NOT NULL)) AND ((NOT standby_synced) OR (standby_node IS NOT NULL)) AND ((move_node IS NULL) OR (standby_node IS NULL) OR (move_node <> standby_node)) AND (NOT (drop_standby_slot AND replicated)))),
-    CONSTRAINT database_vms_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'parked'::text, 'waking'::text, 'running'::text, 'parking'::text, 'moving'::text, 'upgrading'::text, 'deleting'::text, 'failed'::text]))),
+    CONSTRAINT database_vms_state_check_v2 CHECK ((state = ANY (ARRAY['provisioning'::text, 'parked'::text, 'waking'::text, 'running'::text, 'parking'::text, 'moving'::text, 'upgrading'::text, 'deleting'::text, 'failed'::text, 'rehearsal_restore'::text, 'maintenance_handoff'::text, 'regional_restore'::text]))),
     CONSTRAINT database_vms_upgrade CHECK ((((upgrade_major IS NULL) = (upgrade_from IS NULL)) AND ((upgrade_major IS NULL) = (upgrade_operation IS NULL)) AND ((upgrade_major IS NULL) OR ((upgrade_from >= 14) AND (upgrade_major > upgrade_from) AND (upgrade_major <= 18))) AND ((upgrade_operation IS NULL) OR (upgrade_operation ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)) AND ((state = 'upgrading'::text) = (upgrade_lease_until IS NOT NULL)) AND ((state <> 'upgrading'::text) OR ((upgrade_major IS NOT NULL) AND (upgrade_result IS NULL) AND (upgrade_from = postgres_major))) AND ((state = 'upgrading'::text) OR (upgrade_major IS NULL) OR (upgrade_result IS NOT NULL)) AND ((upgrade_result IS NULL) OR (upgrade_result <> 'ok'::text) OR (postgres_major = upgrade_major)) AND ((upgrade_result IS NULL) OR (upgrade_result = 'ok'::text) OR (postgres_major = upgrade_from)))),
     CONSTRAINT database_vms_upgrade_result_check CHECK ((upgrade_result = ANY (ARRAY['ok'::text, 'refused'::text, 'failed'::text]))),
     CONSTRAINT database_vms_vcpu_count_check CHECK (((vcpu_count >= 1) AND (vcpu_count <= 32))),
@@ -42024,7 +42261,7 @@ CREATE TABLE public.environment_qualification_postgres_receipts (
     CONSTRAINT environment_qualification_postgres__credential_generation_check CHECK ((credential_generation >= 1)),
     CONSTRAINT environment_qualification_postgres_recei_delivery_version_check CHECK ((delivery_version >= 1)),
     CONSTRAINT environment_qualification_postgres_receip_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
-    CONSTRAINT environment_qualification_postgres_receipts_access_v2_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'session'::text]))),
+    CONSTRAINT environment_qualification_postgres_receipts_access_v3_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'session'::text, 'replica_only'::text]))),
     CONSTRAINT environment_qualification_postgres_receipts_attempt_check CHECK ((attempt > 0))
 );
 
@@ -48817,7 +49054,7 @@ CREATE TABLE public.managed_postgres_bindings (
     connection_limit bigint DEFAULT 0 NOT NULL,
     database_account_id uuid NOT NULL,
     data_api_inspection_revision bigint DEFAULT 1 NOT NULL,
-    CONSTRAINT managed_postgres_bindings_access_v2_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text, 'session'::text]))),
+    CONSTRAINT managed_postgres_bindings_access_v3_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text, 'session'::text, 'replica_only'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
@@ -49039,7 +49276,7 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     value_hash text,
     verified_at timestamp with time zone,
     CONSTRAINT managed_postgres_cutover_cre_source_credential_generation_check CHECK ((source_credential_generation > 0)),
-    CONSTRAINT managed_postgres_cutover_credentials_access_v2_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text, 'session'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_access_v3_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text, 'session'::text, 'replica_only'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text, 'published'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text, 'published'::text]))),
@@ -49319,8 +49556,12 @@ CREATE TABLE public.managed_postgres_databases (
     preview_pr_number integer,
     expires_at timestamp with time zone,
     data_api_inspection_revision bigint DEFAULT 1 NOT NULL,
+    recovery_region text DEFAULT ''::text NOT NULL,
+    restore_from_recovery boolean DEFAULT false NOT NULL,
+    restore_recovery_timeline bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
+    CONSTRAINT managed_postgres_copy_fields_ck CHECK ((((restore_source_resource_id IS NULL) AND (restore_point_in_time IS NULL)) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_databases_availability_check CHECK ((availability = ANY (ARRAY['single_zone'::text, 'high_availability'::text]))),
     CONSTRAINT managed_postgres_databases_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -49338,14 +49579,15 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_databases_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_postgres_major_check CHECK (((postgres_major >= 12) AND (postgres_major <= 99))),
-    CONSTRAINT managed_postgres_databases_previews_chk CHECK ((previews = ANY (ARRAY['off'::text, 'empty'::text, 'copy'::text]))),
     CONSTRAINT managed_postgres_databases_region_check CHECK ((region ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT managed_postgres_databases_restore_window_seconds_check CHECK ((restore_window_seconds >= 0)),
     CONSTRAINT managed_postgres_databases_service_class_check CHECK ((service_class = ANY (ARRAY['development'::text, 'burstable'::text, 'production'::text]))),
     CONSTRAINT managed_postgres_databases_state_check CHECK ((state = ANY (ARRAY['provisioning'::text, 'ready'::text, 'updating'::text, 'deleting'::text, 'failed'::text, 'deleted'::text]))),
     CONSTRAINT managed_postgres_databases_storage_limit_bytes_check CHECK ((storage_limit_bytes >= 0)),
     CONSTRAINT managed_postgres_preview_fields_chk CHECK ((((preview_source_database_id IS NULL) AND (preview_environment_id IS NULL) AND (preview_pr_number IS NULL)) OR ((preview_source_database_id IS NOT NULL) AND (preview_source_database_id <> id) AND (preview_environment_id ~ '^[A-Za-z0-9-]{1,64}$'::text) AND (preview_pr_number > 0) AND (previews = 'off'::text)))),
-    CONSTRAINT managed_postgres_restore_fields_ck CHECK ((((restore_source_database_id IS NULL) AND (restore_source_resource_id IS NULL) AND (restore_point_in_time IS NULL)) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL))))
+    CONSTRAINT managed_postgres_previews_mode_ck CHECK ((previews = ANY (ARRAY['off'::text, 'empty'::text, 'copy'::text, 'masked'::text]))),
+    CONSTRAINT managed_postgres_recovery_region_check CHECK (((recovery_region = ''::text) OR ((recovery_region <> region) AND (recovery_region ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)))),
+    CONSTRAINT managed_postgres_restore_from_recovery_check CHECK (((NOT restore_from_recovery) OR ((restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL))))
 );
 
 
@@ -49618,6 +49860,8 @@ CREATE TABLE public.managed_postgres_resizes (
     target_storage_limit_bytes bigint,
     target_postgres_major integer,
     error_code text,
+    automatic boolean DEFAULT false NOT NULL,
+    auto_grow_idle_at timestamp with time zone,
     CONSTRAINT managed_postgres_compute_policy_target_check CHECK (((target_scale_to_zero IS NULL) OR ((NOT (target_class IS DISTINCT FROM (source_spec ->> 'Class'::text))) AND (NOT (jsonb_typeof((source_spec -> 'ScaleToZero'::text)) IS DISTINCT FROM 'boolean'::text))))),
     CONSTRAINT managed_postgres_major_upgrade_target_check CHECK (((target_postgres_major IS NULL) OR ((target_scale_to_zero IS NULL) AND (target_storage_limit_bytes IS NULL) AND (target_class = (source_spec ->> 'Class'::text)) AND (jsonb_typeof((source_spec -> 'PostgresMajor'::text)) = 'number'::text) AND ((target_postgres_major)::numeric > ((source_spec ->> 'PostgresMajor'::text))::numeric) AND (target_postgres_major <= 99)))),
     CONSTRAINT managed_postgres_resize_outcome_check CHECK ((((state = 'failed'::text) = (error_code IS NOT NULL)) AND ((error_code IS NULL) OR (error_code ~ '^[a-z_]{1,64}$'::text)))),
@@ -51814,6 +52058,340 @@ CREATE TABLE public.native_issue_ticket_receipts (
     CONSTRAINT native_issue_ticket_receipts_request_hash_check CHECK ((request_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT native_issue_ticket_receipts_state_check CHECK ((state = ANY (ARRAY['ready'::text, 'dispatching'::text, 'created'::text, 'linked'::text]))),
     CONSTRAINT native_issue_ticket_receipts_ticket_url_check CHECK ((octet_length(ticket_url) <= 512))
+);
+
+
+--
+-- Name: native_postgres_auto_grow; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_auto_grow (
+    database_id uuid NOT NULL,
+    max_bytes bigint NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    checked_at timestamp with time zone,
+    reason text DEFAULT 'waiting_for_pressure'::text NOT NULL,
+    CONSTRAINT native_postgres_auto_grow_max_bytes_check CHECK ((max_bytes >= 0))
+);
+
+
+--
+-- Name: native_postgres_autovacuum_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_autovacuum_settings (
+    database_id uuid NOT NULL,
+    profile text NOT NULL,
+    revision bigint NOT NULL,
+    next_attempt_at timestamp with time zone,
+    CONSTRAINT native_postgres_autovacuum_settings_profile_check CHECK ((profile = ANY (ARRAY['default'::text, 'high-churn'::text]))),
+    CONSTRAINT native_postgres_autovacuum_settings_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: native_postgres_backup_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_backup_schedules (
+    database_id uuid NOT NULL,
+    owner_id text NOT NULL,
+    org_id text NOT NULL,
+    bucket_account_id uuid NOT NULL,
+    bucket_app_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    utc_minute smallint NOT NULL,
+    next_run_at timestamp with time zone NOT NULL,
+    retry_at timestamp with time zone NOT NULL,
+    run_id uuid,
+    run_deadline timestamp with time zone,
+    export_queued boolean DEFAULT false NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    last_success_at timestamp with time zone,
+    last_archive_key text,
+    last_error_code text,
+    CONSTRAINT native_postgres_backup_schedules_check CHECK (((run_id IS NULL) = (run_deadline IS NULL))),
+    CONSTRAINT native_postgres_backup_schedules_check1 CHECK (((NOT export_queued) OR (run_id IS NOT NULL))),
+    CONSTRAINT native_postgres_backup_schedules_check2 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT native_postgres_backup_schedules_check3 CHECK (((lease_token IS NULL) OR (run_id IS NOT NULL))),
+    CONSTRAINT native_postgres_backup_schedules_check4 CHECK (((last_success_at IS NULL) = (last_archive_key IS NULL))),
+    CONSTRAINT native_postgres_backup_schedules_utc_minute_check CHECK (((utc_minute >= 0) AND (utc_minute <= 1439)))
+);
+
+
+--
+-- Name: native_postgres_base_refreshes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_base_refreshes (
+    database_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    source_running_at timestamp with time zone NOT NULL,
+    node_id text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    recover_after timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    outcome text DEFAULT ''::text NOT NULL,
+    resize_id uuid,
+    target_volume_bytes bigint,
+    refresh_base boolean DEFAULT true NOT NULL,
+    rolling_standby_node text,
+    rolling_image text,
+    phase text DEFAULT ''::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    standby_restarted boolean DEFAULT false NOT NULL,
+    handoff_started boolean DEFAULT false NOT NULL,
+    handoff_reserved_mb bigint DEFAULT 0 NOT NULL,
+    promotion_started boolean DEFAULT false NOT NULL,
+    CONSTRAINT native_postgres_base_refreshes_check CHECK (((finished_at IS NULL) = (outcome = ''::text))),
+    CONSTRAINT native_postgres_base_refreshes_outcome_check CHECK ((outcome = ANY (ARRAY[''::text, 'succeeded'::text, 'still_stale'::text, 'interrupted'::text, 'window_closed'::text, 'runtime_failed'::text]))),
+    CONSTRAINT native_postgres_base_refreshes_rolling_check CHECK ((((rolling_standby_node IS NULL) AND (rolling_image IS NULL) AND (phase = ''::text) AND (NOT standby_restarted)) OR ((rolling_standby_node IS NOT NULL) AND (rolling_standby_node <> node_id) AND refresh_base AND (resize_id IS NULL) AND ((phase = 'refreshing_standby'::text) OR ((phase = ANY (ARRAY['switching_over'::text, 'restoring_redundancy'::text])) AND (COALESCE(rolling_image, ''::text) <> ''::text))))))
+);
+
+
+--
+-- Name: native_postgres_binding_timeouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_binding_timeouts (
+    binding_id uuid NOT NULL,
+    statement_timeout_ms integer NOT NULL,
+    lock_timeout_ms integer NOT NULL,
+    idle_in_transaction_session_timeout_ms integer NOT NULL,
+    revision bigint NOT NULL,
+    applied_at timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT native_postgres_binding_time_idle_in_transaction_session__check CHECK ((idle_in_transaction_session_timeout_ms >= 0)),
+    CONSTRAINT native_postgres_binding_timeouts_lock_timeout_ms_check CHECK ((lock_timeout_ms >= 0)),
+    CONSTRAINT native_postgres_binding_timeouts_revision_check CHECK ((revision > 0)),
+    CONSTRAINT native_postgres_binding_timeouts_statement_timeout_ms_check CHECK ((statement_timeout_ms >= 0))
+);
+
+
+--
+-- Name: native_postgres_error_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_error_events (
+    id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    severity text NOT NULL,
+    sqlstate text NOT NULL,
+    binding_id uuid,
+    CONSTRAINT native_postgres_error_events_severity_check CHECK ((severity = ANY (ARRAY['ERROR'::text, 'FATAL'::text, 'PANIC'::text]))),
+    CONSTRAINT native_postgres_error_events_sqlstate_check CHECK ((sqlstate ~ '^[A-Z0-9]{5}$'::text))
+);
+
+
+--
+-- Name: native_postgres_error_history_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_error_history_settings (
+    database_id uuid NOT NULL,
+    epoch uuid NOT NULL,
+    enabled boolean NOT NULL
+);
+
+
+--
+-- Name: native_postgres_export_objects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_export_objects (
+    export_id uuid NOT NULL,
+    token uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: native_postgres_exports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_exports (
+    id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    owner_id text NOT NULL,
+    org_id text NOT NULL,
+    generation bigint NOT NULL,
+    state text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    lease_until timestamp with time zone,
+    lease_token uuid,
+    manifest jsonb,
+    artifact_token uuid,
+    CONSTRAINT native_postgres_exports_check CHECK (((state = 'ready'::text) = ((manifest IS NOT NULL) AND (artifact_token IS NOT NULL)))),
+    CONSTRAINT native_postgres_exports_check1 CHECK (((state = 'running'::text) = ((lease_until IS NOT NULL) AND (lease_token IS NOT NULL)))),
+    CONSTRAINT native_postgres_exports_generation_check CHECK ((generation > 0)),
+    CONSTRAINT native_postgres_exports_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'running'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: native_postgres_maintenance_windows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_maintenance_windows (
+    database_id uuid NOT NULL,
+    weekday smallint NOT NULL,
+    start_minute smallint NOT NULL,
+    duration_minutes smallint NOT NULL,
+    stale_since timestamp with time zone,
+    CONSTRAINT native_postgres_maintenance_windows_duration_minutes_check CHECK (((duration_minutes >= 1) AND (duration_minutes <= 1440))),
+    CONSTRAINT native_postgres_maintenance_windows_start_minute_check CHECK (((start_minute >= 0) AND (start_minute <= 1439))),
+    CONSTRAINT native_postgres_maintenance_windows_weekday_check CHECK (((weekday >= 0) AND (weekday <= 6)))
+);
+
+
+--
+-- Name: native_postgres_masked_branches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_masked_branches (
+    database_id uuid NOT NULL,
+    source_resource_id text NOT NULL,
+    policy jsonb NOT NULL,
+    validated_at timestamp with time zone,
+    preview_policy_revision bigint,
+    CONSTRAINT native_postgres_masked_branches_policy_check CHECK ((jsonb_typeof(policy) = 'array'::text))
+);
+
+
+--
+-- Name: native_postgres_preview_masking_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_preview_masking_policies (
+    database_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    policy jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT native_postgres_preview_masking_policies_policy_check CHECK ((jsonb_typeof(policy) = 'array'::text)),
+    CONSTRAINT native_postgres_preview_masking_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: native_postgres_query_cancels; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_query_cancels (
+    target_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    node_id text NOT NULL,
+    primary_since timestamp with time zone NOT NULL,
+    target jsonb NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    dispatched_at timestamp with time zone,
+    outcome text,
+    CONSTRAINT native_postgres_query_cancels_outcome_check CHECK ((outcome = ANY (ARRAY['signal_sent'::text, 'stale_target'::text, 'unconfirmed'::text])))
+);
+
+
+--
+-- Name: native_postgres_query_intervals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_query_intervals (
+    database_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone NOT NULL,
+    boot_at timestamp with time zone NOT NULL,
+    counters jsonb NOT NULL,
+    CONSTRAINT native_postgres_query_intervals_check CHECK ((started_at < ended_at))
+);
+
+
+--
+-- Name: native_postgres_query_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_query_settings (
+    database_id uuid NOT NULL,
+    database_name text NOT NULL,
+    enabled boolean NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    attempted_at timestamp with time zone,
+    sampled_at timestamp with time zone,
+    baseline jsonb
+);
+
+
+--
+-- Name: native_postgres_query_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_query_snapshots (
+    owner_id uuid NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    active jsonb NOT NULL,
+    CONSTRAINT native_postgres_query_snapshots_active_check CHECK ((jsonb_typeof(active) = 'array'::text))
+);
+
+
+--
+-- Name: native_postgres_scheduled_growth; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_scheduled_growth (
+    resize_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    source_running_at timestamp with time zone NOT NULL,
+    policy_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: native_postgres_storage_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_storage_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    database_id uuid NOT NULL,
+    incident_id uuid NOT NULL,
+    state text NOT NULL,
+    sampled_at timestamp with time zone NOT NULL,
+    total_bytes bigint NOT NULL,
+    free_bytes bigint NOT NULL,
+    growth_reason text NOT NULL,
+    database_name text NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_token uuid,
+    attempts smallint DEFAULT 0 NOT NULL,
+    finished_at timestamp with time zone,
+    CONSTRAINT native_postgres_storage_alerts_check CHECK (((free_bytes >= 0) AND (free_bytes <= total_bytes))),
+    CONSTRAINT native_postgres_storage_alerts_state_check CHECK ((state = ANY (ARRAY['low_space'::text, 'read_only'::text, 'recovered'::text]))),
+    CONSTRAINT native_postgres_storage_alerts_total_bytes_check CHECK ((total_bytes > 0))
+);
+
+
+--
+-- Name: native_postgres_storage_samples; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_postgres_storage_samples (
+    database_id uuid NOT NULL,
+    role text NOT NULL,
+    node_id text NOT NULL,
+    state_changed_at timestamp with time zone NOT NULL,
+    allocated_bytes bigint NOT NULL,
+    total_bytes bigint NOT NULL,
+    free_bytes bigint NOT NULL,
+    low boolean NOT NULL,
+    read_only boolean NOT NULL,
+    sampled_at timestamp with time zone NOT NULL,
+    low_since timestamp with time zone,
+    CONSTRAINT native_postgres_storage_samples_allocated_bytes_check CHECK ((allocated_bytes > 0)),
+    CONSTRAINT native_postgres_storage_samples_check CHECK (((free_bytes >= 0) AND (free_bytes <= total_bytes))),
+    CONSTRAINT native_postgres_storage_samples_role_check CHECK ((role = ANY (ARRAY['primary'::text, 'standby'::text]))),
+    CONSTRAINT native_postgres_storage_samples_total_bytes_check CHECK ((total_bytes > 0))
 );
 
 
@@ -59794,7 +60372,7 @@ CREATE TABLE public.release_database_switches (
     source_database_id uuid NOT NULL,
     target_database_id uuid,
     target_name text NOT NULL,
-    restore_point timestamp with time zone NOT NULL,
+    restore_point timestamp with time zone,
     cutover_id uuid,
     phase text NOT NULL,
     failure_code text DEFAULT ''::text NOT NULL,
@@ -59818,6 +60396,9 @@ CREATE TABLE public.release_database_switches (
     retry_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    migration_operation_id uuid,
+    migration_lease_token text,
+    migration_lease_until timestamp with time zone,
     CONSTRAINT release_database_switches_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 1000000))),
     CONSTRAINT release_database_switches_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT release_database_switches_check1 CHECK (((phase = ANY (ARRAY['completed'::text, 'failed'::text, 'cancelled'::text])) = (finished_at IS NOT NULL))),
@@ -59831,6 +60412,7 @@ CREATE TABLE public.release_database_switches (
     CONSTRAINT release_database_switches_failure_code_check CHECK ((failure_code ~ '^[a-z_]{0,63}$'::text)),
     CONSTRAINT release_database_switches_failure_detail_check CHECK ((length(failure_detail) <= 500)),
     CONSTRAINT release_database_switches_last_error_code_check CHECK ((last_error_code ~ '^[a-z_]{0,63}$'::text)),
+    CONSTRAINT release_database_switches_migration_check CHECK (((restore_point IS NOT NULL) = (migration_operation_id IS NULL))),
     CONSTRAINT release_database_switches_phase_check CHECK ((phase = ANY (ARRAY['restoring'::text, 'staging'::text, 'verifying'::text, 'fencing'::text, 'settling'::text, 'draining'::text, 'switching'::text, 'resuming'::text, 'aborting'::text, 'completed'::text, 'failed'::text, 'cancelled'::text]))),
     CONSTRAINT release_database_switches_requested_by_check CHECK ((length(requested_by) <= 200)),
     CONSTRAINT release_database_switches_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
@@ -62249,6 +62831,7 @@ CREATE TABLE public.sandbox_session_captures (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     consumed_at timestamp with time zone,
     checked_at timestamp with time zone,
+    volume_backup_id uuid,
     CONSTRAINT sandbox_session_captures_check CHECK (((state = 'consumed'::text) = (consumed_at IS NOT NULL))),
     CONSTRAINT sandbox_session_captures_check1 CHECK (((state = 'consumed'::text) OR ((fc_version <> ''::text) AND (mem_bytes > 0)))),
     CONSTRAINT sandbox_session_captures_mem_bytes_check CHECK ((mem_bytes >= 0)),
@@ -62473,6 +63056,49 @@ CREATE TABLE public.sandbox_templates (
 --
 
 COMMENT ON TABLE public.sandbox_templates IS 'ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.';
+
+
+--
+-- Name: sandbox_volume_backups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_volume_backups (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id text NOT NULL,
+    reason text NOT NULL,
+    state text NOT NULL,
+    size_bytes bigint DEFAULT 0 NOT NULL,
+    data_chunks integer DEFAULT 0 NOT NULL,
+    uploaded_bytes bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT sandbox_volume_backups_check CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
+    CONSTRAINT sandbox_volume_backups_data_chunks_check CHECK ((data_chunks >= 0)),
+    CONSTRAINT sandbox_volume_backups_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_volume_backups_reason_check CHECK ((reason = ANY (ARRAY['periodic'::text, 'pause'::text]))),
+    CONSTRAINT sandbox_volume_backups_size_bytes_check CHECK ((size_bytes >= 0)),
+    CONSTRAINT sandbox_volume_backups_state_check CHECK ((state = ANY (ARRAY['uploading'::text, 'stored'::text, 'deleted'::text]))),
+    CONSTRAINT sandbox_volume_backups_uploaded_bytes_check CHECK ((uploaded_bytes >= 0))
+);
+
+
+--
+-- Name: sandbox_volumes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_volumes (
+    session_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id text NOT NULL,
+    size_gb integer NOT NULL,
+    latest_backup_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_volumes_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_volumes_size_gb_check CHECK ((size_gb > 0))
+);
 
 
 --
@@ -69338,6 +69964,14 @@ ALTER TABLE ONLY public.database_role_verifiers
 
 
 --
+-- Name: database_upgrade_rehearsals database_upgrade_rehearsals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.database_upgrade_rehearsals
+    ADD CONSTRAINT database_upgrade_rehearsals_pkey PRIMARY KEY (drill_id);
+
+
+--
 -- Name: database_vms database_vms_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73738,6 +74372,14 @@ ALTER TABLE ONLY public.managed_postgres_restore_proofs
 
 
 --
+-- Name: managed_postgres_databases managed_postgres_restore_recovery_timeline_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_databases
+    ADD CONSTRAINT managed_postgres_restore_recovery_timeline_check CHECK (((restore_recovery_timeline = 0) OR (restore_from_recovery AND ((restore_recovery_timeline >= 1) AND (restore_recovery_timeline <= '4294967295'::bigint))))) NOT VALID;
+
+
+--
 -- Name: managed_postgres_restore_slot_notices managed_postgres_restore_slot_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -74591,6 +75233,190 @@ ALTER TABLE ONLY public.mirror_slot_leases
 
 ALTER TABLE ONLY public.native_issue_ticket_receipts
     ADD CONSTRAINT native_issue_ticket_receipts_pkey PRIMARY KEY (account_id, request_id);
+
+
+--
+-- Name: native_postgres_auto_grow native_postgres_auto_grow_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_auto_grow
+    ADD CONSTRAINT native_postgres_auto_grow_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_autovacuum_settings native_postgres_autovacuum_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_autovacuum_settings
+    ADD CONSTRAINT native_postgres_autovacuum_settings_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_backup_schedules native_postgres_backup_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_backup_schedules
+    ADD CONSTRAINT native_postgres_backup_schedules_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_base_refreshes native_postgres_base_refreshes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_base_refreshes
+    ADD CONSTRAINT native_postgres_base_refreshes_pkey PRIMARY KEY (database_id, window_start);
+
+
+--
+-- Name: native_postgres_base_refreshes native_postgres_base_refreshes_resize_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_base_refreshes
+    ADD CONSTRAINT native_postgres_base_refreshes_resize_id_key UNIQUE (resize_id);
+
+
+--
+-- Name: native_postgres_binding_timeouts native_postgres_binding_timeouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_binding_timeouts
+    ADD CONSTRAINT native_postgres_binding_timeouts_pkey PRIMARY KEY (binding_id);
+
+
+--
+-- Name: native_postgres_error_events native_postgres_error_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_error_events
+    ADD CONSTRAINT native_postgres_error_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: native_postgres_error_history_settings native_postgres_error_history_settings_epoch_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_error_history_settings
+    ADD CONSTRAINT native_postgres_error_history_settings_epoch_key UNIQUE (epoch);
+
+
+--
+-- Name: native_postgres_error_history_settings native_postgres_error_history_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_error_history_settings
+    ADD CONSTRAINT native_postgres_error_history_settings_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_export_objects native_postgres_export_objects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_export_objects
+    ADD CONSTRAINT native_postgres_export_objects_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: native_postgres_exports native_postgres_exports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_exports
+    ADD CONSTRAINT native_postgres_exports_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: native_postgres_maintenance_windows native_postgres_maintenance_windows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_maintenance_windows
+    ADD CONSTRAINT native_postgres_maintenance_windows_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_masked_branches native_postgres_masked_branches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_masked_branches
+    ADD CONSTRAINT native_postgres_masked_branches_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_preview_masking_policies native_postgres_preview_masking_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_preview_masking_policies
+    ADD CONSTRAINT native_postgres_preview_masking_policies_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_query_cancels native_postgres_query_cancels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_query_cancels
+    ADD CONSTRAINT native_postgres_query_cancels_pkey PRIMARY KEY (target_id);
+
+
+--
+-- Name: native_postgres_query_intervals native_postgres_query_intervals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_query_intervals
+    ADD CONSTRAINT native_postgres_query_intervals_pkey PRIMARY KEY (database_id, ended_at);
+
+
+--
+-- Name: native_postgres_query_settings native_postgres_query_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_query_settings
+    ADD CONSTRAINT native_postgres_query_settings_pkey PRIMARY KEY (database_id);
+
+
+--
+-- Name: native_postgres_query_snapshots native_postgres_query_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_query_snapshots
+    ADD CONSTRAINT native_postgres_query_snapshots_pkey PRIMARY KEY (owner_id);
+
+
+--
+-- Name: native_postgres_scheduled_growth native_postgres_scheduled_growth_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_scheduled_growth
+    ADD CONSTRAINT native_postgres_scheduled_growth_pkey PRIMARY KEY (resize_id);
+
+
+--
+-- Name: native_postgres_storage_alerts native_postgres_storage_alerts_database_id_sampled_at_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_storage_alerts
+    ADD CONSTRAINT native_postgres_storage_alerts_database_id_sampled_at_key UNIQUE (database_id, sampled_at);
+
+
+--
+-- Name: native_postgres_storage_alerts native_postgres_storage_alerts_incident_id_state_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_storage_alerts
+    ADD CONSTRAINT native_postgres_storage_alerts_incident_id_state_key UNIQUE (incident_id, state);
+
+
+--
+-- Name: native_postgres_storage_alerts native_postgres_storage_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_storage_alerts
+    ADD CONSTRAINT native_postgres_storage_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: native_postgres_storage_samples native_postgres_storage_samples_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_storage_samples
+    ADD CONSTRAINT native_postgres_storage_samples_pkey PRIMARY KEY (database_id, role);
 
 
 --
@@ -78210,6 +79036,14 @@ ALTER TABLE ONLY public.release_bundles
 
 
 --
+-- Name: release_database_switches release_database_switches_migration_lease_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.release_database_switches
+    ADD CONSTRAINT release_database_switches_migration_lease_check CHECK ((((migration_operation_id IS NULL) AND (migration_lease_token IS NULL) AND (migration_lease_until IS NULL)) OR ((migration_operation_id IS NOT NULL) AND (NOT (lease_token IS DISTINCT FROM 'migration-worker'::text)) AND (NOT (lease_until IS DISTINCT FROM 'infinity'::timestamp with time zone)) AND ((migration_lease_token IS NULL) = (migration_lease_until IS NULL))))) NOT VALID;
+
+
+--
 -- Name: release_database_switches release_database_switches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79215,6 +80049,22 @@ ALTER TABLE ONLY public.sandbox_templates
 
 ALTER TABLE ONLY public.sandbox_templates
     ADD CONSTRAINT sandbox_templates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_volume_backups sandbox_volume_backups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volume_backups
+    ADD CONSTRAINT sandbox_volume_backups_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_volumes sandbox_volumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volumes
+    ADD CONSTRAINT sandbox_volumes_pkey PRIMARY KEY (session_id);
 
 
 --
@@ -83923,10 +84773,52 @@ CREATE INDEX data_upstreams_host_redacted_idx ON public.data_upstreams USING btr
 
 
 --
+-- Name: database_nodes_archive_fleet_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX database_nodes_archive_fleet_key ON public.database_nodes USING btree (id, recovery_region);
+
+
+--
 -- Name: database_restore_drills_node_started; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX database_restore_drills_node_started ON public.database_restore_drills USING btree (node_id, started_at DESC);
+
+
+--
+-- Name: database_restore_drills_requested_node; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX database_restore_drills_requested_node ON public.database_restore_drills USING btree (node_id) WHERE ((request_id IS NOT NULL) AND (result = ANY (ARRAY['queued'::text, 'running'::text])));
+
+
+--
+-- Name: database_restore_drills_requested_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX database_restore_drills_requested_source ON public.database_restore_drills USING btree (source_id) WHERE ((request_id IS NOT NULL) AND (result = ANY (ARRAY['queued'::text, 'running'::text])));
+
+
+--
+-- Name: database_restore_drills_source_started; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX database_restore_drills_source_started ON public.database_restore_drills USING btree (source_id, started_at DESC, drill_id DESC);
+
+
+--
+-- Name: database_restore_drills_work_node; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX database_restore_drills_work_node ON public.database_restore_drills USING btree (node_id) WHERE ((result = 'queued'::text) OR ((request_id IS NOT NULL) AND (result = 'running'::text)));
+
+
+--
+-- Name: database_restore_drills_work_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX database_restore_drills_work_source ON public.database_restore_drills USING btree (source_id) WHERE ((result = 'queued'::text) OR ((request_id IS NOT NULL) AND (result = 'running'::text)));
 
 
 --
@@ -88270,6 +89162,125 @@ CREATE INDEX native_issue_ticket_receipts_issue_idx ON public.native_issue_ticke
 
 
 --
+-- Name: native_postgres_backup_schedules_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_backup_schedules_due_idx ON public.native_postgres_backup_schedules USING btree (retry_at, database_id);
+
+
+--
+-- Name: native_postgres_base_refreshes_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX native_postgres_base_refreshes_active ON public.native_postgres_base_refreshes USING btree (database_id) WHERE (finished_at IS NULL);
+
+
+--
+-- Name: native_postgres_binding_timeouts_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_binding_timeouts_pending ON public.native_postgres_binding_timeouts USING btree (retry_at) WHERE (applied_at IS NULL);
+
+
+--
+-- Name: native_postgres_error_bindings_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_error_bindings_idx ON public.managed_postgres_bindings USING btree (database_id, provider_identity_id) WHERE (state = ANY (ARRAY['ready'::text, 'provisioning'::text, 'retiring'::text]));
+
+
+--
+-- Name: native_postgres_error_events_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_error_events_expiry ON public.native_postgres_error_events USING btree (observed_at);
+
+
+--
+-- Name: native_postgres_error_events_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_error_events_history ON public.native_postgres_error_events USING btree (database_id, observed_at DESC, id DESC);
+
+
+--
+-- Name: native_postgres_error_placements_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_error_placements_idx ON public.managed_postgres_databases USING btree (COALESCE(NULLIF(data_resource_id, ''::text), provider_resource_id)) WHERE (state = 'ready'::text);
+
+
+--
+-- Name: native_postgres_export_objects_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_export_objects_expiry_idx ON public.native_postgres_export_objects USING btree (expires_at);
+
+
+--
+-- Name: native_postgres_exports_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX native_postgres_exports_active_idx ON public.native_postgres_exports USING btree (database_id) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: native_postgres_exports_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_exports_expires_idx ON public.native_postgres_exports USING btree (expires_at);
+
+
+--
+-- Name: native_postgres_exports_queued_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_exports_queued_idx ON public.native_postgres_exports USING btree (created_at) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: native_postgres_exports_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_exports_scope_idx ON public.native_postgres_exports USING btree (owner_id, org_id, expires_at);
+
+
+--
+-- Name: native_postgres_query_cancels_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_query_cancels_expiry ON public.native_postgres_query_cancels USING btree (requested_at);
+
+
+--
+-- Name: native_postgres_query_cancels_owner_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_query_cancels_owner_pending ON public.native_postgres_query_cancels USING btree (owner_id, requested_at) WHERE ((dispatched_at IS NULL) AND (outcome IS NULL));
+
+
+--
+-- Name: native_postgres_query_intervals_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_query_intervals_expiry_idx ON public.native_postgres_query_intervals USING btree (ended_at);
+
+
+--
+-- Name: native_postgres_storage_alerts_finished_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_storage_alerts_finished_idx ON public.native_postgres_storage_alerts USING btree (sampled_at) WHERE (finished_at IS NOT NULL);
+
+
+--
+-- Name: native_postgres_storage_alerts_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_postgres_storage_alerts_pending_idx ON public.native_postgres_storage_alerts USING btree (available_at, sampled_at) WHERE (finished_at IS NULL);
+
+
+--
 -- Name: neon_project_keys_live; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -91585,6 +92596,13 @@ CREATE INDEX sandbox_sessions_persistent_idx ON public.sandbox_sessions USING bt
 --
 
 CREATE INDEX sandbox_sessions_queue_idx ON public.sandbox_sessions USING btree (created_at, id) WHERE (state = 'queued'::text);
+
+
+--
+-- Name: sandbox_volume_backups_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_volume_backups_session ON public.sandbox_volume_backups USING btree (session_id, created_at) WHERE (state <> 'deleted'::text);
 
 
 --
@@ -95774,6 +96792,13 @@ CREATE TRIGGER data_upstreams_notify_trg AFTER INSERT OR DELETE OR UPDATE ON pub
 
 
 --
+-- Name: database_nodes database_node_handoff_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER database_node_handoff_admission BEFORE UPDATE OF admission_ceiling_mb ON public.database_nodes FOR EACH ROW EXECUTE FUNCTION public.project_database_handoff_admission();
+
+
+--
 -- Name: dead_letter_events dead_letter_events_environment_ownership; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -98095,6 +99120,34 @@ CREATE TRIGGER migration_source_guard BEFORE INSERT OR DELETE OR UPDATE ON publi
 --
 
 CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON public.mirror_rules FOR EACH ROW EXECUTE FUNCTION public.mirror_rules_set_updated_at();
+
+
+--
+-- Name: database_vms native_postgres_auto_grow_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER native_postgres_auto_grow_guard BEFORE UPDATE OF volume_bytes, state ON public.database_vms FOR EACH ROW EXECUTE FUNCTION public.native_postgres_auto_grow_guard();
+
+
+--
+-- Name: managed_postgres_databases native_postgres_masked_branch_ready; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER native_postgres_masked_branch_ready BEFORE INSERT OR UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_native_postgres_masked_branch_ready();
+
+
+--
+-- Name: managed_postgres_databases native_postgres_masked_preview_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER native_postgres_masked_preview_owner BEFORE INSERT OR UPDATE OF preview_source_database_id ON public.managed_postgres_databases FOR EACH ROW WHEN ((new.preview_source_database_id IS NOT NULL)) EXECUTE FUNCTION public.guard_native_postgres_masked_preview_owner();
+
+
+--
+-- Name: native_postgres_storage_samples native_postgres_storage_alert_from_sample; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER native_postgres_storage_alert_from_sample AFTER INSERT OR UPDATE ON public.native_postgres_storage_samples FOR EACH ROW WHEN ((new.role = 'primary'::text)) EXECUTE FUNCTION public.capture_native_postgres_storage_alert();
 
 
 --
@@ -105613,6 +106666,22 @@ ALTER TABLE ONLY public.data_upstreams
 
 
 --
+-- Name: database_upgrade_rehearsals database_upgrade_rehearsals_drill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.database_upgrade_rehearsals
+    ADD CONSTRAINT database_upgrade_rehearsals_drill_id_fkey FOREIGN KEY (drill_id) REFERENCES public.database_restore_drills(drill_id) ON DELETE CASCADE;
+
+
+--
+-- Name: database_vms database_vms_move_archive_fleet_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.database_vms
+    ADD CONSTRAINT database_vms_move_archive_fleet_fk FOREIGN KEY (move_node, recovery_region) REFERENCES public.database_nodes(id, recovery_region);
+
+
+--
 -- Name: database_vms database_vms_move_node_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -105626,6 +106695,22 @@ ALTER TABLE ONLY public.database_vms
 
 ALTER TABLE ONLY public.database_vms
     ADD CONSTRAINT database_vms_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.database_nodes(id);
+
+
+--
+-- Name: database_vms database_vms_primary_archive_fleet_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.database_vms
+    ADD CONSTRAINT database_vms_primary_archive_fleet_fk FOREIGN KEY (node_id, recovery_region) REFERENCES public.database_nodes(id, recovery_region);
+
+
+--
+-- Name: database_vms database_vms_standby_archive_fleet_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.database_vms
+    ADD CONSTRAINT database_vms_standby_archive_fleet_fk FOREIGN KEY (standby_node, recovery_region) REFERENCES public.database_nodes(id, recovery_region);
 
 
 --
@@ -111573,6 +112658,134 @@ ALTER TABLE ONLY public.native_issue_ticket_receipts
 
 
 --
+-- Name: native_postgres_auto_grow native_postgres_auto_grow_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_auto_grow
+    ADD CONSTRAINT native_postgres_auto_grow_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_autovacuum_settings native_postgres_autovacuum_settings_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_autovacuum_settings
+    ADD CONSTRAINT native_postgres_autovacuum_settings_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.database_vms(database_id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_backup_schedules native_postgres_backup_schedules_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_backup_schedules
+    ADD CONSTRAINT native_postgres_backup_schedules_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_base_refreshes native_postgres_base_refreshes_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_base_refreshes
+    ADD CONSTRAINT native_postgres_base_refreshes_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.database_vms(database_id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_base_refreshes native_postgres_base_refreshes_resize_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_base_refreshes
+    ADD CONSTRAINT native_postgres_base_refreshes_resize_id_fkey FOREIGN KEY (resize_id) REFERENCES public.native_postgres_scheduled_growth(resize_id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_binding_timeouts native_postgres_binding_timeouts_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_binding_timeouts
+    ADD CONSTRAINT native_postgres_binding_timeouts_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.managed_postgres_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_error_events native_postgres_error_events_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_error_events
+    ADD CONSTRAINT native_postgres_error_events_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_error_history_settings native_postgres_error_history_settings_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_error_history_settings
+    ADD CONSTRAINT native_postgres_error_history_settings_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_maintenance_windows native_postgres_maintenance_windows_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_maintenance_windows
+    ADD CONSTRAINT native_postgres_maintenance_windows_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.database_vms(database_id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_masked_branches native_postgres_masked_branches_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_masked_branches
+    ADD CONSTRAINT native_postgres_masked_branches_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_preview_masking_policies native_postgres_preview_masking_policies_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_preview_masking_policies
+    ADD CONSTRAINT native_postgres_preview_masking_policies_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_query_intervals native_postgres_query_intervals_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_query_intervals
+    ADD CONSTRAINT native_postgres_query_intervals_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.native_postgres_query_settings(database_id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_query_settings native_postgres_query_settings_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_query_settings
+    ADD CONSTRAINT native_postgres_query_settings_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.database_vms(database_id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_scheduled_growth native_postgres_scheduled_growth_resize_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_scheduled_growth
+    ADD CONSTRAINT native_postgres_scheduled_growth_resize_id_fkey FOREIGN KEY (resize_id) REFERENCES public.managed_postgres_resizes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_storage_alerts native_postgres_storage_alerts_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_storage_alerts
+    ADD CONSTRAINT native_postgres_storage_alerts_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.database_vms(database_id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_postgres_storage_samples native_postgres_storage_samples_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_postgres_storage_samples
+    ADD CONSTRAINT native_postgres_storage_samples_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.database_vms(database_id) ON DELETE CASCADE;
+
+
+--
 -- Name: node_leases node_leases_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -117266,6 +118479,38 @@ ALTER TABLE ONLY public.sandbox_templates
 
 ALTER TABLE ONLY public.sandbox_templates
     ADD CONSTRAINT sandbox_templates_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volume_backups sandbox_volume_backups_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volume_backups
+    ADD CONSTRAINT sandbox_volume_backups_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volume_backups sandbox_volume_backups_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volume_backups
+    ADD CONSTRAINT sandbox_volume_backups_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volumes sandbox_volumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volumes
+    ADD CONSTRAINT sandbox_volumes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volumes sandbox_volumes_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volumes
+    ADD CONSTRAINT sandbox_volumes_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --

@@ -246,6 +246,7 @@ type Querier interface {
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
+	AppendNativePostgresErrorEvents(ctx context.Context, db DBTX, events []byte) error
 	AppendProfileGateRollbackAudit(ctx context.Context, db DBTX, arg AppendProfileGateRollbackAuditParams) (int64, error)
 	AppendProjectReleaseConfigurationVersion(ctx context.Context, db DBTX, arg AppendProjectReleaseConfigurationVersionParams) (int64, error)
 	AppendRolloutRecoveryAudit(ctx context.Context, db DBTX, arg AppendRolloutRecoveryAuditParams) (int64, error)
@@ -298,6 +299,7 @@ type Querier interface {
 	// public responses do not cross the instance veth), otherwise 0.
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	ApplyMCPNotificationAction(ctx context.Context, db DBTX, arg ApplyMCPNotificationActionParams) error
+	ApplyManagedPostgresBindingTimeoutPolicy(ctx context.Context, db DBTX, bindingID pgtype.UUID) error
 	// Change only the debugger workflow state for one app-scoped observation.
 	// The handler maps reopen to active before calling this query. Reopening a
 	// non-active observation starts a new detection lifecycle so the transition
@@ -609,6 +611,7 @@ type Querier interface {
 	// managed_postgres_app_wake_starts so the activity read can match the start
 	// it caused after later claims moved the stamp (ADR-20261125231222).
 	ClaimManagedPostgresWakeStarts(ctx context.Context, db DBTX, arg ClaimManagedPostgresWakeStartsParams) ([]ClaimManagedPostgresWakeStartsRow, error)
+	ClaimNativePostgresBackupSchedule(ctx context.Context, db DBTX, arg ClaimNativePostgresBackupScheduleParams) (NativePostgresBackupSchedule, error)
 	// ADR-732 scheduler side. schedd holds a lease on every restoring or running
 	// fork; terminal transitions clear it (app_forks_lease_status_chk).
 	ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAppForkParams) (AppFork, error)
@@ -1354,6 +1357,7 @@ type Querier interface {
 	DeleteLegacyStaticEgressProvisioning(ctx context.Context, db DBTX) error
 	DeleteLogArchiveErasure(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteManagedPostgresBindingSecrets(ctx context.Context, db DBTX, bindingID string) (int64, error)
+	DeleteNativePostgresBackupSchedule(ctx context.Context, db DBTX, arg DeleteNativePostgresBackupScheduleParams) (int64, error)
 	DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error)
 	// Operator-driven revoke path (PR-C). Returns 0 rows on miss;
 	// the caller maps that to ErrNotFound. The 5-min TTL is the
@@ -1467,6 +1471,7 @@ type Querier interface {
 	// stale_before, oldest request first, with the account's plan.
 	DueAnalyticsCohorts(ctx context.Context, db DBTX, arg DueAnalyticsCohortsParams) ([]DueAnalyticsCohortsRow, error)
 	DueDeferredAlertFires(ctx context.Context, db DBTX, arg DueDeferredAlertFiresParams) ([]DueDeferredAlertFiresRow, error)
+	DueManagedPostgresBindingTimeoutPolicies(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresBinding, error)
 	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
 	DueStorageObjectDeletions(ctx context.Context, db DBTX, arg DueStorageObjectDeletionsParams) ([]DueStorageObjectDeletionsRow, error)
@@ -2074,6 +2079,7 @@ type Querier interface {
 	ExpireAPIConsumerCreditPurchase(ctx context.Context, db DBTX, arg ExpireAPIConsumerCreditPurchaseParams) error
 	// imaged, after deleting every object: the sealed key goes with them.
 	ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCrashCaptureParams) (CrashCapture, error)
+	ExpireNativePostgresErrorEvents(ctx context.Context, db DBTX) error
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
 	// ADR-20261022105723: a pending queue message past its plan's retention
 	// moves to the dead letter. A message a worker holds (dispatching) is not
@@ -2434,6 +2440,7 @@ type Querier interface {
 	FinishManagedPostgresLifecycleDelete(ctx context.Context, db DBTX, arg FinishManagedPostgresLifecycleDeleteParams) (ManagedPostgresDatabase, error)
 	FinishManagedPostgresLifecycleProvision(ctx context.Context, db DBTX, arg FinishManagedPostgresLifecycleProvisionParams) (ManagedPostgresDatabase, error)
 	FinishManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg FinishManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error)
+	FinishNativePostgresBackupSchedule(ctx context.Context, db DBTX, arg FinishNativePostgresBackupScheduleParams) (int64, error)
 	FinishNodeLifecycleCompletion(ctx context.Context, db DBTX, arg FinishNodeLifecycleCompletionParams) (int64, error)
 	FinishProductionQueueTriggerInvocations(ctx context.Context, db DBTX, arg FinishProductionQueueTriggerInvocationsParams) error
 	FinishProfileCanaryCheck(ctx context.Context, db DBTX, arg FinishProfileCanaryCheckParams) error
@@ -2634,7 +2641,9 @@ type Querier interface {
 	// column (issue #954) so the typed DataUpstream.DeploymentScope
 	// in pkg/state/types.go round-trips through sqlc.
 	GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) (GetDataUpstreamByIDRow, error)
+	GetDatabaseRolePoolRevisions(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]GetDatabaseRolePoolRevisionsRow, error)
 	GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetDatabaseRoleVerifierParams) (string, error)
+	GetDatabaseUpgradeRehearsal(ctx context.Context, db DBTX, drillID pgtype.UUID) (DatabaseUpgradeRehearsal, error)
 	GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (DatabaseVm, error)
 	GetDeploymentArtifactScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentArtifactScan, error)
 	GetDeploymentArtifactScanPointer(ctx context.Context, db DBTX, arg GetDeploymentArtifactScanPointerParams) (pgtype.UUID, error)
@@ -2700,6 +2709,7 @@ type Querier interface {
 	GetMCPOAuthRetirementApp(ctx context.Context, db DBTX, arg GetMCPOAuthRetirementAppParams) (string, error)
 	// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
+	GetManagedPostgresBindingTimeoutPolicy(ctx context.Context, db DBTX, bindingID pgtype.UUID) (NativePostgresBindingTimeout, error)
 	GetManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg GetManagedPostgresCustomerDatabaseParams) (ManagedPostgresDatabase, error)
 	GetManagedPostgresCutover(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetManagedPostgresCutoverPreflight(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverPreflightParams) (ManagedPostgresCutoverPreflight, error)
@@ -2716,6 +2726,9 @@ type Querier interface {
 	GetManagedPostgresUsageProgress(ctx context.Context, db DBTX, arg GetManagedPostgresUsageProgressParams) (GetManagedPostgresUsageProgressRow, error)
 	GetMigrationCutover(ctx context.Context, db DBTX, arg GetMigrationCutoverParams) (GetMigrationCutoverRow, error)
 	GetMigrationVerification(ctx context.Context, db DBTX, arg GetMigrationVerificationParams) (GetMigrationVerificationRow, error)
+	GetNativePostgresBackupSchedule(ctx context.Context, db DBTX, arg GetNativePostgresBackupScheduleParams) (NativePostgresBackupSchedule, error)
+	GetNativePostgresErrorHistory(ctx context.Context, db DBTX, databaseID pgtype.UUID) (bool, error)
+	GetNativePostgresErrorHistoryPolicies(ctx context.Context, db DBTX, runtimeIds []string) ([]GetNativePostgresErrorHistoryPoliciesRow, error)
 	GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error)
 	GetNodeLease(ctx context.Context, db DBTX, nodeID pgtype.UUID) (GetNodeLeaseRow, error)
 	GetNotificationChannel(ctx context.Context, db DBTX, arg GetNotificationChannelParams) (NotificationChannel, error)
@@ -3517,6 +3530,7 @@ type Querier interface {
 	// ADR-570: verify every synthetic target in the invocation version snapshot.
 	InvocationTargetAllowed(ctx context.Context, db DBTX, arg InvocationTargetAllowedParams) (bool, error)
 	InvoiceRefreshTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	IsDatabaseUpgradeRehearsalRestore(ctx context.Context, db DBTX, arg IsDatabaseUpgradeRehearsalRestoreParams) (bool, error)
 	// Returns true if any active suppression matches the address.
 	// "Active" means expires_at IS NULL OR expires_at > now(); the
 	// partial index mail_suppressions_active_email_idx keeps expired
@@ -4468,6 +4482,7 @@ type Querier interface {
 	ListMigrationSourceLeasesForRecovery(ctx context.Context, db DBTX, arg ListMigrationSourceLeasesForRecoveryParams) ([]MigrationLease, error)
 	ListMigrationSourcesForRecovery(ctx context.Context, db DBTX, arg ListMigrationSourcesForRecoveryParams) ([]MigrationSource, error)
 	ListMigrationVerifications(ctx context.Context, db DBTX, arg ListMigrationVerificationsParams) ([]ListMigrationVerificationsRow, error)
+	ListNativePostgresErrorEvents(ctx context.Context, db DBTX, arg ListNativePostgresErrorEventsParams) ([]ListNativePostgresErrorEventsRow, error)
 	ListNotificationChannels(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]NotificationChannel, error)
 	// Per-account dashboard list (PR-C). Empty slice on miss.
 	ListOIDCTrustPoliciesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOIDCTrustPoliciesForAccountRow, error)
@@ -5022,6 +5037,8 @@ type Querier interface {
 	LockMCPOAuthRetirementAccount(ctx context.Context, db DBTX, accountID string) error
 	LockManagedPostgresActivationSecretTarget(ctx context.Context, db DBTX, arg LockManagedPostgresActivationSecretTargetParams) error
 	LockManagedPostgresBindingAppOwner(ctx context.Context, db DBTX, arg LockManagedPostgresBindingAppOwnerParams) (pgtype.UUID, error)
+	LockManagedPostgresBindingTimeoutApply(ctx context.Context, db DBTX, arg LockManagedPostgresBindingTimeoutApplyParams) (pgtype.Text, error)
+	LockManagedPostgresBindingTimeoutEdit(ctx context.Context, db DBTX, arg LockManagedPostgresBindingTimeoutEditParams) (pgtype.Bool, error)
 	LockManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg LockManagedPostgresCustomerDatabaseParams) (pgtype.UUID, error)
 	LockManagedPostgresCutoverAccount(ctx context.Context, db DBTX, accountID string) (string, error)
 	LockManagedPostgresCutoverAdmissionApp(ctx context.Context, db DBTX, appID string) (LockManagedPostgresCutoverAdmissionAppRow, error)
@@ -5055,6 +5072,7 @@ type Querier interface {
 	LockMigrationVerificationApp(ctx context.Context, db DBTX, arg LockMigrationVerificationAppParams) (pgtype.UUID, error)
 	// Serializes reservation attempts for one rule across every gateway replica.
 	LockMirrorRuleForSlotLease(ctx context.Context, db DBTX, ruleID pgtype.UUID) (string, error)
+	LockNativePostgresErrorHistoryPolicies(ctx context.Context, db DBTX, epochs []pgtype.UUID) ([]pgtype.UUID, error)
 	// The same advisory key as CreateWorkflowRunAdmitted, taken before app locks.
 	LockNativeWorkflowAdmission(ctx context.Context, db DBTX, appID string) error
 	LockNativeWorkflowOwnership(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
@@ -5425,6 +5443,7 @@ type Querier interface {
 	// Synchronized only while the database and its standby run; clearing is
 	// always allowed.
 	MarkDatabaseStandbySynced(ctx context.Context, db DBTX, arg MarkDatabaseStandbySyncedParams) (int64, error)
+	MarkDatabaseUpgradeRehearsalRestoring(ctx context.Context, db DBTX, drillID pgtype.UUID) error
 	MarkDeploymentLive(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error
@@ -6258,6 +6277,7 @@ type Querier interface {
 	PersistApplicationStandardEnrollment(ctx context.Context, db DBTX, arg PersistApplicationStandardEnrollmentParams) (int64, error)
 	PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) (int64, error)
 	PinCustomerOperationReleaseMembers(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseMembersParams) (int64, error)
+	PinDatabaseVMRestoreTimeline(ctx context.Context, db DBTX, arg PinDatabaseVMRestoreTimelineParams) (int64, error)
 	PinDeploymentReleaseEnvironment(ctx context.Context, db DBTX, arg PinDeploymentReleaseEnvironmentParams) error
 	PinDeploymentReleaseSecrets(ctx context.Context, db DBTX, arg PinDeploymentReleaseSecretsParams) error
 	PinDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, arg PinDeploymentRuntimeUpgradeTargetParams) (string, error)
@@ -6604,6 +6624,7 @@ type Querier interface {
 	PruneWorkflowScheduleCursors(ctx context.Context, db DBTX, arg PruneWorkflowScheduleCursorsParams) error
 	PruneWorkflowScheduleOccurrences(ctx context.Context, db DBTX, arg PruneWorkflowScheduleOccurrencesParams) (int64, error)
 	PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPatchTriggerParams) (Trigger, error)
+	PublishDatabaseRolePoolRevision(ctx context.Context, db DBTX, arg PublishDatabaseRolePoolRevisionParams) (int64, error)
 	PublishDeploymentArtifactMainScan(ctx context.Context, db DBTX, arg PublishDeploymentArtifactMainScanParams) (int64, error)
 	PublishDeploymentRegistryMainRootfs(ctx context.Context, db DBTX, arg PublishDeploymentRegistryMainRootfsParams) (int64, error)
 	PublishDeploymentRegistrySidecarRootfs(ctx context.Context, db DBTX, arg PublishDeploymentRegistrySidecarRootfsParams) error
@@ -6720,6 +6741,7 @@ type Querier interface {
 	QueueConsumerReviveBinding(ctx context.Context, db DBTX, arg QueueConsumerReviveBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error)
+	QueueDatabaseUpgradeRehearsal(ctx context.Context, db DBTX, arg QueueDatabaseUpgradeRehearsalParams) error
 	// Use the recipients selected by the claim. The current bindings may have
 	// changed since that snapshot. Meterd compares actual PagerDuty keys when
 	// releasing same-region aliases.
@@ -8218,6 +8240,8 @@ type Querier interface {
 	RetryDeferredAlertFire(ctx context.Context, db DBTX, arg RetryDeferredAlertFireParams) error
 	RetryDeploymentDependencyGate(ctx context.Context, db DBTX, arg RetryDeploymentDependencyGateParams) error
 	RetryExternalTriggerRecordByOperator(ctx context.Context, db DBTX, arg RetryExternalTriggerRecordByOperatorParams) (int64, error)
+	RetryManagedPostgresBindingTimeoutPolicy(ctx context.Context, db DBTX, bindingID pgtype.UUID) error
+	RetryNativePostgresBackupSchedule(ctx context.Context, db DBTX, arg RetryNativePostgresBackupScheduleParams) (int64, error)
 	RetryProductionQueueDeadLetter(ctx context.Context, db DBTX, arg RetryProductionQueueDeadLetterParams) (Invocation, error)
 	RetryProductionQueueTriggerInvocations(ctx context.Context, db DBTX, arg RetryProductionQueueTriggerInvocationsParams) error
 	// ADR-20261113180000 (R6-1, R8-2): a replay starts a new delivery, so it
@@ -8470,6 +8494,7 @@ type Querier interface {
 	SaveMCPPagerDutyAcknowledgements(ctx context.Context, db DBTX, arg SaveMCPPagerDutyAcknowledgementsParams) error
 	SaveMCPPagerDutyPolicy(ctx context.Context, db DBTX, arg SaveMCPPagerDutyPolicyParams) error
 	SaveMCPReminderDefaults(ctx context.Context, db DBTX, arg SaveMCPReminderDefaultsParams) error
+	SaveManagedPostgresBindingTimeoutPolicy(ctx context.Context, db DBTX, arg SaveManagedPostgresBindingTimeoutPolicyParams) (int64, error)
 	SaveManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverCredentialParams) (int64, error)
 	SaveManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverSourceFenceParams) (int64, error)
 	SaveManagedPostgresCutoverSourceMaintenance(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverSourceMaintenanceParams) (int64, error)
@@ -8477,6 +8502,7 @@ type Querier interface {
 	SaveManagedPostgresDrainProof(ctx context.Context, db DBTX, arg SaveManagedPostgresDrainProofParams) (int64, error)
 	SaveMigrationCutover(ctx context.Context, db DBTX, arg SaveMigrationCutoverParams) (int64, error)
 	SaveMigrationVerification(ctx context.Context, db DBTX, arg SaveMigrationVerificationParams) (int64, error)
+	SaveNativePostgresBackupSchedule(ctx context.Context, db DBTX, arg SaveNativePostgresBackupScheduleParams) (NativePostgresBackupSchedule, error)
 	SaveOperationWebhookBinding(ctx context.Context, db DBTX, arg SaveOperationWebhookBindingParams) (CustomerOperationWebhookBinding, error)
 	// A setup request cannot replace a factor confirmed while it was in flight.
 	SavePendingMFASecret(ctx context.Context, db DBTX, arg SavePendingMFASecretParams) (pgtype.UUID, error)
@@ -8651,6 +8677,8 @@ type Querier interface {
 	SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error
 	SetCustomerOperationJobIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationJobIdentityParams) (int64, error)
 	SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error)
+	SetDatabaseUpgradeRehearsalPhase(ctx context.Context, db DBTX, arg SetDatabaseUpgradeRehearsalPhaseParams) error
+	SetDatabaseUpgradeRehearsalTarget(ctx context.Context, db DBTX, arg SetDatabaseUpgradeRehearsalTargetParams) error
 	SetDatabaseVMAlwaysOn(ctx context.Context, db DBTX, arg SetDatabaseVMAlwaysOnParams) (int64, error)
 	SetDatabaseVMComputeQuota(ctx context.Context, db DBTX, arg SetDatabaseVMComputeQuotaParams) (int64, error)
 	SetDatabaseVMHeld(ctx context.Context, db DBTX, arg SetDatabaseVMHeldParams) (int64, error)
@@ -8719,6 +8747,7 @@ type Querier interface {
 	SetManagedPostgresDatabasePreviews(ctx context.Context, db DBTX, arg SetManagedPostgresDatabasePreviewsParams) (ManagedPostgresDatabase, error)
 	SetManagedPostgresOverage(ctx context.Context, db DBTX, arg SetManagedPostgresOverageParams) error
 	SetManagedPostgresPreviewOwner(ctx context.Context, db DBTX, arg SetManagedPostgresPreviewOwnerParams) (ManagedPostgresDatabase, error)
+	SetManagedPostgresRecoveryRegion(ctx context.Context, db DBTX, arg SetManagedPostgresRecoveryRegionParams) (int64, error)
 	// Customer-chosen scale-to-zero suspend timeouts (gregale postgres
 	// suspend-timeout). No row is the platform default. apid checks the caller owns
 	// the database before writing.
@@ -8726,6 +8755,7 @@ type Querier interface {
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)
+	SetNativePostgresErrorHistory(ctx context.Context, db DBTX, arg SetNativePostgresErrorHistoryParams) error
 	SetObjectStorageCeilingGrant(ctx context.Context, db DBTX, arg SetObjectStorageCeilingGrantParams) error
 	// ADR-051: the workload class a cold boot observed. The caller holds the app
 	// row exclusively.
@@ -9049,6 +9079,7 @@ type Querier interface {
 	TrimCompletedQueuePayloads(ctx context.Context, db DBTX, arg TrimCompletedQueuePayloadsParams) (int64, error)
 	// Keep only the newest max_active remembered browsers per account.
 	TrimMFATrustedBrowsers(ctx context.Context, db DBTX, arg TrimMFATrustedBrowsersParams) (int64, error)
+	TrimNativePostgresErrorEvents(ctx context.Context, db DBTX, arg TrimNativePostgresErrorEventsParams) error
 	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)
@@ -9192,7 +9223,7 @@ type Querier interface {
 	UpsertCustomerOperationWorkflowState(ctx context.Context, db DBTX, arg UpsertCustomerOperationWorkflowStateParams) error
 	// Database VMs (ADR-1027). database_nodes is inventory; database_vms is
 	// written only by schedd's database scheduler (pkg/dbsched).
-	UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDatabaseNodeParams) error
+	UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDatabaseNodeParams) (int64, error)
 	UpsertDatabaseRoleVerifier(ctx context.Context, db DBTX, arg UpsertDatabaseRoleVerifierParams) error
 	// Accept only a routable target on this app. Using INSERT .. SELECT makes the
 	// ownership/status check atomic with writing the alias.

@@ -169,6 +169,9 @@ func (r *Runtime) recoverJails() (map[string]bool, error) {
 			}
 			r.mu.Unlock()
 			if !dup {
+				if !vm.waiting {
+					r.restoreMigrationRelay(context.Background(), id, vm)
+				}
 				if vm.spareDir != "" {
 					kept[vm.spareDir] = true
 				}

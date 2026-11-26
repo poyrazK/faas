@@ -54,29 +54,36 @@ func (s *Service) issueSignedBucketObject(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	out, err := s.issueBucketObjectCapability(r, b, req, permission)
+	if err != nil {
+		BucketProblem(w, err)
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, out)
+}
+
+// The caller has authenticated and authorized the exact bucket before issuing
+// this short-lived gateway capability.
+func (s *Service) issueBucketObjectCapability(r *http.Request, b state.ObjectBucket, req objectstorage.SignRequest, permission string) (objectstorage.SignedRequest, error) {
 	store, ok := s.Host.Store().(state.ObjectURLCapabilityStore)
 	if !ok {
-		BucketProblem(w, objectstorage.ErrUnavailable)
-		return
+		return objectstorage.SignedRequest{}, objectstorage.ErrUnavailable
 	}
 	c, receipt, secret, err := s.prepareObjectURLCredential(r, b, req, permission)
 	if err != nil {
-		BucketProblem(w, err)
-		return
+		return objectstorage.SignedRequest{}, err
 	}
 	c, receipt, err = store.IssueObjectURLCredential(r.Context(), c, receipt, s.Host.ObjectStorage().Accounting)
 	if err != nil {
-		BucketProblem(w, err)
-		return
+		return objectstorage.SignedRequest{}, err
 	}
 	now := c.URL.ExpiresAt.Add(-time.Duration(c.URL.Request.ExpiresIn) * time.Second)
 	out, err := objectstorage.PresignPublicObject(r.Context(), s.Host.ObjectStorage().PublicEndpoint, s.Host.ObjectStorage().PublicRegion, b.Name, c.AccessKeyID, secret, objectstorage.SignRequest(c.URL.Request), now)
 	if err != nil {
-		BucketProblem(w, err)
-		return
+		return objectstorage.SignedRequest{}, err
 	}
 	out.UploadID = receipt.ID
-	httpkit.WriteJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 func (s *Service) prepareObjectURLCredential(r *http.Request, b state.ObjectBucket, req objectstorage.SignRequest, permission string) (state.ObjectS3Credential, state.ObjectUploadCompletion, string, error) {

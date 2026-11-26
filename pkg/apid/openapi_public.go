@@ -6,8 +6,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/monetization"
 	"github.com/onebox-faas/faas/pkg/apid/realtimepreview"
+	"github.com/onebox-faas/faas/pkg/productcap"
 	"gopkg.in/yaml.v3"
 )
 
@@ -76,7 +78,15 @@ func PublicOpenAPIYAMLFor(v Visibility) []byte {
 // publicSpec filters raw. A spec it cannot rewrite yields an error document,
 // never the unfiltered spec, so hidden paths cannot leak on failure.
 func publicSpec(raw []byte, v Visibility) []byte {
-	return FilterSpec(raw, nil, v)
+	catalog, err := productcap.Load()
+	if err != nil {
+		return []byte("error: openapi capability catalog is malformed at build time\n")
+	}
+	gate := capgate.New(catalog, nil)
+	return FilterSpec(raw, func(path string) bool {
+		owner, _ := gate.Capability(path)
+		return owner == "native-postgres-operations"
+	}, v)
 }
 
 // FilterSpec returns raw without the operator previews, the paths hide
@@ -117,6 +127,11 @@ func FilterSpec(raw []byte, hide func(path string) bool, v Visibility) []byte {
 	}
 	if !v.RealtimePreview {
 		removed = append(removed, hideRealtimePreviewFields(root)...)
+	}
+	// The native preview adds options to existing public PostgreSQL routes.
+	// Their shared schemas must follow the same release decision as its routes.
+	if hide == nil || hide("/v1/postgres/databases/{id}/recovery-region") {
+		removed = append(removed, hideNativePostgresFields(root)...)
 	}
 	if len(removed) == 0 {
 		return raw
@@ -213,6 +228,30 @@ func hideRealtimePreviewFields(root *yaml.Node) []*yaml.Node {
 			if property := mappingValue(properties, field); property != nil {
 				dropListValues(property, func(value string) bool { return slices.Contains(values, value) })
 			}
+		}
+	}
+	return removed
+}
+
+func hideNativePostgresFields(root *yaml.Node) []*yaml.Node {
+	schemas := mappingValue(mappingValue(root, "components"), "schemas")
+	var removed []*yaml.Node
+	for schema, fields := range map[string][]string{
+		"ManagedPostgresDatabase":               {"masked_branch"},
+		"ResourceStatus":                        {"storage", "maintenance", "backup", "replica"},
+		"RestoreManagedPostgresDatabaseRequest": {"region"},
+	} {
+		properties := mappingValue(mappingValue(schemas, schema), "properties")
+		for _, field := range fields {
+			if property := mappingValue(properties, field); property != nil {
+				removed = append(removed, property)
+				deleteMappingKey(properties, field)
+			}
+		}
+	}
+	for _, name := range []string{"CreateManagedPostgresBindingRequest", "ManagedPostgresBinding", "ManagedPostgresCapabilities", "ManagedPostgresCutoverMember"} {
+		if body := mappingValue(schemas, name); body != nil {
+			dropListValues(body, func(value string) bool { return value == "replica_only" })
 		}
 	}
 	return removed

@@ -89,6 +89,36 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		return inventory.Blockers
 	}
 
+	secret := clonePostgresSecretFixture(t, pool, account, app, "staging", "inventory-db", 1)
+	bindingID := secret.ManagedPostgresBindingID
+	if _, err := pool.Exec(ctx, `INSERT INTO native_postgres_binding_timeouts
+		(binding_id, statement_timeout_ms, lock_timeout_ms, idle_in_transaction_session_timeout_ms, revision)
+		VALUES ($1, 500, 0, 0, 1)`, bindingID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admit("staging-timeouts"); err != nil {
+		t.Fatalf("timeouts from staging blocked a production clone: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET scope = 'production' WHERE id = $1`, bindingID); err != nil {
+		t.Fatal(err)
+	}
+	secret.Scope = "production"
+	if err := s.PutManagedPostgresSecret(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+	timeoutBlocker := []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "native_postgres_binding_timeouts", Code: state.CloneBlockerStrategyUnavailable}}
+	if got := blockers("live-timeouts"); !reflect.DeepEqual(got, timeoutBlocker) {
+		t.Fatalf("live timeout blockers = %+v, want %+v", got, timeoutBlocker)
+	}
+	if err := s.DeleteManagedPostgresSecret(ctx, secret.ManagedCredentialRef); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_bindings SET state = 'deleted', deleted_at = now() WHERE id = $1`, bindingID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admit("deleted-timeouts"); err != nil {
+		t.Fatalf("timeouts from a deleted binding blocked a production clone: %v", err)
+	}
 	if _, err := createWebhook(app.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +183,7 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 		t.Fatal(err)
 	}
 	qualified = nil
-	if n := operations(); n != 1 {
+	if n := operations(); n != 3 {
 		t.Fatalf("a refused admission must not create an operation; have %d", n)
 	}
 	// A bucket scoped to another environment is not the source's, and a

@@ -19,15 +19,19 @@ class RestoreManagedPostgresDatabaseRequest:
     """
 
     name: str
+    region: str | Unset = UNSET
+    """Recover from the configured region's archive. When point_in_time is omitted, use the latest verified point
+    in that archive."""
     point_in_time: datetime.datetime | Unset = UNSET
-    """A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds
-    before the request."""
+    """A time inside the source's restore_range. Omit it to use the latest point."""
     ttl_seconds: int | Unset = UNSET
     """Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is
     never touched. The database shows expires_at."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
+
+        region = self.region
 
         point_in_time: str | Unset = UNSET
         if not isinstance(self.point_in_time, Unset):
@@ -42,6 +46,8 @@ class RestoreManagedPostgresDatabaseRequest:
                 "name": name,
             }
         )
+        if region is not UNSET:
+            field_dict["region"] = region
         if point_in_time is not UNSET:
             field_dict["point_in_time"] = point_in_time
         if ttl_seconds is not UNSET:
@@ -54,6 +60,8 @@ class RestoreManagedPostgresDatabaseRequest:
         d = dict(src_dict)
         name = d.pop("name")
 
+        region = d.pop("region", UNSET)
+
         _point_in_time = d.pop("point_in_time", UNSET)
         point_in_time: datetime.datetime | Unset
         if isinstance(_point_in_time, Unset):
@@ -65,6 +73,7 @@ class RestoreManagedPostgresDatabaseRequest:
 
         restore_managed_postgres_database_request = cls(
             name=name,
+            region=region,
             point_in_time=point_in_time,
             ttl_seconds=ttl_seconds,
         )

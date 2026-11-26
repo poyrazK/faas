@@ -211,7 +211,7 @@ RULES = [
     (r"internal/hosting|hosting-|internal-frontend|^sites$|^hosting|frontend-hosting|site-", "Internal frontend hosting"),
     (r"internal-?mail|maild|mailctl|mail-feedback|mail-metrics|mail-report|productemail|product-email", "Internal mail service"),
     (r"product-control|productcontrol|product_control|/product/|^product$|product-customers", "Product control"),
-    (r"agent-run|agent-execution|agent-callback|agent-tool|sandbox|^agent|agents", "Gregale Agents"),
+    (r"agent-run|agent-execution|agent-callback|agent-tool|sandbox|^agent|agents|^volbackup$", "Gregale Agents"),
     (r"oci/registry|^/v2/?$|registry-storage|ociregistry", "Platform OCI registry"),
     (r"^/v1/admin|^admin|gregalectl|compute-nodes|operator|break-glass|abuse|^/admin|deployctl|nodes?-|fleet|cluster-signing", "Operator admin"),
     (r"data-repair|datarepair|repair", "Selective data repair"),
@@ -274,7 +274,7 @@ RULES = [
     (r"entit|durable-entity|__gregale/entities", "Durable entities"),
     (r"redis|valkey|^resp$", "Managed Redis"),
     (r"data-api|dataapi|postgres-pool|pgpool", "Data API"),
-    (r"postgres|database|^pg-|managedpostgres|managed-postgres|/databases|pgbouncer", "Managed Postgres"),
+    (r"postgres|database|^pg-|^pgarchive$|^pgexport$|managedpostgres|managed-postgres|/databases|pgbouncer", "Managed Postgres"),
     (r"bucket|object|s3|upload-route|storage", "Object storage"),
     # --- async
     (r"inbound-webhook", "Durable inbound webhooks"),

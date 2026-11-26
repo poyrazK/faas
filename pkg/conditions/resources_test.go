@@ -170,3 +170,22 @@ func TestJobRunConditions(t *testing.T) {
 		})
 	}
 }
+
+func TestDatabaseStorageWarnsOnlyForFreshPressure(t *testing.T) {
+	now := time.Now()
+	database := api.ManagedPostgresDatabase{State: "ready"}
+	volume := &api.ManagedPostgresVolumeStatus{Low: true, Fresh: true, SampledAt: now}
+	check := func(storage *api.ManagedPostgresStorageStatus, reason string) {
+		t.Helper()
+		status := conditions.WithDatabaseStorage(conditions.Database(database, now), storage)
+		if status.Storage != storage || status.Conditions[0].Status != api.ConditionTrue || status.Conditions[2].Reason != reason {
+			t.Fatalf("status: %+v", status)
+		}
+	}
+	check(&api.ManagedPostgresStorageStatus{Primary: volume}, api.ConditionReasonStorageLow)
+	check(&api.ManagedPostgresStorageStatus{Standby: volume}, api.ConditionReasonStandbyStorageLow)
+	volume.ReadOnly = true
+	check(&api.ManagedPostgresStorageStatus{Primary: volume}, api.ConditionReasonStorageReadOnly)
+	volume.Fresh = false
+	check(&api.ManagedPostgresStorageStatus{Primary: volume}, api.ConditionReasonNotAssessed)
+}

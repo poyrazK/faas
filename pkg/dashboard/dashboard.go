@@ -3746,6 +3746,8 @@ type ManagedPostgresDatabaseItem struct {
 	ScaleToZero          bool
 	StorageLimitBytes    int64
 	StorageLimitLabel    string
+	StorageWarning       string
+	StorageAlerts        []api.ManagedPostgresStorageAlert
 	RestoreWindowSeconds int64
 	State                string
 	LastErrorCode        string

@@ -215,6 +215,14 @@ func ConnectionURL(access managedpostgres.CredentialAccess, material managedpost
 }
 
 func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endpoints []managedpostgres.Endpoint) (managedpostgres.Endpoint, bool) {
+	if access == managedpostgres.CredentialReplicaOnly {
+		for _, endpoint := range endpoints {
+			if endpoint.Role == managedpostgres.EndpointReplicaOnly {
+				return endpoint, true
+			}
+		}
+		return managedpostgres.Endpoint{}, false
+	}
 	if access == managedpostgres.CredentialReadOnly {
 		for _, endpoint := range endpoints {
 			if endpoint.Role == managedpostgres.EndpointReadOnly {

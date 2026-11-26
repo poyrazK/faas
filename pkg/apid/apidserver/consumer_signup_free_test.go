@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -152,14 +153,27 @@ func TestConsumerSignupFreePlanAndOAuthConsumers(t *testing.T) {
 		t.Fatalf("foreign account link = %v; want not found", err)
 	}
 
-	// The owner sees which sign-in bills to which consumer and can unlink.
-	var ids api.ConsumerIdentityListResponse
-	decode(t, e.Do(t, http.MethodGet, "/v1/apps/search/consumer-identities", nil, nil), http.StatusOK, &ids)
-	if len(ids.Identities) != 1 || ids.Identities[0].ConsumerID != done.ConsumerID || ids.Identities[0].Subject != "u1" {
-		t.Fatalf("identities = %+v", ids)
-	}
-	decode(t, e.Do(t, http.MethodDelete, "/v1/apps/search/consumer-identities/"+ids.Identities[0].ID, nil, nil), http.StatusNoContent, nil)
-	decode(t, e.Do(t, http.MethodDelete, "/v1/apps/search/consumer-identities/"+ids.Identities[0].ID, nil, nil), http.StatusNotFound, nil)
+	t.Run("manage identities with MCP hosting disabled", func(t *testing.T) {
+		server := *e.S()
+		if err := server.InstallCapabilityGate(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { server.WithCapabilityGate(nil) })
+		server.SeedPlatformFlag(capabilityFlag(t, "mcp-hosting"), platformflags.Definition{Enabled: false})
+
+		const path = "/v1/apps/search/consumer-identities"
+		decode(t, e.Do(t, http.MethodGet, path, nil, public), http.StatusUnauthorized, nil)
+		var ids api.ConsumerIdentityListResponse
+		decode(t, e.Do(t, http.MethodGet, path, nil, nil), http.StatusOK, &ids)
+		if len(ids.Identities) != 1 || ids.Identities[0].ConsumerID != done.ConsumerID || ids.Identities[0].Subject != "u1" {
+			t.Fatalf("identities = %+v", ids)
+		}
+
+		unlink := path + "/" + ids.Identities[0].ID
+		decode(t, e.Do(t, http.MethodDelete, unlink, nil, public), http.StatusUnauthorized, nil)
+		decode(t, e.Do(t, http.MethodDelete, unlink, nil, nil), http.StatusNoContent, nil)
+		decode(t, e.Do(t, http.MethodDelete, unlink, nil, nil), http.StatusNotFound, nil)
+	})
 	if fresh, created, err := enroll("u1"); err != nil || !created || fresh.ID == done.ConsumerID {
 		t.Fatalf("enroll after unlink = %+v %v %v; want a new consumer", fresh, created, err)
 	}
