@@ -313,21 +313,27 @@ func saveSessionUpload(ctx context.Context, c *Client, state resumableUploadStat
 }
 
 func (s *savedDeploySession) resumeCommand() string {
-	return recoveryCLI() + " release resume " + s.record.ID
+	return s.resumeCommandWithTimeout(0)
+}
+
+func (s *savedDeploySession) resumeCommandWithTimeout(timeout time.Duration) string {
+	command := deployRecoveryCLI() + " release resume " + s.record.ID
+	if seconds := int(timeout / time.Second); seconds > 0 && seconds != defaultDeployWaitTimeoutSeconds {
+		command = fmt.Sprintf("%s --timeout %d", command, seconds)
+	}
+	return command
 }
 
 func (s *savedDeploySession) recovery(stage string) *deployRecovery {
 	return s.recoveryWithTimeout(stage, 0)
 }
 
-// recoveryWithTimeout is recovery with the wait deadline the run used, so
-// the `release wait` next step repeats that --timeout instead of the
-// default (CLI audit 2026-10-31). Zero means the default.
+// Keep the same wait budget when the caller resumes. Zero means the default.
 func (s *savedDeploySession) recoveryWithTimeout(stage string, timeout time.Duration) *deployRecovery {
 	r := newDeployRecovery(stage, s.record.AppSlug, s.record.DeploymentID, s.key, timeout, s.record.WaitForRollout)
 	r.SessionID, r.SubmissionOutcome = s.record.ID, s.record.Outcome
 	r.Configuration = s.record.CronConfiguration
-	r.ResumeCommand = s.resumeCommand()
+	r.setResumeCommand(s.resumeCommandWithTimeout(timeout))
 	r.Hint = "The server continues processing an accepted deployment. Resume this saved deploy to reconnect and complete its pending settings. Resume does not submit another deployment."
 	if s.record.Outcome == deploySubmissionUnknown {
 		r.Hint = "Acceptance remains uncertain. Resume checks the saved submission or upload receipt without submitting another build; inspect deployment history if acceptance cannot be confirmed."
@@ -335,12 +341,35 @@ func (s *savedDeploySession) recoveryWithTimeout(stage string, timeout time.Dura
 	if s.record.Outcome == deploySubmissionRejected {
 		// Resume refuses a rejected submission, so offering its command
 		// contradicted this hint (Hunt 14 H14-10).
-		r.ResumeCommand = ""
+		r.setResumeCommand("")
 		r.Hint = "Submission stopped before acceptance. Correct the error and rerun the original deploy."
 	}
 	if s.shouldCleanPolicies() && s.hasStagedSettingsToRestore() {
-		r.ResumeCommand = s.resumeCommand()
+		r.setResumeCommand(s.resumeCommandWithTimeout(timeout))
 		r.Hint = "No deployment needs to be submitted to recover this attempt. Resume the saved deploy to finish saved deployment settings cleanup; concurrent edits are preserved."
+	}
+	return r
+}
+
+type deployRecoveryConflict string
+
+func (e deployRecoveryConflict) Error() string { return string(e) }
+
+func (s *savedDeploySession) recoveryForError(stage string, timeout time.Duration, err error) *deployRecovery {
+	r := s.recoveryWithTimeout(stage, timeout)
+	var conflict deployRecoveryConflict
+	var remote *APIError
+	blocked := errors.As(err, &conflict)
+	if errors.As(err, &remote) {
+		switch remote.Problem.Code {
+		case api.CodeDeploySettingsConflict, api.CodeDeploymentCronConflict, api.CodeDeploymentStagingConflict:
+			blocked = true
+		}
+	}
+	if blocked {
+		r.InspectCommand = deployRecoveryCLI() + " app get " + recoveryArgument(s.record.AppSlug)
+		r.setResumeCommand("")
+		r.Hint = "Recovery stopped because the saved deployment or app state no longer matches. Inspect the current app before taking further action."
 	}
 	return r
 }
@@ -357,7 +386,7 @@ func (s *savedDeploySession) hasStagedSettingsToRestore() bool {
 }
 
 func (s *savedDeploySession) failure(title, stage string, err error) int {
-	return printErr(title, &deployRecoveryError{err: err, recovery: s.recovery(stage)})
+	return printErr(title, &deployRecoveryError{err: err, recovery: s.recoveryForError(stage, 0, err)})
 }
 
 func (s *savedDeploySession) decorate(receipt *DeployReceipt) {
@@ -388,11 +417,7 @@ func (s *savedDeploySession) decorate(receipt *DeployReceipt) {
 	receipt.ResumeCommand = s.resumeCommand()
 	if receipt.Recovery != nil {
 		receipt.Recovery.SessionID = s.record.ID
-		if receipt.Recovery.ResumeCommand != "" {
-			receipt.Recovery.ResumeCommand = receipt.ResumeCommand
-		} else if receipt.WaitStage != "configuration" {
-			receipt.ResumeCommand = ""
-		}
+		receipt.ResumeCommand = receipt.Recovery.ResumeCommand
 	}
 }
 

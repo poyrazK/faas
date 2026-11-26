@@ -33,6 +33,8 @@ type Store interface {
 	Sandboxes(ctx context.Context, accountID string, f agentstore.SandboxFilter) ([]agentstore.Sandbox, error)
 	UpdateSandboxTimeouts(ctx context.Context, accountID, id string, idleTimeoutSec int, expiresAt time.Time) (agentstore.Sandbox, error)
 	CloseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
+	PauseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
+	ResumeSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
 	SandboxSnapshot(ctx context.Context, accountID, id string) (agentstore.SandboxSnapshot, error)
 	SandboxSnapshots(ctx context.Context, accountID string, f agentstore.SandboxSnapshotFilter) ([]agentstore.SandboxSnapshot, error)
 	RequestSandboxSnapshotDelete(ctx context.Context, accountID, id string) error
@@ -65,6 +67,10 @@ type Handler struct {
 	// WebNetwork is FAAS_SANDBOX_WEB_NETWORK: it admits network.mode web
 	// (ADR-20261112121456 §6). Off, web is sandbox_unsupported.
 	WebNetwork bool
+	// Persistent is FAAS_SANDBOX_PERSISTENT: it admits kind persistent and
+	// the pause and resume routes (ADR-20261122132055), once agentd, schedd
+	// and vmmd serve them. Off, they are sandbox_unsupported.
+	Persistent bool
 	// CodeInterpreterImage is FAAS_SANDBOX_CODE_INTERPRETER_IMAGE: the
 	// image preset code-interpreter boots (ADR-20261027090013 step 14).
 	// Empty, the preset is sandbox_unsupported.
@@ -257,6 +263,42 @@ func (h *Handler) Close(w http.ResponseWriter, r *http.Request, acct state.Accou
 	httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
 }
 
+// Pause handles POST /v1/sandboxes/{id}/pause: agentd captures the
+// persistent session's memory and stops its VM (ADR-20261122132055 §1). It
+// answers 202 with the session, whose state moves to pausing, then paused.
+func (h *Handler) Pause(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	h.pauseOrResume(w, r, acct, true)
+}
+
+// Resume handles POST /v1/sandboxes/{id}/resume: agentd restores the
+// paused session's capture with a new identity, or cold-boots it when the
+// capture cannot be restored. Until workspace volumes (ADR-20261122132055
+// step 5), a cold resume starts from a fresh workspace (resumed_cold).
+func (h *Handler) Resume(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	h.pauseOrResume(w, r, acct, false)
+}
+
+func (h *Handler) pauseOrResume(w http.ResponseWriter, r *http.Request, acct state.Account, pause bool) {
+	if !h.configured(w) {
+		return
+	}
+	if !h.Persistent {
+		api.WriteProblem(w, api.ErrSandboxUnsupported("pause", "persistent sessions are not available on this platform yet"))
+		return
+	}
+	call, action, op := h.Store.ResumeSandbox, "sandbox.resume_requested", "sandbox.resume"
+	if pause {
+		call, action, op = h.Store.PauseSandbox, "sandbox.pause_requested", "sandbox.pause"
+	}
+	sb, err := call(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		api.WriteProblem(w, h.problem(acct, op, err))
+		return
+	}
+	h.audit(r.Context(), action, sb)
+	httpkit.WriteJSON(w, http.StatusAccepted, h.view(acct, sb, false))
+}
+
 func (h *Handler) configured(w http.ResponseWriter) bool {
 	if h.Store == nil || h.Tokens == nil {
 		api.WriteProblem(w, api.ErrCapacity("sandbox sessions are unavailable on this control-plane host"))
@@ -294,7 +336,8 @@ func (h *Handler) filter(r *http.Request, acct state.Account) (agentstore.Sandbo
 }
 
 var sandboxStates = map[string]bool{agentstore.SandboxQueued: true, agentstore.SandboxStarting: true, agentstore.SandboxReady: true,
-	agentstore.SandboxFrozen: true, agentstore.SandboxClosed: true, agentstore.SandboxExpired: true, agentstore.SandboxFailed: true}
+	agentstore.SandboxFrozen: true, agentstore.SandboxPausing: true, agentstore.SandboxPaused: true, agentstore.SandboxResuming: true,
+	agentstore.SandboxClosed: true, agentstore.SandboxExpired: true, agentstore.SandboxFailed: true}
 
 // view is a session as the API shows it. withToken mints a token for a
 // live session; it ends with the session at the latest. A placed session's
@@ -303,7 +346,9 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode, Allow: sb.EgressAllow, Deny: sb.EgressDeny}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser}
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser,
+		VCPU: sb.VCPU, VolumeGB: sb.VolumeGB, PauseRequestedAt: sb.PauseRequestedAt, ResumeRequestedAt: sb.ResumeRequestedAt,
+		PausedAt: sb.PausedAt, Durability: sb.Durability, ResumedCold: sb.ResumedCold, ForkedFrom: sb.ForkedFrom}
 	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {
 		out.Template = name
 	} else {
@@ -355,6 +400,9 @@ func (h *Handler) problem(acct state.Account, operation string, err error) *api.
 			"the account has no such snapshot ready to start from; it may have expired or been deleted")
 	case errors.Is(err, agentstore.ErrTenantInactive):
 		return api.NewProblem(http.StatusConflict, api.CodeAgentTenantInactive, "Tenant not active", "the tenant is suspended")
+	case errors.Is(err, agentstore.ErrSandboxNotPausable):
+		return api.NewProblem(http.StatusConflict, api.CodeSandboxNotPausable, "Sandbox cannot be paused or resumed",
+			"only a running persistent session pauses, and only a paused one resumes")
 	}
 	return httpkit.CustomerInternalProblem(h.Log, operation, "the sandbox request could not be completed", "retry the request", err)
 }
