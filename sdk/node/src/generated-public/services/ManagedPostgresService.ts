@@ -11,6 +11,8 @@ import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindin
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
 import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgresComputePolicyChange.js';
 import type { ManagedPostgresConnectionBudget } from '../models/ManagedPostgresConnectionBudget.js';
+import type { ManagedPostgresCustomRole } from '../models/ManagedPostgresCustomRole.js';
+import type { ManagedPostgresCustomRoleList } from '../models/ManagedPostgresCustomRoleList.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
 import type { ManagedPostgresOverage } from '../models/ManagedPostgresOverage.js';
@@ -22,6 +24,7 @@ import type { ManagedPostgresSuspendTimeout } from '../models/ManagedPostgresSus
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { ManagedPostgresWakeWithApp } from '../models/ManagedPostgresWakeWithApp.js';
 import type { Problem } from '../models/Problem.js';
+import type { PutManagedPostgresCustomRoleRequest } from '../models/PutManagedPostgresCustomRoleRequest.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
 import type { SetManagedPostgresSuspendTimeoutRequest } from '../models/SetManagedPostgresSuspendTimeoutRequest.js';
@@ -186,6 +189,108 @@ export class ManagedPostgresService {
       },
       query: {
         'purge': purge,
+      },
+    });
+  }
+  /**
+   * List a database's custom roles.
+   * Beta (postgres-custom-roles capability, ADR-20261116213000). The
+   * NOLOGIN group roles declared on the database, with the access modes
+   * whose logins may SET ROLE to each, the roles each is a member of, the
+   * access modes whose logins start every session as it, and whether it
+   * is applied (state ready) yet. Requires postgres read scope and MFA.
+   *
+   * @returns ManagedPostgresCustomRoleList The database's custom roles.
+   * @returns Problem Missing sign-in, scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static listManagedPostgresCustomRoles({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresCustomRoleList | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/roles',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Declare or replace a custom role.
+   * Beta (postgres-custom-roles capability, ADR-20261116213000). Creates
+   * the NOLOGIN role on the database, or corrects it to this declaration,
+   * and grants it, SET only, to the database's logins of the granted
+   * access modes, including logins issued later. The role and the
+   * read_write logins can run the schema owner's functions in public
+   * (ADR-20261123112326). bypass_rls is refused on a database with Data
+   * API or Auth. Hobby and above; at most 16 roles per database. Requires
+   * postgres manage scope, MFA and a verified email. Answers 200 when the
+   * role is already applied and 202 while it is being applied.
+   *
+   * @returns ManagedPostgresCustomRole The role, applied.
+   * @returns Problem An invalid declaration, a plan without custom roles, the role limit, a BYPASSRLS conflict with Data API or Auth, another default role for the access mode, a backend without custom roles, missing sign-in, scope, MFA or verified email, a database this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static putManagedPostgresCustomRole({
+    id,
+    name,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * The role name: a lowercase letter or underscore, then at most 62 lowercase letters, digits and underscores. Names starting with gregale, pg_, neon, cloudsql, rds, azure, supabase or cron_, and PostgreSQL's reserved role names, are refused.
+     */
+    name: string,
+    requestBody: PutManagedPostgresCustomRoleRequest,
+  }): CancelablePromise<ManagedPostgresCustomRole | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/roles/{name}',
+      path: {
+        'id': id,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Drop a custom role.
+   * Beta (postgres-custom-roles capability). Marks the role deleting;
+   * the platform then hands what it owns to the schema owner, removes its
+   * grants and drops it. Requires postgres manage scope and MFA.
+   *
+   * @returns Problem An unknown role, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+   * @returns ManagedPostgresCustomRole The role, deleting.
+   * @throws ApiError
+   */
+  public static deleteManagedPostgresCustomRole({
+    id,
+    name,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * The role name: a lowercase letter or underscore, then at most 62 lowercase letters, digits and underscores. Names starting with gregale, pg_, neon, cloudsql, rds, azure, supabase or cron_, and PostgreSQL's reserved role names, are refused.
+     */
+    name: string,
+  }): CancelablePromise<Problem | ManagedPostgresCustomRole> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/databases/{id}/roles/{name}',
+      path: {
+        'id': id,
+        'name': name,
       },
     });
   }

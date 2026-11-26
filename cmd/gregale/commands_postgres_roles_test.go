@@ -28,19 +28,11 @@ func postgresRolesVisible() bool {
 	return false
 }
 
-// Custom roles are dark: the CLI hides `postgres roles` from discovery and
-// dispatch until FAAS_POSTGRES_CUSTOM_ROLES_ENABLED is set.
-func TestPostgresRolesCLIHiddenUntilEnabled(t *testing.T) {
-	t.Setenv("FAAS_POSTGRES_CUSTOM_ROLES_ENABLED", "")
-	if postgresRolesVisible() {
-		t.Fatal("hidden postgres roles surfaced")
-	}
-	if code := main.CmdPostgres([]string{"roles", "list", "windmill-db"}); code == 0 {
-		t.Fatal("hidden postgres roles dispatched")
-	}
-	t.Setenv("FAAS_POSTGRES_CUSTOM_ROLES_ENABLED", "1")
+// Custom roles are beta (ADR-20261125232048): `postgres roles` is in the
+// CLI's discovery without any switch.
+func TestPostgresRolesCLIVisible(t *testing.T) {
 	if !postgresRolesVisible() {
-		t.Fatal("enabled postgres roles hidden")
+		t.Fatal("postgres roles hidden")
 	}
 }
 
@@ -68,7 +60,6 @@ func TestPostgresRolesCLIGrantKeepsTheDeclaration(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
-	t.Setenv("FAAS_POSTGRES_CUSTOM_ROLES_ENABLED", "1")
 	var out bytes.Buffer
 	old := *main.OsStdout
 	*main.OsStdout = &out
@@ -114,7 +105,6 @@ func TestPostgresRolesCLIDefaultFor(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
-	t.Setenv("FAAS_POSTGRES_CUSTOM_ROLES_ENABLED", "1")
 	var out bytes.Buffer
 	old := *main.OsStdout
 	*main.OsStdout = &out
