@@ -4366,7 +4366,7 @@ type Querier interface {
 	// to its build log there. The spool sweeper never removes either while the
 	// deployment is in one of these states, whatever the file's age.
 	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
-	ListInFlightRouteSplits(ctx context.Context, db DBTX, rowLimit int32) ([]RouteSplit, error)
+	ListInFlightRouteSplits(ctx context.Context, db DBTX, arg ListInFlightRouteSplitsParams) ([]RouteSplit, error)
 	ListInstanceResourceMinutes(ctx context.Context, db DBTX, arg ListInstanceResourceMinutesParams) ([]ListInstanceResourceMinutesRow, error)
 	ListInstanceRouteMinutes(ctx context.Context, db DBTX, arg ListInstanceRouteMinutesParams) ([]ListInstanceRouteMinutesRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)

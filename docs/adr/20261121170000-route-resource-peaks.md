@@ -156,8 +156,13 @@ budget charge, audit and notifications as one a customer makes:
 1. `creating`: the row reserves the target name, `<slug>-<last static path
    segment>` (a random five-character suffix when taken). apid creates a
    standalone app in the source's account and org, sized `route_ram_mb`
-   (CPU splits: the source's RAM), with the source's type, runtime, CPU,
-   idle timeout and visibility.
+   (CPU splits: the source's RAM). When its deployment is seeded it takes
+   every runtime and security setting of the source (the environment
+   promotion's settings set: egress allowlist and ports, auth, IP
+   allowlist, rate limits, security policy, declared routes, CORS, start
+   command), so the route runs under the rules it ran under before. It
+   keeps its own RAM, scales to zero (no min instances) and gets no work
+   policies or queue bindings.
 2. `deploying`: in the same request apid creates one deployment of the
    source's live artifact (the environment branch's artifact copy: same
    image, rootfs layer, sidecar layers and overrides, no rebuild), reason
@@ -173,8 +178,12 @@ budget charge, audit and notifications as one a customer makes:
    undo finds them.
 4. `done`: a memory split sizes the source to `main_ram_mb` first.
 
-A failure before the rules are live rolls back: the rules made so far and
-the target app are deleted and the row ends `rolled_back` with the error.
+A failure before the rules are live rolls back: the rules made so far go
+first (so the path never routes to a deleted app), then the target app,
+and the row ends `rolled_back` with the error. Once recorded, a split's
+creation runs to the end even if the caller disconnects. The worker pages
+through every in-flight split each pass, so waiting splits never hold
+newer ones back, and two undo requests for one split never both act.
 A deployment that is not live after 15 minutes, or a row left in
 `creating` for 5 minutes, rolls back the same way. A rollback that cannot
 delete the route's app within an hour ends `rolled_back` naming the app for
@@ -192,7 +201,10 @@ The first slice splits standalone apps only. Apps in a project (their
 workloads are source-managed), previews, and apps with managed bindings
 (Postgres, object storage) or service bindings are refused up front with
 422 `route_split_unsupported` and what blocks them, so no split ever serves
-a route without the data it needs. A second slice copies request-path
+a route without the data it needs. So are apps with their own edge rules
+(the route's app answers on its own hostname, where those deny, auth, IP
+and rate-limit rules would not run) and apps with a static egress IP
+(unique to one app). A second slice copies request-path
 bindings with the environment clone's binding definitions and still never
 copies consumers.
 

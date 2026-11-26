@@ -18,6 +18,8 @@ const (
 	Interval = 15 * time.Second
 	// batch bounds the splits one pass moves.
 	batch = 50
+	// maxPages bounds one pass at maxPages*batch splits.
+	maxPages = 40
 )
 
 // Run moves in-flight splits until ctx ends.
@@ -36,18 +38,29 @@ func (s *Service) Run(ctx context.Context) error {
 
 // Step moves every in-flight split one phase where it can.
 func (s *Service) Step(ctx context.Context) {
-	splits, err := s.Store.InFlightRouteSplits(ctx, batch)
-	if err != nil {
-		if ctx.Err() == nil {
-			s.log().Warn("route split: list in-flight splits failed", "err", err)
-		}
-		return
-	}
-	for _, split := range splits {
-		if ctx.Err() != nil {
+	// Page through every in-flight split: splits that wait (a deployment
+	// coming up, a rollback retrying) keep their updated_at, so one page
+	// could otherwise hold the newest splits back forever.
+	var after state.RouteSplitCursor
+	for range maxPages {
+		splits, err := s.Store.InFlightRouteSplits(ctx, after, batch)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.log().Warn("route split: list in-flight splits failed", "err", err)
+			}
 			return
 		}
-		s.advance(ctx, split)
+		for _, split := range splits {
+			if ctx.Err() != nil {
+				return
+			}
+			s.advance(ctx, split)
+		}
+		if len(splits) < batch {
+			return
+		}
+		last := splits[len(splits)-1]
+		after = state.RouteSplitCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
 	}
 }
 
@@ -249,9 +262,22 @@ func transient(prob *api.Problem) bool {
 // anyway, naming the app, so the source can be split again.
 func (s *Service) rollBack(ctx context.Context, acct state.Account, split state.RouteSplit, reason string) {
 	from := split.Phase
+	abandon := s.now().Sub(split.UpdatedAt) >= api.RouteSplitAbandonAfter
+	// The rules go first, so the path never routes to a deleted app.
+	if source, err := s.Store.AppByID(ctx, split.SourceAppID); err == nil && source.Status != state.AppDeleted {
+		if prob := s.removeRules(ctx, acct, source, split); prob != nil {
+			if !abandon {
+				s.log().Warn("route split: rollback could not remove the rules", "split", split.ID, "detail", prob.Detail)
+				return
+			}
+			reason += "; the route's edge rules could not be removed (" + prob.Detail + ")"
+		}
+	} else if err != nil && !errors.Is(err, state.ErrNotFound) && !abandon {
+		return
+	}
 	if target, ok := s.target(ctx, acct, split); ok {
 		if prob := s.deleteApp(ctx, acct, target); prob != nil {
-			if s.now().Sub(split.UpdatedAt) < api.RouteSplitAbandonAfter {
+			if !abandon {
 				s.log().Warn("route split: rollback could not delete the route's app", "split", split.ID, "detail", prob.Detail)
 				return
 			}
@@ -294,6 +320,20 @@ func (s *Service) Undo(ctx context.Context, acct state.Account, source state.App
 		return state.RouteSplit{}, api.NewProblem(http.StatusConflict, api.CodeRouteSplitInFlight, "Split in flight",
 			"the split is still "+split.Phase+"; undo it once it is done")
 	}
+	// One undo at a time: a second request waits for the first's answer.
+	claimed, ok, err := s.Store.ClaimRouteSplit(ctx, split, s.now().Add(api.RouteSplitLease))
+	if err != nil {
+		return state.RouteSplit{}, api.ErrCapacity("could not read the split")
+	}
+	if !ok {
+		return s.undoneOrBusy(ctx, split)
+	}
+	defer func() {
+		if err := s.Store.ReleaseRouteSplit(context.WithoutCancel(ctx), claimed); err != nil {
+			s.log().Warn("route split: release failed", "split", claimed.ID, "err", err)
+		}
+	}()
+	split = claimed
 	if split.MainResized {
 		if prob := s.Host.ResizeApp(ctx, acct, source, split.PreviousRAMMB); prob != nil {
 			return state.RouteSplit{}, prob
@@ -309,9 +349,26 @@ func (s *Service) Undo(ctx context.Context, acct state.Account, source state.App
 	}
 	split.Phase = state.RouteSplitUndone
 	out, err := s.Store.AdvanceRouteSplit(ctx, split, state.RouteSplitDone)
+	if errors.Is(err, state.ErrConflict) {
+		return s.undoneOrBusy(ctx, split)
+	}
 	if err != nil {
 		return state.RouteSplit{}, api.ErrCapacity("could not record the undo")
 	}
 	s.log().Info("route split undone", "split", split.ID, "app", source.ID)
 	return out, nil
+}
+
+// undoneOrBusy answers an undo that lost the race: the split as it is when
+// the other request undid it, or 409 while that one still runs.
+func (s *Service) undoneOrBusy(ctx context.Context, split state.RouteSplit) (state.RouteSplit, *api.Problem) {
+	current, err := s.Store.RouteSplit(ctx, split.AccountID, split.ID)
+	if err != nil {
+		return state.RouteSplit{}, api.ErrCapacity("could not read the split")
+	}
+	if current.Phase == state.RouteSplitUndone {
+		return current, nil
+	}
+	return state.RouteSplit{}, api.NewProblem(http.StatusConflict, api.CodeRouteSplitInFlight, "Undo in progress",
+		"another request is undoing this split; check it with gregale app scale --split-status")
 }

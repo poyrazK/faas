@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -267,8 +268,8 @@ func (s bindingStore) RouteSplitsForApp(ctx context.Context, accountID, appID st
 	return s.Mem.RouteSplitsForApp(ctx, accountID, appID, limit)
 }
 
-func (s bindingStore) InFlightRouteSplits(ctx context.Context, limit int) ([]state.RouteSplit, error) {
-	return s.Mem.InFlightRouteSplits(ctx, limit)
+func (s bindingStore) InFlightRouteSplits(ctx context.Context, after state.RouteSplitCursor, limit int) ([]state.RouteSplit, error) {
+	return s.Mem.InFlightRouteSplits(ctx, after, limit)
 }
 
 func (s bindingStore) AdvanceRouteSplit(ctx context.Context, split state.RouteSplit, from string) (state.RouteSplit, error) {
@@ -321,6 +322,110 @@ func TestDeployTimeoutRollsBack(t *testing.T) {
 	}
 	if _, prob := f.svc.Undo(f.ctx, f.acct, f.source, got); prob != nil {
 		t.Fatalf("undo of a rolled-back split: %+v", prob)
+	}
+}
+
+// A rollback removes rules an earlier pass made before it deletes the
+// route's app, so the path never routes to a deleted app.
+func TestRollbackRemovesRules(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if _, err := f.store.CreateEdgeRule(f.ctx, state.CreateEdgeRuleParams{AccountID: f.acct.ID, AppID: f.source.ID,
+		MatchHost: "shop.gregale.dev", MatchPath: "/exports/*", Enabled: true, Kind: state.EdgeRuleKind("route"), Name: routesplit.RuleName(split.ID)}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock = f.clock.Add(api.RouteSplitDeployTimeout + time.Minute)
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitRolledBack {
+		t.Fatalf("split = %+v", got)
+	}
+	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID); len(rules) != 0 {
+		t.Fatalf("rules left after rollback: %+v", rules)
+	}
+}
+
+// The route's app runs under the source's settings (here its egress
+// allowlist) but scales to zero.
+func TestTargetInheritsSettings(t *testing.T) {
+	f := newFixture(t)
+	allow := []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
+	one := 1
+	source, err := f.store.UpdateApp(f.ctx, f.source.ID, state.UpdateAppParams{
+		EgressAllowlist: &allow, SetEgressAllowlist: true, MinInstances: &one, SetMinInstances: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	split, prob := f.svc.Apply(f.ctx, f.acct, source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	target, err := f.store.AppByID(f.ctx, split.TargetAppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(target.EgressAllowlist) != 1 || target.EgressAllowlist[0] != allow[0] {
+		t.Fatalf("route's app egress = %v", target.EgressAllowlist)
+	}
+	if target.RAMMB != 1920 || target.MinInstances != 0 {
+		t.Fatalf("route's app = %d MB, min %d", target.RAMMB, target.MinInstances)
+	}
+}
+
+// An app with its own edge rules or a static egress IP is refused: the
+// route's app would answer without them.
+func TestApplyRefusesUncopiableProtections(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.CreateEdgeRule(f.ctx, state.CreateEdgeRuleParams{AccountID: f.acct.ID, AppID: f.source.ID,
+		MatchHost: "shop.gregale.dev", MatchPath: "/admin/*", Enabled: true, Kind: state.EdgeRuleKind("deny"), Name: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
+		t.Fatalf("edge rules: %+v", prob)
+	}
+	g := newFixture(t)
+	ip := netip.MustParseAddr("198.51.100.7")
+	source := g.source
+	source.StaticEgressIP = &ip
+	if _, prob := g.svc.Apply(g.ctx, g.acct, source, g.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
+		t.Fatalf("static egress IP: %+v", prob)
+	}
+}
+
+// A second undo while the first runs gets 409; after it, the undone split.
+func TestConcurrentUndo(t *testing.T) {
+	f := newFixture(t)
+	f.host.split = &routeresources.Split{Kind: routeresources.SplitCPU, Route: "POST /render", Method: "POST", PathGlob: "/render",
+		RouteRAMMB: 1024, CurrentRAMMB: 1024, MainRAMMB: 1024}
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.svc.Step(f.ctx)
+	done := f.read(t, split.ID)
+	held, ok, err := f.store.ClaimRouteSplit(f.ctx, done, time.Now().Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if _, prob := f.svc.Undo(f.ctx, f.acct, f.source, done); prob == nil || prob.Status != http.StatusConflict {
+		t.Fatalf("undo while another runs: %+v", prob)
+	}
+	if err := f.store.ReleaseRouteSplit(f.ctx, held); err != nil {
+		t.Fatal(err)
+	}
+	if _, prob := f.svc.Undo(f.ctx, f.acct, f.source, done); prob != nil {
+		t.Fatalf("undo: %+v", prob)
+	}
+	again, prob := f.svc.Undo(f.ctx, f.acct, f.source, f.read(t, split.ID))
+	if prob != nil || again.Phase != state.RouteSplitUndone {
+		t.Fatalf("repeat undo = %+v, %+v", again, prob)
 	}
 }
 

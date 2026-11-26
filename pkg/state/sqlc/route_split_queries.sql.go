@@ -201,12 +201,19 @@ func (q *Queries) InsertRouteSplit(ctx context.Context, db DBTX, arg InsertRoute
 const listInFlightRouteSplits = `-- name: ListInFlightRouteSplits :many
 SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at FROM route_splits
  WHERE phase IN ('creating', 'deploying', 'rule_live')
+   AND (updated_at, id) > ($1::timestamptz, $2::uuid)
  ORDER BY updated_at, id
- LIMIT $1
+ LIMIT $3
 `
 
-func (q *Queries) ListInFlightRouteSplits(ctx context.Context, db DBTX, rowLimit int32) ([]RouteSplit, error) {
-	rows, err := db.Query(ctx, listInFlightRouteSplits, rowLimit)
+type ListInFlightRouteSplitsParams struct {
+	AfterUpdatedAt pgtype.Timestamptz
+	AfterID        pgtype.UUID
+	RowLimit       int32
+}
+
+func (q *Queries) ListInFlightRouteSplits(ctx context.Context, db DBTX, arg ListInFlightRouteSplitsParams) ([]RouteSplit, error) {
+	rows, err := db.Query(ctx, listInFlightRouteSplits, arg.AfterUpdatedAt, arg.AfterID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

@@ -108,9 +108,13 @@ func routeSplits(t *testing.T, s contractTestStore) {
 	if _, err := s.AdvanceRouteSplit(ctx, stale, state.RouteSplitCreating); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("advance from a stale phase: %v, want ErrConflict", err)
 	}
-	inFlight, err := s.InFlightRouteSplits(ctx, 10)
+	inFlight, err := s.InFlightRouteSplits(ctx, state.RouteSplitCursor{}, 10)
 	if err != nil || !containsSplit(inFlight, split.ID) {
 		t.Fatalf("in flight = %+v, %v", inFlight, err)
+	}
+	past, err := s.InFlightRouteSplits(ctx, state.RouteSplitCursor{UpdatedAt: split.UpdatedAt, ID: split.ID}, 10)
+	if err != nil || containsSplit(past, split.ID) {
+		t.Fatalf("page after the split = %+v, %v", past, err)
 	}
 
 	// One pass holds the split; a second cannot claim it until the first
@@ -157,7 +161,7 @@ func routeSplits(t *testing.T, s contractTestStore) {
 	if _, err := s.RouteSplit(ctx, uuid.NewString(), split.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("other account read: %v, want ErrNotFound", err)
 	}
-	inFlight, err = s.InFlightRouteSplits(ctx, 10)
+	inFlight, err = s.InFlightRouteSplits(ctx, state.RouteSplitCursor{}, 10)
 	if err != nil || containsSplit(inFlight, split.ID) {
 		t.Fatalf("a done split is still in flight: %+v, %v", inFlight, err)
 	}

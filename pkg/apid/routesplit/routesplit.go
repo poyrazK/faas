@@ -84,7 +84,15 @@ func (s *Service) log() *slog.Logger {
 
 // RuleName labels the edge rules of one split, so a retried pass finds the
 // rules an earlier one made and undo removes them all.
-func RuleName(splitID string) string { return "route-split:" + splitID }
+func RuleName(splitID string) string { return RuleNamePrefix + splitID }
+
+// applyBudget bounds Apply's work after the split is recorded; it stays
+// under RouteSplitCreateTimeout so the worker never rolls back a split
+// Apply is still creating.
+const applyBudget = api.RouteSplitCreateTimeout - time.Minute
+
+// RuleNamePrefix starts every split rule's name.
+const RuleNamePrefix = "route-split:"
 
 // Apply checks the request against a fresh suggestion, records the split,
 // creates the route's app and seeds its deployment.
@@ -104,8 +112,8 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 		return state.RouteSplit{}, changedProblem(suggestion)
 	}
 	if suggestion.RouteRAMOverPlan {
-		return state.RouteSplit{}, api.NewProblem(422, api.CodeRouteSplitUnsupported, "Route needs a larger plan",
-			fmt.Sprintf("the route needs %d MB, more than your plan's largest app; upgrade the plan first", suggestion.RouteRAMMB))
+		limits, _ := api.LimitsFor(acct.Plan)
+		return state.RouteSplit{}, api.ErrPlanLimitRAM(limits, suggestion.RouteRAMMB)
 	}
 	target, err := s.targetSlug(ctx, app.Slug, suggestion.PathGlob)
 	if err != nil {
@@ -127,16 +135,23 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 	if err != nil {
 		return state.RouteSplit{}, api.ErrCapacity("could not record the split")
 	}
+	// The split is recorded: finish it even if the caller goes away, within
+	// the time the worker leaves a creating split alone.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), applyBudget)
+	defer cancel()
 	created, split, prob := s.createTarget(ctx, acct, app, split)
 	if prob != nil {
 		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not create the route's app: "+prob.Detail)
 		return state.RouteSplit{}, prob
 	}
 	split.TargetAppID = created.ID
-	if split, err = s.Store.AdvanceRouteSplit(ctx, split, state.RouteSplitCreating); err != nil {
+	recorded, err := s.Store.AdvanceRouteSplit(ctx, split, state.RouteSplitCreating)
+	if err != nil {
 		s.deleteTarget(ctx, acct, created)
+		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not record the route's app")
 		return state.RouteSplit{}, api.ErrCapacity("could not record the route's app")
 	}
+	split = recorded
 	dep, err := s.Store.SeedRouteSplitTarget(ctx, state.RouteSplitSeed{
 		AccountID: app.AccountID, SplitID: split.ID, SourceAppID: app.ID, TargetAppID: created.ID,
 	})
@@ -149,11 +164,15 @@ func (s *Service) Apply(ctx context.Context, acct state.Account, app state.App, 
 		}
 		return state.RouteSplit{}, api.ErrCapacity("could not deploy the app's build to the route's app")
 	}
-	split.TargetDeploymentID, split.Phase = dep.ID, state.RouteSplitDeploying
-	split, err = s.Store.AdvanceRouteSplit(ctx, split, state.RouteSplitCreating)
+	deploying := split
+	deploying.TargetDeploymentID, deploying.Phase = dep.ID, state.RouteSplitDeploying
+	recorded, err = s.Store.AdvanceRouteSplit(ctx, deploying, state.RouteSplitCreating)
 	if err != nil {
+		s.deleteTarget(ctx, acct, created)
+		s.finish(ctx, split, state.RouteSplitCreating, state.RouteSplitRolledBack, "could not record the route's deployment")
 		return state.RouteSplit{}, api.ErrCapacity("could not record the route's deployment")
 	}
+	split = recorded
 	s.log().Info("route split applied", "split", split.ID, "app", app.ID, "target", created.ID, "kind", split.Kind)
 	return split, nil
 }
@@ -220,6 +239,20 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 		return refuse("apps in a project are split in the project's source; split a standalone app, or move the route to its own service there")
 	case len(app.Manifest.ServiceBindings) > 0:
 		return refuse("the app has service bindings, which the route's app would not have yet")
+	case app.StaticEgressIP != nil:
+		return refuse("the app has a static egress IP, which belongs to one app; the route would call out from another address")
+	}
+	// The route's app answers on its own hostname, where the app's edge
+	// rules (deny, auth, IP, rate limit) do not run. Until splits copy them,
+	// only an app whose sole rules are earlier splits' can be split.
+	rules, err := s.Store.ListEdgeRulesForApp(ctx, app.ID)
+	if err != nil {
+		return api.ErrCapacity("could not read the app's edge rules")
+	}
+	for _, rule := range rules {
+		if rule.Kind != state.EdgeRuleKind("route") || !strings.HasPrefix(rule.Name, RuleNamePrefix) {
+			return refuse("the app has edge rules (" + rule.Name + "), which would not protect the route's app on its own hostname")
+		}
 	}
 	secrets, err := s.Store.ListAppSecrets(ctx, app.AccountID, app.ID)
 	if err != nil {

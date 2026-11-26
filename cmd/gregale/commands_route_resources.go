@@ -250,6 +250,15 @@ func appRouteSplitUndo(client *api.Client, slug, id string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
+	if out.Phase == api.RouteSplitPhaseRolledBack {
+		// Nothing was undone: the split never finished, and its error says
+		// whether the route's app is left for the customer to delete.
+		_, _ = fmt.Fprintf(osStdout, "Split %s was rolled back; there is nothing to undo.\n", out.ID)
+		if out.Error != "" {
+			_, _ = fmt.Fprintf(osStdout, "  %s\n", out.Error)
+		}
+		return 0
+	}
 	_, _ = fmt.Fprintf(osStdout, "Split %s is %s: %s serves %s again", out.ID, out.Phase, slug, out.Route)
 	if out.MainResized {
 		_, _ = fmt.Fprintf(osStdout, " at %d MB", out.PreviousRAMMB)

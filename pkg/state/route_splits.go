@@ -76,6 +76,19 @@ type RouteSplit struct {
 	leaseUntil time.Time
 }
 
+// RouteSplitCursor pages InFlightRouteSplits by (updated_at, id).
+type RouteSplitCursor struct {
+	UpdatedAt time.Time
+	ID        string
+}
+
+func (c RouteSplitCursor) before(split RouteSplit) bool {
+	if !c.UpdatedAt.Equal(split.UpdatedAt) {
+		return c.UpdatedAt.Before(split.UpdatedAt)
+	}
+	return c.ID < split.ID
+}
+
 // InFlight reports whether the worker still moves the split.
 func (s RouteSplit) InFlight() bool {
 	return s.Phase == RouteSplitCreating || s.Phase == RouteSplitDeploying || s.Phase == RouteSplitRuleLive
@@ -104,8 +117,8 @@ type RouteSplitStore interface {
 	// RouteSplitsForApp lists an app's splits, newest first.
 	RouteSplitsForApp(ctx context.Context, accountID, sourceAppID string, limit int) ([]RouteSplit, error)
 	// InFlightRouteSplits lists splits the worker still moves, oldest
-	// update first.
-	InFlightRouteSplits(ctx context.Context, limit int) ([]RouteSplit, error)
+	// update first, after the cursor (the zero cursor starts at the first).
+	InFlightRouteSplits(ctx context.Context, after RouteSplitCursor, limit int) ([]RouteSplit, error)
 	// AdvanceRouteSplit writes the split's mutable fields when its phase is
 	// still fromPhase. ErrConflict when it moved.
 	AdvanceRouteSplit(ctx context.Context, split RouteSplit, fromPhase string) (RouteSplit, error)
@@ -212,12 +225,12 @@ func (m *MemStore) RouteSplitsForApp(_ context.Context, accountID, sourceAppID s
 	return out, nil
 }
 
-func (m *MemStore) InFlightRouteSplits(_ context.Context, limit int) ([]RouteSplit, error) {
+func (m *MemStore) InFlightRouteSplits(_ context.Context, after RouteSplitCursor, limit int) ([]RouteSplit, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := []RouteSplit{}
 	for _, split := range m.routeSplits {
-		if split.InFlight() {
+		if split.InFlight() && after.before(split) {
 			out = append(out, cloneRouteSplit(split))
 		}
 	}
@@ -346,6 +359,15 @@ func (m *MemStore) prepareRouteSplitDeploymentLocked(d Deployment) (Deployment, 
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(live)); err != nil {
 		return Deployment{}, nil, "", err
 	}
+	settings, err := RouteSplitTargetSettings(source, target)
+	if err != nil {
+		return Deployment{}, nil, "", err
+	}
+	updated, err := settings.ApplyTo(target)
+	if err != nil {
+		return Deployment{}, nil, "", err
+	}
+	m.apps[target.ID] = updated
 	return routeSplitTargetDeployment(normalizeProjectCloneArtifact(projectCloneArtifactFromDeployment(live)), seed), nil, live.ID, nil
 }
 
@@ -457,8 +479,19 @@ func (s *PgStore) RouteSplitsForApp(ctx context.Context, accountID, sourceAppID 
 	return routeSplitsFromRows(rows), nil
 }
 
-func (s *PgStore) InFlightRouteSplits(ctx context.Context, limit int) ([]RouteSplit, error) {
-	rows, err := new(sqlc.Queries).ListInFlightRouteSplits(ctx, s.pool, routeSplitLimit(limit))
+func (s *PgStore) InFlightRouteSplits(ctx context.Context, after RouteSplitCursor, limit int) ([]RouteSplit, error) {
+	afterID := pgtype.UUID{Valid: true} // the zero UUID sorts first
+	if after.ID != "" {
+		if uuid.Validate(after.ID) != nil {
+			return nil, ErrInvalidArgument
+		}
+		afterID = mustPgUUID(after.ID)
+	}
+	rows, err := new(sqlc.Queries).ListInFlightRouteSplits(ctx, s.pool, sqlc.ListInFlightRouteSplitsParams{
+		AfterUpdatedAt: pgtype.Timestamptz{Time: after.UpdatedAt, Valid: true},
+		AfterID:        afterID,
+		RowLimit:       routeSplitLimit(limit),
+	})
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -601,6 +634,21 @@ func prepareRouteSplitDeploymentTx(ctx context.Context, tx pgx.Tx, d Deployment)
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, source.ID); err != nil {
 		return Deployment{}, nil, "", err
 	}
+	sourceApp, err := appByIDDB(ctx, tx, seed.SourceAppID)
+	if err != nil {
+		return Deployment{}, nil, "", err
+	}
+	targetApp, err := appByIDDB(ctx, tx, seed.TargetAppID)
+	if err != nil {
+		return Deployment{}, nil, "", err
+	}
+	settings, err := RouteSplitTargetSettings(sourceApp, targetApp)
+	if err != nil {
+		return Deployment{}, nil, "", err
+	}
+	if err := replaceAppWorkloadSettingsTx(ctx, tx, targetApp.ID, settings); err != nil {
+		return Deployment{}, nil, "", err
+	}
 	return routeSplitTargetDeployment(normalizeProjectCloneArtifact(projectCloneArtifactFromDeployment(source)), seed), nil, source.ID, nil
 }
 
@@ -632,6 +680,24 @@ func attachRouteSplitDeploymentTx(ctx context.Context, tx pgx.Tx, sourceID strin
 		return mapErr(err)
 	}
 	return stageBranchDeploymentTx(ctx, tx, created)
+}
+
+// RouteSplitTargetSettings is the route's app configuration: every runtime
+// and security setting of the source (egress allowlist and ports, auth, IP
+// allowlist, rate limits, security policy, declared routes, CORS, start
+// command), so the route runs under the rules it ran under before. The
+// target keeps its own RAM, scales to zero (no min instances) and gets no
+// work policies or queue bindings, which would consume twice.
+func RouteSplitTargetSettings(source, target App) (ProjectEnvironmentWorkloadSettings, error) {
+	settings, err := WorkloadSettingsFromApp(source)
+	if err != nil {
+		return ProjectEnvironmentWorkloadSettings{}, err
+	}
+	settings.RAMMB = target.RAMMB
+	settings.MinInstances = 0
+	settings.StaticEgressIP = nil // unique per app; apid refuses such splits
+	settings.WorkPolicies, settings.QueueBindings = nil, nil
+	return settings, nil
 }
 
 func routeSplitLimit(limit int) int32 {

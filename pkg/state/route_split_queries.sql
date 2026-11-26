@@ -23,6 +23,7 @@ SELECT * FROM route_splits
 -- name: ListInFlightRouteSplits :many
 SELECT * FROM route_splits
  WHERE phase IN ('creating', 'deploying', 'rule_live')
+   AND (updated_at, id) > (@after_updated_at::timestamptz, @after_id::uuid)
  ORDER BY updated_at, id
  LIMIT @row_limit;
 
