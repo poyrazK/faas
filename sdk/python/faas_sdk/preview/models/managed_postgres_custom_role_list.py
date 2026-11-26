@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ManagedPostgresCustomRoleList")
 
 @_attrs_define
 class ManagedPostgresCustomRoleList:
+    """A database's custom roles."""
+
     items: list[ManagedPostgresCustomRole]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

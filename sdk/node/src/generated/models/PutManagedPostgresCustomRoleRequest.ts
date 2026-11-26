@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * The declaration of a custom role; absent fields take their defaults.
+ */
 export type PutManagedPostgresCustomRoleRequest = {
   bypass_rls?: boolean;
   /**

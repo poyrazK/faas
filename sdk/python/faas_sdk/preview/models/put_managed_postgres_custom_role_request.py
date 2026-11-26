@@ -21,6 +21,8 @@ T = TypeVar("T", bound="PutManagedPostgresCustomRoleRequest")
 
 @_attrs_define
 class PutManagedPostgresCustomRoleRequest:
+    """The declaration of a custom role; absent fields take their defaults."""
+
     bypass_rls: bool | Unset = False
     granted_to: list[PutManagedPostgresCustomRoleRequestGrantedToItem] | Unset = UNSET
     """Access modes whose logins may SET ROLE to it; session is stored as read_write."""

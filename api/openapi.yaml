@@ -96815,6 +96815,7 @@ components:
         updated_at: { type: string, format: date-time }
     ManagedPostgresCustomRoleList:
       type: object
+      description: A database's custom roles.
       required: [items]
       properties:
         items:
@@ -96822,6 +96823,7 @@ components:
           items: { $ref: '#/components/schemas/ManagedPostgresCustomRole' }
     PutManagedPostgresCustomRoleRequest:
       type: object
+      description: The declaration of a custom role; absent fields take their defaults.
       properties:
         bypass_rls: { type: boolean, default: false }
         granted_to:

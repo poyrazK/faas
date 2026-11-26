@@ -86,7 +86,8 @@ def sync_detailed(
     Args:
         id (str):
         name (str):
-        body (PutManagedPostgresCustomRoleRequest):
+        body (PutManagedPostgresCustomRoleRequest): The declaration of a custom role; absent
+            fields take their defaults.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,7 +132,8 @@ def sync(
     Args:
         id (str):
         name (str):
-        body (PutManagedPostgresCustomRoleRequest):
+        body (PutManagedPostgresCustomRoleRequest): The declaration of a custom role; absent
+            fields take their defaults.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,7 +173,8 @@ async def asyncio_detailed(
     Args:
         id (str):
         name (str):
-        body (PutManagedPostgresCustomRoleRequest):
+        body (PutManagedPostgresCustomRoleRequest): The declaration of a custom role; absent
+            fields take their defaults.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,7 +217,8 @@ async def asyncio(
     Args:
         id (str):
         name (str):
-        body (PutManagedPostgresCustomRoleRequest):
+        body (PutManagedPostgresCustomRoleRequest): The declaration of a custom role; absent
+            fields take their defaults.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
