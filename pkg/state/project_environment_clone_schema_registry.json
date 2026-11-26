@@ -18766,7 +18766,38 @@
       "state",
       "storage_key",
       "vmstate_bytes",
-      "vmstate_storage_key"
+      "vmstate_storage_key",
+      "volume_backup_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_volumes",
+    "columns": [
+      "account_id",
+      "created_at",
+      "latest_backup_id",
+      "node_id",
+      "session_id",
+      "size_gb",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_volume_backups",
+    "columns": [
+      "account_id",
+      "created_at",
+      "data_chunks",
+      "deleted_at",
+      "id",
+      "node_id",
+      "reason",
+      "session_id",
+      "size_bytes",
+      "state",
+      "uploaded_bytes"
     ],
     "kind": "operational"
   },

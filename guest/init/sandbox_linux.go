@@ -33,6 +33,13 @@ func runSandboxGuest(log *slog.Logger) error {
 	} else if err := startOutboundRelay(log); err != nil {
 		log.Warn("sandbox: outbound relay unavailable", "err", err)
 	}
+	// A persistent session's workspace is its volume (ADR-20261122132055
+	// §4); a volume that will not mount fails the boot, so the session
+	// never writes its workspace to the root instead.
+	if _, err := mountSandboxVolume(log); err != nil {
+		log.Error("sandbox: workspace volume", "err", err)
+		return err
+	}
 	if err := prepareSandboxDirs(); err != nil {
 		log.Error("sandbox: prepare workspace", "err", err)
 		return err

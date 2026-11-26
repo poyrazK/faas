@@ -329,6 +329,9 @@ service Schedd {
   // grant and recorded answers down. The VM is destroyed and the
   // reservation released when the stream ends.
   rpc RunSandbox(stream SandboxRunRequest) returns (stream SandboxRunEvent);
+  // DeleteSandboxVolume removes a persistent session's workspace volume
+  // from one node (ADR-20261122132055 §4), relayed to that node's vmmd.
+  rpc DeleteSandboxVolume(DeleteSandboxVolumeRequest) returns (DeleteSandboxVolumeResponse);
   // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
   // memory-pressure report: MemAvailable fell to the pressure share of
   // MemTotal while a profile collector was registered. schedd queues one
@@ -1386,6 +1389,18 @@ message SandboxRunStart {
   // resume restores a paused persistent session; workspace_key is empty
   // with it.
   SandboxRunResume resume = 19;
+  // volume_gb, volume_backup_id and volume_backup_interval_ms are the
+  // persistent session's workspace volume (ADR-20261122132055 §4), as
+  // vmmd's RunSandboxStart.
+  int32 volume_gb = 20;
+  string volume_backup_id = 21;
+  int64 volume_backup_interval_ms = 22;
+  // volume_node_id is the node holding the volume's newest copy, which the
+  // session prefers; volume_stored_backup_id is its newest backup the
+  // shared store holds. When that node left the pool, its copy and the
+  // backups only it held are gone, so vmmd restores the stored one.
+  string volume_node_id = 23;
+  string volume_stored_backup_id = 24;
 }
 
 // SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
@@ -1474,7 +1489,29 @@ message SandboxRunEvent {
     // ends after paused.
     SandboxRunPaused paused = 13;
     SandboxRunPauseRefused pause_refused = 14;
+    // volume_backup relays vmmd's backup of the session's volume; sent
+    // only to a start with volume_gb.
+    SandboxRunVolumeBackup volume_backup = 15;
   }
+}
+
+message SandboxRunVolumeBackup {
+  string backup_id = 1;
+  int64 size_bytes = 2;
+  int32 data_chunks = 3;
+  int64 uploaded_bytes = 4;
+  int64 backup_ms = 5;
+  bool incremental = 6;
+}
+
+message DeleteSandboxVolumeRequest {
+  string node_id = 1;
+  string account_id = 2;
+  string sandbox_id = 3;
+}
+
+message DeleteSandboxVolumeResponse {
+  bool deleted = 1;
 }
 
 message SandboxRunPaused {
@@ -1485,6 +1522,8 @@ message SandboxRunPaused {
   int64 vmstate_bytes = 5;
   int64 pause_ms = 6;
   bool has_backing = 7;
+  // volume_backup_id names the volume backup that matches the capture.
+  string volume_backup_id = 8;
 }
 
 message SandboxRunPauseRefused {

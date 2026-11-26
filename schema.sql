@@ -62249,6 +62249,7 @@ CREATE TABLE public.sandbox_session_captures (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     consumed_at timestamp with time zone,
     checked_at timestamp with time zone,
+    volume_backup_id uuid,
     CONSTRAINT sandbox_session_captures_check CHECK (((state = 'consumed'::text) = (consumed_at IS NOT NULL))),
     CONSTRAINT sandbox_session_captures_check1 CHECK (((state = 'consumed'::text) OR ((fc_version <> ''::text) AND (mem_bytes > 0)))),
     CONSTRAINT sandbox_session_captures_mem_bytes_check CHECK ((mem_bytes >= 0)),
@@ -62473,6 +62474,49 @@ CREATE TABLE public.sandbox_templates (
 --
 
 COMMENT ON TABLE public.sandbox_templates IS 'ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.';
+
+
+--
+-- Name: sandbox_volume_backups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_volume_backups (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id text NOT NULL,
+    reason text NOT NULL,
+    state text NOT NULL,
+    size_bytes bigint DEFAULT 0 NOT NULL,
+    data_chunks integer DEFAULT 0 NOT NULL,
+    uploaded_bytes bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT sandbox_volume_backups_check CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
+    CONSTRAINT sandbox_volume_backups_data_chunks_check CHECK ((data_chunks >= 0)),
+    CONSTRAINT sandbox_volume_backups_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_volume_backups_reason_check CHECK ((reason = ANY (ARRAY['periodic'::text, 'pause'::text]))),
+    CONSTRAINT sandbox_volume_backups_size_bytes_check CHECK ((size_bytes >= 0)),
+    CONSTRAINT sandbox_volume_backups_state_check CHECK ((state = ANY (ARRAY['uploading'::text, 'stored'::text, 'deleted'::text]))),
+    CONSTRAINT sandbox_volume_backups_uploaded_bytes_check CHECK ((uploaded_bytes >= 0))
+);
+
+
+--
+-- Name: sandbox_volumes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_volumes (
+    session_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id text NOT NULL,
+    size_gb integer NOT NULL,
+    latest_backup_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_volumes_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_volumes_size_gb_check CHECK ((size_gb > 0))
+);
 
 
 --
@@ -79218,6 +79262,22 @@ ALTER TABLE ONLY public.sandbox_templates
 
 
 --
+-- Name: sandbox_volume_backups sandbox_volume_backups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volume_backups
+    ADD CONSTRAINT sandbox_volume_backups_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_volumes sandbox_volumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volumes
+    ADD CONSTRAINT sandbox_volumes_pkey PRIMARY KEY (session_id);
+
+
+--
 -- Name: sandbox_workspace_snapshots sandbox_workspace_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -91585,6 +91645,13 @@ CREATE INDEX sandbox_sessions_persistent_idx ON public.sandbox_sessions USING bt
 --
 
 CREATE INDEX sandbox_sessions_queue_idx ON public.sandbox_sessions USING btree (created_at, id) WHERE (state = 'queued'::text);
+
+
+--
+-- Name: sandbox_volume_backups_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_volume_backups_session ON public.sandbox_volume_backups USING btree (session_id, created_at) WHERE (state <> 'deleted'::text);
 
 
 --
@@ -117266,6 +117333,38 @@ ALTER TABLE ONLY public.sandbox_templates
 
 ALTER TABLE ONLY public.sandbox_templates
     ADD CONSTRAINT sandbox_templates_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volume_backups sandbox_volume_backups_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volume_backups
+    ADD CONSTRAINT sandbox_volume_backups_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volume_backups sandbox_volume_backups_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volume_backups
+    ADD CONSTRAINT sandbox_volume_backups_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volumes sandbox_volumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volumes
+    ADD CONSTRAINT sandbox_volumes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_volumes sandbox_volumes_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_volumes
+    ADD CONSTRAINT sandbox_volumes_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --
