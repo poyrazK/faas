@@ -721,7 +721,7 @@ var cliCommands = []cliCommand{
 				{Name: "dry-run", Short: "show the files without writing them"},
 			}},
 			{Name: "postgres", Short: "Provision or attach PostgreSQL and inject DATABASE_URL", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "database", Short: "existing database ID or name", Value: "REF"},
@@ -735,7 +735,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "region", Short: "object-storage region", Value: "REGION"},
@@ -752,7 +752,7 @@ var cliCommands = []cliCommand{
 				"gregale add datadog --app my-api --dry-run",
 				"gregale add datadog --app my-api --remove",
 			}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "site", Short: "Datadog site (default us1)", Value: "SITE", ClosedSet: []string{"ap1", "eu1", "us1", "us3", "us5"}},
 				{Name: "api-key-env", Short: "environment variable holding the API key (default DD_API_KEY)", Value: "NAME"},
 				{Name: "api-key-stdin", Short: "read the API key from stdin"},
@@ -767,7 +767,7 @@ var cliCommands = []cliCommand{
 				"gregale add ai --app my-api --provider vertex --region us-central1 --key-file key.json",
 				"gregale add ai --app my-api --provider azure_openai --origin https://my-resource.openai.azure.com --key-stdin",
 			}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "APP"},
 				{Name: "provider", Short: "AI provider", Req: true, Value: "PROVIDER", ClosedSet: []string{"openai", "anthropic", "gemini", "azure_openai", "bedrock", "vertex"}},
 				{Name: "integration", Short: "existing AI integration to bind instead of creating one", Value: "ID"},
 				{Name: "name", Short: "integration name (default the provider)", Value: "NAME"},
@@ -2419,8 +2419,8 @@ var cliCommands = []cliCommand{
 				{Name: "max-output-bytes", Short: "captured output limit (default 1048576 bytes)", Value: "N"},
 				{Name: "timezone", Short: "IANA timezone (default UTC)", Value: "TZ"},
 				{Name: "skip-if-running", Short: "skip fires while the previous run is active"},
-				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
-				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt"},
+				{Name: "retry-max", Value: "N", Short: "additional command attempts after failure or timeout"},
+				{Name: "retry-backoff-seconds", Value: "N", Short: "base retry delay; doubles per attempt"},
 				{Name: "schedule-policy", Short: "versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
@@ -2449,7 +2449,7 @@ var cliCommands = []cliCommand{
 				{Name: "disable", Short: "disable the cron"},
 				{Name: "skip-if-running", Short: "skip fires while a previous run is active"},
 				{Name: "allow-overlap", Short: "allow scheduled fires to overlap"},
-				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
+				{Name: "retry-max", Value: "N", Short: "additional command attempts after failure or timeout"},
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt", Value: "N"},
 				{Name: "schedule-policy", Short: "replace versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
@@ -3036,7 +3036,7 @@ var cliCommands = []cliCommand{
 			"gregale deployment latest --app my-api",
 		},
 		Subcommands: []cliSub{
-			{Name: "verify", Short: "Verify an application response from an exact live deployment", Positionals: []string{"<deployment-uuid>"}, Notes: []string{"Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified."}, Examples: []string{"gregale release verify DEPLOYMENT_UUID --app my-api --path /", "gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "path", Value: "PATH", Short: "app-relative GET path (default /)"}, {Name: "project-id", Value: "UUID", Short: "project identity for a named environment (looked up when omitted)"}, {Name: "environment-id", Value: "UUID", Short: "environment identity for a named environment (looked up when omitted)"}}},
+			{Name: "verify", Short: "Verify an application response from an exact live deployment", Positionals: []string{"<deployment-uuid>"}, Notes: []string{"Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified."}, Examples: []string{"gregale release verify DEPLOYMENT_UUID --app my-api --path /", "gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}, {Name: "path", Value: "PATH", Short: "app-relative GET path (default /)"}, {Name: "project-id", Value: "UUID", Short: "project identity for a named environment (looked up when omitted)"}, {Name: "environment-id", Value: "UUID", Short: "environment identity for a named environment (looked up when omitted)"}}},
 			{Name: "retry-hold", Positionals: []string{"<ID|vN>"}, Short: "Schedule an MCP promotion hold retry with all activation checks", Examples: []string{"gregale deployment retry-hold v42 --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale release runtime v42 --app my-function", "gregale release runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
@@ -3355,6 +3355,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: subRm, Aliases: []string{"remove"}, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}, Flags: []cliFlag{
 				{Name: "yes", Bool: true, Short: "confirm removal without prompting"},
+				{Name: "app", Short: "refuse unless the domain is bound to this app", Value: "SLUG"},
 			}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
 			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending.", "Checks ownership and routing immediately; --wait waits for HTTPS readiness."}, Positionals: []string{"<domain>"}, Flags: []cliFlag{
@@ -3891,14 +3892,14 @@ var cliCommands = []cliCommand{
 				{Name: "environment", Short: "project environment whose consumers to create it in; trials are production's; omitted is production", Value: "ENV"},
 			}},
 			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
-			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}},
+			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Short: "accepted for scripts; revoke does not prompt"}}},
 			{Name: "keys", Short: "List a consumer's API keys", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "key-create", Short: "Issue a consumer API key (secret shown once)", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "name", Short: "key display name", Value: "TEXT", Req: true},
 				{Name: "scopes", Short: "comma-separated scopes: read, write, admin, billing (default write); billing lets the customer read its own usage and invoices", Value: "LIST"},
 				{Name: "expires", Short: "key expiry", Value: "RFC3339"},
 			}},
-			{Name: "key-revoke", Short: "Revoke one consumer API key", Positionals: []string{"<slug>", "<consumer-id>", "<key-id>"}},
+			{Name: "key-revoke", Short: "Revoke one consumer API key", Positionals: []string{"<slug>", "<consumer-id>", "<key-id>"}, Flags: []cliFlag{{Name: "yes", Bool: true, Short: "accepted for scripts; revoke does not prompt"}}},
 			{Name: "usage", Short: "Show a consumer's metered requests", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "since", Short: "window start", Value: "RFC3339"},
 				{Name: "until", Short: "window end", Value: "RFC3339"},
@@ -6479,11 +6480,11 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale redis create sessions --memory 128"}},
 			{Name: "get", Short: "Show one managed Redis cache", Positionals: []string{"<name>"}},
 			{Name: "bind", Short: "Let an app call the cache and set its connection URL", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app that receives the URL", Req: true, Value: "APP"},
+				{Name: "app", Short: "app that receives the URL (defaults to the linked app)", Value: "APP"},
 				{Name: "env", Short: "environment variable (default REDIS_URL)", Value: "KEY"},
 			}, Examples: []string{"gregale redis bind sessions --app web"}},
 			{Name: "unbind", Short: "Stop an app from calling the cache", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app that loses access", Req: true, Value: "APP"},
+				{Name: "app", Short: "app that loses access (defaults to the linked app)", Value: "APP"},
 			}, Notes: []string{"The app's connection variable stays set; unset it with `gregale env unset`."}, Examples: []string{"gregale redis unbind sessions --app web"}},
 			{Name: "resize", Short: "Change a cache's size or eviction policy; its data is kept", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "memory", Short: "new data size in MB", Value: "MB"},
@@ -6817,7 +6818,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "realtime",
 		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"<app>"}},
+			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"[<app>]"}},
 			{Name: "usage", Short: "Show open connections against the fair-use limit and usage", Notes: []string{"Includes recent hourly usage."}, Flags: []cliFlag{
 				{Name: "hours", Short: "UTC hours of usage to show (1-744, default 24)", Value: "N"},
 			}},
@@ -7348,6 +7349,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it removed the secret"},
 				{Name: "timeout", Short: "maximum time to wait for runtime acknowledgements (requires --wait-for-ack)", Value: "DURATION"},
 				{Name: "no-guard", Short: "do not open a config guard for this change", Bool: true},
+				{Name: "yes", Short: "accepted for scripts; removing named keys does not prompt", Bool: true},
 			}},
 			{Name: "list-all", Short: "List every secret across apps", Examples: []string{"gregale secrets list-all --class ephemeral", "gregale secrets list-all --older-than 90d"}, Flags: []cliFlag{
 				{Name: "before", Short: "pagination cursor from a previous call's next_before", Value: "slug|key"},

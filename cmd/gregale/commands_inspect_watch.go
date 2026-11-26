@@ -256,7 +256,7 @@ func renderInspectWatchChanges(w io.Writer, summary inspectSummary, changed []st
 		case "app":
 			renderInspectApp(w, summary.App)
 		case "runtime":
-			renderInspectRuntime(w, summary.Runtime)
+			renderInspectRuntime(w, summary.Runtime, inspectServesNoRequests(summary.App))
 		case "resources":
 			renderInspectResources(w, summary.Resources)
 		case "signals":

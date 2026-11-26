@@ -10228,6 +10228,14 @@ ON CONFLICT (cache_app_id, app_id) DO NOTHING;
 DELETE FROM managed_valkey_cache_grants
 WHERE cache_app_id = sqlc.arg(cache_app_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
+-- name: ListManagedValkeyCacheGrantees :many
+-- The live apps bound to a cache, so deleting it can name them.
+SELECT a.slug FROM managed_valkey_cache_grants g
+JOIN apps a ON a.id = g.app_id
+WHERE g.cache_app_id = sqlc.arg(cache_app_id)::uuid
+  AND a.status <> 'deleted' AND a.deleted_at IS NULL
+ORDER BY a.slug;
+
 -- name: ReadServicePolicyProject :one
 SELECT preview_service_policy FROM github_deploy_policies
 WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;

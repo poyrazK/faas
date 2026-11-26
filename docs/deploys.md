@@ -15,7 +15,7 @@ By default `gregale deploy` uploads the committed `HEAD` of the selected
 directory when the repository has an `origin` remote, and the files on disk
 otherwise (`--source=worktree` includes uncommitted changes). Before upload:
 
-- **Excluded by default:** `.git`, `node_modules`, `vendor`, `__pycache__`,
+- **Excluded by default:** `.git`, `.gregale` (the CLI's local context), `node_modules`, `vendor`, `__pycache__`,
   `.venv`, `dist`, `.next`, `target`, `coverage`, `.cache`, `.DS_Store`,
   `Thumbs.db` and `*.pyc`, at any depth. A Go `vendor/` directory with
   `vendor/modules.txt` ships, because it is source. When the app builds with

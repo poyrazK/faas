@@ -77,10 +77,10 @@ func TestSharedRuntimeStart(t *testing.T) {
 		want       []string
 		wantReason string
 	}{
-		{name: "shell npm start", entrypoint: []string{"/bin/bash", "-c", "npm run start"}, want: []string{"/bin/sh", "-c", "node worker.js"}},
-		{name: "exec npm start", entrypoint: []string{"npm", "start"}, want: []string{"/bin/sh", "-c", "node worker.js"}},
+		{name: "shell npm start", entrypoint: []string{"/bin/bash", "-c", "npm run start"}, want: []string{"/bin/sh", "-c", "exec node worker.js"}},
+		{name: "exec npm start", entrypoint: []string{"npm", "start"}, want: []string{"/bin/sh", "-c", "exec node worker.js"}},
 		{name: "direct exec", entrypoint: []string{"node", "server.js"}, want: []string{"node", "server.js"}},
-		{name: "customer start command", entrypoint: []string{"npm", "start"}, start: "npm run start", want: []string{"/bin/sh", "-c", "node worker.js"}},
+		{name: "customer start command", entrypoint: []string{"npm", "start"}, start: "npm run start", want: []string{"/bin/sh", "-c", "exec node worker.js"}},
 		{name: "other package manager", entrypoint: []string{"/bin/sh", "-c", "yarn start"}, wantReason: "package_manager_start"},
 	}
 	for _, tt := range tests {
@@ -105,11 +105,11 @@ func TestSharedRuntimeStartPython(t *testing.T) {
 		want       []string
 		wantReason string
 	}{
-		{name: "shell start", entrypoint: []string{"/bin/bash", "-c", "python app.py"}, want: []string{"/bin/sh", "-c", "python app.py"}},
+		{name: "shell start", entrypoint: []string{"/bin/bash", "-c", "python app.py"}, want: []string{"/bin/sh", "-c", "exec python app.py"}},
 		{name: "exec start", entrypoint: []string{"gunicorn", "--bind", "0.0.0.0:8080", "app:app"}, want: []string{"gunicorn", "--bind", "0.0.0.0:8080", "app:app"}},
-		{name: "customer start command", entrypoint: []string{"/bin/bash", "-c", "python app.py"}, start: "uvicorn main:app", want: []string{"/bin/sh", "-c", "uvicorn main:app"}},
-		{name: "uv run", entrypoint: []string{"/bin/sh", "-c", "uv run app.py"}, want: []string{"/bin/sh", "-c", "python app.py"}},
-		{name: "exec poetry", entrypoint: []string{"/mise/shims/poetry", "run", "app"}, want: []string{"/bin/sh", "-c", "app"}},
+		{name: "customer start command", entrypoint: []string{"/bin/bash", "-c", "python app.py"}, start: "uvicorn main:app", want: []string{"/bin/sh", "-c", "exec uvicorn main:app"}},
+		{name: "uv run", entrypoint: []string{"/bin/sh", "-c", "uv run app.py"}, want: []string{"/bin/sh", "-c", "exec python app.py"}},
+		{name: "exec poetry", entrypoint: []string{"/mise/shims/poetry", "run", "app"}, want: []string{"/bin/sh", "-c", "exec app"}},
 		{name: "customer poetry script", start: "poetry run serve", wantReason: sharedruntime.ReasonRunTargetUnresolved},
 		{name: "uvx", entrypoint: []string{"/bin/sh", "-c", "uvx gunicorn app:app"}, wantReason: "package_manager_start"},
 	}
@@ -314,7 +314,7 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 				t.Fatalf("reason=%q layers=%d, want %q with one layer", got.Reason, len(got.layers), tt.wantReason)
 			}
 			if tt.wantReason == "" {
-				if !slices.Equal(manifest.Entrypoint, []string{"/bin/sh", "-c", "node worker.js"}) || manifest.Env["PATH"] != sharedruntime.RunnerPath || manifest.Env["NODE_ENV"] != "production" {
+				if !slices.Equal(manifest.Entrypoint, []string{"/bin/sh", "-c", "exec node worker.js"}) || manifest.Env["PATH"] != sharedruntime.RunnerPath || manifest.Env["NODE_ENV"] != "production" {
 					t.Fatalf("manifest = %+v, want npm resolved on the runner PATH", manifest)
 				}
 				return
@@ -407,7 +407,7 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			// is over the plan's cap, so this layer fails that cap as it
 			// did before the standalone build.
 			name: "release command keeps all of /app", files: standalone, start: "npm run start", release: true,
-			wantArgv: []string{"/bin/sh", "-c", "next start"}, wantPath: sharedruntime.RunnerPath,
+			wantArgv: []string{"/bin/sh", "-c", "exec next start"}, wantPath: sharedruntime.RunnerPath,
 			wantNames: allNames,
 		},
 		{
@@ -453,14 +453,14 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			// step: its server lacks static and public files.
 			name: "standalone without the builder marker keeps node_modules", start: "npm run start",
 			files:     withoutMarker,
-			wantArgv:  []string{"/bin/sh", "-c", "next start"},
+			wantArgv:  []string{"/bin/sh", "-c", "exec next start"},
 			wantPath:  sharedruntime.RunnerPath,
 			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js", "app/node_modules/next/dist/server.js", "app/package.json"},
 		},
 		{
 			name: "next start with arguments keeps all of /app", start: "npm run start",
 			files:    withPkg(standalone, `{"scripts":{"start":"next start -p 3000"}}`),
-			wantArgv: []string{"/bin/sh", "-c", "next start -p 3000"}, wantPath: sharedruntime.RunnerPath,
+			wantArgv: []string{"/bin/sh", "-c", "exec next start -p 3000"}, wantPath: sharedruntime.RunnerPath,
 			wantNames: allNames,
 		},
 		{
@@ -474,14 +474,14 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 		{
 			name: "next without standalone output", start: "npm run start",
 			files:     map[string]string{"app/package.json": nextPkg, "app/node_modules/next/dist/server.js": "full"},
-			wantArgv:  []string{"/bin/sh", "-c", "next start"},
+			wantArgv:  []string{"/bin/sh", "-c", "exec next start"},
 			wantPath:  sharedruntime.RunnerPath,
 			wantNames: []string{"app/node_modules/next/dist/server.js", "app/package.json"},
 		},
 		{
 			name: "bun keeps bun, not node", start: "bun run start",
 			files:     map[string]string{"app/package.json": bunPkg, "app/index.ts": "Bun.serve()", "mise/installs/bun/1.3.5/bin/bun": "elf", "mise/installs/node/24.1.0/bin/node": "elf"},
-			wantArgv:  []string{"/bin/sh", "-c", "bun run start"},
+			wantArgv:  []string{"/bin/sh", "-c", "exec bun run start"},
 			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
 			wantNames: []string{"app/index.ts", "app/package.json", "mise/installs/bun/1.3.5/bin/bun"},
 		},
@@ -588,7 +588,7 @@ func TestSharedRuntimeAppLayersPython(t *testing.T) {
 				}
 				return
 			}
-			if !slices.Equal(manifest.Entrypoint, []string{"/bin/sh", "-c", tt.want}) || manifest.Env["PATH"] != sharedruntime.PythonRunnerPath ||
+			if !slices.Equal(manifest.Entrypoint, sharedruntime.ShellStart(tt.want)) || manifest.Env["PATH"] != sharedruntime.PythonRunnerPath ||
 				manifest.Env["VIRTUAL_ENV"] != "/app/.venv" || manifest.Env["PYTHONUNBUFFERED"] != "1" {
 				t.Fatalf("manifest = %+v, want %q on the Python runner PATH", manifest, tt.want)
 			}
