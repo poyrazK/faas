@@ -54,6 +54,13 @@ class CreateAlertRuleRequest:
     (below_baseline: request_count only)."""
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
+    observe_only: bool | Unset = UNSET
+    """Record baseline breaches as observations. Defaults to false."""
+    recovery_confirmation_checks: int | Unset = 1
+    """Consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison."""
+    environment_scope: str | Unset = UNSET
+    """Scope a request-count, error-rate, or p95 latency baseline rule to default or a named project environment.
+    Scoped Notify supports channels and webhooks. Omitted or empty uses app-wide telemetry."""
     mcp_readiness_scope: str | Unset = UNSET
     """Readiness environment requested when creating this alert. Immutable readiness environment selector. Omitted
     or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy."""
@@ -124,6 +131,12 @@ class CreateAlertRuleRequest:
 
         window_spec: str = self.window_spec
 
+        observe_only = self.observe_only
+
+        recovery_confirmation_checks = self.recovery_confirmation_checks
+
+        environment_scope = self.environment_scope
+
         mcp_readiness_scope = self.mcp_readiness_scope
 
         mcp_min_calls = self.mcp_min_calls
@@ -192,6 +205,12 @@ class CreateAlertRuleRequest:
                 "window_spec": window_spec,
             }
         )
+        if observe_only is not UNSET:
+            field_dict["observe_only"] = observe_only
+        if recovery_confirmation_checks is not UNSET:
+            field_dict["recovery_confirmation_checks"] = recovery_confirmation_checks
+        if environment_scope is not UNSET:
+            field_dict["environment_scope"] = environment_scope
         if mcp_readiness_scope is not UNSET:
             field_dict["mcp_readiness_scope"] = mcp_readiness_scope
         if mcp_min_calls is not UNSET:
@@ -247,6 +266,12 @@ class CreateAlertRuleRequest:
         threshold = d.pop("threshold")
 
         window_spec = check_create_alert_rule_request_window_spec(d.pop("window_spec"))
+
+        observe_only = d.pop("observe_only", UNSET)
+
+        recovery_confirmation_checks = d.pop("recovery_confirmation_checks", UNSET)
+
+        environment_scope = d.pop("environment_scope", UNSET)
 
         mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
 
@@ -334,6 +359,9 @@ class CreateAlertRuleRequest:
             comparison=comparison,
             threshold=threshold,
             window_spec=window_spec,
+            observe_only=observe_only,
+            recovery_confirmation_checks=recovery_confirmation_checks,
+            environment_scope=environment_scope,
             mcp_readiness_scope=mcp_readiness_scope,
             mcp_min_calls=mcp_min_calls,
             mcp_for_minutes=mcp_for_minutes,

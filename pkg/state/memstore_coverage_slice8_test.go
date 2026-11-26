@@ -197,19 +197,19 @@ func TestMemStoreCoverageAlertDeliveries(t *testing.T) {
 	}
 	at := time.Now().UTC()
 	// ClaimAlertFire — win + duplicate-loss + stale (at < last_fired).
-	id1, won, err := m.ClaimAlertFire(ctx, rule.ID, "bucket-1", nil, 1.0, at)
+	id1, won, _, err := m.ClaimAlertFire(ctx, rule.ID, "bucket-1", nil, 1.0, at)
 	if err != nil || !won || id1 == "" {
 		t.Fatalf("claim fire 1 = %q/%v, %v", id1, won, err)
 	}
-	if id2, won, err := m.ClaimAlertFire(ctx, rule.ID, "bucket-1", nil, 1.0, at.Add(time.Minute)); err != nil || won || id2 != "" {
+	if id2, won, _, err := m.ClaimAlertFire(ctx, rule.ID, "bucket-1", nil, 1.0, at.Add(time.Minute)); err != nil || won || id2 != "" {
 		t.Fatalf("claim fire duplicate = %q/%v, %v", id2, won, err)
 	}
 	// Missing rule → ErrNotFound.
-	if _, _, err := m.ClaimAlertFire(ctx, "missing", "k", nil, 1.0, at); !errors.Is(err, state.ErrNotFound) {
+	if _, _, _, err := m.ClaimAlertFire(ctx, "missing", "k", nil, 1.0, at); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("claim fire missing rule = %v", err)
 	}
 	// New bucket with at earlier than last_fired → lose.
-	if _, won, err := m.ClaimAlertFire(ctx, rule.ID, "bucket-2", nil, 1.0, at.Add(-time.Hour)); err != nil || won {
+	if _, won, _, err := m.ClaimAlertFire(ctx, rule.ID, "bucket-2", nil, 1.0, at.Add(-time.Hour)); err != nil || won {
 		t.Fatalf("claim fire stale = %v, %v", won, err)
 	}
 	// ListAlertDeliveriesForRule — one row from the winning claim.

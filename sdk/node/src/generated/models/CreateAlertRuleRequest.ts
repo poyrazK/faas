@@ -7,6 +7,18 @@
  */
 export type CreateAlertRuleRequest = {
   /**
+   * Record baseline breaches as observations. Defaults to false.
+   */
+  observe_only?: boolean;
+  /**
+   * Consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison.
+   */
+  recovery_confirmation_checks?: number;
+  /**
+   * Scope a request-count, error-rate, or p95 latency baseline rule to default or a named project environment. Scoped Notify supports channels and webhooks. Omitted or empty uses app-wide telemetry.
+   */
+  environment_scope?: string;
+  /**
    * Readiness environment requested when creating this alert. Immutable readiness environment selector. Omitted or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy.
    */
   mcp_readiness_scope?: string;

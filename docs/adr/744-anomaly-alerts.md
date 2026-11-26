@@ -71,3 +71,30 @@
    history.
 3. Weekly seasonality (same hour on the same weekday) once there is enough
    retention to make it useful.
+
+## Amendment 2026-11-23 · Preview and live observation
+
+Keep the seven-day median as the live baseline. The preview compares the
+saved rule against recent history, includes a same-weekday candidate, and
+replays two-hour incident sequences using the configured cooldown. The
+preview records no live state and sends no notifications.
+
+Live evaluations share up to one hour of aligned historical checkpoints
+for each app, environment, metric, and window. Each check uses the
+baseline for its own timestamp. A check outside the cached grid reads
+its historical windows directly.
+
+App-scoped rules can record live incidents in Observe only mode before
+enabling notifications. Environment-scoped rules use request telemetry
+from the saved environment. Store the latest evaluation and opening
+evidence with the rule. Record accepted observation checks for a rolling
+24-hour coverage summary, clearing the summary when the condition or
+environment changes. Both modes support optional recovery confirmation
+after two consecutive healthy checks.
+
+Switching to Observe only queues stand-down notices for the active live
+episode and preserves delivery retry for resolutions already owed.
+
+The schema expands with optional evidence and observation settings on
+`alert_rules` and a per-rule coverage table. The existing anomaly
+capability controls availability.

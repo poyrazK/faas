@@ -2021,6 +2021,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envFile),
 		filepath.Join(root, "pkg", "api", registryFile),
 		filepath.Join(root, "pkg", "api", alertsFile),
+		filepath.Join(root, "pkg", "api", "alert_anomaly_evaluation.go"),
 		filepath.Join(root, "pkg", "api", alertsDeliveryFile),
 		filepath.Join(root, "pkg", "api", alertsPresetsFile),
 		filepath.Join(root, "pkg", "api", "notification_channels.go"), // ADR-749 channel DTOs

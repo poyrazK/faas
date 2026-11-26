@@ -509,7 +509,9 @@ type MemStore struct {
 	alertRuleChannels             map[string][]string                               // rule id → channel ids (ADR-749)
 	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
 	alertChannelStandDowns        map[alertChannelRetryKey]memStandDown             // ADR-20261104142830
-	appSLOs                       map[string][]SLO                                  // app id → definitions (ADR-747), lazily made
+	alertWebhookStandDowns        map[string]memWebhookStandDown
+	alertDeferredFires            map[string]memDeferredAlertFire
+	appSLOs                       map[string][]SLO // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
 	syntheticRuns                 map[string][]SyntheticCheckRun
@@ -25829,7 +25831,10 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
 	in = defaultMCPProtocolAlert(in)
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
+	if in.RecoveryConfirmationChecks == 0 {
+		in.RecoveryConfirmationChecks = 1
+	}
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
@@ -25842,7 +25847,7 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 			return AlertRule{}, ErrConflict
 		}
 	}
-	if in.State == "" {
+	if in.State == "" || in.ObserveOnly {
 		in.State = AlertStateOk
 	}
 	if in.Action == "" {
@@ -25866,7 +25871,10 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
 	in = defaultMCPProtocolAlert(in)
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
+	if in.RecoveryConfirmationChecks == 0 {
+		in.RecoveryConfirmationChecks = 1
+	}
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
@@ -25927,7 +25935,7 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 	if in.CreatedAt.IsZero() {
 		in.CreatedAt = time.Now()
 	}
-	if in.State == "" {
+	if in.State == "" || in.ObserveOnly {
 		in.State = AlertStateOk
 	}
 	if in.Action == "" {
@@ -25992,6 +26000,7 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if !ok {
 		return AlertRule{}, ErrNotFound
 	}
+	before := r
 	if p.MCPMinCalls != nil {
 		r.MCPMinCalls = *p.MCPMinCalls
 	}
@@ -26003,6 +26012,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	}
 	if p.Enabled != nil {
 		r.Enabled = *p.Enabled
+	}
+	if p.ObserveOnly != nil {
+		r.ObserveOnly = *p.ObserveOnly
+	}
+	if p.EnvironmentScope != nil {
+		r.EnvironmentScope = *p.EnvironmentScope
 	}
 	if p.Metric != nil {
 		r.Metric = *p.Metric
@@ -26029,6 +26044,9 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.CooldownMinutes != nil {
 		r.CooldownMinutes = *p.CooldownMinutes
 	}
+	if p.RecoveryConfirmationChecks != nil {
+		r.RecoveryConfirmationChecks = *p.RecoveryConfirmationChecks
+	}
 	if p.NotifyResolved != nil {
 		r.NotifyResolved = *p.NotifyResolved
 	}
@@ -26041,10 +26059,39 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.PostDeployRollbackWindowSeconds != nil {
 		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
 	}
-	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) {
+	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) || !validAlertObservationMode(r) || !validAlertRecoveryConfirmation(r) ||
+		!alertScopeEditAllowed(before, p, r.ObserveOnly) {
 		return AlertRule{}, ErrInvalidArgument
 	}
-	r.UpdatedAt = time.Now()
+	if before.ObserveOnly && !r.ObserveOnly && r.WebhookURL == "" {
+		channels := m.alertRuleChannels[id]
+		if p.PromotionChannelIDs != nil {
+			channels = m.ownedAlertRuleChannelsLocked(r.AccountID, *p.PromotionChannelIDs)
+			if len(channels) != len(*p.PromotionChannelIDs) {
+				return AlertRule{}, ErrInvalidArgument
+			}
+		}
+		if len(channels) == 0 {
+			return AlertRule{}, ErrInvalidArgument
+		}
+		m.storeAlertRuleChannelsLocked(id, channels)
+	}
+	r.AnomalyEvaluation = api.AlertAnomalyEvaluation{}
+	r.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	if observationEndsOnEdit(before, p, r.ObserveOnly, r.Enabled) {
+		r.ObservedIncidents = endObservedIncident(r.ObservedIncidents, r.UpdatedAt, api.AlertObservationEnded)
+	}
+	if before.ObserveOnly && (!r.ObserveOnly || observationConditionChanged(before, p)) {
+		r.observationChecks = nil
+	}
+	if r.ObserveOnly != before.ObserveOnly {
+		if r.ObserveOnly {
+			m.queueAlertChannelStandDownsLocked(before, StandDownDisabled, r.UpdatedAt, true)
+			m.queueAlertWebhookStandDownLocked(before, r.UpdatedAt)
+		}
+		r.State = AlertStateOk
+		m.recordAlertEpisodeLocked(r, r.UpdatedAt)
+	}
 	m.alertRules[id] = r
 	return r, nil
 }
@@ -26077,12 +26124,22 @@ func (m *MemStore) deleteAlertRuleLocked(id string) {
 	// (ADR-20261104142830), unless its account is being deleted too.
 	if rule, ok := m.alertRules[id]; ok {
 		if _, live := m.accounts[rule.AccountID]; live {
-			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC())
+			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC(), false)
 		}
 	}
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
 	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
+	for key, fire := range m.alertDeferredFires {
+		if fire.RuleID == id {
+			delete(m.alertDeferredFires, key)
+		}
+	}
+	for key, notice := range m.alertWebhookStandDowns {
+		if notice.Rule.ID == id {
+			delete(m.alertWebhookStandDowns, key)
+		}
+	}
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)
 	delete(m.readinessPagerDutyAckPolicies, id+":primary")
@@ -27156,23 +27213,29 @@ func matchHostPattern(pattern, host string) bool {
 //
 // On won=true the returned deliveryID is the new row's UUID; on
 // won=false it is "".
-func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, error) {
+func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, AlertFireRecipients, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.alertRules[ruleID]
 	if !ok {
-		return "", false, ErrNotFound
+		return "", false, AlertFireRecipients{}, ErrNotFound
+	}
+	if r.ObserveOnly {
+		return "", false, AlertFireRecipients{}, nil
+	}
+	if !alertFireMatchesScope(payload, r.EnvironmentScope) {
+		return "", false, AlertFireRecipients{}, ErrConflict
 	}
 	// Fire and recovery/retry writers share the journal's unique key.
 	if _, exists := m.alertDeliveries[idempotencyKey]; exists {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	cacheKey := ruleID + "\x00" + idempotencyKey
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	if r.Action == AlertActionRollback && alertRollbackMetricAllowed(r.Metric) && !api.IsFiniteFloat(observed) {
-		return "", false, ErrInvalidArgument
+		return "", false, AlertFireRecipients{}, ErrInvalidArgument
 	}
 	if r.LastFiredAt.Before(at) || r.LastFiredAt.IsZero() {
 		r.LastFiredAt = at.UTC()
@@ -27201,20 +27264,34 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 			ObservedValue:  observed,
 			FiredAt:        at.UTC(),
 		}
+		if r.State != AlertStateFiring {
+			r.State, r.UpdatedAt = AlertStateFiring, at.UTC()
+			m.alertRules[ruleID] = r
+			m.recordAlertEpisodeLocked(r, at.UTC())
+		}
+		recipients := m.queueDeferredAlertFiresLocked(r, m.alertDeliveries[idempotencyKey])
 		m.captureAlertRollbackLocked(id, r, observed, at)
-		return id, true, nil
+		return id, true, recipients, nil
 	}
-	return "", false, nil
+	return "", false, AlertFireRecipients{}, nil
 }
 
 func (m *MemStore) SetAlertRuleState(_ context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
+	return m.setAlertRuleState(ruleID, to, at, nil)
+}
+
+func (m *MemStore) setAlertRuleState(ruleID string, to AlertState, at time.Time, confirmedAt *time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.alertRules[ruleID]
 	if !ok {
 		return false, ErrNotFound
 	}
-	if r.State == to {
+	if r.State == to || r.ObserveOnly {
+		return false, nil
+	}
+	if confirmedAt != nil && (!r.Enabled || !r.LastEvaluatedAt.Equal(*confirmedAt) ||
+		r.AnomalyEvaluation.Reason != api.AlertAnomalyRecoveryConfirmed) {
 		return false, nil
 	}
 	r.State = to

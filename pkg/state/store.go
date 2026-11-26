@@ -4011,12 +4011,14 @@ type Store interface {
 	// observed envelope — the INSERT writes '{}' so the dashboard's
 	// `payload ->> 'metric'` query is safe.
 	//
-	// On won=true the returned deliveryID is the inserted row's UUID;
-	// callers pass that to UpdateAlertDeliveryStatus after the
-	// dispatch. On won=false the deliveryID is empty (the caller
-	// stays silent and lets the cool-down carry on). On a missing
-	// rule row, returns ("", false, ErrNotFound).
-	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
+	// The claim also opens the live episode and persists any destinations
+	// waiting for an earlier terminal notification.
+	// A winning claim returns the delivery ID, the bound channels and any
+	// recipients held until the previous episode settles. Callers pass
+	// the ID to UpdateAlertDeliveryStatus after dispatch. A losing claim
+	// returns an empty ID. A missing rule returns ErrNotFound.
+	// A payload whose environment differs from the current rule gets ErrConflict.
+	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, recipients AlertFireRecipients, err error)
 	// SetAlertRuleState transitions a rule's cool-down state. Called by
 	// the evaluator on healthy ticks (firing→ok) and after a successful
 	// delivery (ok→firing). returns (true, nil) on a real transition,
