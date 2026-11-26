@@ -87,7 +87,7 @@ Scale open the port with `gregale app egress-ports add my-api 5432`), or create 
 managed database and restore a `pg_dump` into it:
 
 ```bash
-gregale add postgres --app my-api --region <region>
+gregale add postgres --app my-api
 gregale postgres attach my-api-postgres my-api --access migration --env MIGRATION_DATABASE_URL
 ```
 

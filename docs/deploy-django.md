@@ -82,7 +82,7 @@ out of the repository).
 ## Database and migrations
 
 ```bash
-gregale add postgres --app my-site --region <region>
+gregale add postgres --app my-site
 gregale postgres attach my-site-postgres my-site --access migration --env MIGRATION_DATABASE_URL
 ```
 

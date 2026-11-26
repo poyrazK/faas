@@ -444,7 +444,7 @@ func cmdPostgresList(args []string) int {
 func cmdPostgresCreate(args []string) int {
 	args = normalizePostgresArgs(args)
 	fs := newFlagSet("postgres create", flag.ContinueOnError)
-	region := fs.String("region", "", "provider-neutral region (required)")
+	region := fs.String("region", "", "region (default: the platform default)")
 	major := fs.Int("postgres-major", api.ManagedPostgresDefaultMajor, "PostgreSQL major version")
 	serviceClass := fs.String("class", "development", "service class: development|burstable|production")
 	availability := fs.String("availability", "single_zone", "availability: single_zone|high_availability")
@@ -459,20 +459,21 @@ func cmdPostgresCreate(args []string) int {
 	if invalidPostgresChoice("postgres create", "class", *serviceClass, "availability", *availability) {
 		return 1
 	}
-	if fs.NArg() != 1 || *region == "" {
-		PrintUsage(os.Stderr, "usage: gregale postgres create NAME --region REGION [--postgres-major N] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--storage-bytes N] [--restore-window-seconds N]", "postgres")
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale postgres create NAME [--region REGION] [--postgres-major N] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--storage-bytes N] [--restore-window-seconds N]", "postgres")
 		return 1
 	}
 	if *storage < 0 || *restoreWindow < 0 || !postgresServiceClassOK(*serviceClass) || !postgresAvailabilityOK(*availability) {
-		PrintUsage(os.Stderr, "usage: gregale postgres create NAME --region REGION [--postgres-major N] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--storage-bytes N] [--restore-window-seconds N]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres create NAME [--region REGION] [--postgres-major N] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--storage-bytes N] [--restore-window-seconds N]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.CreateManagedPostgresDatabase(context.Background(), api.CreateManagedPostgresDatabaseRequest{
-		Name: fs.Arg(0), Region: *region, PostgresMajor: *major, ServiceClass: *serviceClass,
+	ctx := context.Background()
+	result, err := client.CreateManagedPostgresDatabase(ctx, api.CreateManagedPostgresDatabaseRequest{
+		Name: fs.Arg(0), Region: defaultPostgresRegion(ctx, client, *region), PostgresMajor: *major, ServiceClass: *serviceClass,
 		Availability: *availability, ScaleToZero: scaleToZero, StorageLimitBytes: *storage,
 		RestoreWindowSeconds: *restoreWindow,
 	})

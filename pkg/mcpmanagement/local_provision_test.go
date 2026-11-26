@@ -220,6 +220,26 @@ func TestProvisionBucketAndPostgresRunTheCLI(t *testing.T) {
 	}
 }
 
+// TestProvisionPostgresWithoutRegionUsesPlatformDefault: placement is the
+// operator's choice, so an agent need not name a region; the CLI resolves it.
+func TestProvisionPostgresWithoutRegionUsesPlatformDefault(t *testing.T) {
+	cli := newProvisionCLI()
+	_, call := connectProvision(t, cli, true)
+	pg := planID(t, call("gregale_plan_postgres", map[string]any{"app": "alpha", "reason": "orders"}, false))
+	call("gregale_apply_provision", map[string]any{"plan_id": pg}, false)
+	cli.mu.Lock()
+	defer cli.mu.Unlock()
+	for _, c := range cli.calls {
+		if strings.Join(c[:2], " ") == "add postgres" {
+			if !slices.Equal(c, []string{"add", "postgres", "--app", "alpha", "--env", "default", "--access", "read_write"}) {
+				t.Errorf("postgres command = %v", c)
+			}
+			return
+		}
+	}
+	t.Fatal("add postgres never ran")
+}
+
 func TestProvisionCronRetryAdoptsInsteadOfDuplicating(t *testing.T) {
 	cli := newProvisionCLI()
 	cli.crons = []map[string]any{{"id": "cron-old", "schedule": "0 * * * *", "path": "/hourly"}}
@@ -248,7 +268,7 @@ func TestProvisionRejectsBadInput(t *testing.T) {
 		{"gregale_plan_domain", map[string]any{"app": "alpha", "domain": "localhost", "reason": "x"}},
 		{"gregale_plan_bucket", map[string]any{"app": "alpha", "name": "Assets", "reason": "x"}},
 		{"gregale_plan_bucket", map[string]any{"app": "alpha", "name": "assets", "permission": "admin", "reason": "x"}},
-		{"gregale_plan_postgres", map[string]any{"app": "alpha", "region": "", "reason": "x"}},
+		{"gregale_plan_postgres", map[string]any{"app": "alpha", "region": "EU Central", "reason": "x"}},
 		{"gregale_plan_postgres", map[string]any{"app": "alpha", "region": "eu-central", "access": "data_api", "reason": "x"}},
 		{"gregale_plan_cron", map[string]any{"app": "alpha", "schedule": "* * * * *", "path": "sync", "reason": "x"}},
 		{"gregale_plan_cron", map[string]any{"app": "alpha", "schedule": "* * * * *", "path": "/sync", "timezone": "Europe/Paris; rm", "reason": "x"}},

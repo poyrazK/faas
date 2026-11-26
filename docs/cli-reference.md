@@ -872,7 +872,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--database <REF>` | existing database ID or name |  |
-| `--region <REGION>` | provider-neutral region when creating |  |
+| `--region <REGION>` | region for a new database (default: the platform default) |  |
 | `--postgres-major <N>` | PostgreSQL major version |  |
 | `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
@@ -4951,11 +4951,11 @@ Show monthly managed PostgreSQL usage and guardrail state
 
 Create a managed PostgreSQL database
 
-`gregale postgres create --region <REGION> [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--storage-bytes <N>] [--restore-window-seconds <N>] <name>`
+`gregale postgres create [--region <REGION>] [--postgres-major <N>] [--class <CLASS>] [--availability <MODE>] [--scale-to-zero] [--storage-bytes <N>] [--restore-window-seconds <N>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--region <REGION>` | provider-neutral region | required |
+| `--region <REGION>` | region (default: the platform default) |  |
 | `--postgres-major <N>` | PostgreSQL major version |  |
 | `--class <CLASS>` | service class | one of `development` · `burstable` · `production` |
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
@@ -4966,7 +4966,7 @@ Create a managed PostgreSQL database
 Examples:
 
 ```sh
-gregale postgres create orders --region us-east-2 --class development --scale-to-zero
+gregale postgres create orders --class development --scale-to-zero
 ```
 
 ### postgres get

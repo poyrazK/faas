@@ -98028,11 +98028,11 @@ components:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
       additionalProperties: false
-      required: [name, region]
+      required: [name]
       properties:
         request_id: { type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
-        region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional. Omit it to use the platform's default placement, which GET /v1/postgres/capabilities reports." }
         postgres_major: { type: integer, minimum: 12, maximum: 99, default: 17 }
         service_class: { type: string, enum: [development, burstable, production], default: development }
         availability: { type: string, enum: [single_zone, high_availability], default: single_zone }
