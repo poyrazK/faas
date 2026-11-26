@@ -352,6 +352,7 @@
       ],
       "routes": [
         "/dashboard/apps/{}/consumers",
+        "/v1/apps/{}/consumer-identities",
         "/v1/apps/{}/consumers"
       ],
       "cli": [
@@ -413,6 +414,7 @@
         "/v1/apps/{}/consumer-plans",
         "/v1/apps/{}/consumer-signup",
         "/v1/apps/{}/consumer-signups",
+        "/v1/apps/{}/monetization-funnel",
         "/v1/apps/{}/rate-cards",
         "/v1/consumer-billing",
         "/v1/consumer-signup"
@@ -1350,6 +1352,8 @@
       "routes": [
         "/dashboard/apps/{}/data-api",
         "/v1/apps/{}/data-api",
+        "/v1/apps/{}/data-api-inspections",
+        "/v1/postgres/databases/{}/data-api-catalog-preview",
         "/v1/runtime/data-api"
       ],
       "cli": [
@@ -3312,6 +3316,7 @@
         "/v1/postgres/databases/{}/query",
         "/v1/postgres/databases/{}/suspend-timeout",
         "/v1/postgres/databases/{}/undelete",
+        "/v1/postgres/databases/{}/wake-with-app",
         "/v1/postgres/usage"
       ],
       "cli": [

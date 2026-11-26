@@ -30,6 +30,7 @@ images=(
   runner-go124
   runner-go124-alpine
   agent-base
+  sandbox-code-interpreter
 )
 
 mkdir -p "${output_dir}"
