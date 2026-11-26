@@ -43,6 +43,8 @@ var cliTreeVerbs = []string{
 	"undo",
 	// deny: refuse a hosted agent run's call (ADR-20261027090016 amendment 2).
 	"deny",
+	// `mcp client group submit` sends the planned calls in a recoverable Task group.
+	"submit",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).

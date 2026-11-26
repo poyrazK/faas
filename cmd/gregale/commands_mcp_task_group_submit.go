@@ -107,11 +107,8 @@ func (a mcpTaskGroupAdmission) submit(ctx context.Context, plan []mcpTaskGroupSu
 			attempts[i] = attempt
 		}
 	}
-	for i, entry := range entries {
-		if ctx.Err() != nil {
-			break
-		}
-		if entry.Outcome == "prepared" || attempts[i] != nil {
+	for i := 0; i < len(entries) && ctx.Err() == nil; i++ {
+		if entries[i].Outcome == "prepared" || attempts[i] != nil {
 			current, err := a.send(ctx, i, plan[i], attempts[i])
 			if err != nil {
 				return nil, fmt.Errorf("submit Task group member %d: %w", i, err)
@@ -152,15 +149,15 @@ func (a mcpTaskGroupAdmission) send(ctx context.Context, index int, item mcpTask
 		return mcpTaskReceiptStatusResult{}, err
 	}
 	if attempt != nil {
-		savedProof, err := hex.DecodeString(attempt.CredentialProof)
-		if err != nil || !hmac.Equal(savedProof, mcpTaskGroupCredentialProof(*attempt, a.client.Token)) {
+		proof := hex.EncodeToString(mcpTaskGroupCredentialProof(*attempt, a.client.Token))
+		if !hmac.Equal([]byte(attempt.CredentialProof), []byte(proof)) {
 			return mcpTaskReceiptStatusResult{Outcome: "credential_mismatch"}, nil
 		}
 		if !mcpTaskGroupKeyWithinWindow(attempt.SubmissionKey) {
 			return mcpTaskReceiptStatusResult{Outcome: "retry_window_closed"}, nil
 		}
 	}
-	if err := a.client.VerifyTaskGroupTool(ctx, owner, item.tool); err != nil {
+	if a.client.VerifyTaskGroupTool(ctx, owner, item.tool) != nil {
 		return mcpTaskReceiptStatusResult{Outcome: "unavailable"}, nil
 	}
 	if attempt == nil {
@@ -181,17 +178,19 @@ func (a mcpTaskGroupAdmission) send(ctx context.Context, index int, item mcpTask
 	if err := checkMCPTaskGroupOpen(a.dir, a.manifest); err != nil {
 		return mcpTaskReceiptStatusResult{}, err
 	}
-	if !mcpTaskGroupKeyWithinWindow(attempt.SubmissionKey) || ctx.Err() != nil {
+	canSubmit := mcpTaskGroupKeyWithinWindow(attempt.SubmissionKey) && ctx.Err() == nil
+	if !canSubmit {
 		return mcpTaskReceiptStatusResult{Outcome: "unconfirmed"}, nil
 	}
 	task, x, err := a.client.SubmitBoundTask(ctx, owner, attempt.SubmissionKey, item.tool, item.args, item.deferFormInput)
-	if err != nil {
-		if x.HTTPStatus >= 400 && x.HTTPStatus < 500 && x.HTTPStatus != http.StatusRequestTimeout {
-			return mcpTaskReceiptStatusResult{Outcome: "rejected"}, nil
-		}
+	switch {
+	case err == nil:
+		return mcpTaskGroupAccepted(task), nil
+	case x.HTTPStatus >= 400 && x.HTTPStatus < 500 && x.HTTPStatus != http.StatusRequestTimeout:
+		return mcpTaskReceiptStatusResult{Outcome: "rejected"}, nil
+	default:
 		return mcpTaskReceiptStatusResult{Outcome: "unconfirmed"}, nil
 	}
-	return mcpTaskGroupAccepted(task), nil
 }
 
 func mcpTaskGroupKeyWithinWindow(key string) bool {

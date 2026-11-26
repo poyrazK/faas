@@ -143,3 +143,15 @@ func (c *Client) SetOrgManagedPostgresWakeWithApp(ctx context.Context, organizat
 	err := c.do(ctx, http.MethodPut, orgPostgresPath(organization)+"/databases/"+url.PathEscape(id)+"/wake-with-app", request, &out)
 	return out, err
 }
+
+// GetOrgManagedPostgresActivity is GetManagedPostgresActivity for an
+// organization's database.
+func (c *Client) GetOrgManagedPostgresActivity(ctx context.Context, organization, id, since string) (ManagedPostgresActivity, error) {
+	var out ManagedPostgresActivity
+	path := orgPostgresPath(organization) + "/databases/" + url.PathEscape(id) + "/activity"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}

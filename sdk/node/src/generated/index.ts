@@ -588,6 +588,7 @@ export type { CreateQueueBindingCanaryRequest } from './models/CreateQueueBindin
 export type { CreateQueueBindingRequest } from './models/CreateQueueBindingRequest.js';
 export type { CreateReleaseFreezeRequest } from './models/CreateReleaseFreezeRequest.js';
 export type { CreateReleaseGateRequest } from './models/CreateReleaseGateRequest.js';
+export type { CreateRouteSplitRequest } from './models/CreateRouteSplitRequest.js';
 export type { CreateScenarioObjectsRequest } from './models/CreateScenarioObjectsRequest.js';
 export type { CreateScenarioPostgresRequest } from './models/CreateScenarioPostgresRequest.js';
 export type { CreateSLORequest } from './models/CreateSLORequest.js';
@@ -1540,6 +1541,10 @@ export type { ManagedPostgresAccountingDiagnostic } from './models/ManagedPostgr
 export type { ManagedPostgresAccountingDiagnosticsResponse } from './models/ManagedPostgresAccountingDiagnosticsResponse.js';
 export type { ManagedPostgresAccountingReconciliationRequest } from './models/ManagedPostgresAccountingReconciliationRequest.js';
 export type { ManagedPostgresAccountingReconciliationResult } from './models/ManagedPostgresAccountingReconciliationResult.js';
+export type { ManagedPostgresActivity } from './models/ManagedPostgresActivity.js';
+export type { ManagedPostgresActivityCause } from './models/ManagedPostgresActivityCause.js';
+export type { ManagedPostgresActivityComputeStart } from './models/ManagedPostgresActivityComputeStart.js';
+export type { ManagedPostgresActivityHint } from './models/ManagedPostgresActivityHint.js';
 export type { ManagedPostgresBinding } from './models/ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './models/ManagedPostgresBindingList.js';
 export type { ManagedPostgresCapabilities } from './models/ManagedPostgresCapabilities.js';
@@ -1557,6 +1562,7 @@ export type { ManagedPostgresCutoverSourceSessions } from './models/ManagedPostg
 export type { ManagedPostgresCutoverWriterIsolation } from './models/ManagedPostgresCutoverWriterIsolation.js';
 export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
+export type { ManagedPostgresDatabaseUsage } from './models/ManagedPostgresDatabaseUsage.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
 export type { ManagedPostgresOverage } from './models/ManagedPostgresOverage.js';
@@ -3310,6 +3316,8 @@ export type { RouteResourceAttribution } from './models/RouteResourceAttribution
 export type { RouteResourceSplit } from './models/RouteResourceSplit.js';
 export type { RouteResourcesResponse } from './models/RouteResourcesResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
+export type { RouteSplit } from './models/RouteSplit.js';
+export type { RouteSplitsResponse } from './models/RouteSplitsResponse.js';
 export type { RouteThrottleRequirement } from './models/RouteThrottleRequirement.js';
 export type { RunArtifactDelivery } from './models/RunArtifactDelivery.js';
 export type { RunArtifactObject } from './models/RunArtifactObject.js';
@@ -3862,6 +3870,7 @@ export type { WorkflowStepSpec } from './models/WorkflowStepSpec.js';
 export type { WorkflowTriggerSpec } from './models/WorkflowTriggerSpec.js';
 export type { WorkloadDependency } from './models/WorkloadDependency.js';
 export type { WorkloadPort } from './models/WorkloadPort.js';
+export type { WorkloadUses } from './models/WorkloadUses.js';
 export type { WorkPolicyListResponse } from './models/WorkPolicyListResponse.js';
 export type { WorkPolicyResponse } from './models/WorkPolicyResponse.js';
 

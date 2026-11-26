@@ -273,6 +273,8 @@ touch them. The tables below map each earlier name.
 | `gregale data-api rotation preflight` | `gregale data-api rotation check` |
 | `gregale data-api storage sql` | `gregale data-api storage export` |
 | `gregale data-api verify release` | `gregale data-api release verify` |
+| `gregale data-api write-check` | `gregale data-api write check` |
+| `gregale data-api write-readiness` | `gregale data-api write readiness` |
 | `gregale debug capture-diff` | `gregale debug capture diff` |
 | `gregale debug rollout` | `gregale debug explain` |
 | `gregale delayed-task add` | `gregale cron create --at` |

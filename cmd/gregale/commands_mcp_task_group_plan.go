@@ -34,18 +34,18 @@ func readMCPTaskGroupPlan(path string) ([]mcpTaskGroupSubmission, error) {
 	defer func() { _ = dir.Close() }()
 	body, err := readCustomerOperationSourceFile(dir, filepath.Base(path), maxMCPTaskGroupPlanBytes)
 	if err != nil {
-		return nil, errors.New("Task group plan must be a regular JSON file up to 1 MiB")
+		return nil, errors.New("the Task group plan must be a regular JSON file up to 1 MiB")
 	}
 	var entries []json.RawMessage
 	if !utf8.Valid(body) ||
 		json.Unmarshal(body, &entries) != nil || len(entries) == 0 || len(entries) > maxMCPTaskGroupMembers {
-		return nil, errors.New("Task group plan must contain an array of 1 to 64 tool calls")
+		return nil, errors.New("the Task group plan must contain an array of 1 to 64 tool calls")
 	}
 	result := make([]mcpTaskGroupSubmission, len(entries))
 	for i, entry := range entries {
 		result[i], err = parseMCPTaskGroupSubmission(entry)
 		if err != nil {
-			return nil, fmt.Errorf("Task group plan member %d: %w", i, err)
+			return nil, fmt.Errorf("invalid Task group plan member %d: %w", i, err)
 		}
 	}
 	return result, nil

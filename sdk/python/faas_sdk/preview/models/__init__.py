@@ -1109,6 +1109,8 @@ from .create_release_gate_request import CreateReleaseGateRequest
 from .create_release_gate_request_comparison import CreateReleaseGateRequestComparison
 from .create_release_gate_request_kind import CreateReleaseGateRequestKind
 from .create_release_gate_request_labels import CreateReleaseGateRequestLabels
+from .create_route_split_request import CreateRouteSplitRequest
+from .create_route_split_request_kind import CreateRouteSplitRequestKind
 from .create_scenario_objects_request import CreateScenarioObjectsRequest
 from .create_scenario_postgres_request import CreateScenarioPostgresRequest
 from .create_slo_request import CreateSLORequest
@@ -3027,6 +3029,13 @@ from .managed_postgres_accounting_diagnostic_state import ManagedPostgresAccount
 from .managed_postgres_accounting_diagnostics_response import ManagedPostgresAccountingDiagnosticsResponse
 from .managed_postgres_accounting_reconciliation_request import ManagedPostgresAccountingReconciliationRequest
 from .managed_postgres_accounting_reconciliation_result import ManagedPostgresAccountingReconciliationResult
+from .managed_postgres_activity import ManagedPostgresActivity
+from .managed_postgres_activity_cause import ManagedPostgresActivityCause
+from .managed_postgres_activity_cause_cause import ManagedPostgresActivityCauseCause
+from .managed_postgres_activity_compute_start import ManagedPostgresActivityComputeStart
+from .managed_postgres_activity_compute_start_cause import ManagedPostgresActivityComputeStartCause
+from .managed_postgres_activity_hint import ManagedPostgresActivityHint
+from .managed_postgres_activity_hint_code import ManagedPostgresActivityHintCode
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -3069,6 +3078,7 @@ from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_database_usage import ManagedPostgresDatabaseUsage
 from .managed_postgres_health import ManagedPostgresHealth
 from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
@@ -6201,8 +6211,13 @@ from .route_requirements_report import RouteRequirementsReport
 from .route_requirements_result import RouteRequirementsResult
 from .route_resource_attribution import RouteResourceAttribution
 from .route_resource_split import RouteResourceSplit
+from .route_resource_split_kind import RouteResourceSplitKind
 from .route_resources_response import RouteResourcesResponse
 from .route_row import RouteRow
+from .route_split import RouteSplit
+from .route_split_kind import RouteSplitKind
+from .route_split_phase import RouteSplitPhase
+from .route_splits_response import RouteSplitsResponse
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
 from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
@@ -7359,6 +7374,11 @@ from .workload_dependency import WorkloadDependency
 from .workload_dependency_condition import WorkloadDependencyCondition
 from .workload_port import WorkloadPort
 from .workload_port_protocol import WorkloadPortProtocol
+from .workload_uses import WorkloadUses
+from .workload_uses_buckets_item import WorkloadUsesBucketsItem
+from .workload_uses_buckets_item_access import WorkloadUsesBucketsItemAccess
+from .workload_uses_queues_item import WorkloadUsesQueuesItem
+from .workload_uses_realtime_item import WorkloadUsesRealtimeItem
 
 __all__ = (
     "AccountAbuseHold",
@@ -8439,6 +8459,8 @@ __all__ = (
     "CreateReleaseGateRequestComparison",
     "CreateReleaseGateRequestKind",
     "CreateReleaseGateRequestLabels",
+    "CreateRouteSplitRequest",
+    "CreateRouteSplitRequestKind",
     "CreateScenarioObjectsRequest",
     "CreateScenarioPostgresRequest",
     "CreateSLORequest",
@@ -10268,6 +10290,13 @@ __all__ = (
     "ManagedPostgresAccountingDiagnosticState",
     "ManagedPostgresAccountingReconciliationRequest",
     "ManagedPostgresAccountingReconciliationResult",
+    "ManagedPostgresActivity",
+    "ManagedPostgresActivityCause",
+    "ManagedPostgresActivityCauseCause",
+    "ManagedPostgresActivityComputeStart",
+    "ManagedPostgresActivityComputeStartCause",
+    "ManagedPostgresActivityHint",
+    "ManagedPostgresActivityHintCode",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
@@ -10310,6 +10339,7 @@ __all__ = (
     "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresDatabaseUsage",
     "ManagedPostgresHealth",
     "ManagedPostgresHealthComputeState",
     "ManagedPostgresHealthLastErrorCode",
@@ -13242,8 +13272,13 @@ __all__ = (
     "RouteRequirementsResult",
     "RouteResourceAttribution",
     "RouteResourceSplit",
+    "RouteResourceSplitKind",
     "RouteResourcesResponse",
     "RouteRow",
+    "RouteSplit",
+    "RouteSplitKind",
+    "RouteSplitPhase",
+    "RouteSplitsResponse",
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",
     "RouteThrottleRequirementMissingKeyPolicy",
@@ -14344,6 +14379,11 @@ __all__ = (
     "WorkloadDependencyCondition",
     "WorkloadPort",
     "WorkloadPortProtocol",
+    "WorkloadUses",
+    "WorkloadUsesBucketsItem",
+    "WorkloadUsesBucketsItemAccess",
+    "WorkloadUsesQueuesItem",
+    "WorkloadUsesRealtimeItem",
     "WorkPolicyListResponse",
     "WorkPolicyResponse",
     "WorkPolicyResponseMaxRunningPerKey",

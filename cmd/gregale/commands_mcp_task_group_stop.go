@@ -64,12 +64,12 @@ func stopMCPTaskGroupReference(ctx context.Context, client *mcphosting.Client, r
 	}
 	var unconfirmed *mcphosting.TaskCancellationUnconfirmedError
 	var rpc *mcphosting.RPCError
-	if !errors.As(err, &unconfirmed) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
-		!(errors.As(err, &rpc) && rpc.Code == -32603) {
-		entry.Outcome = "unavailable"
-		return entry
+	if errors.As(err, &unconfirmed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		(errors.As(err, &rpc) && rpc.Code == -32603) {
+		return reconcileMCPTaskGroupStop(ctx, client, receipt, task.TaskID, entry)
 	}
-	return reconcileMCPTaskGroupStop(ctx, client, receipt, task.TaskID, entry)
+	entry.Outcome = "unavailable"
+	return entry
 }
 
 func taskGroupAdmissionUnconfirmed(status int, err error) bool {

@@ -582,6 +582,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"environment release-sets stage create", "projects environments release-sets stage"},
 	{"environment release-sets verification", "projects environments release-sets verification-runs"},
 	{"data-api rotation check", "data-api rotation preflight"},
+	{"data-api write readiness", "data-api write-readiness"},
+	{"data-api write check", "data-api write-check"},
 	{"data-api migration check", "data-api migration preview"},
 	{"data-api migration explain", "data-api migration guide"},
 	{"data-api serve", "data-api dev"},

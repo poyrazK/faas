@@ -91,7 +91,7 @@ their own grant model when environment branches add identity scoping). The
 target app is the one in the path and must belong to the caller's resource
 account. The caller's manifest must hold a grant for the target and the
 resource. Refusals are 403 `binding_not_granted` naming the missing grant
-(what to add to `uses:`), 401 only for a token whose signature, audience or
+(what to add to `uses:`, applied with `gregale deploy`), 401 only for a token whose signature, audience or
 expiry fails, and 403 `insufficient_scope` for a correctly signed token whose
 caller may not use bindings (a stage deployment, a stopped instance, a deleted
 app, an inactive account). Only 401 counts against the shared per-IP
@@ -100,8 +100,23 @@ credential refresh cannot lock its node's other tenants out of apid. An
 Idempotency-Key is scoped to the caller app by hashing it with the caller's
 ID (a fixed 72 bytes), so any key the route accepts still fits. The handler then runs as
 the target's resource account, exactly as an API key of that account would,
-so plan limits, budgets and idempotency apply unchanged. Audit records the
-caller app and instance as the actor.
+so plan limits, budgets and idempotency apply unchanged. A target slug that
+does not exist, or is another account's, answers by the caller's own grants
+alone: `no such app` (404) only when `uses:` names that slug, and otherwise
+the same 403 `binding_not_granted` an existing ungranted app gets, so a
+workload cannot probe which slugs exist.
+
+Producer-route calls are not audited one by one, as API-key sends are not;
+the workload credentials of section 3 are, because a key can later be seen
+in a bucket's access log: `object_storage.workload_credential_issued` names
+the caller app, instance, bucket, access key, scope and expiry (never the
+secret), and `object_storage.workload_credentials_reconciled` counts the
+keys an apply rescoped or revoked.
+
+A staged release (`gregale deploy --no-traffic`) is a production deployment
+of the same app and holds its grants, so a candidate can be qualified
+against the real resources before it takes traffic; stage environments do
+not.
 
 The platform flag `cross_app_bindings` (decided for the resource account)
 gates the token path; off, a binding token is refused as if the route did not
@@ -129,9 +144,18 @@ static key in its environment:
 - **Revocation.** A credential also stops resolving once its caller app is
   deleted (which covers `project destroy`) or its instance no longer holds a
   VM (parked, stopped, failed, evicted). `project apply` deletes a changed
-  app's credentials that its new `uses:` no longer covers (a dropped bucket,
-  or a grant whose access or prefix changed) and keeps the rest, so an
-  unrelated manifest change does not break a guest's cached credential.
+  app's credentials for a bucket its new `uses:` no longer names. A grant
+  whose access or prefix changed **rescopes** the live credentials in place
+  instead of deleting them: guest-init and the app's AWS SDK each keep a
+  credential until shortly before it expires, so a deleted key would fail
+  every call of the running instances for up to an hour (the 2026-11-26 prod
+  trial saw exactly that), while a rescoped key keeps serving what the grant
+  still allows and is refused the rest within the gateway's two-second
+  resolution cache. Credentials the grants still cover are left alone.
+- **Exposure.** A credential is a bearer secret like any AWS key: it works
+  from anywhere the S3 endpoint is reachable, not only from its VM, until it
+  expires or is revoked. The short lifetime, the per-grant scope and the
+  issue audit bound what a leaked key can do.
 - **Gateway.** `ResolveObjectS3Credential` resolves a `GRGW` key from that
   table and returns it shaped as a compute-binding key (`ManagedAppID` is
   the caller, `KeyPrefix` the grant's prefix), so s3-gatewayd's existing
@@ -140,14 +164,24 @@ static key in its environment:
   on its loopback identity listener: it fetches a gregale:bindings token over
   vsock, calls apid (the workload's `GREGALE_API_URL`, https only) and caches
   the answer until five minutes before `Expiration`; apid's refusal of a
-  bucket is cached for 30 seconds. The answer is the AWS
+  bucket is cached for 30 seconds and reaches the app as its own code with
+  apid's explanation (`bindings_disabled`, `binding_not_allowed`,
+  `bucket_required` listing the granted buckets, `bucket_not_found`,
+  `bucket_not_granted`). The answer is the AWS
   container credential shape (`AccessKeyId`, `SecretAccessKey`, `Token`,
   `Expiration`) plus `Bucket`, `KeyPrefix`, `Endpoint` and `Region`.
 - **Env.** `project apply` sets `AWS_CONTAINER_CREDENTIALS_FULL_URI` to that
   URL for a service with exactly one bucket grant and removes the platform's
   value otherwise; a value the customer set is left alone and is not reported
   as drift. AWS SDKs accept a loopback http container-credential URI and
-  refresh before expiry.
+  refresh before expiry. When the platform's URI is set, schedd also hands
+  the instance `AWS_ENDPOINT_URL_S3` and `AWS_REGION` (its
+  `FAAS_PUBLIC_S3_ENDPOINT` / `FAAS_PUBLIC_S3_REGION`, defaulting to the
+  object-storage public endpoint and region) unless the app sets either
+  itself, so `new S3Client({ forcePathStyle: true })` (boto3:
+  `Config(s3={"addressing_style": "path"})`) is all the code an app needs.
+  Path style stays required until the gateway serves virtual-hosted bucket
+  names.
 
 A single endpoint serves one credential per bucket. A service with several
 bucket grants gets no platform default, because the endpoint without

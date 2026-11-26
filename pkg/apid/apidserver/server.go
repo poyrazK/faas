@@ -2108,6 +2108,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/suspend-timeout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresSuspendTimeout)))))
 	// Whether a database starts when a bound app wakes (ADR-20261125105038).
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/wake-with-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresWakeWithApp)))))
+	// Why a database was awake (ADR-20261125231222).
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresActivity))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresResize(managedpg.Resizes.Post))))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresResize(managedpg.Resizes.Get)))))
 	// ADR-1027 in-place major upgrades, served by pkg/apid/managedpg: hidden
@@ -4723,6 +4725,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-customers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteCustomerUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-resources", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteResources)))
+	// ADR-20261121170000 amendment 2: apply, read and undo a route split.
+	mux.HandleFunc("POST /v1/apps/{slug}/route-splits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createRouteSplit)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-splits", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listRouteSplits)))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-splits/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getRouteSplit)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/route-splits/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.undoRouteSplit))))
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-tool-insights", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getMCPToolInsights)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
