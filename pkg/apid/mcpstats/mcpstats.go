@@ -6,8 +6,10 @@ package mcpstats
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -22,12 +24,9 @@ type Store interface {
 	state.SellerStatsStore
 }
 
-// IdentityLister and SignupLister tell where customers came from; a store
-// without them counts every customer as the owner's.
-type IdentityLister interface {
-	ListAPIConsumerIdentities(ctx context.Context, accountID, appID string) ([]state.APIConsumerIdentity, error)
-}
-
+// SignupLister tells which customers came through the hosted sign-up page
+// with a checkout (their external ref is the provider's customer id); a store
+// without it counts them as the owner's.
 type SignupLister interface {
 	ListAPIConsumerSignups(ctx context.Context, accountID, appID string, limit int) ([]state.APIConsumerSignup, error)
 }
@@ -41,11 +40,8 @@ type App struct {
 	Slug, ID, AccountID string
 }
 
-// signupListMax bounds the sign-ups read to tell sources apart.
-const signupListMax = 100_000
-
 // ErrMonths refuses a window outside 1..api.MCPSellerStatsMaxMonths.
-var ErrMonths = errors.New("months must be between 1 and 12")
+var ErrMonths = fmt.Errorf("months must be between 1 and %d", api.MCPSellerStatsMaxMonths)
 
 const toolPrefix = api.MCPBillingToolsPrefix + "/"
 
@@ -69,9 +65,14 @@ func Read(ctx context.Context, store Store, quote Quoter, app App, months int, n
 	for i := range r.resp.Months {
 		r.months[r.resp.Months[i].Month] = &r.resp.Months[i]
 	}
-	for _, step := range []func(context.Context) error{r.customers, r.usage, r.billed, r.estimate, r.tools, r.nearLimit} {
-		if err := step(ctx); err != nil {
-			return api.MCPSellerStatsResponse{}, err
+	steps := []struct {
+		name string
+		run  func(context.Context) error
+	}{{"customers", r.customers}, {"usage by month", r.usage}, {"statements", r.billed}, {"estimate", r.estimate},
+		{"tool usage", r.tools}, {"near limit", r.nearLimit}}
+	for _, step := range steps {
+		if err := step.run(ctx); err != nil {
+			return api.MCPSellerStatsResponse{}, fmt.Errorf("seller stats: %s: %w", step.name, err)
 		}
 	}
 	return r.resp, nil
@@ -102,7 +103,7 @@ func (r *reader) customers(ctx context.Context) error {
 		return err
 	}
 	r.consumers = consumers
-	sources, err := r.sources(ctx)
+	signups, err := r.signups(ctx)
 	if err != nil {
 		return err
 	}
@@ -117,50 +118,47 @@ func (r *reader) customers(ctx context.Context) error {
 		}
 		if m := r.month(c.CreatedAt); m != nil {
 			m.SignedUp++
-			m.SignedUpBySource[source(c, sources)]++
+			m.SignedUpBySource[source(c, signups)]++
 		}
 	}
 	return nil
 }
 
-func (r *reader) sources(ctx context.Context) (map[string]string, error) {
-	out := map[string]string{}
-	if l, ok := r.store.(SignupLister); ok {
-		signups, err := l.ListAPIConsumerSignups(ctx, r.app.AccountID, r.app.ID, signupListMax)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return nil, err
-		}
-		for _, s := range signups {
-			if s.ConsumerID != "" {
-				out[s.ConsumerID] = api.MCPSellerSourceSignup
-			}
-		}
+// signups is the set of consumers a hosted sign-up created.
+func (r *reader) signups(ctx context.Context) (map[string]bool, error) {
+	out := map[string]bool{}
+	l, ok := r.store.(SignupLister)
+	if !ok {
+		return out, nil
 	}
-	if l, ok := r.store.(IdentityLister); ok {
-		identities, err := l.ListAPIConsumerIdentities(ctx, r.app.AccountID, r.app.ID)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return nil, err
-		}
-		for _, id := range identities {
-			out[id.ConsumerID] = api.MCPSellerSourceOAuth
+	signups, err := l.ListAPIConsumerSignups(ctx, r.app.AccountID, r.app.ID, api.MCPSellerStatsMaxSignups)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return nil, fmt.Errorf("list sign-ups: %w", err)
+	}
+	for _, s := range signups {
+		if s.ConsumerID != "" {
+			out[s.ConsumerID] = true
 		}
 	}
 	return out, nil
 }
 
-func source(c state.APIConsumer, sources map[string]string) string {
+// source is how the customer was created, which never changes: an MCP
+// sign-in creates a consumer whose external ref starts "oauth:", the hosted
+// sign-up page one with a sign-up row (and, on the free plan, a "signup:"
+// ref). An identity linked to an existing consumer later does not count.
+func source(c state.APIConsumer, signups map[string]bool) string {
 	switch {
-	case sources[c.ID] != "":
-		return sources[c.ID]
 	case strings.HasPrefix(c.ExternalRef, "oauth:"):
 		return api.MCPSellerSourceOAuth
-	case strings.HasPrefix(c.ExternalRef, "signup:"):
+	case signups[c.ID], strings.HasPrefix(c.ExternalRef, "signup:"):
 		return api.MCPSellerSourceSignup
 	}
 	return api.MCPSellerSourceOwner
 }
 
 // usage sums requests and units per month and marks active customers.
+// Anonymous traffic counts toward requests and units but is no customer.
 func (r *reader) usage(ctx context.Context) error {
 	sums, err := r.store.SumAPIConsumerUsageByMonth(ctx, r.app.AccountID, r.app.ID, r.start, r.until)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -174,7 +172,7 @@ func (r *reader) usage(ctx context.Context) error {
 		}
 		m.Requests += s.Requests
 		m.Units += s.BillableUnits
-		if s.BillableUnits > 0 {
+		if s.BillableUnits > 0 && s.ConsumerKey != state.AnonymousConsumerKey {
 			m.Active++
 		}
 		if m.Current {
@@ -184,22 +182,47 @@ func (r *reader) usage(ctx context.Context) error {
 	return nil
 }
 
-// billed sums finalized statements of closed months.
+// billed sums the statements of closed months: a finalized statement is
+// billed; a period the month-end run has not finalized yet counts its latest
+// draft as an estimate.
 func (r *reader) billed(ctx context.Context) error {
 	if !r.thisMonth.After(r.start) {
 		return nil
 	}
-	statements, err := r.store.ListFinalizedAPIConsumerStatementsForApp(ctx, r.app.AccountID, r.app.ID, r.start, r.thisMonth)
+	statements, err := r.store.ListAPIConsumerStatementsForApp(ctx, r.app.AccountID, r.app.ID, r.start, r.thisMonth)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		return err
 	}
-	paying := map[string]map[string]bool{}
+	type period struct {
+		consumer   string
+		start, end time.Time
+	}
+	chosen := map[period]state.APIConsumerUsageStatement{}
+	order := []period{}
 	for _, s := range statements {
+		p := period{s.ConsumerID, s.PeriodStart.UTC(), s.PeriodEnd.UTC()}
+		prev, seen := chosen[p]
+		if !seen {
+			order = append(order, p)
+		}
+		final := s.Status == state.APIConsumerUsageStatementFinalized
+		prevFinal := seen && prev.Status == state.APIConsumerUsageStatementFinalized
+		if !seen || (final && !prevFinal) || (final == prevFinal && s.Revision > prev.Revision) {
+			chosen[p] = s
+		}
+	}
+	paying := map[string]map[string]bool{}
+	for _, p := range order {
+		s := chosen[p]
 		m := r.month(s.PeriodStart)
 		if m == nil || s.AmountMillicents <= 0 {
 			continue
 		}
-		addAmount(&m.Revenue, s.Currency, s.AmountMillicents, 0)
+		if s.Status == state.APIConsumerUsageStatementFinalized {
+			addAmount(&m.Revenue, s.Currency, s.AmountMillicents, 0)
+		} else {
+			addAmount(&m.Revenue, s.Currency, 0, s.AmountMillicents)
+		}
 		if paying[m.Month] == nil {
 			paying[m.Month] = map[string]bool{}
 		}
@@ -212,7 +235,10 @@ func (r *reader) billed(ctx context.Context) error {
 }
 
 // estimate prices this month so far for the open customers with the most
-// units, at most api.MCPSellerStatsMaxQuotes of them.
+// units, at most api.MCPSellerStatsMaxQuotes of them,
+// api.MCPSellerStatsQuoteParallelism at a time and within
+// api.MCPSellerStatsQuoteBudget, so the read answers inside a client's
+// request timeout. Customers left unpriced mark the estimate incomplete.
 func (r *reader) estimate(ctx context.Context) error {
 	current := r.month(r.thisMonth)
 	candidates := []state.APIConsumer{}
@@ -231,32 +257,59 @@ func (r *reader) estimate(ctx context.Context) error {
 		candidates, r.resp.EstimateComplete = candidates[:api.MCPSellerStatsMaxQuotes], false
 	}
 	r.toolRevenue = map[string]map[string]int64{}
+	budget, cancel := context.WithTimeout(ctx, api.MCPSellerStatsQuoteBudget)
+	defer cancel()
+	var (
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+		next = make(chan state.APIConsumer)
+	)
+	for range min(api.MCPSellerStatsQuoteParallelism, len(candidates)) {
+		wg.Go(func() {
+			for c := range next {
+				q, err := r.quote(budget, r.app.AccountID, r.app.ID, c.ID, r.thisMonth, r.until)
+				mu.Lock()
+				if err != nil {
+					// One customer's price history, or the time budget,
+					// should not hide the rest.
+					r.resp.EstimateComplete = false
+				} else {
+					r.addQuote(current, q)
+				}
+				mu.Unlock()
+			}
+		})
+	}
+send:
 	for _, c := range candidates {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		q, err := r.quote(ctx, r.app.AccountID, r.app.ID, c.ID, r.thisMonth, r.until)
-		if err != nil {
-			// One customer's price history should not hide the rest.
+		select {
+		case next <- c:
+		case <-budget.Done():
 			r.resp.EstimateComplete = false
-			continue
-		}
-		if q.AmountMillicents > 0 {
-			current.Paying++
-			addAmount(&current.Revenue, q.Currency, 0, q.AmountMillicents)
-		}
-		for _, b := range q.RouteBreakdown {
-			tool, ok := strings.CutPrefix(b.Route, toolPrefix)
-			if !ok || b.AmountMillicents <= 0 {
-				continue
-			}
-			if r.toolRevenue[tool] == nil {
-				r.toolRevenue[tool] = map[string]int64{}
-			}
-			r.toolRevenue[tool][q.Currency] += b.AmountMillicents
+			break send
 		}
 	}
-	return nil
+	close(next)
+	wg.Wait()
+	return ctx.Err()
+}
+
+// addQuote adds one customer's priced month to the current month and tools.
+func (r *reader) addQuote(current *api.MCPSellerStatsMonth, q billing.APIConsumerUsageQuote) {
+	if q.AmountMillicents > 0 {
+		current.Paying++
+		addAmount(&current.Revenue, q.Currency, 0, q.AmountMillicents)
+	}
+	for _, b := range q.RouteBreakdown {
+		tool, ok := strings.CutPrefix(b.Route, toolPrefix)
+		if !ok || b.AmountMillicents <= 0 {
+			continue
+		}
+		if r.toolRevenue[tool] == nil {
+			r.toolRevenue[tool] = map[string]int64{}
+		}
+		r.toolRevenue[tool][q.Currency] += b.AmountMillicents
+	}
 }
 
 // tools lists units and customers per MCP tool over the window.
@@ -281,7 +334,7 @@ func (r *reader) tools(ctx context.Context) error {
 func (r *reader) nearLimit(ctx context.Context) error {
 	plans, err := r.store.ListAPIConsumerPlans(ctx, r.app.AccountID, r.app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return err
+		return fmt.Errorf("list plans: %w", err)
 	}
 	byID := map[string]state.APIConsumerPlan{}
 	for _, p := range plans {
@@ -289,7 +342,7 @@ func (r *reader) nearLimit(ctx context.Context) error {
 	}
 	assignments, err := r.store.ListAPIConsumerPlanAssignmentsForApp(ctx, r.app.AccountID, r.app.ID)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
-		return err
+		return fmt.Errorf("list plan assignments: %w", err)
 	}
 	current := map[string]string{} // consumer → plan in force now
 	for _, a := range assignments {

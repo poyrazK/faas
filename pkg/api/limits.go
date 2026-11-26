@@ -2008,6 +2008,14 @@ const (
 	MCPSellerStatsMaxQuotes        = 500
 	MCPSellerStatsNearLimitMax     = 50
 	MCPSellerStatsNearLimitPercent = 80
+	// It reads at most MCPSellerStatsMaxSignups sign-ups to tell where
+	// customers came from, and prices MCPSellerStatsQuoteParallelism
+	// customers at a time for at most MCPSellerStatsQuoteBudget, well inside
+	// DefaultClientTimeout; customers left unpriced mark the estimate
+	// incomplete.
+	MCPSellerStatsMaxSignups       = 100_000
+	MCPSellerStatsQuoteParallelism = 8
+	MCPSellerStatsQuoteBudget      = 20 * time.Second
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,

@@ -12,7 +12,7 @@ export type MCPSellerStatsAmount = {
    */
   billed_millicents: number;
   /**
-   * The current month priced so far.
+   * The current month priced so far; in a closed month, draft statements the month-end run has not finalized yet.
    */
   estimated_millicents: number;
 };

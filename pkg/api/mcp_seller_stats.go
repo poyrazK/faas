@@ -23,8 +23,9 @@ type MCPSellerStatsResponse struct {
 	NearLimit []MCPSellerNearLimit `json:"near_limit"`
 	// Customers counts customers now.
 	Customers MCPSellerCustomerTotals `json:"customers"`
-	// EstimateComplete is false when this month's estimate priced only the
-	// MCPSellerStatsMaxQuotes customers with the most units.
+	// EstimateComplete is false when this month's estimate left customers
+	// out: past MCPSellerStatsMaxQuotes customers, past
+	// MCPSellerStatsQuoteBudget, or a customer that could not be priced.
 	EstimateComplete bool `json:"estimate_complete"`
 }
 
@@ -37,7 +38,8 @@ type MCPSellerStatsMonth struct {
 	// into oauth, signup and owner.
 	SignedUp         int64            `json:"signed_up"`
 	SignedUpBySource map[string]int64 `json:"signed_up_by_source"`
-	// Active counts customers with billable units in the month.
+	// Active counts customers with billable units in the month; anonymous
+	// traffic counts toward Units only.
 	Active int64 `json:"active"`
 	// Paying counts customers whose month amounts to more than zero.
 	Paying int64 `json:"paying"`
@@ -49,7 +51,8 @@ type MCPSellerStatsMonth struct {
 }
 
 // MCPSellerStatsAmount is revenue in one currency. Billed sums finalized
-// statements before credits; Estimated prices the current month so far.
+// statements before credits; Estimated prices the current month so far and,
+// in a closed month, sums the drafts not finalized yet.
 type MCPSellerStatsAmount struct {
 	Currency            string `json:"currency"`
 	BilledMillicents    int64  `json:"billed_millicents"`

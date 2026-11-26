@@ -19,9 +19,13 @@ func (s *server) getMCPSellerStats(w http.ResponseWriter, r *http.Request, acct 
 	if raw := r.URL.Query().Get("months"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 || n > api.MCPSellerStatsMaxMonths {
-			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid months",
+			problem := api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid months",
 				"months must be a whole number from 1 to "+strconv.Itoa(api.MCPSellerStatsMaxMonths)).
-				WithLimit(api.MCPSellerStatsMaxMonths, int64(n)).WithDocs("https://gregale.dev/docs/api-monetization#seller-stats"))
+				WithDocs("https://gregale.dev/docs/api-monetization#seller-stats")
+			if err == nil {
+				problem = problem.WithLimit(api.MCPSellerStatsMaxMonths, int64(n))
+			}
+			api.WriteProblem(w, problem)
 			return
 		}
 		months = n

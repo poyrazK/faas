@@ -6,6 +6,7 @@ package mcpstats_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,6 +57,11 @@ func TestRead(t *testing.T) {
 	record(owner.ID, lastMonth.Add(time.Hour), "search", 4)
 	record(oauth.ID, thisMonth, "search", 9) // 90% of the free plan
 	record(owner.ID, thisMonth, "fetch", 2)
+	// Anonymous traffic adds units but is no customer.
+	if _, err := st.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{EventID: uuid.NewString(), AccountID: acct.ID, AppID: app.ID,
+		ConsumerKey: state.AnonymousConsumerKey, WindowStart: thisMonth, RequestCount: 5, BillableUnits: 5}); err != nil {
+		t.Fatal(err)
+	}
 	statement, _, err := st.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{AccountID: acct.ID, AppID: app.ID,
 		ConsumerID: owner.ID, Revision: 1, PeriodStart: lastMonth, PeriodEnd: thisMonth, Currency: "USD", BillableUnits: 4,
 		AmountMillicents: 4000, Priced: true, AsOf: thisMonth,
@@ -67,9 +73,21 @@ func TestRead(t *testing.T) {
 	if _, _, err := st.FinalizeAPIConsumerUsageStatement(ctx, acct.ID, app.ID, owner.ID, statement.ID); err != nil {
 		t.Fatal(err)
 	}
+	// The month-end run has not finalized oauth's last month yet: its
+	// draft counts as an estimate.
+	if _, _, err := st.CreateAPIConsumerUsageStatement(ctx, state.APIConsumerUsageStatementInput{AccountID: acct.ID, AppID: app.ID,
+		ConsumerID: oauth.ID, Revision: 1, PeriodStart: lastMonth, PeriodEnd: thisMonth, Currency: "USD", BillableUnits: 1,
+		AmountMillicents: 700, Priced: true, AsOf: thisMonth,
+		Buckets: []state.APIConsumerUsageStatementBucket{{WindowStart: lastMonth, BillableUnits: 1, RateCardID: uuid.NewString(),
+			Currency: "USD", PriceMillicentsPerUnit: 700, AmountMillicents: 700}}}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
 	quoted := map[string]bool{}
 	quote := func(_ context.Context, _, _, consumerID string, since, _ time.Time) (billing.APIConsumerUsageQuote, error) {
+		mu.Lock()
 		quoted[consumerID] = true
+		mu.Unlock()
 		if !since.Equal(thisMonth) {
 			t.Errorf("quote since %v, want this month", since)
 		}
@@ -95,10 +113,11 @@ func TestRead(t *testing.T) {
 		cur.SignedUpBySource[api.MCPSellerSourceOwner] != 1 {
 		t.Fatalf("sign-ups = %d %v", cur.SignedUp, cur.SignedUpBySource)
 	}
-	if cur.Active != 2 || cur.Units != 11 || cur.Paying != 1 || len(cur.Revenue) != 1 || cur.Revenue[0].EstimatedMillicents != 900 {
+	if cur.Active != 2 || cur.Units != 16 || cur.Paying != 1 || len(cur.Revenue) != 1 || cur.Revenue[0].EstimatedMillicents != 900 {
 		t.Fatalf("current month = %+v", cur)
 	}
-	if prev.Active != 1 || prev.Units != 4 || prev.Paying != 1 || len(prev.Revenue) != 1 || prev.Revenue[0].BilledMillicents != 4000 {
+	if prev.Active != 1 || prev.Units != 4 || prev.Paying != 2 || len(prev.Revenue) != 1 || prev.Revenue[0].BilledMillicents != 4000 ||
+		prev.Revenue[0].EstimatedMillicents != 700 {
 		t.Fatalf("last month = %+v", prev)
 	}
 	if got.EstimateComplete || !quoted[signup.ID] {

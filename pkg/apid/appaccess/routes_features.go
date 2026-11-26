@@ -134,6 +134,9 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"PUT /v1/apps/{slug}/consumer-signup":    authz.OrgActionManageAppSecurity,
 	// consumer-signups
 	"GET /v1/apps/{slug}/consumer-signups": authz.OrgActionReadApp,
+	// mcp-stats (ADR-20261126082046) names customers and revenue, like
+	// monetization-funnel.
+	"GET /v1/apps/{slug}/mcp-stats": authz.OrgActionManageAppSecurity,
 	// consumers
 	"POST /v1/apps/{slug}/consumers":                                                        authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/credits":                                   authz.OrgActionManageAppSecurity,

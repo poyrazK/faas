@@ -12,7 +12,8 @@ import (
 
 // checkSellerStats runs the ADR-20261126082046 store contract: usage sums by
 // consumer and UTC month, route totals by prefix with distinct consumers,
-// finalized statements by period start, and every plan assignment of the app.
+// draft and finalized statements by period start, and every plan assignment
+// of the app.
 func checkSellerStats(t *testing.T, ctx context.Context, st state.Store, accountID, appID string) {
 	t.Helper()
 	stats := st.(state.SellerStatsStore)
@@ -83,9 +84,14 @@ func checkSellerStats(t *testing.T, ctx context.Context, st state.Store, account
 	if _, _, err := statements.FinalizeAPIConsumerUsageStatement(ctx, accountID, appID, a.ID, draft.ID); err != nil {
 		t.Fatal(err)
 	}
-	final, err := stats.ListFinalizedAPIConsumerStatementsForApp(ctx, accountID, appID, lastMonth, thisMonth)
-	if err != nil || len(final) != 1 || final[0].ConsumerID != a.ID || final[0].AmountMillicents != 500 {
-		t.Fatalf("finalized = %+v, %v; want only a's", final, err)
+	listed, err := stats.ListAPIConsumerStatementsForApp(ctx, accountID, appID, lastMonth, thisMonth)
+	byConsumer := map[string]state.APIConsumerUsageStatement{}
+	for _, s := range listed {
+		byConsumer[s.ConsumerID] = s
+	}
+	if err != nil || len(listed) != 2 || byConsumer[a.ID].Status != state.APIConsumerUsageStatementFinalized ||
+		byConsumer[a.ID].AmountMillicents != 500 || byConsumer[b.ID].Status != state.APIConsumerUsageStatementDraft {
+		t.Fatalf("statements = %+v, %v; want a's finalized and b's draft", listed, err)
 	}
 
 	plan, err := plans.CreateAPIConsumerPlan(ctx, state.APIConsumerPlan{AccountID: accountID, AppID: appID, Name: "pro", MaxUnitsPerMonth: 10})

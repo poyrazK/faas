@@ -1003,15 +1003,19 @@ gregale mcp server stats --app my-mcp --months 6   # the last six months
 agents connected to Gregale's MCP server can call
 `gregale_get_mcp_seller_stats`.
 
-- **Per month:** sign-ups by source (`oauth` for MCP sign-ins, `signup` for
-  the hosted sign-up page, `owner` for customers you created), customers
-  with billable units (active), customers whose month amounts to more than
+- **Per month:** sign-ups by how the customer was created (`oauth` for MCP
+  sign-ins, `signup` for the hosted sign-up page, `owner` for customers you
+  created; linking a sign-in to an existing customer later does not change
+  it), customers with billable units (active; anonymous traffic counts
+  toward units only), customers whose month amounts to more than
   zero (paying), closed customers, requests, units and revenue per
   currency.
 - **Revenue:** a closed month shows what finalized statements billed,
-  before credits. The current month shows an estimate priced exactly as
-  its statement will be. Past 500 customers, the estimate covers the 500
-  with the most units and `estimate_complete` is `false`.
+  before credits; until the month-end run finalizes a customer's month,
+  its draft statement counts as an estimate. The current month shows an
+  estimate priced exactly as its statement will be. Past 500 customers,
+  the estimate covers the 500 with the most units, and pricing stops after
+  20 seconds; either way `estimate_complete` is `false`.
 - **Tools:** units and distinct customers per MCP tool over the window,
   and this month's estimated revenue per tool. Closed months have no
   per-tool revenue because statements do not split by tool.

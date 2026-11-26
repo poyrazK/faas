@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -20,7 +21,8 @@ type APIConsumerMonthUsage struct {
 }
 
 // APIConsumerRouteTotal is one route's billable units and distinct
-// consumers over a window.
+// consumers over a window; anonymous usage counts toward the units but is
+// not a consumer.
 type APIConsumerRouteTotal struct {
 	Route         string
 	BillableUnits int64
@@ -35,9 +37,10 @@ type SellerStatsStore interface {
 	// SumAPIConsumerRouteUsage sums route usage minutes in [since, until)
 	// for routes starting with prefix, by route, with distinct consumers.
 	SumAPIConsumerRouteUsage(ctx context.Context, accountID, appID, prefix string, since, until time.Time) ([]APIConsumerRouteTotal, error)
-	// ListFinalizedAPIConsumerStatementsForApp lists the app's finalized
-	// statements whose period starts in [since, until).
-	ListFinalizedAPIConsumerStatementsForApp(ctx context.Context, accountID, appID string, since, until time.Time) ([]APIConsumerUsageStatement, error)
+	// ListAPIConsumerStatementsForApp lists the app's draft and finalized
+	// statements (not superseded revisions) whose period starts in
+	// [since, until).
+	ListAPIConsumerStatementsForApp(ctx context.Context, accountID, appID string, since, until time.Time) ([]APIConsumerUsageStatement, error)
 	// ListAPIConsumerPlanAssignmentsForApp lists every consumer's plan
 	// assignments, oldest first.
 	ListAPIConsumerPlanAssignmentsForApp(ctx context.Context, accountID, appID string) ([]APIConsumerPlanAssignment, error)
@@ -101,7 +104,9 @@ func (m *MemStore) SumAPIConsumerRouteUsage(_ context.Context, accountID, appID,
 		if consumers[b.Route] == nil {
 			consumers[b.Route] = map[string]bool{}
 		}
-		consumers[b.Route][consumer] = true
+		if consumer != AnonymousConsumerKey {
+			consumers[b.Route][consumer] = true
+		}
 	}
 	out := make([]APIConsumerRouteTotal, 0, len(units))
 	for route, u := range units {
@@ -120,7 +125,7 @@ func sortRouteTotals(out []APIConsumerRouteTotal) {
 	})
 }
 
-func (m *MemStore) ListFinalizedAPIConsumerStatementsForApp(_ context.Context, accountID, appID string, since, until time.Time) ([]APIConsumerUsageStatement, error) {
+func (m *MemStore) ListAPIConsumerStatementsForApp(_ context.Context, accountID, appID string, since, until time.Time) ([]APIConsumerUsageStatement, error) {
 	if accountID == "" || appID == "" || !until.After(since) {
 		return nil, ErrNotFound
 	}
@@ -128,7 +133,8 @@ func (m *MemStore) ListFinalizedAPIConsumerStatementsForApp(_ context.Context, a
 	defer m.mu.Unlock()
 	out := []APIConsumerUsageStatement{}
 	for _, s := range m.apiConsumerUsageStatements {
-		if s.AccountID == accountID && s.AppID == appID && s.Status == APIConsumerUsageStatementFinalized &&
+		if s.AccountID == accountID && s.AppID == appID &&
+			(s.Status == APIConsumerUsageStatementFinalized || s.Status == APIConsumerUsageStatementDraft) &&
 			!s.PeriodStart.Before(since) && s.PeriodStart.Before(until) {
 			out = append(out, s)
 		}
@@ -175,7 +181,7 @@ func (s *PgStore) SumAPIConsumerUsageByMonth(ctx context.Context, accountID, app
 		 group by consumer_key, month
 		 order by month, consumer_key`, accountID, appID, since.UTC(), until.UTC())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sum consumer usage by month: %w", err)
 	}
 	defer rows.Close()
 	out := []APIConsumerMonthUsage{}
@@ -195,13 +201,14 @@ func (s *PgStore) SumAPIConsumerRouteUsage(ctx context.Context, accountID, appID
 		return nil, ErrNotFound
 	}
 	rows, err := s.pool.Query(ctx, `
-		select route, coalesce(sum(billable_units), 0)::bigint, count(distinct consumer_key)::bigint
+		select route, coalesce(sum(billable_units), 0)::bigint,
+		       count(distinct consumer_key) filter (where consumer_key <> '__anonymous__')::bigint
 		  from api_consumer_route_usage_minutes
 		 where account_id = $1::uuid and app_id = $2::uuid and window_start >= $3 and window_start < $4
 		   and left(route, length($5)) = $5
 		 group by route`, accountID, appID, since.UTC(), until.UTC(), prefix)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sum consumer route usage: %w", err)
 	}
 	defer rows.Close()
 	out := []APIConsumerRouteTotal{}
@@ -219,18 +226,18 @@ func (s *PgStore) SumAPIConsumerRouteUsage(ctx context.Context, accountID, appID
 	return out, nil
 }
 
-func (s *PgStore) ListFinalizedAPIConsumerStatementsForApp(ctx context.Context, accountID, appID string, since, until time.Time) ([]APIConsumerUsageStatement, error) {
+func (s *PgStore) ListAPIConsumerStatementsForApp(ctx context.Context, accountID, appID string, since, until time.Time) ([]APIConsumerUsageStatement, error) {
 	if accountID == "" || appID == "" || !until.After(since) {
 		return nil, ErrNotFound
 	}
 	rows, err := s.pool.Query(ctx,
 		`select `+apiConsumerUsageStatementSelectCols+`
 		   from api_consumer_usage_statements
-		  where account_id = $1::uuid and app_id = $2::uuid and status = 'finalized'
+		  where account_id = $1::uuid and app_id = $2::uuid and status in ('draft', 'finalized')
 		    and period_start >= $3 and period_start < $4
 		  order by period_start, id`, accountID, appID, since.UTC(), until.UTC())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list app consumer statements: %w", err)
 	}
 	defer rows.Close()
 	out := []APIConsumerUsageStatement{}
@@ -252,7 +259,7 @@ func (s *PgStore) ListAPIConsumerPlanAssignmentsForApp(ctx context.Context, acco
 		where account_id = $1::uuid and app_id = $2::uuid
 		order by effective_from, id`, accountID, appID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list app plan assignments: %w", err)
 	}
 	defer rows.Close()
 	out := []APIConsumerPlanAssignment{}

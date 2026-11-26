@@ -11,7 +11,6 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -20,7 +19,6 @@ func cmdMCPStats(args []string) int {
 	fs := newFlagSet("mcp-stats", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug")
 	months := fs.Int("months", 1, "calendar months to read, 1-12 (1 = this month)")
-	timeout := fs.Duration("timeout", 60*time.Second, "API deadline")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -30,16 +28,13 @@ func cmdMCPStats(args []string) int {
 	if *months < 1 || *months > api.MCPSellerStatsMaxMonths {
 		return printErr("MCP stats", fmt.Errorf("--months must be from 1 to %d", api.MCPSellerStatsMaxMonths))
 	}
-	if *timeout <= 0 {
-		return printErr("MCP stats", errors.New("--timeout must be positive"))
-	}
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	resp, err := c.GetMCPSellerStats(ctx, *slug, *months)
+	// The server prices within api.MCPSellerStatsQuoteBudget, inside the
+	// client's request timeout; a large app gets a partial estimate.
+	resp, err := c.GetMCPSellerStats(context.Background(), *slug, *months)
 	if err != nil {
 		return printErr("Could not fetch MCP stats", err)
 	}

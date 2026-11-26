@@ -17,7 +17,8 @@ class MCPSellerStatsAmount:
     billed_millicents: int
     """Finalized statements, before credits."""
     estimated_millicents: int
-    """The current month priced so far."""
+    """The current month priced so far; in a closed month, draft statements the month-end run has not finalized
+    yet."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

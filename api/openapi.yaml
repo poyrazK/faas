@@ -132534,7 +132534,7 @@ components:
       properties:
         currency: { type: string }
         billed_millicents: { type: integer, format: int64, description: "Finalized statements, before credits." }
-        estimated_millicents: { type: integer, format: int64, description: "The current month priced so far." }
+        estimated_millicents: { type: integer, format: int64, description: "The current month priced so far; in a closed month, draft statements the month-end run has not finalized yet." }
     MCPSellerStatsTool:
       description: "One MCP tool's units and customers over the window."
       type: object
