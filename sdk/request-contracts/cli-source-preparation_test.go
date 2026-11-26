@@ -38,7 +38,8 @@ func TestCLISourcePreparationContract(t *testing.T) {
 	for _, name := range strings.Fields(`defaultExcludeDirs defaultExcludeFiles buildOutputDirs gregaleignoreFile dockerignoreFile
 		gregaleignorePattern packRules packSelection packEntry maxSymlinkHops SourceArchiveMaxEntries SourceArchiveMaxExpandedBytes
 		parseGregaleignore loadGregaleignore matchGregaleignoreOne globMatchSegments parseDockerignore loadPackRules
-		collectPackEntries resolvePackSymlink selection rootDockerignorePatterns escapeGregaleignoreLiteral maxGitignoreBytes`) {
+		collectPackEntries resolvePackSymlink selection rootDockerignorePatterns escapeGregaleignoreLiteral maxGitignoreBytes
+		cliLocalContext projectContextDirName projectContextFileName`) {
 		keep[name] = true
 	}
 	var code bytes.Buffer
@@ -51,7 +52,7 @@ func (*deploySourceFilesReport) observe(string, bool, int64, packSelection, bool
 func composeServiceDockerignorePatterns(func(string) ([]byte, bool)) []gregaleignorePattern { return nil }
 `)
 	fset := token.NewFileSet()
-	for _, name := range []string{"cmd/gregale/pack.go", "cmd/gregale/pack_selection.go", "cmd/gregale/git_archive_normalize.go", "cmd/gregale/git_archive_pack.go", "cmd/gregale/compose_dockerignore.go", "pkg/api/limits.go"} {
+	for _, name := range []string{"cmd/gregale/pack.go", "cmd/gregale/pack_selection.go", "cmd/gregale/git_archive_normalize.go", "cmd/gregale/git_archive_pack.go", "cmd/gregale/compose_dockerignore.go", "cmd/gregale/project_context.go", "pkg/api/limits.go"} {
 		file, err := parser.ParseFile(fset, name, read(name), 0)
 		if err != nil {
 			t.Fatal(err)
