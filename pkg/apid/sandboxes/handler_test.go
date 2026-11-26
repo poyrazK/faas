@@ -76,11 +76,23 @@ func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmissi
 	if a.WorkspaceSnapshotID != "" && !f.usable(a.AccountID, a.WorkspaceSnapshotID) {
 		return agentstore.Sandbox{}, agentstore.ErrSnapshotUnavailable
 	}
+	if a.Kind == agentstore.SandboxPersistent {
+		persistent := 0
+		for _, s := range f.sessions {
+			if s.AccountID == a.AccountID && s.Kind == agentstore.SandboxPersistent && !agentstore.SandboxTerminal(s.State) {
+				persistent++
+			}
+		}
+		if persistent >= a.PersistentMax {
+			return agentstore.Sandbox{}, &agentstore.LimitError{Limit: "SandboxPersistentMax", Max: a.PersistentMax, Observed: persistent}
+		}
+	}
 	now := f.now()
 	sb := agentstore.Sandbox{ID: fmt.Sprintf("00000000-0000-0000-0000-%012d", len(f.sessions)+1), AccountID: a.AccountID, TenantID: a.TenantID,
 		Kind: a.Kind, Preset: a.Preset, RAMMB: a.RAMMB, NetworkMode: a.NetworkMode, State: agentstore.SandboxQueued,
 		IdleTimeoutSec: a.IdleTimeoutSec, ExpiresAt: a.ExpiresAt, Labels: a.Labels, CreatedAt: now, UpdatedAt: now, LastActivityAt: now,
-		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef, EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny}
+		WorkspaceSnapshotID: a.WorkspaceSnapshotID, ImageRef: a.ImageRef, EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny,
+		VCPU: a.VCPU, VolumeGB: a.VolumeGB}
 	f.admitted = a
 	f.sessions = append([]agentstore.Sandbox{sb}, f.sessions...)
 	if len(a.Ports) > 0 {
@@ -143,6 +155,39 @@ func (f *fakeStore) UpdateSandboxTimeouts(_ context.Context, accountID, id strin
 	}
 	f.sessions[i].IdleTimeoutSec, f.sessions[i].ExpiresAt = idle, expires
 	return f.sessions[i], nil
+}
+
+// PauseSandbox and ResumeSandbox record the request as the store does
+// (ADR-20261122132055 §1).
+func (f *fakeStore) PauseSandbox(_ context.Context, accountID, id string) (agentstore.Sandbox, error) {
+	return f.pauseOrResume(accountID, id, true)
+}
+
+func (f *fakeStore) ResumeSandbox(_ context.Context, accountID, id string) (agentstore.Sandbox, error) {
+	return f.pauseOrResume(accountID, id, false)
+}
+
+func (f *fakeStore) pauseOrResume(accountID, id string, pause bool) (agentstore.Sandbox, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i, err := f.find(accountID, id)
+	if err != nil {
+		return agentstore.Sandbox{}, err
+	}
+	s := &f.sessions[i]
+	now := f.now()
+	switch {
+	case s.Kind != agentstore.SandboxPersistent || agentstore.SandboxTerminal(s.State):
+		return *s, agentstore.ErrSandboxNotPausable
+	case pause && (s.State == agentstore.SandboxReady || s.State == agentstore.SandboxFrozen):
+		s.PauseRequestedAt, s.ResumeRequestedAt = &now, nil
+	case !pause && s.State == agentstore.SandboxPaused:
+		s.ResumeRequestedAt = &now
+	case pause && s.State == agentstore.SandboxPaused, !pause && s.State == agentstore.SandboxReady:
+	default:
+		return *s, agentstore.ErrSandboxNotPausable
+	}
+	return *s, nil
 }
 
 func (f *fakeStore) CloseSandbox(_ context.Context, accountID, id string) (agentstore.Sandbox, error) {

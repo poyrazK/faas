@@ -1,0 +1,11 @@
+{
+  "name": "journey-yarn-hello",
+  "private": true,
+  "packageManager": "yarn@1.22.22",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ms": "2.1.3"
+  }
+}
