@@ -118,7 +118,7 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if !validDeploySessionID(receipt.SessionID) {
 		t.Fatalf("timeout receipt missing valid session ID: %q", receipt.SessionID)
 	}
-	wantCommand := "gregale --profile default --non-interactive --json release resume " + receipt.SessionID
+	wantCommand := "gregale --profile default --non-interactive --json release resume " + receipt.SessionID + " --timeout 1"
 	assertDeployRecoveryCommand(t, receipt.Recovery, wantCommand)
 	if receipt.ResumeCommand != wantCommand {
 		t.Fatalf("timeout receipt resume_command = %q, want %q", receipt.ResumeCommand, wantCommand)
@@ -131,9 +131,17 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	}
 	assertDeployRecoveryCommand(t, problemDetails.Recovery, wantCommand)
 
+	stdout.Reset()
+	runEmittedDeployCommand(t, problemDetails.Recovery.NextCommand, 3)
+	var pending DeployReceipt
+	if err := json.Unmarshal(stdout.Bytes(), &pending); err != nil || !pending.TimedOut || pending.ID != deploymentID {
+		t.Fatalf("pending resume stdout=%s err=%v", stdout, err)
+	}
+	assertDeployRecoveryCommand(t, pending.Recovery, wantCommand)
+
 	live.Store(true)
 	stdout.Reset()
-	runEmittedDeployCommand(t, problemDetails.Recovery.NextCommand)
+	runEmittedDeployCommand(t, pending.Recovery.NextCommand, 0)
 	var resumed DeployReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &resumed); err != nil || resumed.ID != deploymentID || resumed.Status != statusLive || resumed.SessionID != receipt.SessionID {
 		t.Fatalf("resume stdout=%s err=%v", stdout, err)
@@ -151,14 +159,14 @@ func assertDeployRecoveryCommand(t *testing.T, recovery *deployRecovery, want st
 	}
 }
 
-func runEmittedDeployCommand(t *testing.T, command string) {
+func runEmittedDeployCommand(t *testing.T, command string, wantExit int) {
 	t.Helper()
 	args := strings.Fields(command) // Test data uses shell-safe profiles and session IDs.
 	if len(args) == 0 || args[0] != "gregale" {
 		t.Fatalf("invalid Gregale command: %q", command)
 	}
-	if code := run(args[1:]); code != 0 {
-		t.Fatalf("%s exited %d, stderr=%s", command, code, osStderr)
+	if code := run(args[1:]); code != wantExit {
+		t.Fatalf("%s exited %d, want %d, stderr=%s", command, code, wantExit, osStderr)
 	}
 }
 

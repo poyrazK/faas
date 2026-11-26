@@ -478,7 +478,6 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		final, ok = waitForDeploymentRollout(waitCtx, c, final)
 	}
 	if !ok {
-		resumeCommand := deploymentWaitResumeCommandWithRollout(dep.ID, deadline, waitForRollout)
 		receiptDep := dep
 		if final.ID != "" {
 			receiptDep = final
@@ -488,8 +487,11 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.Interrupted = errors.Is(ctx.Err(), context.Canceled)
 		receipt.TimedOut = !receipt.Interrupted
 		receipt.WaitStage = stage
-		receipt.ResumeCommand = resumeCommand
 		receipt.Recovery = newDeployRecovery(stage, appSlug, receiptDep.ID, "", deadline, waitForRollout)
+		if session := sessionFromContext(ctx); session != nil {
+			receipt.Recovery.setResumeCommand(session.resumeCommandWithTimeout(deadline))
+		}
+		receipt.ResumeCommand = receipt.Recovery.ResumeCommand
 		if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 			return code
 		}
@@ -525,13 +527,13 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 	}
 	if configurationErr != nil {
 		receipt.WaitStage = "configuration"
-		receipt.Recovery = sessionFromContext(ctx).recoveryWithTimeout("configuration", deadline)
+		receipt.Recovery = sessionFromContext(ctx).recoveryForError("configuration", deadline, configurationErr)
 	}
 	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code
 	}
 	if configurationErr != nil {
-		return sessionFromContext(ctx).failure("Saved deploy settings remain pending", "configuration", configurationErr)
+		return printErr("Saved deploy settings remain pending", &deployRecoveryError{err: configurationErr, recovery: receipt.Recovery})
 	}
 	if waitForRollout && final.RolloutState == rolloutStateAborted {
 		return 1

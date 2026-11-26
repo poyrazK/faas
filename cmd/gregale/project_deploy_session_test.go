@@ -212,7 +212,7 @@ func TestProjectDeployResumeTimeoutKeepsAcceptedSession(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil || !receipt.TimedOut || !receipt.RecoverySaved || len(receipt.Builds) != 1 || receipt.Builds[0].DeploymentID != deploymentID {
 		t.Fatalf("timeout stdout=%s err=%v", stdout, err)
 	}
-	if want := "gregale --non-interactive --json release resume " + receipt.SessionID; receipt.ResumeCommand != want {
+	if want := "gregale --non-interactive --json release resume " + receipt.SessionID + " --timeout 1"; receipt.ResumeCommand != want {
 		t.Fatalf("resume_command=%q, want %q", receipt.ResumeCommand, want)
 	}
 	if err := os.Remove(archive); err != nil {
@@ -221,7 +221,7 @@ func TestProjectDeployResumeTimeoutKeepsAcceptedSession(t *testing.T) {
 	live.Store(true)
 	stdout.Reset()
 	stderr.Reset()
-	runEmittedDeployCommand(t, receipt.ResumeCommand)
+	runEmittedDeployCommand(t, receipt.ResumeCommand, 0)
 	var resumed projectDeployReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &resumed); err != nil || resumed.TimedOut || resumed.SessionID != receipt.SessionID || len(resumed.Builds) != 1 || resumed.Builds[0].DeploymentID != deploymentID {
 		t.Fatalf("resume stdout=%s err=%v", stdout, err)
