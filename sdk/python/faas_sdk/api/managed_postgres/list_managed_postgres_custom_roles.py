@@ -55,7 +55,7 @@ def sync_detailed(
 ) -> Response[ManagedPostgresCustomRoleList | Problem]:
     """List a database's custom roles.
 
-     Beta (postgres-custom-roles capability, ADR-20261116213000). The
+     Beta (postgres-custom-roles capability). The
     NOLOGIN group roles declared on the database, with the access modes
     whose logins may SET ROLE to each, the roles each is a member of, the
     access modes whose logins start every session as it, and whether it
@@ -90,7 +90,7 @@ def sync(
 ) -> ManagedPostgresCustomRoleList | Problem | None:
     """List a database's custom roles.
 
-     Beta (postgres-custom-roles capability, ADR-20261116213000). The
+     Beta (postgres-custom-roles capability). The
     NOLOGIN group roles declared on the database, with the access modes
     whose logins may SET ROLE to each, the roles each is a member of, the
     access modes whose logins start every session as it, and whether it
@@ -120,7 +120,7 @@ async def asyncio_detailed(
 ) -> Response[ManagedPostgresCustomRoleList | Problem]:
     """List a database's custom roles.
 
-     Beta (postgres-custom-roles capability, ADR-20261116213000). The
+     Beta (postgres-custom-roles capability). The
     NOLOGIN group roles declared on the database, with the access modes
     whose logins may SET ROLE to each, the roles each is a member of, the
     access modes whose logins start every session as it, and whether it
@@ -153,7 +153,7 @@ async def asyncio(
 ) -> ManagedPostgresCustomRoleList | Problem | None:
     """List a database's custom roles.
 
-     Beta (postgres-custom-roles capability, ADR-20261116213000). The
+     Beta (postgres-custom-roles capability). The
     NOLOGIN group roles declared on the database, with the access modes
     whose logins may SET ROLE to each, the roles each is a member of, the
     access modes whose logins start every session as it, and whether it

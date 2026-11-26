@@ -26,7 +26,7 @@ T = TypeVar("T", bound="ManagedPostgresCustomRole")
 
 @_attrs_define
 class ManagedPostgresCustomRole:
-    """A custom group role declared on a managed database (ADR-20261116213000)."""
+    """A custom group role declared on a managed database."""
 
     database_id: str
     name: str

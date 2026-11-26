@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A custom group role declared on a managed database (ADR-20261116213000).
+ * A custom group role declared on a managed database.
  */
 export type ManagedPostgresCustomRole = {
   database_id: string;

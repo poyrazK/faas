@@ -194,7 +194,7 @@ export class ManagedPostgresService {
   }
   /**
    * List a database's custom roles.
-   * Beta (postgres-custom-roles capability, ADR-20261116213000). The
+   * Beta (postgres-custom-roles capability). The
    * NOLOGIN group roles declared on the database, with the access modes
    * whose logins may SET ROLE to each, the roles each is a member of, the
    * access modes whose logins start every session as it, and whether it
@@ -222,12 +222,12 @@ export class ManagedPostgresService {
   }
   /**
    * Declare or replace a custom role.
-   * Beta (postgres-custom-roles capability, ADR-20261116213000). Creates
+   * Beta (postgres-custom-roles capability). Creates
    * the NOLOGIN role on the database, or corrects it to this declaration,
    * and grants it, SET only, to the database's logins of the granted
    * access modes, including logins issued later. The role and the
-   * read_write logins can run the schema owner's functions in public
-   * (ADR-20261123112326). bypass_rls is refused on a database with Data
+   * read_write logins can run the schema owner's functions in public.
+   * bypass_rls is refused on a database with Data
    * API or Auth. Hobby and above; at most 16 roles per database. Requires
    * postgres manage scope, MFA and a verified email. Answers 200 when the
    * role is already applied and 202 while it is being applied.
