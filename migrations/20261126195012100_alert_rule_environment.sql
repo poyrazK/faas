@@ -1,4 +1,4 @@
--- filename: 20261126134259100_alert_rule_environment.sql
+-- filename: 20261126195012100_alert_rule_environment.sql
 -- migration-compat: expand
 
 -- +goose Up
@@ -46,7 +46,7 @@ DROP TRIGGER IF EXISTS alert_rule_environment_guard ON alert_rules;
 CREATE TRIGGER alert_rule_environment_guard BEFORE INSERT OR UPDATE OF environment_id, app_id, account_id ON alert_rules
   FOR EACH ROW EXECUTE FUNCTION guard_alert_rule_environment();
 -- alert_rules_environment_idx is built concurrently by
--- 20261126134259200_alert_rule_environment_index.
+-- 20261126195012200_alert_rule_environment_index.
 -- +goose StatementEnd
 
 -- +goose Down
