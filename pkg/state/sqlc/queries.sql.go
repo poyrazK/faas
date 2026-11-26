@@ -88320,19 +88320,26 @@ func (q *Queries) ReadInvocationPinScope(ctx context.Context, db DBTX, arg ReadI
 }
 
 const readInvocationVersionApp = `-- name: ReadInvocationVersionApp :one
-SELECT id, account_id, project_id, preview_of_slug, status, deleted_at,
-  coalesce(manifest->>'execution_mode', '')::text AS execution_mode
+SELECT id, account_id, project_id, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, status, deleted_at,
+  coalesce(manifest->>'execution_mode', '')::text AS execution_mode,
+  coalesce(manifest->>'api_sandbox_source_deployment_id', '')::text AS api_sandbox_source_deployment_id,
+  coalesce(manifest->>'api_sandbox_run' = 'true', false)::boolean AS api_sandbox_run
 FROM apps WHERE id = $1::uuid
 `
 
 type ReadInvocationVersionAppRow struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	ProjectID     pgtype.UUID
-	PreviewOfSlug pgtype.Text
-	Status        string
-	DeletedAt     pgtype.Timestamptz
-	ExecutionMode string
+	ID                           pgtype.UUID
+	AccountID                    pgtype.UUID
+	ProjectID                    pgtype.UUID
+	PreviewOfSlug                pgtype.Text
+	PreviewPrNumber              pgtype.Int4
+	PreviewPrState               pgtype.Text
+	PreviewExpiresAt             pgtype.Timestamptz
+	Status                       string
+	DeletedAt                    pgtype.Timestamptz
+	ExecutionMode                string
+	ApiSandboxSourceDeploymentID string
+	ApiSandboxRun                bool
 }
 
 // ADR-570: identity-only projection for a durable invocation version snapshot.
@@ -88344,9 +88351,14 @@ func (q *Queries) ReadInvocationVersionApp(ctx context.Context, db DBTX, id pgty
 		&i.AccountID,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
+		&i.PreviewPrNumber,
+		&i.PreviewPrState,
+		&i.PreviewExpiresAt,
 		&i.Status,
 		&i.DeletedAt,
 		&i.ExecutionMode,
+		&i.ApiSandboxSourceDeploymentID,
+		&i.ApiSandboxRun,
 	)
 	return i, err
 }

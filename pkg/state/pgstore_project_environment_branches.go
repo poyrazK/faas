@@ -269,6 +269,9 @@ func prepareBranchDeploymentTx(ctx context.Context, tx pgx.Tx, d Deployment) (De
 	if input.Seed != nil {
 		return prepareSeedDeploymentTx(ctx, tx, d)
 	}
+	if input.SandboxSourceID != "" {
+		return prepareAPISandboxDeploymentTx(ctx, tx, d)
+	}
 	var environmentID, parentSlug string
 	err := tx.QueryRow(ctx, `
 		select b.environment_id::text, p.slug
@@ -323,6 +326,9 @@ func attachBranchDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnvir
 	}
 	if err := copyBranchDeploymentArtifactTx(ctx, tx, sourceID, d, created); err != nil {
 		return err
+	}
+	if input.SandboxSourceID != "" {
+		return stageBranchDeploymentTx(ctx, tx, created)
 	}
 	tag, err := tx.Exec(ctx, `
 		insert into project_environment_branch_deployments (deployment_id, environment_id, app_id, source_deployment_id)

@@ -2789,7 +2789,13 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	// returning the quota error first strands a customer's first app forever
 	// on plans with a single slot.
 	var slugExists bool
-	if err := tx.QueryRow(ctx, `select exists(select 1 from apps where slug = $1 and status <> 'deleted')`, app.Slug).Scan(&slugExists); err != nil {
+	if IsAPISandbox(app) {
+		// A delayed retry must not recreate an ended sandbox.
+		slugExists, err = sqlc.New().APISandboxSlugExists(ctx, tx, app.Slug)
+	} else {
+		err = tx.QueryRow(ctx, `select exists(select 1 from apps where slug = $1 and status <> 'deleted')`, app.Slug).Scan(&slugExists)
+	}
+	if err != nil {
 		return App{}, fmt.Errorf("state: check app slug %s: %w", app.Slug, err)
 	}
 	if slugExists {
@@ -2984,6 +2990,40 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
+	}
+	if IsAPISandbox(created) {
+		var scenario []byte
+		if app.APISandboxScenario != nil {
+			scenario, err = json.Marshal(app.APISandboxScenario)
+			if err != nil {
+				return App{}, fmt.Errorf("state: encode sandbox scenario: %w", err)
+			}
+		}
+		if err := sqlc.New().EnqueueAPISandboxOperation(ctx, tx, sqlc.EnqueueAPISandboxOperationParams{
+			AppID: mustPgUUID(created.ID), SmokePath: app.APISandboxSmokePath, Scenario: scenario,
+		}); err != nil {
+			return App{}, fmt.Errorf("state: enqueue API sandbox: %w", err)
+		}
+		if app.APISandboxPartnerLabel != "" {
+			if err := sqlc.New().CreateAPISandboxPartner(ctx, tx, sqlc.CreateAPISandboxPartnerParams{
+				AppID: mustPgUUID(created.ID), Label: app.APISandboxPartnerLabel,
+			}); err != nil {
+				return App{}, fmt.Errorf("state: reserve sandbox partner: %w", err)
+			}
+		}
+		if app.APISandboxRunID != "" {
+			if app.APISandboxScenario == nil {
+				return App{}, ErrInvalidArgument
+			}
+			if err := sqlc.New().CreateAPISandboxRun(ctx, tx, sqlc.CreateAPISandboxRunParams{
+				ID: mustPgUUID(app.APISandboxRunID), SourceDeploymentID: mustPgUUID(app.Manifest.APISandboxSourceDeploymentID),
+				SandboxAppID: mustPgUUID(created.ID), ScenarioRevision: mustPgUUID(app.APISandboxScenario.Revision),
+				ScenarioName: app.APISandboxScenario.Name, PartnerStepCount: int32(apiSandboxPartnerStepCount(app)),
+				PartnerWebhook: app.APISandboxRunPartnerWebhook,
+			}); err != nil {
+				return App{}, fmt.Errorf("state: reserve sandbox run: %w", mapErr(err))
+			}
+		}
 	}
 	return created, nil
 }
@@ -8080,14 +8120,17 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 	//    acquisition in one round-trip; apps.status flips are blocked
 	//    behind this lock until COMMIT/ROLLBACK. apps_pkey is the
 	//    primary key on id, so the lock search is an index hit.
-	var locked int
+	var sandboxSourceID string
 	if err := tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
-		d.AppID).Scan(&locked); err != nil {
+		`select coalesce(manifest->>'api_sandbox_source_deployment_id', '') from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
+		d.AppID).Scan(&sandboxSourceID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, 0, ErrNotFound
 		}
 		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+	}
+	if sandboxSourceID != "" && (d.branchInput == nil || d.branchInput.SandboxSourceID != sandboxSourceID) {
+		return Deployment{}, 0, ErrConflict
 	}
 	if err := guardReleaseAdditionDeploymentDB(ctx, tx, d); err != nil {
 		return Deployment{}, 0, err

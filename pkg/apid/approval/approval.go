@@ -188,6 +188,7 @@ func PolicyView(p state.ReleaseApprovalPolicy, app string, channelNames []string
 		App: app, RequiredApprovals: p.RequiredApprovals, AfterStage: p.AfterStage, TimeoutMinutes: p.TimeoutMinutes,
 		Approvers: p.Approvers, AllowSelfApproval: p.AllowSelfApproval, NotifyChannels: channelNames, UpdatedBy: p.UpdatedBy,
 		CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339),
+		RequirePassingSandboxSuite: p.RequiresSandboxSuite(),
 	}
 }
 
@@ -305,13 +306,19 @@ func WaitsBeforeReleaseCommand(ctx context.Context, store any, policy *state.Rel
 // for the policy's timeout, like a canary waits in its stage.
 func ReleaseCommandStatus(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment, decisions []state.ReleaseApproval, since, now time.Time) api.ReleaseApprovalStatus {
 	status := Status(policy, app, d, decisions, now)
-	if policy == nil || status.State != api.ReleaseApprovalStateWaiting {
+	status.BeforeReleaseCommand = true
+	if policy == nil {
+		return status
+	}
+	status.RequirePassingSandboxSuite = policy.RequiresSandboxSuite()
+	if status.State != api.ReleaseApprovalStateWaiting &&
+		!(status.RequirePassingSandboxSuite && status.State == api.ReleaseApprovalStateApproved) {
 		return status
 	}
 	expires := since.Add(time.Duration(policy.TimeoutMinutes) * time.Minute)
 	status.WaitingSince = since.UTC().Format(time.RFC3339)
 	status.ExpiresAt = expires.UTC().Format(time.RFC3339)
-	if !now.Before(expires) {
+	if status.State == api.ReleaseApprovalStateWaiting && !now.Before(expires) {
 		status.State = api.ReleaseApprovalStateExpired
 	}
 	return status
@@ -350,6 +357,13 @@ type ReleaseCommandWait struct {
 // Pending reports whether the release still waits for its approvals.
 func (w ReleaseCommandWait) Pending() bool {
 	return w.Waits && w.Status.State == api.ReleaseApprovalStateWaiting
+}
+
+// SandboxSuiteWindowOpen also allows fresh evidence after human approval.
+func (w ReleaseCommandWait) SandboxSuiteWindowOpen(d state.Deployment, now time.Time) bool {
+	return w.Waits && w.Status.RequirePassingSandboxSuite &&
+		(w.Pending() || w.Status.State == api.ReleaseApprovalStateApproved) &&
+		now.Before(ReleasePhaseStartedAt(d).Add(time.Duration(w.Policy.TimeoutMinutes)*time.Minute))
 }
 
 // LoadReleaseCommandWait reads whether d waits for approval before its

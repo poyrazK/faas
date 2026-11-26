@@ -208,7 +208,10 @@ type App struct {
 	// ProductionAppID is a PR preview's production app, whose app-wide edge
 	// rules the preview applies too (ADR-091 amendment 2026-10-30). Empty
 	// for production apps.
-	ProductionAppID string
+	ProductionAppID   string
+	IsAPISandbox      bool
+	APISandboxPartner bool
+	APISandboxRun     bool
 	// MaintenanceMode (ADR-091 amendment / §4.1.2.0) is the
 	// coarse-grained per-app maintenance flag mirrored from
 	// apps.maintenance_mode. When true, every inbound request is
@@ -1361,7 +1364,8 @@ type Handler struct {
 	credentialMatcher CredentialMatcher
 	// consumerKeyTouches coalesces best-effort last_used_at writes so a hot
 	// customer key does not turn every request into a database update.
-	consumerKeyTouches *consumerKeyToucher
+	consumerKeyTouches    *consumerKeyToucher
+	sandboxSuccessTouches *consumerKeyToucher
 	// publicAuthCache is the unsealed basic-auth credential
 	// cache (issue #477 / ADR-079). Nil = no caching; the
 	// basic-auth path falls back to per-request unsealing
@@ -2109,6 +2113,9 @@ func (h *Handler) WithConsumerAuth(store ConsumerAuthStore) *Handler {
 	h.consumerAuthStore = store
 	if store != nil && h.consumerKeyTouches == nil {
 		h.consumerKeyTouches = newConsumerKeyToucher()
+	}
+	if _, ok := store.(sandboxPartnerStore); ok {
+		h.sandboxSuccessTouches = newConsumerKeyToucher()
 	}
 	return h
 }
@@ -7277,7 +7284,7 @@ haveApp:
 		projectReleaseScope = "production"
 	}
 	var asyncRule *EdgeRuleAsyncResolved
-	if !deploymentSmoke {
+	if !app.APISandboxRun && !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
 	}
 	if h.pinPublicRoutingPolicy(w, r, app, publicRoutingInputs(r, app, versionKey, smokeDeploymentID, asyncRule != nil)) {
@@ -7570,7 +7577,7 @@ haveApp:
 
 	// Scoped local execution retains ordinary authentication, body limits and
 	// rate/budget admission, then streams without VM upload spooling or wake.
-	if h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
+	if !app.APISandboxRun && h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -8170,6 +8177,11 @@ haveApp:
 		return
 	}
 
+	if app.APISandboxRun && rec.sandboxPartnerKeyID != "" && !h.claimSandboxPartnerStep(w, r, rec, app, target) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+		return
+	}
+
 	// Stamp the per-instance identity on the request BEFORE proxying so
 	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
 	// the HTTP bytes to this exact instance. A retry restamps for its own
@@ -8609,6 +8621,9 @@ haveApp:
 				defer endTracking()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
+	}
+	if completionTarget.DeploymentID != "" && r.Context().Err() == nil {
+		h.recordSandboxPartnerSuccess(app.ID, rec)
 	}
 	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
@@ -9511,8 +9526,10 @@ func (h *Handler) RoutesFor(appID string) (routes []string, overflowed bool) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status      int
-	wroteHeader bool
+	status                     int
+	wroteHeader                bool
+	sandboxPartnerKeyID        string
+	sandboxPartnerStepResponse func(int)
 	// platformResponse marks a response the gateway wrote itself (a
 	// forwarder problem), not the app: its bytes are not app egress.
 	platformResponse bool
@@ -9694,6 +9711,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// Who wrote the response is fixed when its headers commit; a header
 		// set afterwards never unbills bytes already sent.
 		s.platformProblem = s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
+		if s.sandboxPartnerStepResponse != nil {
+			s.sandboxPartnerStepResponse(code)
+		}
 		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed

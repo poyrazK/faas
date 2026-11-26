@@ -68,6 +68,26 @@ func TestEnforceConsumerAuthProductionFallbackIsPreviewOnly(t *testing.T) {
 	}
 }
 
+func TestAPISandboxConsumerAuth(t *testing.T) {
+	base, productionToken := consumerAuthFixture()
+	store := &appScopedConsumerAuthStore{fakeConsumerAuthStore: *base}
+	h := NewHandlerWith(nil, nil, nil).WithConsumerAuth(store)
+	sandbox := App{ID: "sandbox-1", AccountID: "acct-1", IsPreview: true, IsAPISandbox: true,
+		ProductionAppID: "app-1", ConsumerAuthMode: api.ConsumerAuthModeRequired}
+
+	rec, _, allowed := runConsumerAuthGate(t, h, sandbox, http.MethodGet, productionToken)
+	if allowed || rec.Code != http.StatusUnauthorized || len(store.lookups) != 1 || store.lookups[0] != sandbox.ID {
+		t.Fatalf("sandbox accepted a production credential or consulted its owner: %d %v", rec.Code, store.lookups)
+	}
+	r := httptest.NewRequest(http.MethodOptions, "https://sandbox.example.test/", nil)
+	r.Header.Set("Origin", "https://example.test")
+	r.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	rec = httptest.NewRecorder()
+	if h.enforceConsumerAuth(rec, r, &statusRecorder{ResponseWriter: rec}, sandbox) || rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous request passed the sandbox gate: %d", rec.Code)
+	}
+}
+
 // The pull request's code must not read a production consumer's key.
 func TestPreviewWithholdsVerifiedConsumerKey(t *testing.T) {
 	for _, tc := range []struct {

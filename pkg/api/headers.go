@@ -142,7 +142,8 @@ const (
 	// RevisionHeader is an app-scoped, exact deployment pin for public API
 	// clients. It is only honored on apps with a revision pin window enabled.
 	// The edge also returns the selected immutable deployment ID under this
-	// name so clients can store and replay it across deploys.
+	// name so clients can store and replay it across deploys. API sandbox
+	// responses use it as evidence of which deployment served the request.
 	RevisionHeader = "X-Gregale-Revision"
 	// ReleaseHeader identifies an immutable project deployment graph.
 	ReleaseHeader = "X-Gregale-Release"

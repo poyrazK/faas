@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/buildcache"
@@ -2269,7 +2270,8 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 			return err
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
-		if errors.Is(err, errReleaseDeploymentClosed) {
+		if errors.Is(err, errReleaseDeploymentClosed) || errors.Is(err, errReleaseApprovalWait) ||
+			errors.Is(err, state.ErrPassingSandboxSuiteRequired) {
 			return nil
 		}
 		if err != nil {
@@ -2303,10 +2305,21 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	if !errors.Is(err, state.ErrNotFound) {
 		return state.AppTask{}, fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
+	current, err := h.store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		return state.AppTask{}, fmt.Errorf("imaged: read release before admission: %w", err)
+	}
+	wait, err := approval.LoadReleaseCommandWait(ctx, h.store, app, current, time.Now())
+	if err != nil {
+		return state.AppTask{}, err
+	}
+	if wait.Waits && wait.Status.State != api.ReleaseApprovalStateApproved {
+		return state.AppTask{}, errReleaseApprovalWait
+	}
 	params := state.CreateAppTaskParams{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
 		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
-		CommandShell: dep.ReleaseCommandShell,
+		CommandShell: dep.ReleaseCommandShell, CheckPassingSandboxSuite: wait.Waits,
 	}
 	contained, err := h.prepareContainedRelease(ctx, app, dep, &params)
 	if err != nil {
@@ -2332,6 +2345,8 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 // errReleaseDeploymentClosed reports that release admission already failed the
 // deployment durably; there is nothing left to wait for or prime.
 var errReleaseDeploymentClosed = errors.New("imaged: release admission closed the deployment")
+
+var errReleaseApprovalWait = errors.New("imaged: release approval is still required")
 
 // prepareContainedRelease pins the release of an app enrolled in a contained
 // rehearsal as that run's contained command (ADR-20261020150000): it executes

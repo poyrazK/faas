@@ -157,6 +157,18 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	apiSandboxOperations           map[string]APISandboxOperation
+	apiSandboxRuns                 map[string]APISandboxRun
+	apiSandboxComparisons          map[string]apiSandboxComparison
+	apiSandboxWebhookPartners      map[string]APISandboxWebhookPartner
+	apiSandboxPartners             map[string]APISandboxPartner
+	apiSandboxScenarios            map[string]savedAPISandboxScenario
+	apiSandboxScenarioLibrary      map[string]map[string]sandboxScenarioLibraryEntry
+	apiSandboxSuites               map[string]api.APISandboxSuite
+	apiSandboxSuiteRuns            map[string]APISandboxSuiteRun
+	apiSandboxSuiteScenarios       map[string][]APISandboxSuiteScenario
+	apiSandboxSuiteAutomatic       map[string]apiSandboxSuiteQueuedRequest
+	apiSandboxReleaseAdmissions    map[string]string
 	executionEnvironments          map[string]ExecutionEnvironment
 	executionTaskVersions          map[string]ExecutionTaskVersion
 	executionTaskInvocations       map[string]ExecutionTaskInvocation
@@ -5558,6 +5570,21 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []A
 }
 
 func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, limits api.Limits) (App, error) {
+	if IsAPISandbox(app) {
+		for _, existing := range m.apps {
+			if existing.Slug == app.Slug {
+				return App{}, ErrConflict
+			}
+		}
+	}
+	if app.APISandboxRunID != "" {
+		if app.APISandboxScenario == nil {
+			return App{}, ErrInvalidArgument
+		}
+		if _, exists := m.apiSandboxRuns[app.APISandboxRunID]; exists {
+			return App{}, ErrConflict
+		}
+	}
 	app, err := m.prepareAppIfUnderQuotaLocked(app, limits, m.apps)
 	if err != nil {
 		return App{}, err
@@ -5569,8 +5596,47 @@ func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, lim
 		return App{}, err
 	}
 	m.ensureServiceAddressIndexLocked(&app)
+	app = m.recordAPISandboxAppLocked(app)
 	m.apps[app.ID] = app
 	return app, nil
+}
+
+func (m *MemStore) recordAPISandboxAppLocked(app App) App {
+	if IsAPISandbox(app) {
+		if m.apiSandboxOperations == nil {
+			m.apiSandboxOperations = make(map[string]APISandboxOperation)
+		}
+		now := time.Now().UTC()
+		m.apiSandboxOperations[app.ID] = APISandboxOperation{
+			AppID: app.ID, SmokePath: app.APISandboxSmokePath, Phase: APISandboxPreparingDatabase,
+			StartedAt: now, NextAttemptAt: &now, Scenario: cloneAPISandboxScenario(app.APISandboxScenario),
+		}
+		if app.APISandboxPartnerLabel != "" {
+			if m.apiSandboxPartners == nil {
+				m.apiSandboxPartners = make(map[string]APISandboxPartner)
+			}
+			m.apiSandboxPartners[app.ID] = APISandboxPartner{Label: app.APISandboxPartnerLabel}
+		}
+		if app.APISandboxRunID != "" {
+			if m.apiSandboxRuns == nil {
+				m.apiSandboxRuns = make(map[string]APISandboxRun)
+			}
+			m.apiSandboxRuns[app.APISandboxRunID] = APISandboxRun{
+				AppID: app.ID, APISandboxRunReport: api.APISandboxRunReport{
+					ID: app.APISandboxRunID, SourceDeploymentID: app.Manifest.APISandboxSourceDeploymentID,
+					ScenarioRevision: app.APISandboxScenario.Revision, ScenarioName: app.APISandboxScenario.Name,
+					Status: api.APISandboxRunQueued, PartnerWebhook: app.APISandboxRunPartnerWebhook, Steps: []api.APISandboxRunStep{}, CreatedAt: now,
+					PartnerStepCount: apiSandboxPartnerStepCount(app),
+				},
+			}
+		}
+		app.APISandboxRunID = ""
+		app.APISandboxRunPartnerWebhook = false
+		app.APISandboxSmokePath = ""
+		app.APISandboxScenario = nil
+		app.APISandboxPartnerLabel = ""
+	}
+	return app
 }
 
 // enrollNewAppsLocked gives apps about to be published their ADR-595
@@ -8103,6 +8169,14 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.publishMemTrafficAppPurgeLocked(id)
 	m.forgetOwnedOperationsLocked("", id)
+	delete(m.apiSandboxScenarioLibrary, id)
+	delete(m.apiSandboxSuites, id)
+	for runID, run := range m.apiSandboxSuiteRuns {
+		if run.AppID == id {
+			delete(m.apiSandboxSuiteRuns, runID)
+			delete(m.apiSandboxSuiteScenarios, runID)
+		}
+	}
 	for key, connection := range m.toolOAuthConnections {
 		if connection.Record.AppID == id {
 			delete(m.toolOAuthConnections, key)
@@ -8899,6 +8973,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if IsAPISandbox(app) && (d.branchInput == nil || d.branchInput.SandboxSourceID == "") {
+		return Deployment{}, 0, ErrConflict
 	}
 	if err := m.checkProjectDeploymentEnvironmentLocked(app, normalizedDeploymentScope(d.Scope)); err != nil {
 		return Deployment{}, 0, err

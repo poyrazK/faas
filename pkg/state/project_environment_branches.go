@@ -254,7 +254,8 @@ type projectEnvironmentBranchDeploymentInput struct {
 	AccountID, ProjectID, Slug string
 	// Seed, when set, seeds a rehearsal member from the branch workload
 	// instead of creating the branch's own deployment (slice 6b).
-	Seed *EnvironmentBranchSeed
+	Seed            *EnvironmentBranchSeed
+	SandboxSourceID string
 }
 
 type projectEnvironmentBranchDeployment struct {
@@ -513,6 +514,9 @@ func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Dep
 	if input.Seed != nil {
 		return m.prepareSeedDeploymentLocked(d)
 	}
+	if input.SandboxSourceID != "" {
+		return m.prepareAPISandboxDeploymentLocked(d)
+	}
 	branch, err := m.projectEnvironmentBranchBySlugLocked(input.AccountID, input.ProjectID, input.Slug)
 	if err != nil {
 		return Deployment{}, nil, "", err
@@ -544,6 +548,10 @@ func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Dep
 func (m *MemStore) attachBranchDeploymentLocked(input projectEnvironmentBranchDeploymentInput, sourceID string, created Deployment) {
 	if input.Seed != nil {
 		m.attachSeedDeploymentLocked(input, sourceID, created)
+		return
+	}
+	if input.SandboxSourceID != "" {
+		m.copyBranchDeploymentLayersLocked(sourceID, created.ID)
 		return
 	}
 	branch, err := m.projectEnvironmentBranchBySlugLocked(input.AccountID, input.ProjectID, input.Slug)

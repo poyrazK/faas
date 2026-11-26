@@ -88,6 +88,11 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, p)
 		return
 	}
+	if req.RequirePassingSandboxSuite != nil && *req.RequirePassingSandboxSuite {
+		if !s.checkRequiredSandboxSuitePolicy(w, r, acct, app) {
+			return
+		}
+	}
 	channelIDs, problem := s.releaseApprovalChannelIDs(r.Context(), acct.ID, req.NotifyChannels)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -97,6 +102,7 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		AppID: app.ID, AccountID: app.AccountID, RequiredApprovals: req.RequiredApprovals, AfterStage: req.AfterStage,
 		TimeoutMinutes: req.TimeoutMinutes, Approvers: req.Approvers, AllowSelfApproval: req.AllowSelfApproval,
 		NotifyChannelIDs: channelIDs, UpdatedBy: releaseApprovalActorLabel(r, acct),
+		RequirePassingSandboxSuite: req.RequirePassingSandboxSuite,
 	}, time.Now())
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "save release approval policy",
@@ -108,8 +114,33 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		"app": app.Slug, "required_approvals": view.RequiredApprovals, "after_stage": view.AfterStage,
 		"timeout_minutes": view.TimeoutMinutes, "approvers": view.Approvers, "allow_self_approval": view.AllowSelfApproval,
 		"notify_channels": view.NotifyChannels, "actor": view.UpdatedBy,
+		"require_passing_sandbox_suite": view.RequirePassingSandboxSuite,
 	}))
 	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *server) checkRequiredSandboxSuitePolicy(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) bool {
+	if !apiSandboxHTTPSourceApp(app) || app.PreviewOfSlug != "" || !s.apiSandboxWorkerEnabled() {
+		api.WriteProblem(w, api.ErrValidation("required sandbox suites need an app with API sandbox support"))
+		return false
+	}
+	if !s.allowAPISandboxProvisioning(w, r, acct, app) {
+		return false
+	}
+	store, ok := s.sandboxSuiteStore(w)
+	if !ok {
+		return false
+	}
+	suite, err := store.GetAPISandboxSuite(r.Context(), app.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not verify the app's sandbox suite"))
+		return false
+	}
+	if len(suite.ScenarioIDs) == 0 {
+		api.WriteProblem(w, api.ErrValidation("save a regression suite for this app before requiring a passing suite"))
+		return false
+	}
+	return true
 }
 
 // executionModeApprovalProblem refuses moving an app that requires release

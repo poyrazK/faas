@@ -82,10 +82,19 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 			return AppTask{}, ErrNotFound
 		}
 	}
+	var suiteRunID string
 	if resolved.Kind == AppTaskKindRelease {
 		for _, task := range m.appTasks {
 			if task.DeploymentID == resolved.DeploymentID && task.Kind == AppTaskKindRelease {
 				return AppTask{}, ErrConflict
+			}
+		}
+		if resolved.CheckPassingSandboxSuite {
+			if gate := m.sandboxReleaseGateLocked(resolved.AppID, resolved.DeploymentID); gate != nil {
+				if gate.Status != "passed" {
+					return AppTask{}, ErrPassingSandboxSuiteRequired
+				}
+				suiteRunID = gate.SuiteRunID
 			}
 		}
 	}
@@ -119,6 +128,12 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 		UpdatedAt:            now,
 	}
 	m.appTasks[task.ID] = task
+	if suiteRunID != "" {
+		if m.apiSandboxReleaseAdmissions == nil {
+			m.apiSandboxReleaseAdmissions = make(map[string]string)
+		}
+		m.apiSandboxReleaseAdmissions[task.DeploymentID] = suiteRunID
+	}
 	if resolved.Interactive != nil {
 		if m.appTaskAttach == nil {
 			m.appTaskAttach = make(map[string]AppTaskAttach)

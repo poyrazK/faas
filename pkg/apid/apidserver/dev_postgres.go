@@ -126,7 +126,11 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 			created = append(created, binding.ID)
 		}
 		if err != nil {
-			s.compensateDevPostgres(ctx, acct.ID, database.ID, created, !wasExisting)
+			// Sandbox setup retries under a durable lease and reuses partial
+			// resources. Its janitor owns cleanup after the sandbox closes.
+			if !state.IsAPISandbox(app) {
+				s.compensateDevPostgres(ctx, acct.ID, database.ID, created, !wasExisting)
+			}
 			return nil, err
 		}
 		if i == 0 {

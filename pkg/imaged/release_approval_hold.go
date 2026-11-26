@@ -50,6 +50,24 @@ func (h *Handler) holdReleaseCommandForApproval(ctx context.Context, app state.A
 	}
 	switch wait.Status.State {
 	case api.ReleaseApprovalStateApproved:
+		if wait.Status.RequirePassingSandboxSuite {
+			reader, ok := h.store.(state.APISandboxReleaseGateReader)
+			if !ok {
+				return true, errors.New("imaged: sandbox release evidence unavailable")
+			}
+			gate, err := reader.APISandboxReleaseGate(ctx, app.ID, dep.ID, true)
+			if err != nil {
+				return true, fmt.Errorf("imaged: read sandbox release evidence: %w", err)
+			}
+			if gate != nil && gate.Status != "passed" && gate.Status != "admitted" {
+				if !wait.SandboxSuiteWindowOpen(dep, time.Now()) {
+					return true, h.failReleaseApproval(ctx, app, dep, wait, api.CodeReleaseApprovalRequired,
+						"the release waited past its approval timeout for a passing sandbox suite. The release command did not run")
+				}
+				h.enqueueAutomaticSandboxSuite(ctx, dep)
+				return true, nil
+			}
+		}
 		return h.holdApprovedRelease(ctx, app, dep, wait)
 	case api.ReleaseApprovalStateNotRequired:
 		return false, nil
@@ -62,10 +80,19 @@ func (h *Handler) holdReleaseCommandForApproval(ctx context.Context, app state.A
 			"the release waited past its approval timeout before its release command ran; the command did not run. Deploy again to request approval again")
 	}
 	h.noticeReleaseApproval(ctx, app, dep, wait, state.ReleaseApprovalEventRequested)
+	h.enqueueAutomaticSandboxSuite(ctx, dep)
 	h.log.Info("imaged: release command waits for approval",
 		"deployment_id", dep.ID, "app_id", app.ID, "approvals", wait.Status.Approvals,
 		"required", wait.Status.RequiredApprovals, "expires_at", wait.Status.ExpiresAt)
 	return true, nil
+}
+
+func (h *Handler) enqueueAutomaticSandboxSuite(ctx context.Context, dep state.Deployment) {
+	if suites, ok := h.store.(state.APISandboxSuiteAutoEnqueuer); ok && state.APISandboxApprovalCandidateSupported(dep) {
+		if err := suites.EnqueueAPISandboxSuiteAutomatic(ctx, dep.ID, time.Now().UTC()); err != nil {
+			h.log.Warn("imaged: enqueue automatic sandbox suite", "deployment_id", dep.ID, "err", err)
+		}
+	}
 }
 
 // holdApprovedRelease rechecks, as a scheduled release does when it starts,
@@ -356,7 +383,8 @@ func (l *Loop) releaseApprovalPending(ctx context.Context, d state.Deployment) b
 		return true // decide on the next sweep rather than cancel blind
 	}
 	// An approved release the break-glass pause holds waits too (amendment 13).
-	return wait.Pending() || wait.Waits && wait.Status.State == api.ReleaseApprovalStateApproved && l.handler != nil && l.handler.releasePauseOn()
+	return wait.Pending() || wait.SandboxSuiteWindowOpen(d, l.now()) ||
+		wait.Waits && wait.Status.State == api.ReleaseApprovalStateApproved && l.handler != nil && l.handler.releasePauseOn()
 }
 
 // outpacedReleaseLookback bounds how many of an app's newest deployments a

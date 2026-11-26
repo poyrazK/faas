@@ -1167,6 +1167,141 @@ type ApiKeyProjectLimit struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type ApiSandboxApprovalCheck struct {
+	ComparisonID         pgtype.UUID
+	BaselineArtifactPin  string
+	CandidateArtifactPin string
+}
+
+type ApiSandboxComparison struct {
+	ID             pgtype.UUID
+	BaselineRunID  pgtype.UUID
+	CandidateRunID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+}
+
+type ApiSandboxPartner struct {
+	AppID          pgtype.UUID
+	Label          string
+	InviteHash     []byte
+	InvitedAt      pgtype.Timestamptz
+	RedeemedAt     pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	ConsumerKeyID  pgtype.UUID
+	FirstSuccessAt pgtype.Timestamptz
+}
+
+type ApiSandboxProvisioning struct {
+	AppID         pgtype.UUID
+	SmokePath     string
+	Phase         string
+	StartedAt     pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LeaseToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	DeploymentID  pgtype.UUID
+	Failure       []byte
+	Verification  []byte
+	Scenario      []byte
+}
+
+type ApiSandboxReleaseAdmission struct {
+	DeploymentID pgtype.UUID
+	TaskID       pgtype.UUID
+	SuiteRunID   pgtype.UUID
+}
+
+type ApiSandboxRun struct {
+	ID                  pgtype.UUID
+	SourceDeploymentID  pgtype.UUID
+	SandboxAppID        pgtype.UUID
+	ScenarioRevision    pgtype.UUID
+	ScenarioName        string
+	Status              string
+	Steps               []byte
+	FailureCode         string
+	SandboxDeploymentID pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	StartedAt           pgtype.Timestamptz
+	FinishedAt          pgtype.Timestamptz
+	LeaseToken          pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
+	ShareHash           []byte
+	ShareExpiresAt      pgtype.Timestamptz
+	PartnerStepCount    int32
+	PartnerClaim        pgtype.UUID
+	PartnerClaimUntil   pgtype.Timestamptz
+	PartnerWebhook      bool
+	PartnerOutcomeUntil pgtype.Timestamptz
+}
+
+// The currently saved API sandbox scenario for a retained release. Each sandbox stores its own copy.
+type ApiSandboxScenario struct {
+	DeploymentID    pgtype.UUID
+	Revision        pgtype.UUID
+	Definition      []byte
+	SourceRequestID pgtype.UUID
+}
+
+type ApiSandboxSuite struct {
+	AppID             pgtype.UUID
+	Revision          pgtype.UUID
+	ScenarioIds       []pgtype.UUID
+	RunBeforeApproval bool
+}
+
+type ApiSandboxSuiteAutoRequest struct {
+	DeploymentID  pgtype.UUID
+	RunID         pgtype.UUID
+	Status        string
+	NextAttemptAt pgtype.Timestamptz
+}
+
+type ApiSandboxSuiteRun struct {
+	ID                    pgtype.UUID
+	AppID                 pgtype.UUID
+	SuiteRevision         pgtype.UUID
+	BaselineDeploymentID  pgtype.UUID
+	CandidateDeploymentID pgtype.UUID
+	BaselineArtifactPin   string
+	CandidateArtifactPin  string
+	ScenarioCount         int16
+	CompletedCount        int16
+	CreatedAt             pgtype.Timestamptz
+	DeadlineAt            pgtype.Timestamptz
+	FinishedAt            pgtype.Timestamptz
+	NextAttemptAt         pgtype.Timestamptz
+	LeaseToken            pgtype.UUID
+	LeaseUntil            pgtype.Timestamptz
+	FailureCode           string
+	Automatic             bool
+	WaitingForCapacity    bool
+}
+
+type ApiSandboxSuiteScenario struct {
+	SuiteRunID       pgtype.UUID
+	Position         int16
+	ScenarioID       pgtype.UUID
+	ScenarioRevision pgtype.UUID
+	ScenarioName     string
+	Definition       []byte
+	ComparisonID     pgtype.UUID
+}
+
+type ApiSandboxWebhookPartner struct {
+	RunID               pgtype.UUID
+	SourceDeploymentID  pgtype.UUID
+	ScenarioRevision    pgtype.UUID
+	ExpiresAt           pgtype.Timestamptz
+	InviteHash          []byte
+	TargetUrl           string
+	SigningSecretSealed []byte
+	OutcomeTokenHash    []byte
+	ReadyAt             pgtype.Timestamptz
+	OutcomeCount        pgtype.Int4
+	OutcomeAt           pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -1281,6 +1416,15 @@ type AppApiRoute struct {
 	FirstSeen     pgtype.Timestamptz
 	LastSeen      pgtype.Timestamptz
 	RequestCount  int64
+}
+
+type AppApiSandboxScenario struct {
+	AppID           pgtype.UUID
+	ID              pgtype.UUID
+	Revision        pgtype.UUID
+	Name            string
+	Definition      []byte
+	SourceRequestID pgtype.UUID
 }
 
 type AppApplicationStandard struct {
@@ -1895,17 +2039,18 @@ type AppRegistryCredential struct {
 }
 
 type AppReleaseApprovalPolicy struct {
-	AppID             pgtype.UUID
-	AccountID         pgtype.UUID
-	RequiredApprovals int16
-	AfterStage        int16
-	TimeoutMinutes    int32
-	Approvers         string
-	AllowSelfApproval bool
-	NotifyChannelIds  []pgtype.UUID
-	UpdatedBy         string
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	AppID                      pgtype.UUID
+	AccountID                  pgtype.UUID
+	RequiredApprovals          int16
+	AfterStage                 int16
+	TimeoutMinutes             int32
+	Approvers                  string
+	AllowSelfApproval          bool
+	NotifyChannelIds           []pgtype.UUID
+	UpdatedBy                  string
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	RequirePassingSandboxSuite bool
 }
 
 type AppReleaseGate struct {

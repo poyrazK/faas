@@ -41,7 +41,7 @@ func IsPlatformReservedSlug(slug string) bool {
 // every public allocation path must reject these names.
 func IsReservedAppSlug(slug string) bool {
 	_, ok := reservedAppSlugs[slug]
-	return ok || IsPreviewAppSlug(slug) || IsSandboxTemplateAppSlug(slug) || isOperatorReservedSlug(slug)
+	return ok || IsPreviewAppSlug(slug) || IsSandboxTemplateAppSlug(slug) || strings.HasPrefix(slug, APISandboxSlugPrefix) || isOperatorReservedSlug(slug)
 }
 
 // operatorReservedSlugs holds the cell's own reserved labels

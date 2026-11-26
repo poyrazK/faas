@@ -614,6 +614,15 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		d.markDead(ctx, row, "webhook: subscription disabled")
 		return
 	}
+	receiver, receiverErr := d.sandboxReceiver(ctx, hook, row)
+	if receiverErr != nil {
+		if errors.Is(receiverErr, state.ErrNotFound) {
+			d.markDead(ctx, row, "webhook: sandbox receiver no longer owns this delivery")
+		} else {
+			d.log.WarnContext(ctx, "webhook: sandbox receiver authority unavailable", "delivery_id", row.ID)
+		}
+		return
+	}
 	if row.Event == state.AppWebhookEventRecoveryReviewReady {
 		guard, ok := d.store.(state.WorkflowRecoveryReviewNotificationStore)
 		if !ok {
@@ -758,6 +767,21 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// fast-forward 7.5h of backoff in <1s). It is cheap: with a nil
 	// HTTPClient it sends through the process-wide shared client, so
 	// constructing one per delivery opens no transport of its own.
+	signer := webhookout.NewSigner(secret)
+	client, target := d.HTTPClient, hook.TargetURL
+	if receiver != nil {
+		if receiver.partnerTarget != "" {
+			target = receiver.partnerTarget
+			if client == nil {
+				guarded := *webhookout.GuardedHTTPClient()
+				guarded.Timeout = d.PerAttempt
+				client = &guarded
+			}
+		} else {
+			receiver.signer = signer
+			client = &http.Client{Transport: receiver}
+		}
+	}
 	disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{
 		MaxAttempts: 1, // the dispatcher owns the retry ladder
 		// The ledger attempt numbers the request: X-Faas-Webhook-Attempt
@@ -765,7 +789,7 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		FirstAttempt: row.Attempt + 1,
 		BaseBackoff:  0,
 		PerAttempt:   d.PerAttempt,
-		HTTPClient:   d.HTTPClient,
+		HTTPClient:   client,
 		Sleeper:      d.Sleeper,
 		Logger:       d.log,
 		HeaderSet:    webhookout.HeaderSetWebhook,
@@ -773,10 +797,15 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	})
 	startedAt := d.Now()
 	res := disp.Dispatch(ctx, webhookout.Target{
-		URL:            hook.TargetURL,
-		Signer:         webhookout.NewSigner(secret),
+		URL:            target,
+		Signer:         signer,
 		PreviousSigner: d.previousSigner(ctx, hook, openIdents, startedAt),
 	}, evt)
+	if receiver != nil && receiver.partnerTarget != "" && row.Attempt == 0 && res.Err == nil {
+		// Preserve the real HTTP response in the ledger and let the ordinary
+		// retry policy redeliver this same delivery ID.
+		res.Err = errors.New(api.APISandboxLostAcknowledgement)
+	}
 
 	now := d.Now()
 	meta := attemptMetadata(ctx, hook, res, startedAt, now)

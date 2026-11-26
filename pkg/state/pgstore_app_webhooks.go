@@ -185,6 +185,10 @@ func (s *PgStore) UpdateAppWebhook(ctx context.Context, id string, p UpdateAppWe
 	if err != nil {
 		return AppWebhook{}, err
 	}
+	if strings.HasPrefix(current.TargetURL, api.APISandboxWebhookReceiverPrefix) ||
+		(p.TargetURL != nil && strings.HasPrefix(*p.TargetURL, api.APISandboxWebhookReceiverPrefix)) {
+		return AppWebhook{}, ErrConflict
+	}
 	if current.Scope == AppWebhookScopePlatformTenant && p.EventFilter != nil {
 		return AppWebhook{}, ErrInvalidAppWebhookScope
 	}

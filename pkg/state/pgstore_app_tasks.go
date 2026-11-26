@@ -137,6 +137,13 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	if resolved.RequireLiveDeployment {
 		return s.createServiceBindingSmokeTask(ctx, resolved)
 	}
+	if resolved.Kind == AppTaskKindRelease && resolved.CheckPassingSandboxSuite {
+		return s.createAppTaskWithSandboxSuite(ctx, resolved)
+	}
+	return createAppTaskOnDB(ctx, s.pool, resolved)
+}
+
+func createAppTaskOnDB(ctx context.Context, db sqlc.DBTX, resolved CreateAppTaskParams) (AppTask, error) {
 	// ADR-1037: an interactive task's attach record is inserted by the same
 	// statement, so no claim can observe the task without it.
 	var interactiveTTY bool
@@ -145,7 +152,7 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		interactiveTTY = resolved.Interactive.TTY
 		attachDigest = familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, resolved.Interactive.TokenSHA256)
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := db.QueryRow(ctx, `
 		with created as (
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,
