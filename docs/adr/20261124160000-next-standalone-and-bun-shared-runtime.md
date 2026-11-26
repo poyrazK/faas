@@ -122,10 +122,9 @@ with the rest of the shared runtime.
   Scale it fits and ships all of `/app` as before. A small Bun app's layer drops from
   ~420 MB to ~95 MB on every plan. Both fit the Free plan with room for
   dependencies.
-- A Next.js app that customizes its start (`next start -p 3000`, a custom
-  server, `prestart` hooks) or pins Next 15 or older keeps its
-  `node_modules` layer. `next start` reads `PORT`, so most apps can drop
-  their arguments to opt in. The guide says so.
+- A Next.js app that customizes its start (a custom server, `prestart`
+  hooks) or pins Next 15 or older keeps its `node_modules` layer. Listen
+  flags on `next start` qualify since amendment 2.
 - Next.js apps whose Node version has no shared runtime (Node 22 is musl,
   others are undeclared) are unchanged; their layer still carries Node.
 - Files the app reads at runtime that Next's file tracing misses are not in
@@ -135,6 +134,26 @@ with the rest of the shared runtime.
 - A Bun app that starts a Next.js server with `bun run start` still gets
   the standalone tree. A Bun app without it carries Bun (88 MB) plus its
   `node_modules`.
+
+## Amendment 2 (2026-11-26): `next start` listen flags
+
+Many apps start with `next start -p $PORT`, `-p 3000` or `-H 0.0.0.0`.
+Those starts kept `node_modules`, so a small app needed Hobby. The
+standalone server reads the same settings from its environment: `PORT`,
+`HOSTNAME` and `KEEP_ALIVE_TIMEOUT`.
+
+- A start script (or start command) of `next start` with `-p`/`--port`,
+  `-H`/`--hostname` or `--keepAliveTimeout` now qualifies for the
+  standalone build. imaged starts the server with
+  `exec env NAME=value … node /app/.next/standalone/server.js`, so a flag
+  still overrides the variable the platform sets, as it does in
+  `next start`.
+- A value must be one plain shell word: letters, digits and `_.:${}-`,
+  optionally in double quotes. `$PORT` and `${PORT:-3000}` expand when the
+  shell runs the start, as they did in the script.
+- A project directory, any other option, a repeated option, arguments
+  forwarded through the package manager (`npm run start -- -p 3000`) and
+  lifecycle hooks still keep the app's own start and `node_modules`.
 
 ## Amendment 1 (2026-11-25): size checks found by the metal acceptance
 

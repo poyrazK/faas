@@ -53,21 +53,36 @@ DELETE FROM product_control_overdue_holds WHERE app_id=$1 AND tenant_id=$2;
 UPDATE usage_statement_invoice_exports e SET next_status_sync_at=sqlc.arg(soon)::timestamptz
 WHERE e.next_status_sync_at>sqlc.arg(soon)::timestamptz AND e.id IN (SELECT export_id FROM product_control_overdue_holds);
 
--- Holds apply while their policy exists and their invoice is still unpaid, so
--- payment or a cleared policy takes effect before the next recomputation.
+-- An existing hold follows the next qualifying statement when its invoice
+-- settles. The point lookup and app list share the same payment snapshot.
 -- name: ProductOverdueHolds :many
-SELECT h.*,coalesce(e.hosted_invoice_url,'')::text AS hosted_invoice_url
-FROM product_control_overdue_holds h
+WITH scoped_holds AS (
+ SELECT customer_hold.* FROM product_control_overdue_holds customer_hold
+ WHERE customer_hold.account_id=sqlc.arg(account_id) AND customer_hold.app_id=sqlc.arg(app_id)
+   AND customer_hold.tenant_id=sqlc.narg(tenant_id)::uuid
+ UNION ALL
+ SELECT app_hold.* FROM product_control_overdue_holds app_hold
+ WHERE app_hold.account_id=sqlc.arg(account_id) AND app_hold.app_id=sqlc.arg(app_id) AND sqlc.narg(tenant_id)::uuid IS NULL
+)
+SELECT h.account_id,h.app_id,h.tenant_id,
+       coalesce(next_invoice.document_id,h.document_id)::uuid AS document_id,
+       coalesce(next_invoice.export_id,h.export_id)::uuid AS export_id,
+       coalesce(next_invoice.due_at,h.due_at)::timestamptz AS due_at,h.since,
+       coalesce(current_invoice.hosted_invoice_url,next_invoice.hosted_invoice_url,'')::text AS hosted_invoice_url
+FROM scoped_holds h
 JOIN product_control_overdue_policies p ON p.app_id=h.app_id AND p.account_id=h.account_id
-JOIN usage_statement_invoice_exports e ON e.id=h.export_id
-WHERE h.account_id=$1 AND h.app_id=$2
- AND e.payment_status IN ('open','uncollectible') AND coalesce(e.amount_remaining_minor,1)>0
-ORDER BY h.due_at,h.tenant_id;
-
--- name: ProductOverdueCustomerHold :one
-SELECT h.*,coalesce(e.hosted_invoice_url,'')::text AS hosted_invoice_url
-FROM product_control_overdue_holds h
-JOIN product_control_overdue_policies p ON p.app_id=h.app_id AND p.account_id=h.account_id
-JOIN usage_statement_invoice_exports e ON e.id=h.export_id
-WHERE h.account_id=$1 AND h.app_id=$2 AND h.tenant_id=$3
- AND e.payment_status IN ('open','uncollectible') AND coalesce(e.amount_remaining_minor,1)>0;
+LEFT JOIN usage_statement_invoice_exports current_invoice ON current_invoice.id=h.export_id
+ AND current_invoice.payment_status IN ('open','uncollectible') AND coalesce(current_invoice.amount_remaining_minor,1)>0
+LEFT JOIN LATERAL (
+ SELECT d.id AS document_id,e.id AS export_id,e.due_at,e.hosted_invoice_url
+ FROM product_control_billing_documents d
+ JOIN usage_statement_invoice_exports e ON e.statement_id=d.id AND e.account_id=d.account_id AND e.source_kind='product_control'
+ WHERE current_invoice.id IS NULL
+   AND d.account_id=h.account_id AND d.app_id=h.app_id AND d.tenant_id=h.tenant_id AND d.kind='statement'
+   AND e.status='completed' AND e.payment_status IN ('open','uncollectible') AND coalesce(e.amount_remaining_minor,1)>0
+   AND e.due_at+make_interval(days=>p.block_overdue_after_days)<=greatest(sqlc.arg(as_of)::timestamptz,h.since)
+ ORDER BY e.due_at,e.id
+ LIMIT 1
+) next_invoice ON true
+WHERE current_invoice.id IS NOT NULL OR next_invoice.export_id IS NOT NULL
+ORDER BY coalesce(next_invoice.due_at,h.due_at),h.tenant_id;

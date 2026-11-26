@@ -94,6 +94,8 @@ var memDispatched = map[string]bool{
 	"AdmitScheduledWorkflow":                                  true,
 	"AppByID":                                                 true,
 	"AppBySlug":                                               true,
+	"ApplyProductCustomerChange":                              true,
+	"FinalizeProductBilling":                                  true,
 	"GetProductBillingDocument":                               true,
 	"ListProductBillingDocuments":                             true,
 	"GetProductBillingHandoff":                                true,
@@ -4904,6 +4906,24 @@ func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.P
 		return override.ListProjectsForOrg(ctx, orgID)
 	}
 	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) ApplyProductCustomerChange(ctx context.Context, account, app string, request api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error) {
+	if override, ok := s.over.(interface {
+		ApplyProductCustomerChange(context.Context, string, string, api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error)
+	}); ok {
+		return override.ApplyProductCustomerChange(ctx, account, app, request)
+	}
+	return s.MemStore.ApplyProductCustomerChange(ctx, account, app, request)
+}
+
+func (s *Mem) FinalizeProductBilling(ctx context.Context, scope state.ProductBillingScope, hash string) (api.ProductBillingDocument, error) {
+	if override, ok := s.over.(interface {
+		FinalizeProductBilling(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocument, error)
+	}); ok {
+		return override.FinalizeProductBilling(ctx, scope, hash)
+	}
+	return s.MemStore.FinalizeProductBilling(ctx, scope, hash)
 }
 
 func (s *Mem) GetProductBillingDocument(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocument, error) {

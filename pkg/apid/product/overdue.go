@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -134,7 +135,59 @@ func customerOverdueHold(ctx context.Context, products state.ProductControlStore
 	if err != nil {
 		return nil, err
 	}
-	return &api.ProductCustomerOverdueHold{DueAt: hold.DueAt, HostedInvoiceURL: api.ProviderHostedURL(hold.HostedInvoiceURL)}, nil
+	view := &api.ProductCustomerOverdueHold{DueAt: hold.DueAt, HostedInvoiceURL: api.ProviderHostedURL(hold.HostedInvoiceURL)}
+	if identity, ok := authmw.ProductCustomerFromContext(ctx); ok && identity.TenantID == tenantID && identity.Access.Permissions.ViewBilling {
+		view.PaymentCheckID = hold.ExportID
+	}
+	return view, nil
+}
+
+// CustomerCheckOverduePayment checks the hold presented to the signed-in
+// workspace. A stale request can reload the hold, including its successor.
+func (s *Service) CustomerCheckOverduePayment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	identity, ok := authmw.ProductCustomerFromContext(r.Context())
+	if !ok || !identity.Access.Permissions.ViewBilling {
+		customerPermissionAllowed(w, api.ProductPermissions{}, api.ProductPermissionViewBilling)
+		return
+	}
+	var req struct {
+		HoldID string `json:"hold_id"`
+	}
+	if r.URL.RawQuery != "" {
+		api.WriteProblem(w, api.ErrValidation("payment check takes no query parameters"))
+		return
+	}
+	if !httpkit.DecodeJSONLimit(w, r, &req, api.ProductControlAuthBodyBytes) {
+		return
+	}
+	if !ownerUUID(req.HoldID) {
+		api.WriteProblem(w, api.ErrValidation("the current payment hold reference is required"))
+		return
+	}
+	store, app, ok := s.owned(w, r, acct)
+	if !ok {
+		return
+	}
+	unavailable := api.NewProblem(http.StatusServiceUnavailable, api.CodeBillingProviderUnavailable, "Payment provider unavailable",
+		"Could not confirm payment right now. Try again shortly or contact your product team.")
+	if s.RefreshHeldInvoicePayment == nil {
+		api.WriteProblem(w, unavailable)
+		return
+	}
+	ctx := r.Context()
+	if problem := s.RefreshHeldInvoicePayment(ctx, acct, app.ID, identity.TenantID, req.HoldID); problem != nil {
+		if problem.Code == api.CodeStatementInvoiceExportInProgress {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, problem.Code, "Payment check in progress",
+				"A check is already in progress. Try again shortly."))
+			return
+		}
+		api.WriteProblem(w, unavailable)
+		return
+	}
+	hold, err := customerOverdueHold(ctx, store, acct.ID, app.ID, identity.TenantID)
+	respond(w, struct {
+		OverdueHold *api.ProductCustomerOverdueHold `json:"overdue_hold"`
+	}{hold}, err)
 }
 
 // StartOverdueHolds recomputes holds every api.ProductOverdueCheckInterval.

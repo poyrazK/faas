@@ -70,7 +70,7 @@ func (s *PgStore) ResolveProductFeature(ctx context.Context, req ProductFeatureR
 			return s.OperationDefinitionByID(ctx, req.AccountID, id)
 		}
 	}
-	customer, err := productCustomerTx(ctx, s.pool, req.AccountID, req.AppID, req.TenantID)
+	customer, err := s.GetProductCustomer(ctx, req.AccountID, req.AppID, req.TenantID)
 	if errors.Is(err, ErrNotFound) {
 		return OperationDefinition{}, ErrProductAccess
 	}
