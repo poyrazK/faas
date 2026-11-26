@@ -9,5 +9,6 @@
   },
   "homepage": "https://gregale.dev/docs/agents",
   "repository": "https://github.com/poyrazK/faas",
+  "privacyPolicyUrl": "https://gregale.dev/privacy",
   "keywords": ["gregale", "deploy", "serverless", "mcp", "firecracker"]
 }
