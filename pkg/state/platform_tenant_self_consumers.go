@@ -87,7 +87,7 @@ func (m *MemStore) CreatePlatformTenantSelfConsumer(_ context.Context, in Create
 	// Replays return the original identity even if the owner has since disabled
 	// new provisioning or lowered the cap. They never create or relink a row.
 	for _, consumer := range m.apiConsumers {
-		if consumer.AppID != surface.AppID || consumer.ExternalRef != in.ExternalRef {
+		if consumer.AppID != surface.AppID || consumer.ExternalRef != in.ExternalRef || consumer.EnvironmentID != "" {
 			continue
 		}
 		if !samePlatformTenantSelfConsumer(consumer, in.TenantID, in.Name) {

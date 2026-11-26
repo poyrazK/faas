@@ -74,7 +74,7 @@ func (m *MemStore) LinkAPIConsumerIdentity(_ context.Context, in APIConsumerIden
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, ok := m.apiConsumers[in.ConsumerID]
-	if !ok || target.AccountID != in.AccountID || target.AppID != in.AppID || !target.Active() {
+	if !ok || target.AccountID != in.AccountID || target.AppID != in.AppID || !target.Active() || target.EnvironmentID != "" {
 		return APIConsumerIdentity{}, "", ErrNotFound
 	}
 	now := time.Now().UTC()
@@ -165,7 +165,7 @@ func (s *PgStore) LinkAPIConsumerIdentity(ctx context.Context, in APIConsumerIde
 		return APIConsumerIdentity{}, "", fmt.Errorf("link consumer identity: lock settings: %w", err)
 	}
 	target, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+` from api_consumers
-		where id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid for update`, in.ConsumerID, in.AccountID, in.AppID))
+		where id = $1::uuid and account_id = $2::uuid and app_id = $3::uuid and environment_id is null for update`, in.ConsumerID, in.AccountID, in.AppID))
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !target.Active()) {
 		return APIConsumerIdentity{}, "", ErrNotFound
 	}

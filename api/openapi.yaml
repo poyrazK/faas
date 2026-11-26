@@ -23142,6 +23142,12 @@ paths:
       tags: [consumers]
       operationId: listAPIConsumers
       summary: List stable API consumer identities for an app.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Project environment slug. Omitted or production lists production's consumers; a stage's consumers are its own.
+          schema: { type: string }
       responses:
         '200':
           description: Consumer identities (never includes credentials).
@@ -23154,6 +23160,20 @@ paths:
       tags: [consumers]
       operationId: createAPIConsumer
       summary: Register a stable API consumer identity.
+      description: |
+        With `environment` set to a stage, the consumer and its keys belong
+        to that stage: the stage's hosts accept only its own consumers once it
+        has any, and production's until then. Plan assignments follow the
+        consumer; trials and billing apply to production consumers only. Until
+        the release after this one, a stage consumer's `external_ref` and key
+        names must differ from production's. Creating a stage's consumer
+        answers 501 `not_implemented` until the platform enables it.
+      parameters:
+        - name: environment
+          in: query
+          required: false
+          description: Project environment slug. Omitted or production creates a production consumer.
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -94510,6 +94530,7 @@ components:
         blocked_events: { type: integer, format: int64 }
         oldest_pending_at: { type: string, format: date-time }
         destination: { type: string, enum: [operation, event], default: operation }
+        poll_interval_ms: { type: integer, minimum: 1000, maximum: 600000, description: Configured poll interval in milliseconds for Postgres row-change sources. }
     CommitPublicationHistoryItem:
       description: Retained publication acceptance receipt with event metadata; excludes event data.
       allOf:
@@ -105387,6 +105408,7 @@ components:
         updated_at: { type: string, format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
         managed_by_platform_tenant: { type: boolean, description: True only when a platform-tenant bundle created this consumer; omitted otherwise. }
+        environment_id: { type: string, format: uuid, description: The project environment the consumer belongs to; omitted for production. }
 
     APIConsumerListResponse:
       description: "Stable API consumer identities for an app."
