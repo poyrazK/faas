@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
@@ -332,6 +333,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
 
   const groupRoot = await mkdtemp(join(tmpdir(), 'gregale-sdk-task-group-'));
   const group = join(groupRoot, 'saved');
+  const acknowledgementGroup = join(groupRoot, 'acknowledgement-interop');
   const agents = [];
   const scope = 'mcp:tools reports:read';
   const gregale = process.env.MCP_TASKS_TEST_GREGALE;
@@ -345,6 +347,28 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       env: groupCLIEnv(token), timeout: 5_000,
     });
     return action === 'watch' ? stdout.trimEnd().split('\n').map(line => JSON.parse(line)) : JSON.parse(stdout);
+  }
+  async function readWatchAndInterrupt(path, token, count, ...flags) {
+    const child = spawn(gregale, groupCLIArgs('watch', path, flags), {
+      env: groupCLIEnv(token), stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    const exit = once(child, 'exit');
+    agents.push({ child, exit });
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const events = [];
+    try {
+      for await (const line of lines) {
+        events.push(JSON.parse(line));
+        if (events.length === count) {
+          child.kill('SIGKILL');
+          break;
+        }
+      }
+    } finally {
+      lines.close();
+    }
+    assert.deepEqual(await exit, [null, 'SIGKILL']);
+    return events;
   }
   async function startAgent({ token, groupPath = group, ...configuration } = {}) {
     token ??= await mint('alice', 'mcp:tools reports:read');
@@ -408,6 +432,37 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     assert.equal(await store.complete(leases[0].task_id, leases[0].lease_token, result), 'completed');
     await requestInput(leases[1]);
 
+    if (gregale) {
+      await createMcpTaskGroup(acknowledgementGroup, paths);
+      const initialToken = await mint('alice', scope);
+      const renewedToken = await mint('alice', scope, '6m');
+      assert.notEqual(renewedToken, initialToken);
+      const [completedUpdate, pendingReview] = await readWatchAndInterrupt(acknowledgementGroup, initialToken, 2);
+      assert.equal(completedUpdate.receiptIndex, 0);
+      assert.equal(pendingReview.receiptIndex, 1);
+      assert.equal(pendingReview.task.status, 'input_required');
+      assert.match(pendingReview.updateId, /^[0-9a-f]{64}$/);
+      assert.deepEqual(await readWatchAndInterrupt(acknowledgementGroup, renewedToken, 2, '--resume'),
+        [completedUpdate, pendingReview]);
+
+      const { stdout } = await promisify(execFile)(gregale, [
+        'mcp', 'client', 'group', 'ack', '--group', acknowledgementGroup, '--update-id', completedUpdate.updateId,
+      ], { timeout: 5_000 });
+      assert.deepEqual(JSON.parse(stdout), { updateId: completedUpdate.updateId, acknowledged: true });
+      const sdkWatch = watchMcpTaskGroup(owner, acknowledgementGroup);
+      try {
+        const { value: reviewNotice } = await sdkWatch.next();
+        assert.equal(reviewNotice.receiptIndex, 1);
+        assert.equal(reviewNotice.updateId, pendingReview.updateId);
+        await reviewNotice.acknowledge();
+      } finally {
+        await sdkWatch.return();
+      }
+      const [remainingUpdate] = await readWatchAndInterrupt(acknowledgementGroup, renewedToken, 1, '--resume');
+      assert.equal(remainingUpdate.receiptIndex, 2);
+      assert.equal(remainingUpdate.task.status, 'working');
+    }
+
     monitorGroup();
     const resumed = await startAgent({ followInput: true });
     assert.deepEqual((await resumed.waitForEvents(2)).map(event => [event.receiptIndex, event.taskId, event.status]), [
@@ -456,6 +511,13 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     assert.equal(reviewEvents.at(-1).status, 'completed');
     assert.equal(taskWatch.opens, 1);
     assert.deepEqual((await getMcpTask(owner, pausedId)).result, result);
+    if (gregale) {
+      const token = await mint('alice', scope);
+      const updates = await runGroupCLI('watch', acknowledgementGroup, token, '--resume');
+      assert.deepEqual(updates.map(event => [event.receiptIndex, event.task.status]), [[1, 'completed'], [2, 'completed']]);
+      const snapshots = await runGroupCLI('watch', acknowledgementGroup, token);
+      assert.deepEqual(snapshots.map(event => event.receiptIndex), [0, 1, 2]);
+    }
 
     const other = await connect('bob', 'mcp:tools reports:read');
     const inaccessible = [];
@@ -871,7 +933,10 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
         [2, 'unavailable', undefined, undefined],
         [3, 'not_submitted', undefined, undefined],
       ]);
-      assert.deepEqual(await runGroupCLI('watch', renewableGroup, renewed), mixed);
+      const watched = await runGroupCLI('watch', renewableGroup, renewed);
+      assert.ok(watched.filter(event => event.outcome === 'available')
+        .every(event => /^[0-9a-f]{64}$/.test(event.updateId)));
+      assert.deepEqual(watched.map(({ updateId, ...entry }) => entry), mixed);
       assert.equal(groupRequests.submissions, beforeRead);
       await assert.rejects(stat(join(renewableGroup, 'member-3.json')), { code: 'ENOENT' });
     }

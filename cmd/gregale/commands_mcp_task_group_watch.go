@@ -15,26 +15,36 @@ import (
 )
 
 type mcpTaskGroupWatchEntry struct {
-	receipt mcpTaskGroupReference
-	current mcpTaskStatusMetadata
-	pending bool
+	receipt  mcpTaskGroupReference
+	current  mcpTaskStatusMetadata
+	updateID string
+	pending  bool
+}
+
+type mcpTaskGroupWatchEvent struct {
+	mcpTaskReceiptWatchEvent
+	UpdateID string `json:"updateId,omitempty"`
 }
 
 type mcpTaskGroupWatcher struct {
+	dir     *os.Root
+	groupID string
+	resume  bool
 	client  *mcphosting.Client
 	entries []mcpTaskGroupWatchEntry
 	output  *json.Encoder
 }
 
-func runMCPTaskGroupWatch(client *mcphosting.Client, manifest mcpTaskGroupManifest, dir *os.Root, interval, timeout time.Duration) int {
+func runMCPTaskGroupWatch(client *mcphosting.Client, manifest mcpTaskGroupManifest, dir *os.Root, interval, timeout time.Duration, resume bool) int {
 	interrupted, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ctx, cancel := context.WithTimeout(interrupted, timeout)
 	defer cancel()
 	watcher := mcpTaskGroupWatcher{
-		client: client, entries: make([]mcpTaskGroupWatchEntry, len(manifest.Members)), output: json.NewEncoder(osStdout),
+		dir: dir, groupID: manifest.ID, resume: resume, client: client,
+		entries: make([]mcpTaskGroupWatchEntry, len(manifest.Members)), output: json.NewEncoder(osStdout),
 	}
-	err := watcher.run(ctx, manifest, dir, interval)
+	err := watcher.run(ctx, manifest, interval)
 	switch {
 	case err == nil || errors.Is(err, context.Canceled) && interrupted.Err() != nil:
 		return 0
@@ -45,17 +55,17 @@ func runMCPTaskGroupWatch(client *mcphosting.Client, manifest mcpTaskGroupManife
 	}
 }
 
-func (w *mcpTaskGroupWatcher) run(ctx context.Context, manifest mcpTaskGroupManifest, dir *os.Root, interval time.Duration) error {
+func (w *mcpTaskGroupWatcher) run(ctx context.Context, manifest mcpTaskGroupManifest, interval time.Duration) error {
 	for i := range w.entries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		receipt, err := manifest.readMember(dir, i)
+		receipt, err := manifest.readMember(w.dir, i)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			err = w.report(i, mcpTaskReceiptStatusResult{Outcome: "not_submitted"})
+			err = w.report(i, mcpTaskReceiptStatusResult{Outcome: "not_submitted"}, "")
 		case err != nil:
-			err = w.report(i, mcpTaskReceiptStatusResult{Outcome: "invalid_receipt"})
+			err = w.report(i, mcpTaskReceiptStatusResult{Outcome: "invalid_receipt"}, "")
 		default:
 			w.entries[i] = mcpTaskGroupWatchEntry{receipt: receipt, pending: true}
 			err = w.update(ctx, i)
@@ -116,14 +126,28 @@ func (w *mcpTaskGroupWatcher) update(ctx context.Context, index int) error {
 	}
 	entry.pending = result.Outcome == "retry" || (result.Outcome == "available" && task.Status == "working")
 	if result.Task != nil {
-		if *result.Task == entry.current {
-			return nil
-		}
 		entry.current = *result.Task
 	}
-	return w.report(index, result)
+	if result.Outcome != "available" {
+		return w.report(index, result, "")
+	}
+	id := mcpTaskGroupUpdateID(w.groupID, index, task)
+	if id == entry.updateID {
+		return nil
+	}
+	entry.updateID = id
+	if w.resume {
+		acknowledged, err := mcpTaskGroupUpdateAcknowledged(w.dir, id)
+		if err != nil || acknowledged {
+			return err
+		}
+	}
+	return w.report(index, result, id)
 }
 
-func (w *mcpTaskGroupWatcher) report(index int, status mcpTaskReceiptStatusResult) error {
-	return w.output.Encode(mcpTaskReceiptWatchEvent{ReceiptIndex: index, mcpTaskReceiptStatusResult: status})
+func (w *mcpTaskGroupWatcher) report(index int, status mcpTaskReceiptStatusResult, updateID string) error {
+	return w.output.Encode(mcpTaskGroupWatchEvent{
+		mcpTaskReceiptWatchEvent: mcpTaskReceiptWatchEvent{ReceiptIndex: index, mcpTaskReceiptStatusResult: status},
+		UpdateID:                 updateID,
+	})
 }

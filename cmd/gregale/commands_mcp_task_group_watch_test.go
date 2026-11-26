@@ -16,6 +16,11 @@ import (
 
 func TestMCPTaskGroupWatchPollsAfterSubscriptionRefusal(t *testing.T) {
 	t.Setenv("GREGALE_TEST_GROUP_TOKEN", "current-token")
+	const taskID = "saved-task-<>&-\u2028\u2029-\\u2028-\\u003c-雪"
+	wireID, err := json.Marshal(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	const working = `"status":"working","lastUpdatedAt":"2026-11-26T08:00:01Z","pollIntervalMs":250`
 	const paused = `"status":"input_required","lastUpdatedAt":"2026-11-26T08:00:02Z","inputRequests":{"form":{"method":"elicitation/create","params":{"message":"private-prompt","requestedSchema":{"type":"object"}}}}`
 	var reads, subscriptions atomic.Int32
@@ -42,7 +47,7 @@ func TestMCPTaskGroupWatchPollsAfterSubscriptionRefusal(t *testing.T) {
 			subscriptions.Add(1)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		case "tasks/get":
-			if req.Params.TaskID != "saved-task" {
+			if req.Params.TaskID != taskID {
 				t.Error("watch read a different Task")
 			}
 			fields := working
@@ -53,7 +58,7 @@ func TestMCPTaskGroupWatchPollsAfterSubscriptionRefusal(t *testing.T) {
 			case 4:
 				fields = paused
 			}
-			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","taskId":"saved-task","createdAt":"2026-11-26T08:00:00Z","ttlMs":null,%s}}`, req.ID, fields)
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","taskId":%s,"createdAt":"2026-11-26T08:00:00Z","ttlMs":null,%s}}`, req.ID, wireID, fields)
 		default:
 			t.Errorf("unexpected method %q", req.Method)
 			w.WriteHeader(http.StatusBadRequest)
@@ -63,15 +68,19 @@ func TestMCPTaskGroupWatchPollsAfterSubscriptionRefusal(t *testing.T) {
 	dir := t.TempDir()
 	endpoint := server.URL + "/mcp"
 	writeMCPTaskGroupTestFile(t, dir, "group.json", fmt.Sprintf(
-		`{"version":1,"id":%q,"endpointSha256":"%x","members":[{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abc","taskId":"saved-task"}]}`,
-		strings.Repeat("a", 64), sha256.Sum256([]byte(endpoint))))
+		`{"version":1,"id":%q,"endpointSha256":"%x","members":[{"submissionKey":"019ab2ce-217c-7abc-89ab-123456789abc","taskId":%s}]}`,
+		strings.Repeat("a", 64), sha256.Sum256([]byte(endpoint)), wireID))
 	out, restore := main.CaptureStdout(t)
 	exit := main.Run([]string{"mcp", "client", "group", "watch", "--url", endpoint, "--group", dir,
 		"--token-env", "GREGALE_TEST_GROUP_TOKEN", "--interval", "250ms", "--timeout", "3s"})
 	restore()
-	want := "" +
-		`{"receiptIndex":0,"outcome":"available","task":{"taskId":"saved-task","status":"working","lastUpdatedAt":"2026-11-26T08:00:01Z","pollIntervalMs":250,"nextAction":"poll_status"}}` + "\n" +
-		`{"receiptIndex":0,"outcome":"available","task":{"taskId":"saved-task","status":"input_required","lastUpdatedAt":"2026-11-26T08:00:02Z","nextAction":"provide_input"}}` + "\n"
+	// SHA-256 vectors from Node JSON.stringify, including both real Unicode
+	// separators and literal backslash escapes in the opaque Task ID.
+	want := fmt.Sprintf(
+		`{"receiptIndex":0,"outcome":"available","task":{"taskId":%s,"status":"working","lastUpdatedAt":"2026-11-26T08:00:01Z","pollIntervalMs":250,"nextAction":"poll_status"},"updateId":"325dbac26e15d4a8b8212ffae7a2b0d09c9f541369add3467635c8d934f41750"}`+"\n"+
+			`{"receiptIndex":0,"outcome":"available","task":{"taskId":%s,"status":"input_required","lastUpdatedAt":"2026-11-26T08:00:02Z","nextAction":"provide_input"},"updateId":"ed27d314571b666218c2106955c3f6288f20c1570420dbb1027f04e8897be880"}`+"\n",
+		wireID, wireID)
+
 	if exit != 0 || out.String() != want {
 		t.Fatalf("group watch exit=%d output=%s", exit, out.String())
 	}

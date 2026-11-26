@@ -6427,6 +6427,25 @@ its receipts intact. Duplicate observations are suppressed within each run.
 It exits when each watched Task settles or needs input. Use `--timeout` to
 change the two-minute deadline.
 
+Available observations include an `updateId`. Once you have handled an
+update, acknowledge it in the same private group directory.
+
+```sh
+gregale mcp client group ack \
+  --group ./receipts/weekly-batch --update-id "$UPDATE_ID"
+
+gregale mcp client group watch \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch --resume
+```
+
+The CLI and Node SDK share acknowledgement markers. A resumed watch uses
+the current token to read each Task, skips acknowledged observations and
+keeps following working Tasks. If an unacknowledged observation is still
+current when the watcher restarts, it is emitted again with the same ID.
+A newer Task state has its own ID. Acknowledging a pause records delivery
+of that update. Use the reviewed input flow to submit the answer.
+
 #### Stop a Task group from TypeScript
 
 Call `stopMcpTaskGroup` with the saved group path and the current authorized

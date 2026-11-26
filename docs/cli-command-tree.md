@@ -482,6 +482,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp retirements acknowledge-manual` | `gregale mcp server retirements ack` |
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
+| `gregale mcp task-group-ack` | `gregale mcp client group ack` |
 | `gregale mcp task-group-status` | `gregale mcp client group status` |
 | `gregale mcp task-group-stop` | `gregale mcp client group stop` |
 | `gregale mcp task-group-watch` | `gregale mcp client group watch` |

@@ -31,7 +31,7 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	endpoint := fs.String("url", "", "full MCP endpoint URL used to save the group")
 	tokenEnv := fs.String("token-env", "", "environment variable containing a current MCP client token")
 	group := fs.String("group", "", "private group directory saved by the Node SDK")
-	var includeResults bool
+	var includeResults, resume bool
 	if action == "status" {
 		fs.BoolVar(&includeResults, "include-results", false, "include retained results and execution errors")
 	}
@@ -39,6 +39,7 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	var interval time.Duration
 	if action == "watch" {
 		defaultTimeout = 2 * time.Minute
+		fs.BoolVar(&resume, "resume", false, "skip updates acknowledged from the CLI or Node SDK")
 		fs.DurationVar(&interval, "interval", 2*time.Second, "polling interval when a stream is unavailable")
 	}
 	timeout := fs.Duration("timeout", defaultTimeout, "total group operation deadline")
@@ -69,7 +70,7 @@ func cmdMCPTaskGroup(action string, args []string) int {
 	}
 	defer func() { _ = dir.Close() }()
 	if action == "watch" {
-		return runMCPTaskGroupWatch(client, manifest, dir, interval, *timeout)
+		return runMCPTaskGroupWatch(client, manifest, dir, interval, *timeout, resume)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()

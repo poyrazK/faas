@@ -51,6 +51,18 @@ type mcpTaskGroupReceipt struct {
 }
 
 func loadMCPTaskGroup(path, endpoint string) (*os.Root, mcpTaskGroupManifest, error) {
+	dir, manifest, err := openMCPTaskGroup(path)
+	if err != nil {
+		return nil, manifest, err
+	}
+	if manifest.EndpointSHA256 != mcpTaskReceiptEndpoint(endpoint) {
+		_ = dir.Close()
+		return nil, manifest, errors.New("MCP Task group does not match the selected endpoint")
+	}
+	return dir, manifest, nil
+}
+
+func openMCPTaskGroup(path string) (*os.Root, mcpTaskGroupManifest, error) {
 	var manifest mcpTaskGroupManifest
 	path = filepath.Clean(path)
 	info, err := os.Lstat(path)
@@ -70,10 +82,6 @@ func loadMCPTaskGroup(path, endpoint string) (*os.Root, mcpTaskGroupManifest, er
 	if err != nil {
 		_ = dir.Close()
 		return nil, manifest, err
-	}
-	if manifest.EndpointSHA256 != mcpTaskReceiptEndpoint(endpoint) {
-		_ = dir.Close()
-		return nil, manifest, errors.New("MCP Task group does not match the selected endpoint")
 	}
 	return dir, manifest, nil
 }
@@ -154,16 +162,25 @@ func privateMCPTaskGroupFile(info fs.FileInfo) bool {
 	return ok && int(stat.Uid) == os.Geteuid() && info.Mode().Perm()&0077 == 0
 }
 
-func readMCPTaskGroupFile(dir *os.Root, name string, maxBytes int64) ([]byte, error) {
+func openMCPTaskGroupFile(dir *os.Root, name string, maxBytes int64) (*os.File, error) {
 	file, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || !privateMCPTaskGroupFile(info) || info.Size() > maxBytes {
+		_ = file.Close()
 		return nil, errInvalidMCPTaskGroup
 	}
+	return file, nil
+}
+
+func readMCPTaskGroupFile(dir *os.Root, name string, maxBytes int64) ([]byte, error) {
+	file, err := openMCPTaskGroupFile(dir, name, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
 	body, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	if err != nil || int64(len(body)) > maxBytes || !utf8.Valid(body) {
 		return nil, errInvalidMCPTaskGroup
