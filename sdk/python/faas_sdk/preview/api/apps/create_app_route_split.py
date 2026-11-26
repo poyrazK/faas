@@ -114,10 +114,12 @@ def sync_detailed(
     path to it with an edge rule once it is live and, for a memory split,
     sizes the app down. A split that fails before traffic moves deletes
     the route's app and ends rolled_back. Apps in a project, previews,
-    apps with managed or service bindings, apps with their own edge rules
-    and apps with a static egress IP are refused with
-    route_split_unsupported. Available only where route resource peaks
-    are enabled for the account.
+    apps with managed or service bindings, apps with app-wide (@app)
+    edge rules and apps with a static egress IP are refused with
+    route_split_unsupported. The route's app is reachable only through
+    the app: its own hostnames get a rule that denies every request.
+    Available only where route resource peaks are enabled for the
+    account.
 
     Args:
         slug (str):
@@ -160,10 +162,12 @@ def sync(
     path to it with an edge rule once it is live and, for a memory split,
     sizes the app down. A split that fails before traffic moves deletes
     the route's app and ends rolled_back. Apps in a project, previews,
-    apps with managed or service bindings, apps with their own edge rules
-    and apps with a static egress IP are refused with
-    route_split_unsupported. Available only where route resource peaks
-    are enabled for the account.
+    apps with managed or service bindings, apps with app-wide (@app)
+    edge rules and apps with a static egress IP are refused with
+    route_split_unsupported. The route's app is reachable only through
+    the app: its own hostnames get a rule that denies every request.
+    Available only where route resource peaks are enabled for the
+    account.
 
     Args:
         slug (str):
@@ -201,10 +205,12 @@ async def asyncio_detailed(
     path to it with an edge rule once it is live and, for a memory split,
     sizes the app down. A split that fails before traffic moves deletes
     the route's app and ends rolled_back. Apps in a project, previews,
-    apps with managed or service bindings, apps with their own edge rules
-    and apps with a static egress IP are refused with
-    route_split_unsupported. Available only where route resource peaks
-    are enabled for the account.
+    apps with managed or service bindings, apps with app-wide (@app)
+    edge rules and apps with a static egress IP are refused with
+    route_split_unsupported. The route's app is reachable only through
+    the app: its own hostnames get a rule that denies every request.
+    Available only where route resource peaks are enabled for the
+    account.
 
     Args:
         slug (str):
@@ -245,10 +251,12 @@ async def asyncio(
     path to it with an edge rule once it is live and, for a memory split,
     sizes the app down. A split that fails before traffic moves deletes
     the route's app and ends rolled_back. Apps in a project, previews,
-    apps with managed or service bindings, apps with their own edge rules
-    and apps with a static egress IP are refused with
-    route_split_unsupported. Available only where route resource peaks
-    are enabled for the account.
+    apps with managed or service bindings, apps with app-wide (@app)
+    edge rules and apps with a static egress IP are refused with
+    route_split_unsupported. The route's app is reachable only through
+    the app: its own hostnames get a rule that denies every request.
+    Available only where route resource peaks are enabled for the
+    account.
 
     Args:
         slug (str):

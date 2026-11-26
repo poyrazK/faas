@@ -72,6 +72,10 @@ func (h *fakeHost) AppHosts(_ context.Context, app state.App) []string {
 	return []string{app.Slug + ".gregale.dev", "shop.example.com"}
 }
 
+func (h *fakeHost) DirectHosts(_ context.Context, app state.App) []string {
+	return []string{app.Slug + ".gregale.dev", app.Slug + "--*.gregale.dev"}
+}
+
 func (h *fakeHost) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem) {
 	if h.ruleErr != nil {
 		return "", h.ruleErr
@@ -380,11 +384,11 @@ func TestTargetInheritsSettings(t *testing.T) {
 func TestApplyRefusesUncopiableProtections(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.store.CreateEdgeRule(f.ctx, state.CreateEdgeRuleParams{AccountID: f.acct.ID, AppID: f.source.ID,
-		MatchHost: "shop.gregale.dev", MatchPath: "/admin/*", Enabled: true, Kind: state.EdgeRuleKind("deny"), Name: "admin"}); err != nil {
+		MatchHost: api.EdgeRuleAppHosts, MatchPath: "/admin/*", Enabled: true, Kind: state.EdgeRuleKindIP, Name: "admin"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
-		t.Fatalf("edge rules: %+v", prob)
+		t.Fatalf("app-wide edge rules: %+v", prob)
 	}
 	g := newFixture(t)
 	ip := netip.MustParseAddr("198.51.100.7")
@@ -392,6 +396,63 @@ func TestApplyRefusesUncopiableProtections(t *testing.T) {
 	source.StaticEgressIP = &ip
 	if _, prob := g.svc.Apply(g.ctx, g.acct, source, g.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
 		t.Fatalf("static egress IP: %+v", prob)
+	}
+}
+
+// An app with host rules splits: they still run on routed requests, and the
+// route's app gets a deny-all rule on each of its own hosts before any
+// traffic moves.
+func TestSplitBlocksTheRouteAppsOwnHosts(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.CreateEdgeRule(f.ctx, state.CreateEdgeRuleParams{AccountID: f.acct.ID, AppID: f.source.ID,
+		MatchHost: "shop.gregale.dev", MatchPath: "/admin/*", Enabled: true, Kind: state.EdgeRuleKindIP, Name: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply with host rules: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.svc.Step(f.ctx) // a retried pass reuses the block rules
+	blocks, err := f.store.ListEdgeRulesForApp(f.ctx, split.TargetAppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := map[string]bool{}
+	for _, rule := range blocks {
+		if rule.Kind != state.EdgeRuleKindIP || rule.MatchPath != "/**" || rule.Name != routesplit.RuleName(split.ID) {
+			t.Fatalf("block rule = %+v", rule)
+		}
+		hosts[rule.MatchHost] = true
+	}
+	if len(blocks) != 2 || !hosts["shop-exports.gregale.dev"] || !hosts["shop-exports--*.gregale.dev"] {
+		t.Fatalf("block rules = %+v", blocks)
+	}
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitDone || len(got.EdgeRuleIDs) != 2 {
+		t.Fatalf("split = %+v", got)
+	}
+}
+
+// A block that cannot be made rolls the split back before any route rule.
+func TestBlockFailureRollsBack(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.host.ruleErr = api.NewProblem(http.StatusPaymentRequired, api.CodePlanEdgeRuleKindNotAllowed, "Not on plan", "ip rules")
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase != state.RouteSplitRolledBack || !strings.Contains(got.Error, "block direct access") {
+		t.Fatalf("split = %+v", got)
+	}
+	if rules, _ := f.store.ListEdgeRulesForApp(f.ctx, f.source.ID); len(rules) != 0 {
+		t.Fatalf("route rules after a failed block: %+v", rules)
 	}
 }
 

@@ -54,6 +54,10 @@ type Host interface {
 	DeleteApp(ctx context.Context, acct state.Account, app state.App) *api.Problem
 	// AppHosts lists the hostnames the app serves on.
 	AppHosts(ctx context.Context, app state.App) []string
+	// DirectHosts are the match_host patterns that reach app on its own,
+	// not through another app's route rule: its platform host and its
+	// port-selector hosts. A split blocks them on the route's app.
+	DirectHosts(ctx context.Context, app state.App) []string
 	// CreateRule and DeleteRule mutate edge rules.
 	CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem)
 	DeleteRule(ctx context.Context, acct state.Account, app state.App, ruleID string) *api.Problem
@@ -242,16 +246,17 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 	case app.StaticEgressIP != nil:
 		return refuse("the app has a static egress IP, which belongs to one app; the route would call out from another address")
 	}
-	// The route's app answers on its own hostname, where the app's edge
-	// rules (deny, auth, IP, rate limit) do not run. Until splits copy them,
-	// only an app whose sole rules are earlier splits' can be split.
+	// Routed requests keep the app's host, so its host rules (deny, auth,
+	// IP, rate limit) still run on them, and the split blocks the route's
+	// app's own hostnames. App-wide ("@app") rules follow the serving app,
+	// which for a routed request is the route's app, so they would not run.
 	rules, err := s.Store.ListEdgeRulesForApp(ctx, app.ID)
 	if err != nil {
 		return api.ErrCapacity("could not read the app's edge rules")
 	}
 	for _, rule := range rules {
-		if rule.Kind != state.EdgeRuleKind("route") || !strings.HasPrefix(rule.Name, RuleNamePrefix) {
-			return refuse("the app has edge rules (" + rule.Name + "), which would not protect the route's app on its own hostname")
+		if api.IsEdgeRuleAppHosts(rule.MatchHost) {
+			return refuse("the app has app-wide edge rules (" + ruleLabel(rule) + "), which would not run on the route once it moves; give them the app's hosts instead of @app")
 		}
 	}
 	secrets, err := s.Store.ListAppSecrets(ctx, app.AccountID, app.ID)
@@ -268,6 +273,13 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 		return refuse("the app has managed bindings (" + strings.Join(managed, ", ") + "), which the route's app would not have yet")
 	}
 	return nil
+}
+
+func ruleLabel(rule state.EdgeRule) string {
+	if rule.Name != "" {
+		return rule.Name
+	}
+	return string(rule.Kind) + " " + rule.MatchPath
 }
 
 func windowFor(since string) (time.Duration, error) {

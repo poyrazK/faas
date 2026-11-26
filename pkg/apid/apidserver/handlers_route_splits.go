@@ -142,6 +142,17 @@ func (h routeSplitHost) AppHosts(ctx context.Context, app state.App) []string {
 	return hosts
 }
 
+// DirectHosts is the route's app's platform host and its port-selector hosts
+// (<slug>--<port>.<domain>). It has no custom domain: a split never adds one.
+func (h routeSplitHost) DirectHosts(_ context.Context, app state.App) []string {
+	platform := api.AppHostname(app.Slug, h.s.domain)
+	hosts := []string{platform}
+	if selector := api.SelectorHostname(platform, "*"); selector != "" {
+		hosts = append(hosts, selector)
+	}
+	return hosts
+}
+
 func (h routeSplitHost) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem) {
 	rule, prob := h.s.edgeRules.CreateRule(ctx, acct, app, req)
 	if prob != nil {

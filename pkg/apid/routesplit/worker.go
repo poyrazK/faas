@@ -135,6 +135,12 @@ func (s *Service) advanceDeploying(ctx context.Context, acct state.Account, spli
 		}
 		return
 	}
+	// The block goes first: the route's app is never reachable on its own
+	// hostname once it serves the route.
+	if prob := s.ensureBlock(ctx, acct, source, target, split); prob != nil {
+		s.rollBack(ctx, acct, split, "could not block direct access to the route's app: "+prob.Detail)
+		return
+	}
 	ids, prob := s.ensureRules(ctx, acct, source, target, split)
 	if prob != nil {
 		if cleanup := s.removeRules(ctx, acct, source, split); cleanup != nil {
@@ -147,6 +153,32 @@ func (s *Service) advanceDeploying(ctx context.Context, acct state.Account, spli
 	if _, err := s.Store.AdvanceRouteSplit(ctx, split, state.RouteSplitDeploying); err != nil && !errors.Is(err, state.ErrConflict) {
 		s.log().Warn("route split: could not record the rule", "split", split.ID, "err", err)
 	}
+}
+
+// ensureBlock denies every request to the route's app that arrives on its
+// own hostnames. Routed requests keep the source's host, so the block never
+// matches them, while the source's host rules still do.
+func (s *Service) ensureBlock(ctx context.Context, acct state.Account, source, target state.App, split state.RouteSplit) *api.Problem {
+	have, prob := s.splitRules(ctx, target, split)
+	if prob != nil {
+		return prob
+	}
+	action, _ := json.Marshal(api.EdgeRuleIPAction{Deny: []string{"0.0.0.0/0", "::/0"}})
+	enabled := true
+	for _, host := range s.Host.DirectHosts(ctx, target) {
+		if _, ok := have[host]; ok {
+			continue
+		}
+		_, prob := s.Host.CreateRule(ctx, acct, target, api.CreateEdgeRuleRequest{
+			MatchHost: host, MatchPath: "/**", Kind: "ip", Action: action, Enabled: &enabled,
+			Name:        RuleName(split.ID),
+			Description: "Route split " + split.Route + ": this app serves the route through " + source.Slug + " only",
+		})
+		if prob != nil {
+			return prob
+		}
+	}
+	return nil
 }
 
 // ensureRules creates the route rule on each of the source's hosts, reusing

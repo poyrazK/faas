@@ -171,7 +171,10 @@ budget charge, audit and notifications as one a customer makes:
    identity, not to the app). Only the request workload is copied: never
    the release command, workflows, crons, workers, queue consumers, event
    subscriptions or schedules, which would run twice.
-3. `rule_live`: once the deployment is live, a `kind=route` edge rule on
+3. `rule_live`: once the deployment is live, first a deny-all `kind=ip`
+   rule on each of the target's own hosts (its platform host and
+   `<slug>--*` port-selector hosts), so the route's app is never reachable
+   except through the source; then a `kind=route` edge rule on
    each of the source's hosts (its platform host and verified app-wide
    custom domains) for the method and path glob, pointing at the target.
    The rules are named `route-split:<id>` so a retried pass reuses them and
@@ -201,10 +204,19 @@ The first slice splits standalone apps only. Apps in a project (their
 workloads are source-managed), previews, and apps with managed bindings
 (Postgres, object storage) or service bindings are refused up front with
 422 `route_split_unsupported` and what blocks them, so no split ever serves
-a route without the data it needs. So are apps with their own edge rules
-(the route's app answers on its own hostname, where those deny, auth, IP
-and rate-limit rules would not run) and apps with a static egress IP
-(unique to one app). A second slice copies request-path
+a route without the data it needs. So are apps with a static egress IP
+(unique to one app) and apps with app-wide (`@app`) edge rules.
+
+The gateway serves a routed request as the route's app but keeps the
+source's host. The source's host rules (deny, auth, IP, rate limit, WAF)
+therefore still match the moved route, since both apps share an edge-rule
+scope, and the target's host-specific block never does. App-wide rules
+follow the serving app, so the source's `@app` rules would not run on the
+moved route: such an app is refused, naming the rule, until its rules name
+hosts. `cmd/gatewayd-internal` `TestRouteSplitRuleScope` pins these three
+facts; if the gateway starts applying a routed source's `@app` rules, the
+refusal can go. (Amendment 3, 2026-11-26, replaces the first slice's refusal
+of any edge rule.) A second slice copies request-path
 bindings with the environment clone's binding definitions and still never
 copies consumers.
 
