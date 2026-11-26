@@ -1483,11 +1483,19 @@ its docs said.
    rest. It now also reports the URI as `uninspected-uri`, as `warn` and
    `block` treat it, so `observe` predicts what `block` would refuse.
 
-**Rollout.** Rules already in `block` start refusing URIs over 8 KiB and
-methods outside GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE (911100)
-when the gateway carrying this amendment is deployed, without a change on
-the customer's side. Check the accounts `edge_waf_blocking` includes for
-`observe` detections of both before deploying.
+**Rollout: platform flag `edge_waf_strict_inspection`.** Items 1 and 2
+would make rules already in `block` refuse URIs over 8 KiB and methods
+outside GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE (911100), with no
+change on the customer's side, so they are released per account by
+their own flag (`gatewayd-internal`, off by default, `WAFSample.Strict`).
+Under the flag: the wider in-path set, `uninspected-uri` detections in
+`warn` and `block`, and `uninspected-uri` reports from sampled checks. Without
+it: amendment 3's in-path set (`baselineInlineRuleFiles`) on the URI's
+first 8 KiB, so the budget fix of item 1 holds for every account, at the
+cost that a payload past 8 KiB of URI passes the in-path check, as
+content past the header bound did before amendment 20. Turn the flag on for
+an account after checking its `observe` detections; retire it once every
+account runs it.
 
 Request bodies are still never blocked (amendment 4); the docs now say so
 first, not last, and point to `kind=validate` and the app's own handling.
@@ -1496,7 +1504,7 @@ domain is on the Public Suffix List (ADR-20261026100000 amendment 1).
 
 Tests: `TestCheckInline` (the added families and DELETE allowed),
 `TestBoundURI`, `TestWAFURIPastTheInspectionBoundIsADetection`,
-`TestWAFWarnOversizedRequestIsStillSampled`, `TestSampledCheckReportsUninspectedURI`,
+`TestWAFWarnOversizedRequestIsStillSampled`, `TestSampledCheckReportsUninspectedURI`, `TestCheckInlineWithoutStrictInspection`, `TestEdgeWAFStrictInspectionFlag`,
 `TestWAFReviewSpreadIsNotAFalsePositive`, and `TestBenignCorpus`,
 `TestCRSRegressionCorpus` and `TestInlineRuleSetCost` with
 `FAAS_WAF_FTW_DIR` set.

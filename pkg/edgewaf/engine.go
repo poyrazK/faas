@@ -183,7 +183,7 @@ func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
 	}
 	res := score(tx.MatchedRules(), s.ExcludeRuleIDs)
 	res.Detected = res.Score >= s.AnomalyThreshold
-	if api.EdgeWAFURIExceedsInspection(s.URI) {
+	if s.Strict && api.EdgeWAFURIExceedsInspection(s.URI) {
 		// Only the prefix was scored. Report it as warn and block would
 		// treat it, so observe shows what block would refuse and a payload
 		// past the cut does not go unreported (ADR-831 amendment 21).

@@ -77,6 +77,11 @@ type WAFSample struct {
 	Header           http.Header
 	Body             []byte
 	BodyTruncated    bool
+	// Strict applies ADR-831 amendment 21 (platform flag
+	// edge_waf_strict_inspection): the wider in-path rule set, and a URI
+	// past the inspection bound reported as uninspected. Without it an
+	// in-path check scores the earlier rule set on the URI's first 8 KiB.
+	Strict bool
 	// country resolves the client's country on demand for a detection
 	// event (ResolveCountry); nil when the request had no match context.
 	country func() string
@@ -187,6 +192,7 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 // applyEdgeRuleWAFRule applies one matched waf rule.
 func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, rule *EdgeRuleWAFResolved) (handled bool, submit func()) {
 	sample := newWAFSample(r, app, rule)
+	sample.Strict = h.edgeFeatureReleased(platformflags.EdgeWAFStrictInspection, app)
 	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
 		res := h.checkEdgeRuleWAFInline(rule, sample)
 		outcome := res.Outcome
@@ -283,7 +289,7 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 	}
 	var res WAFInlineResult
 	switch {
-	case api.EdgeWAFURIExceedsInspection(sample.URI):
+	case sample.Strict && api.EdgeWAFURIExceedsInspection(sample.URI):
 		// Scoring the whole URI let a few long ones a second empty the
 		// app's check budget; scoring part of it would let a client hide
 		// a payload past the cut (ADR-831 amendment 21).

@@ -302,6 +302,17 @@ runs in `observe` only. Warn and block reach accounts one by one as they
 launch: until they reach yours, creating a rule in either mode, or switching
 one to it, returns `422` with code `edge_feature_unavailable`, and existing
 warn and block rules only observe.
+
+Strict inspection reaches accounts one by one too. It covers the in-path
+PHP, Node.js, Java, prototype pollution, session fixation and method checks,
+and URLs over 8 KiB counting as a detection (below). Until it reaches yours,
+`warn` and `block` check SQL injection, cross-site scripting, path traversal,
+remote file inclusion, command injection, scanners and header injection
+in-path, on the first 8 KiB of the URL. The other families are still
+sampled and reported. Once it does, a `block` rule may start refusing long
+URLs and methods it passed before, so check your rule's `observe`
+detections first.
+
 The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |

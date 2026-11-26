@@ -110,7 +110,7 @@ func TestCheckInlineAccountShare(t *testing.T) {
 	other := flood
 	other.AccountID, other.AppID = "acct-other", "app-other"
 	i := New(&recordingObserver{}, nil)
-	if _, err := i.inlineWAF(); err != nil {
+	if _, err := i.inlineWAF(true); err != nil {
 		t.Fatal(err)
 	}
 	// Alone, the account takes every slot: the pool is work-conserving.
@@ -186,7 +186,7 @@ func withUA(s gateway.WAFSample, ua string) gateway.WAFSample {
 func TestCheckInlineWaitsForASlot(t *testing.T) {
 	attack := withUA(sample(http.MethodGet, "/", nil, ""), "sqlmap/1.7.2")
 	i := New(&recordingObserver{}, nil)
-	if _, err := i.inlineWAF(); err != nil {
+	if _, err := i.inlineWAF(true); err != nil {
 		t.Fatal(err)
 	}
 	// A generous wait keeps the test independent of scheduler latency.
@@ -279,6 +279,30 @@ func TestBoundHeaders(t *testing.T) {
 	utf := http.Header{"X-Name": {strings.Repeat("é", api.EdgeWAFMaxInspectHeaderValueBytes)}}
 	if v := boundHeaders(utf).Get("X-Name"); !utf8.ValidString(v) {
 		t.Fatal("a cut value is not valid UTF-8")
+	}
+}
+
+// TestCheckInlineWithoutStrictInspection: an account
+// edge_waf_strict_inspection leaves out keeps the baseline in-path set, so
+// a rule already in block refuses nothing new, but a check still scores only
+// the URI's first 8 KiB (ADR-831 amendment 21).
+func TestCheckInlineWithoutStrictInspection(t *testing.T) {
+	i := New(&recordingObserver{}, nil)
+	baseline := func(s gateway.WAFSample) gateway.WAFSample { s.Strict = false; return s }
+	for name, s := range map[string]gateway.WAFSample{
+		"TRACE method":         sample(http.MethodTrace, "/", nil, ""),
+		"PHP filter wrapper":   sample(http.MethodGet, "/?f=php://filter/convert.base64-encode/resource=index.php", nil, ""),
+		"a URI past the bound": sample(http.MethodGet, "/search?q="+strings.Repeat("a", 2*api.EdgeWAFMaxInspectURIBytes), nil, ""),
+	} {
+		if res := i.CheckInline(baseline(s)); res.Outcome != gateway.WAFInlineClean {
+			t.Errorf("%s: outcome = %s (rules %v, categories %v), want clean on the baseline set", name, res.Outcome, res.RuleIDs, res.Categories)
+		}
+	}
+	// The baseline set still blocks what it always did, also within the
+	// scored prefix of a long URI.
+	sqli := sample(http.MethodGet, "/api/items?q=1%27%20OR%201%3D1--&pad="+strings.Repeat("a", 2*api.EdgeWAFMaxInspectURIBytes), nil, "")
+	if res := i.CheckInline(baseline(sqli)); res.Outcome != gateway.WAFInlineDetected || res.Oversized {
+		t.Errorf("SQLi before the cut: outcome = %s oversized = %v, want a scored detection", res.Outcome, res.Oversized)
 	}
 }
 

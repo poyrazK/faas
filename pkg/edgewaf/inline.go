@@ -20,7 +20,14 @@ import (
 // enforcement (920) stays sampled only: it is the costliest family per
 // detection, and most of the malformed requests it scores are refused by
 // the edge's HTTP server before any rule runs.
+// It runs for accounts the edge_waf_strict_inspection platform flag
+// includes; others run baselineInlineRuleFiles.
 var inlineRuleFiles = []string{"901", "911", "913", "921", "930", "931", "932", "933", "934", "941", "942", "943", "944"}
+
+// baselineInlineRuleFiles is amendment 3's in-path set, kept for accounts
+// edge_waf_strict_inspection leaves out so rules already in block refuse
+// nothing new until the flag reaches them.
+var baselineInlineRuleFiles = []string{"901", "913", "921", "930", "931", "932", "941", "942"}
 
 // compileInline builds the in-path WAF: paranoia level 1, request body access
 // off, so phase 2 evaluates headers, URI and query arguments without reading
@@ -32,8 +39,12 @@ func compileInline() (coraza.WAF, error) {
 }
 
 func compileInlineWith(opts engineOptions) (coraza.WAF, error) {
+	return compileInlineFiles(opts, inlineRuleFiles)
+}
+
+func compileInlineFiles(opts engineOptions, files []string) (coraza.WAF, error) {
 	var rules strings.Builder
-	for _, n := range inlineRuleFiles {
+	for _, n := range files {
 		fmt.Fprintf(&rules, "Include @owasp_crs/REQUEST-%s-*.conf\n", n)
 	}
 	directives := fmt.Sprintf(`Include @coraza.conf-recommended
@@ -53,12 +64,17 @@ SecResponseBodyAccess Off`, opts.directive(), platformPolicy, rules.String(), op
 	return waf, nil
 }
 
-func (i *Inspector) inlineWAF() (coraza.WAF, error) {
-	e := &i.inlineEngine
+// inlineWAF returns the in-path engine for a sample: the wider set under
+// edge_waf_strict_inspection, the baseline set otherwise.
+func (i *Inspector) inlineWAF(strict bool) (coraza.WAF, error) {
+	e, files := &i.baselineInlineEngine, baselineInlineRuleFiles
+	if strict {
+		e, files = &i.inlineEngine, inlineRuleFiles
+	}
 	e.once.Do(func() {
-		e.waf, e.err = compileInline()
+		e.waf, e.err = compileInlineFiles(engine, files)
 		if e.err != nil {
-			i.log.Error("edge waf in-path rule set failed to compile", "err", e.err)
+			i.log.Error("edge waf in-path rule set failed to compile", "strict", strict, "err", e.err)
 		}
 	})
 	return e.waf, e.err
@@ -85,12 +101,18 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: reason}
 	}
 	defer i.inlineSlots.release(tenant)
-	waf, err := i.inlineWAF()
+	waf, err := i.inlineWAF(s.Strict)
 	if err != nil {
 		i.settleInline(s.AppID, 0)
 		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineError}
 	}
 	s.Body, s.BodyTruncated = nil, false
+	if !s.Strict {
+		// Without edge_waf_strict_inspection a long URI is not refused, but
+		// a check still scores only its first 8 KiB, so long URIs cannot
+		// empty the app's check budget (ADR-831 amendment 21).
+		s.URI = boundURI(s.URI)
+	}
 	checkStart := time.Now()
 	res, err := evaluate(waf, s)
 	// The app's budget is charged the check's own time, not the wait.

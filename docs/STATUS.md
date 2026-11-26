@@ -1170,12 +1170,14 @@ control plane's Caddy").
 and turned its `block` rules off, that the in-path rule set passed Log4Shell
 in a header, Spring4Shell, prototype pollution and Node.js and PHP injection,
 and that the false-positive review called a few addresses probing one
-endpoint a false positive. A check now scores at most 8 KiB of URI and
-`warn`/`block` count a longer one as a detection, the in-path set adds CRS
-911, 933, 934, 943 and 944, and the review calls only catalogued rules
+endpoint a false positive. A check now scores at most 8 KiB of URI for every account. Behind the new
+`edge_waf_strict_inspection` flag (off by default), `warn`/`block` count a
+longer one as a detection and the in-path set adds CRS 911, 933, 934, 943
+and 944. The review calls only catalogued rules
 likely false positives, leaving groups spread across clients for review
-(ADR-831 amendment 21). Open before
-turning `edge_waf_blocking` on for more accounts: measure criterion W1 again
+(ADR-831 amendment 21). Open before turning
+`edge_waf_strict_inspection` on for an account: check its `observe`
+detections for long URIs and other methods, and measure criterion W1 again
 with `TestEdgeWAFInlineLoad_E2E` on the reference node, since the wider set
 costs more per check.
 
