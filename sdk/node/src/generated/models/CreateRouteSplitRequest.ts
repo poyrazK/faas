@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The split the route-resources read suggested, repeated so apid can refuse one that changed.
+ * The split the route-resources read suggested, repeated so a split that changed since is refused.
  */
 export type CreateRouteSplitRequest = {
   kind: 'memory' | 'cpu';

@@ -106,22 +106,23 @@ def sync_detailed(
 ) -> Response[Any | Problem | RouteSplit]:
     """Apply the suggested route split.
 
-     Moves one heavy route to its own app (ADR-20261121170000 amendment 2).
-    The body repeats the split the route-resources read suggested; apid
-    recomputes it over the same window and answers route_split_changed
-    when it moved. apid then creates the route's app from the app's live
-    build with its variables and secrets, and in the background routes
-    the path to it with an edge rule once it is live and, for a memory
-    split, sizes the app down. A split that fails before traffic moves
-    deletes the route's app and ends rolled_back. Apps in a project,
-    previews and apps with managed or service bindings are refused with
+     Moves one heavy route to its own app. The body repeats the split the
+    route-resources read suggested; Gregale recomputes it over the same
+    window and answers route_split_changed when it moved. It then creates
+    the route's app from the app's live build with its variables, secrets
+    and runtime and security settings, and in the background routes the
+    path to it with an edge rule once it is live and, for a memory split,
+    sizes the app down. A split that fails before traffic moves deletes
+    the route's app and ends rolled_back. Apps in a project, previews,
+    apps with managed or service bindings, apps with their own edge rules
+    and apps with a static egress IP are refused with
     route_split_unsupported. Available only where route resource peaks
     are enabled for the account.
 
     Args:
         slug (str):
         body (CreateRouteSplitRequest): The split the route-resources read suggested, repeated so
-            apid can refuse one that changed.
+            a split that changed since is refused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,22 +152,23 @@ def sync(
 ) -> Any | Problem | RouteSplit | None:
     """Apply the suggested route split.
 
-     Moves one heavy route to its own app (ADR-20261121170000 amendment 2).
-    The body repeats the split the route-resources read suggested; apid
-    recomputes it over the same window and answers route_split_changed
-    when it moved. apid then creates the route's app from the app's live
-    build with its variables and secrets, and in the background routes
-    the path to it with an edge rule once it is live and, for a memory
-    split, sizes the app down. A split that fails before traffic moves
-    deletes the route's app and ends rolled_back. Apps in a project,
-    previews and apps with managed or service bindings are refused with
+     Moves one heavy route to its own app. The body repeats the split the
+    route-resources read suggested; Gregale recomputes it over the same
+    window and answers route_split_changed when it moved. It then creates
+    the route's app from the app's live build with its variables, secrets
+    and runtime and security settings, and in the background routes the
+    path to it with an edge rule once it is live and, for a memory split,
+    sizes the app down. A split that fails before traffic moves deletes
+    the route's app and ends rolled_back. Apps in a project, previews,
+    apps with managed or service bindings, apps with their own edge rules
+    and apps with a static egress IP are refused with
     route_split_unsupported. Available only where route resource peaks
     are enabled for the account.
 
     Args:
         slug (str):
         body (CreateRouteSplitRequest): The split the route-resources read suggested, repeated so
-            apid can refuse one that changed.
+            a split that changed since is refused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -191,22 +193,23 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | RouteSplit]:
     """Apply the suggested route split.
 
-     Moves one heavy route to its own app (ADR-20261121170000 amendment 2).
-    The body repeats the split the route-resources read suggested; apid
-    recomputes it over the same window and answers route_split_changed
-    when it moved. apid then creates the route's app from the app's live
-    build with its variables and secrets, and in the background routes
-    the path to it with an edge rule once it is live and, for a memory
-    split, sizes the app down. A split that fails before traffic moves
-    deletes the route's app and ends rolled_back. Apps in a project,
-    previews and apps with managed or service bindings are refused with
+     Moves one heavy route to its own app. The body repeats the split the
+    route-resources read suggested; Gregale recomputes it over the same
+    window and answers route_split_changed when it moved. It then creates
+    the route's app from the app's live build with its variables, secrets
+    and runtime and security settings, and in the background routes the
+    path to it with an edge rule once it is live and, for a memory split,
+    sizes the app down. A split that fails before traffic moves deletes
+    the route's app and ends rolled_back. Apps in a project, previews,
+    apps with managed or service bindings, apps with their own edge rules
+    and apps with a static egress IP are refused with
     route_split_unsupported. Available only where route resource peaks
     are enabled for the account.
 
     Args:
         slug (str):
         body (CreateRouteSplitRequest): The split the route-resources read suggested, repeated so
-            apid can refuse one that changed.
+            a split that changed since is refused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -234,22 +237,23 @@ async def asyncio(
 ) -> Any | Problem | RouteSplit | None:
     """Apply the suggested route split.
 
-     Moves one heavy route to its own app (ADR-20261121170000 amendment 2).
-    The body repeats the split the route-resources read suggested; apid
-    recomputes it over the same window and answers route_split_changed
-    when it moved. apid then creates the route's app from the app's live
-    build with its variables and secrets, and in the background routes
-    the path to it with an edge rule once it is live and, for a memory
-    split, sizes the app down. A split that fails before traffic moves
-    deletes the route's app and ends rolled_back. Apps in a project,
-    previews and apps with managed or service bindings are refused with
+     Moves one heavy route to its own app. The body repeats the split the
+    route-resources read suggested; Gregale recomputes it over the same
+    window and answers route_split_changed when it moved. It then creates
+    the route's app from the app's live build with its variables, secrets
+    and runtime and security settings, and in the background routes the
+    path to it with an edge rule once it is live and, for a memory split,
+    sizes the app down. A split that fails before traffic moves deletes
+    the route's app and ends rolled_back. Apps in a project, previews,
+    apps with managed or service bindings, apps with their own edge rules
+    and apps with a static egress IP are refused with
     route_split_unsupported. Available only where route resource peaks
     are enabled for the account.
 
     Args:
         slug (str):
         body (CreateRouteSplitRequest): The split the route-resources read suggested, repeated so
-            apid can refuse one that changed.
+            a split that changed since is refused.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

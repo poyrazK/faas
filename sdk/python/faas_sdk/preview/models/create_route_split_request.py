@@ -14,7 +14,7 @@ T = TypeVar("T", bound="CreateRouteSplitRequest")
 
 @_attrs_define
 class CreateRouteSplitRequest:
-    """The split the route-resources read suggested, repeated so apid can refuse one that changed."""
+    """The split the route-resources read suggested, repeated so a split that changed since is refused."""
 
     kind: CreateRouteSplitRequestKind
     route: str

@@ -27766,15 +27766,16 @@ paths:
       operationId: createAppRouteSplit
       summary: Apply the suggested route split.
       description: |
-        Moves one heavy route to its own app (ADR-20261121170000 amendment 2).
-        The body repeats the split the route-resources read suggested; apid
-        recomputes it over the same window and answers route_split_changed
-        when it moved. apid then creates the route's app from the app's live
-        build with its variables and secrets, and in the background routes
-        the path to it with an edge rule once it is live and, for a memory
-        split, sizes the app down. A split that fails before traffic moves
-        deletes the route's app and ends rolled_back. Apps in a project,
-        previews and apps with managed or service bindings are refused with
+        Moves one heavy route to its own app. The body repeats the split the
+        route-resources read suggested; Gregale recomputes it over the same
+        window and answers route_split_changed when it moved. It then creates
+        the route's app from the app's live build with its variables, secrets
+        and runtime and security settings, and in the background routes the
+        path to it with an edge rule once it is live and, for a memory split,
+        sizes the app down. A split that fails before traffic moves deletes
+        the route's app and ends rolled_back. Apps in a project, previews,
+        apps with managed or service bindings, apps with their own edge rules
+        and apps with a static egress IP are refused with
         route_split_unsupported. Available only where route resource peaks
         are enabled for the account.
       requestBody:
@@ -132611,7 +132612,7 @@ components:
         split: { $ref: '#/components/schemas/RouteResourceSplit' }
     CreateRouteSplitRequest:
       type: object
-      description: "The split the route-resources read suggested, repeated so apid can refuse one that changed."
+      description: "The split the route-resources read suggested, repeated so a split that changed since is refused."
       required: [kind, route, route_ram_mb, main_ram_mb]
       properties:
         kind: { type: string, enum: [memory, cpu] }
