@@ -31,6 +31,8 @@ class APIConsumerResponse:
     revoked_at: datetime.datetime | None | Unset = UNSET
     managed_by_platform_tenant: bool | Unset = UNSET
     """True only when a platform-tenant bundle created this consumer; omitted otherwise."""
+    environment_id: UUID | Unset = UNSET
+    """The project environment the consumer belongs to; omitted for production."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +60,10 @@ class APIConsumerResponse:
 
         managed_by_platform_tenant = self.managed_by_platform_tenant
 
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,6 +81,8 @@ class APIConsumerResponse:
             field_dict["revoked_at"] = revoked_at
         if managed_by_platform_tenant is not UNSET:
             field_dict["managed_by_platform_tenant"] = managed_by_platform_tenant
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
 
         return field_dict
 
@@ -114,6 +122,13 @@ class APIConsumerResponse:
 
         managed_by_platform_tenant = d.pop("managed_by_platform_tenant", UNSET)
 
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
+
         api_consumer_response = cls(
             id=id,
             app_id=app_id,
@@ -124,6 +139,7 @@ class APIConsumerResponse:
             updated_at=updated_at,
             revoked_at=revoked_at,
             managed_by_platform_tenant=managed_by_platform_tenant,
+            environment_id=environment_id,
         )
 
         api_consumer_response.additional_properties = d

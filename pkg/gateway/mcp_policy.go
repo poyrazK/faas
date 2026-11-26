@@ -131,6 +131,7 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	context.AfterFunc(r.Context(), cancel)
 	*r = *r.WithContext(ctx)
 	h.applyMCPBilling(r, app, p, call)
+	h.markMCPRequest(r, app)
 	r.Header.Set(api.MCPGatewayAuthorizedHeader, rule.ID)
 	h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
 	return false

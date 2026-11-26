@@ -275,10 +275,6 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases: behind the preview-databases
 	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
 	"PUT /v1/postgres/databases/{id}/previews": true,
-	// ADR-20261116213000 custom Postgres roles (postgres_custom_roles flag).
-	"GET /v1/postgres/databases/{id}/roles":           true,
-	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
-	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.

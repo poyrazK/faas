@@ -19,6 +19,7 @@ type CommitSourceResponse struct {
 	AllowTenantSelection bool       `json:"allow_tenant_selection"`
 	RelayStatus          string     `json:"relay_status,omitempty"`
 	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
+	PollIntervalMS       int32      `json:"poll_interval_ms,omitempty"`
 	PendingEvents        *int64     `json:"pending_events,omitempty"`
 	BlockedEvents        *int64     `json:"blocked_events,omitempty"`
 	OldestPendingAt      *time.Time `json:"oldest_pending_at,omitempty"`

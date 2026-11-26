@@ -72,6 +72,7 @@ const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|key
 // verb may set which, so a misplaced flag is a usage error, not ignored.
 type consumerFlags struct {
 	externalRef, name, scopes, expires   string
+	environment                          string
 	since, until                         string
 	currency, effectiveFrom              string
 	priceMillicents, includedUnits       int64
@@ -106,7 +107,8 @@ type consumerFlags struct {
 }
 
 var consumerVerbFlags = map[string][]string{
-	"create":             {"external-ref", "name", "trial-days"},
+	"list":               {"environment"},
+	"create":             {"external-ref", "name", "trial-days", "environment"},
 	"trial-set":          {"days", "ends-at"},
 	"billing-policy-set": {"block-overdue-after-days"},
 	"key-create":         {"name", "scopes", "expires"},
@@ -141,6 +143,7 @@ func cmdConsumers(args []string) int {
 	fs := newFlagSet("consumers "+verb, flag.ContinueOnError)
 	var f consumerFlags
 	fs.StringVar(&f.externalRef, "external-ref", "", "stable consumer reference (create)")
+	fs.StringVar(&f.environment, "environment", "", "project environment whose consumers to list or create; omitted is production (list, create)")
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
 	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin, billing, mcp:<scope> (key-create)")
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
@@ -527,9 +530,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	}
 	switch verb {
 	case "list":
-		return client.ListAPIConsumers(ctx, slug)
+		return client.ListAPIConsumersInEnvironment(ctx, slug, f.environment)
 	case "create":
-		return client.CreateAPIConsumer(ctx, slug, request.(api.CreateAPIConsumerRequest))
+		return client.CreateAPIConsumerInEnvironment(ctx, slug, f.environment, request.(api.CreateAPIConsumerRequest))
 	case "info":
 		return client.GetAPIConsumer(ctx, slug, args[1])
 	case "revoke":

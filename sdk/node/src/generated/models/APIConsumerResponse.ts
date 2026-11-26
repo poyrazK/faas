@@ -18,5 +18,9 @@ export type APIConsumerResponse = {
    * True only when a platform-tenant bundle created this consumer; omitted otherwise.
    */
   managed_by_platform_tenant?: boolean;
+  /**
+   * The project environment the consumer belongs to; omitted for production.
+   */
+  environment_id?: string;
 };
 

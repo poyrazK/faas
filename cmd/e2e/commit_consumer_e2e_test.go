@@ -73,7 +73,7 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 	transport := &http.Transport{DisableKeepAlives: true}
 	t.Cleanup(transport.CloseIdleConnections)
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	f.vmmd.SetForwardHandler(instance.ID, func(ctx context.Context, request e2etest.RequestCapture) (e2etest.FakeResponse, error) {
+	forwardConsumer := func(ctx context.Context, request e2etest.RequestCapture) (e2etest.FakeResponse, error) {
 		req, err := http.NewRequestWithContext(ctx, request.Init.Method, "http://"+address+request.Init.RequestUri, bytes.NewReader(request.Body))
 		if err != nil {
 			return e2etest.FakeResponse{}, err
@@ -88,7 +88,8 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
 		return e2etest.FakeResponse{Status: response.StatusCode, Headers: []*vmmdpb.Header{{Name: "Content-Type", Value: response.Header.Get("Content-Type")}}, Body: body}, err
-	})
+	}
+	f.vmmd.SetForwardHandler(instance.ID, forwardConsumer)
 	recovered := make(chan error, 1)
 	go func() {
 		if err := awaitCommitConsumerCrash(first, 91); err != nil {
@@ -115,7 +116,12 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 		recovered <- err
 	}()
 	var repairPoison func(context.Context, string) error
-	completed := runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "consumer-orders", commitHandoffOptions{SourceRecovery: true, RelayFaults: true, RepairPoison: &repairPoison})
+	var stopFixturePeer func()
+	var loadFixture commitConsumerLoadFixture
+	completed := runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "consumer-orders", commitHandoffOptions{
+		SourceRecovery: true, RelayFaults: true, RepairPoison: &repairPoison, LoadFixture: &loadFixture, StopFixturePeer: &stopFixturePeer,
+		TrackCommitTimestamps: os.Getenv("GREGALE_COMMIT_FLEET_TAIL_TRACE") == "1" || os.Getenv("GREGALE_COMMIT_FLEET_SLOW_TLS_DRILL") == "1",
+	})
 	select {
 	case err := <-recovered:
 		if err != nil {
@@ -216,6 +222,28 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 	}
 	if err := commitConsumerCounts(ctx, consumer, 2, 2); err != nil {
 		t.Fatal(err)
+	}
+	if prometheus := os.Getenv("GREGALE_COMMIT_LIVE_PROMETHEUS"); prometheus != "" {
+		// The long outage can idle-park the seeded instance. Every later
+		// incarnation of this fixture's app must reach the same consumer.
+		f.vmmd.SetDefaultVersion("consumer")
+		f.vmmd.SetForwardHandler("", forwardConsumer)
+		t.Run("live-relay-outage-alerts", func(t *testing.T) {
+			if os.Getenv("GREGALE_COMMIT_FLEET_DRILL") == "1" {
+				stopFixturePeer()
+				runCommitFleetDrill(t, f, consumer, loadFixture, prometheus)
+				return
+			}
+			if sources := os.Getenv("GREGALE_COMMIT_RECOVERY_PROFILE"); sources != "" {
+				runCommitRecoveryProfile(t, f, consumer, loadFixture, prometheus, sources)
+				return
+			}
+			runCommitConsumerLiveOutage(t, f, consumer, loadFixture, prometheus)
+		})
+	} else if os.Getenv("GREGALE_COMMIT_CONSUMER_LOAD_TEST") == "1" {
+		t.Run("sustained-load-and-recovery", func(t *testing.T) {
+			runCommitConsumerSustainedLoad(t, f, consumer, loadFixture, client, address)
+		})
 	}
 	t.Logf("producer death, relay death before checkpoint, competing relays, source outage, credential rotation, consumer crashes, concurrent duplicates and poison repair preserved one business effect per event; first event attempts=%d", completed.Attempts)
 }

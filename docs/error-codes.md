@@ -2776,6 +2776,28 @@ HTTP 503 Service Unavailable · Releases are paused
 
 See [Release approvals, freezes and schedules](release-controls.md).
 
+### `postgres_bypass_rls_conflict`
+
+HTTP 409 Conflict · BYPASSRLS conflicts with Data API or Auth
+
+Use a separate database for the tool that needs BYPASSRLS, or declare the role without --bypass-rls.
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_bypass_rls_unavailable`
+
+HTTP 422 Unprocessable Entity · BYPASSRLS unavailable
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_custom_role_default_taken`
+
+HTTP 409 Conflict · Default role already set
+
+Remove it there first (gregale postgres roles create &lt;database> &lt;role> --default-for '' on that role).
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
 ### `postgres_custom_roles_limit`
 
 HTTP 409 Conflict · Custom role limit reached

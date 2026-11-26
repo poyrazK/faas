@@ -1624,6 +1624,8 @@ export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js
 export type { ManagedPostgresCapabilities } from './ManagedPostgresCapabilities.js';
 export type { ManagedPostgresComputePolicyChange } from './ManagedPostgresComputePolicyChange.js';
 export type { ManagedPostgresConnectionBudget } from './ManagedPostgresConnectionBudget.js';
+export type { ManagedPostgresCustomRole } from './ManagedPostgresCustomRole.js';
+export type { ManagedPostgresCustomRoleList } from './ManagedPostgresCustomRoleList.js';
 export type { ManagedPostgresCutover } from './ManagedPostgresCutover.js';
 export type { ManagedPostgresCutoverID } from './ManagedPostgresCutoverID.js';
 export type { ManagedPostgresCutoverMember } from './ManagedPostgresCutoverMember.js';
@@ -2933,6 +2935,7 @@ export type { PutIssueSavedViewRequest } from './PutIssueSavedViewRequest.js';
 export type { PutIssueTeamRequest } from './PutIssueTeamRequest.js';
 export type { PutIssueTrackerLinkRequest } from './PutIssueTrackerLinkRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
+export type { PutManagedPostgresCustomRoleRequest } from './PutManagedPostgresCustomRoleRequest.js';
 export type { PutOperationWebhookBindingRequest } from './PutOperationWebhookBindingRequest.js';
 export type { PutOutboundAIFeedbackRequest } from './PutOutboundAIFeedbackRequest.js';
 export type { PutOutboundAIPolicyRequest } from './PutOutboundAIPolicyRequest.js';
