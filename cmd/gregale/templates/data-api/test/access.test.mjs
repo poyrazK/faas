@@ -121,6 +121,12 @@ async function fixture(t, env = {}, verify = async () => ({ sub: 'private-subjec
     req.resume()
     state.calls.push({ path: req.url, method: req.method, claims: claimsOf(req.headers.authorization) })
     if (req.url.includes('fail=1')) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{"code":"PGRST100"}'); return }
+    if (req.url.includes('csv=1')) {
+      res.writeHead(200, { 'Content-Type': 'text/csv' })
+      res.end('id\n1\n')
+      return
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end('[]')
   })
   const ready = http.createServer((_req, res) => res.end('{}'))
@@ -265,9 +271,9 @@ test('only the default schema and full JSON representation can become shared ent
   const config = runtimeConfig({ ...baseEnv, DATA_API_SCHEMAS: 'api,catalog', DATA_API_PUBLIC_READ: 'api.products,api.categories,catalog.items', DATA_API_PUBLIC_READ_MAX_AGE: '30' })
   const cache = (headers = {}, target = { schema: 'api', relation: 'products', embedded: ['categories'] }) => publicReadCache({ headers }, config, target)
   assert.deepEqual(cache(), { cacheControl: 'public, max-age=30', tags: 'data-api, data-api:api.products, data-api:api.categories' })
-  assert.deepEqual(cache({ accept: 'application/json, text/plain, */*', 'accept-profile': 'api' }).cacheControl, 'public, max-age=30')
+  assert.deepEqual(cache({ accept: 'application/json', 'accept-profile': 'api' }).cacheControl, 'public, max-age=30')
   for (const headers of [{ range: '0-9' }, { 'range-unit': 'items' }, { prefer: 'count=exact' }, { cookie: 'a=b' }, { 'accept-profile': 'catalog' },
-    { accept: 'text/csv' }, { accept: 'application/vnd.pgrst.object+json' }, { accept: 'application/json, text/csv' }]) {
+    { accept: 'text/csv' }, { accept: 'text/plain' }, { accept: 'application/json;q=0' }, { accept: 'application/vnd.pgrst.object+json' }, { accept: 'application/json, text/csv' }]) {
     assert.equal(cache(headers), null, JSON.stringify(headers))
   }
   assert.equal(cache({}, { schema: 'catalog', relation: 'items', embedded: [] }), null, 'non-default schemas share paths with the default schema')
@@ -286,11 +292,12 @@ test('canonical anonymous reads are edge-cacheable; everything else stays no-sto
   assert.equal(cached.headers['cache-control'], 'public, max-age=30')
   assert.equal(cached.headers['cache-tag'], 'data-api, data-api:api.products, data-api:api.categories')
   assert.equal(cached.headers['access-control-allow-origin'], '*')
-  assert.equal(cached.headers.vary, undefined, 'shared entries cannot vary on Origin')
+  assert.equal(cached.headers.vary, 'Accept, Accept-Profile, Authorization, Cookie, Prefer, Range, Range-Unit')
   for (const [path, headers, why] of [
     ['/rest/v1/products', { Range: '0-9' }, 'range'],
     ['/rest/v1/products', { Prefer: 'count=exact' }, 'prefer'],
     ['/rest/v1/products', { Accept: 'text/csv' }, 'csv'],
+    ['/rest/v1/products?csv=1', {}, 'non-JSON engine response'],
     ['/rest/v1/products?fail=1', {}, 'engine error'],
   ]) {
     const response = await send(path, { headers: { ...headers, 'x-faas-client-ip': '203.0.113.2' } })
@@ -307,7 +314,7 @@ test('canonical anonymous reads are edge-cacheable; everything else stays no-sto
   const preflight = await send('/rest/v1/products', { method: 'OPTIONS', headers: { Origin: 'https://app.example', 'Access-Control-Request-Method': 'GET' } })
   assert.equal(preflight.status, 204)
   assert.equal(preflight.headers['access-control-allow-origin'], 'https://app.example', 'preflights keep the owner origin allowlist')
-  assert.equal(state.calls.length, 6)
+  assert.equal(state.calls.length, 7)
 })
 
 test('without a freshness setting public reads keep per-origin CORS and no-store', async t => {

@@ -16,7 +16,7 @@ const enabled = Boolean(process.env.DATA_API_DEV_CLI && process.env.DATA_API_RUN
 test('compiled health CLI validates runtime pool observations over trusted TLS and keeps credentials private', { skip: !enabled, timeout: 30000 }, async t => {
   const runtime = pathToFileURL(process.env.DATA_API_RUNTIME_DIR + '/')
   const { createServer } = await import(new URL('server.mjs', runtime))
-  const { runtimeConfig } = await import(new URL('config.mjs', runtime))
+  const { runtimeConfig, readinessPath } = await import(new URL('config.mjs', runtime))
   // The control plane serves this runtime (ADR-20261031095954), so health
   // reports the running one as current.
   const { version: runtimeVersion } = JSON.parse(await readFile(new URL('runtime-version.json', runtime), 'utf8'))
@@ -42,6 +42,11 @@ test('compiled health CLI validates runtime pool observations over trusted TLS a
     publicReads++
     assert.equal(req.headers.authorization, undefined)
     assert.equal(req.headers.cookie, undefined)
+    if (req.url === '/healthz') {
+      res.writeHead(200, { 'X-Faas-Health-Source': 'edge' })
+      return res.end('{"status":"ok","source":"edge"}')
+    }
+    assert.ok(req.url === readinessPath || req.url === '/livez')
     const forwarded = http.get({ hostname: '127.0.0.1', port: gateway.address().port, path: req.url }, response => {
       res.writeHead(response.statusCode, response.headers); response.pipe(res)
     })

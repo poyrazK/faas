@@ -90,3 +90,16 @@ test('DAPI023 types output cannot replace or alias migrations', {skip:!runtime},
  await assert.rejects(projectModule.loadDevProject({...f,output:join(f.directory,'migration-alias','future.ts'),output_set:true}),/migration/)
  assert.equal(await (await import('node:fs/promises')).readFile(sql,'utf8'),'SELECT 1;')
 })
+
+test('numeric mode persists and can be overridden explicitly', { skip: !runtime }, async t => {
+  const f = await fixture(t)
+  assert.equal((await projectModule.loadDevProject(f)).numericMode, 'number')
+  f.definition.numeric_mode = 'exact'
+  await f.save()
+  assert.equal((await projectModule.loadDevProject(f)).numericMode, 'exact')
+  assert.equal((await projectModule.loadDevProject({ ...f, numeric_mode: 'number' })).numericMode, 'number')
+  await assert.rejects(projectModule.loadDevProject({ ...f, validators: true }), /types without validators/)
+  f.definition.numeric_mode = 'invalid'
+  await f.save()
+  await assert.rejects(projectModule.loadDevProject(f), /numeric_mode/)
+})

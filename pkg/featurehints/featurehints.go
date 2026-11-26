@@ -311,6 +311,18 @@ func projectReleases(in Input, ws []api.PlanWorkload) *api.FeatureHint {
 	}
 }
 
+// managedNoun names a provisioned resource by its kind.
+func managedNoun(kind string) string {
+	switch kind {
+	case "bucket":
+		return "bucket"
+	case "redis":
+		return "managed Redis cache"
+	default:
+		return "managed PostgreSQL database"
+	}
+}
+
 // managed says what happens to each datastore the source declares: a managed
 // PostgreSQL database is created and bound, anything else is not run.
 func managed(in Input, _ []api.PlanWorkload) []api.FeatureHint {
@@ -330,20 +342,17 @@ func managed(in Input, _ []api.PlanWorkload) []api.FeatureHint {
 			if m.Provision.Existing {
 				verb = "reuses"
 			}
-			// A redis service becomes a managed Redis cache
-			// (ADR-20261116192126), not a database (prod hunt r52). The ID
-			// stays: clients match on it.
-			resource := "managed PostgreSQL database"
-			if m.Kind == "redis" {
-				resource = "managed Redis cache"
-			}
-			hints = append(hints, api.FeatureHint{
+			hint := api.FeatureHint{
 				ID:        IDManagedPostgres,
 				Workloads: services,
-				Applied: fmt.Sprintf("%s: Gregale %s the %s %s and sets %s. The Compose host %q does not exist "+
-					"on Gregale.", m.Name, verb, resource, m.Provision.Database, list(bound), m.Name),
-				Change: "Code that dials the Compose host directly must read the bound variable instead.",
-			})
+				Applied:   fmt.Sprintf("%s: Gregale %s the %s %s and sets %s.", m.Name, verb, managedNoun(m.Kind), m.Provision.Database, list(bound)),
+			}
+			if m.Source != "gregale.yaml" {
+				// Only a Compose service has a host name code might dial.
+				hint.Applied += fmt.Sprintf(" The Compose host %q does not exist on Gregale.", m.Name)
+				hint.Change = "Code that dials the Compose host directly must read the bound variable instead."
+			}
+			hints = append(hints, hint)
 		case m.Provision == nil && m.Kind != "postgres" && m.Kind != "bucket":
 			var commands []string
 			var services []string

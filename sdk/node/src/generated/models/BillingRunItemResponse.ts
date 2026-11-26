@@ -44,5 +44,9 @@ export type BillingRunItemResponse = {
    * Payment status of the invoice exported for the item's statement.
    */
   payment_status?: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted';
+  /**
+   * When a recheck recovered the held draft.
+   */
+  usage_recovered_at?: string;
 };
 

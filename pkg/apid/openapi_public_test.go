@@ -86,6 +86,27 @@ func TestPublicOpenAPIHidesOperatorTraceRing(t *testing.T) {
 	}
 }
 
+func TestPublicOpenAPIHidesMonetizeConsoleRoutes(t *testing.T) {
+	full := decodeSpec(t, OpenAPIYAML())
+	public := decodeSpec(t, PublicOpenAPIYAMLFor(allVisible))
+	for _, path := range []string{
+		"/v1/account/billing-connections/stripe/setup",
+		"/v1/account/billing-run-schedule/draft",
+		"/v1/apps/{slug}/monetization-funnel",
+		"/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft",
+	} {
+		if _, ok := full.Paths[path]; !ok {
+			t.Errorf("embedded spec omits %s", path)
+		}
+		if _, ok := public.Paths[path]; ok {
+			t.Errorf("public spec lists %s", path)
+		}
+	}
+	if _, ok := public.Components["schemas"]["PutStripeSetupRequest"]; ok {
+		t.Error("public spec still defines PutStripeSetupRequest")
+	}
+}
+
 // Components only the hidden routes use go too; shared ones stay.
 func TestPublicOpenAPIPrunesExclusiveComponents(t *testing.T) {
 	full := decodeSpec(t, OpenAPIYAML())

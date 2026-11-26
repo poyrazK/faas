@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { fingerprint, generate, generateValidators } from './type-render.mjs'
+import { fingerprint, generate, generateValidators, boundContractOutput, contractArtifactBytes, ContractOutputLimitError } from './type-render.mjs'
 export { fingerprint, generate } from './type-render.mjs'
 import { pathToFileURL } from 'node:url'
 import { databaseURL, schemaNames, limits } from './config.mjs'
@@ -256,10 +256,11 @@ export async function inspectBundle(connection, schemas, { validators = false } 
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
     await client.query("SELECT set_config('statement_timeout',$1,true)", [String(limits.queryMs)])
-    const snapshot = await inspectClient(client, schemas)
+    const numericRisks = new Set()
+    const snapshot = await inspectClient(client, schemas, { numericRisks })
     const metadata = validators ? await inspectInputMetadata(client, schemas, snapshot) : []
     await client.query('COMMIT')
-    return { snapshot, metadata }
+    return { snapshot, metadata, numericRisks }
   } finally { await client.end() }
 }
 
@@ -307,7 +308,7 @@ export async function inspectRowMetadata(client, schemas, snapshot, privilegeRol
   snapshot.version=4
 }
 
-export async function inspectClient(client, schemas, { includeUnexecutable = false, privilegeRole = null } = {}) {
+export async function inspectClient(client, schemas, { includeUnexecutable = false, privilegeRole = null, numericRisks = null } = {}) {
   const columns = (await client.query(columnsQuery, [schemas, privilegeRole])).rows
   const types = (await client.query(typesQuery, [privilegeRole, schemas])).rows
   const relations = (await client.query(relationsQuery, [schemas, privilegeRole])).rows
@@ -326,13 +327,13 @@ export async function inspectClient(client, schemas, { includeUnexecutable = fal
   const privateRelations=baseIDs.length?(await client.query(relationsQuery.replace('n.nspname=ANY($1::text[]) AND rn.nspname=ANY($1::text[])','c.oid=ANY($1::oid[]) AND rc.oid=ANY($1::oid[])').replaceAll('has_table_privilege','has_any_column_privilege'),[baseIDs,privilegeRole])).rows:[]
   if(columns.length+privateColumns.length>limits.columns||relations.length+privateRelations.length>limits.relations)throw new Error('Private view lineage exceeds generation limits')
   const inferred=viewRelationships([...columns,...privateColumns],[...relations,...privateRelations],views,schemas)
-  const snapshot = normalize(columns, types, [...relations, ...inferred], schemas, functions, composites)
+  const snapshot = normalize(columns, types, [...relations, ...inferred], schemas, functions, composites, numericRisks)
   if (!includeUnexecutable && (await computedPermissionBlockers(client, schemas, privilegeRole, snapshot)).length) throw new Error('Unapproved computed relationship execution; revoke serving-role grants and PUBLIC execution or approve a supported signature')
   await inspectRowMetadata(client, schemas, snapshot, privilegeRole)
   return snapshot
 }
 
-export function normalize(columns, types, relationships, schemas, functions = [], compositeFields = []) {
+export function normalize(columns, types, relationships, schemas, functions = [], compositeFields = [], numericRisks = null) {
   const byID = new Map(types.map(t => [t.id, t]))
   const compositeByID = new Map()
   for (const field of compositeFields) {
@@ -362,6 +363,15 @@ export function normalize(columns, types, relationships, schemas, functions = []
     if (['text', 'varchar', 'bpchar', 'uuid', 'date', 'timestamp', 'timestamptz', 'time', 'timetz', 'interval', 'bytea', 'name', 'inet', 'cidr', 'macaddr', 'macaddr8', 'money', 'bit', 'varbit', 'xml', 'tsvector', 'tsquery'].includes(t.name)) return 'string'
     return 'unknown'
   }
+  function recordNumericRisk(id, depth = 0) {
+    if (!numericRisks || depth > 12) return
+    const type = byID.get(id)
+    if (!type || type.accessible === false) return
+    if (type.kind === 'd') recordNumericRisk(type.base, depth + 1)
+    else if (type.element !== '0') recordNumericRisk(type.element, depth + 1)
+    else if (type.schema === 'pg_catalog' && type.name === 'int8') numericRisks.add('bigint')
+    else if (type.schema === 'pg_catalog' && type.name === 'numeric') numericRisks.add('numeric')
+  }
   const tables = new Map()
   for (const c of columns) {
     const key = `${c.schema}.${c.relation}`
@@ -371,6 +381,7 @@ export function normalize(columns, types, relationships, schemas, functions = []
     const column = { name: c.name, type: tsType(c.type), nullable: !(c.required || byID.get(c.type)?.required),
       optional: c.defaulted || c.identity !== '' || !(c.required || byID.get(c.type)?.required),
       insertable: c.insertable && !c.generated && c.identity !== 'a', updatable: c.updatable && !c.generated && c.identity !== 'a' }
+    recordNumericRisk(c.type)
     table.columns.push(column)
     tables.set(key, table)
   }
@@ -424,9 +435,11 @@ export function normalize(columns, types, relationships, schemas, functions = []
     returns = f.setof ? table || composite ? `${returns}[]` : `(${returns} | null)[]` : composite || returns === 'undefined' ? returns : `${returns} | null`
     const fn = { schema: f.schema, name: f.name, args, returns }
     if (table && f.setof && f.schema === table.schema && readableRow(f.return_type)) fn.setof = { from: computed ? source.name : '', to: table.name, one_to_one: Boolean(computed && Number(f.rows) === 1) }
+    for (const id of [...f.arguments, f.return_type]) recordNumericRisk(id)
     callable.push(fn)
   }
   if (compositeByID.size > limits.relations) throw new Error('Too many exposed composite types')
+  for (const composite of compositeByID.values()) for (const field of composite.fields) recordNumericRisk(field.type)
   const composites = [...compositeByID.values()].map(c => ({ schema: c.schema, name: c.name,
     // Composite attributes have no NOT NULL constraints. A NULL composite RPC
     // result expands to an object of nulls, including attributes using domains.
@@ -435,18 +448,40 @@ export function normalize(columns, types, relationships, schemas, functions = []
   return { version: 3, schemas: [...schemas].sort(), tables: [...tables.values()].sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), functions: callable.sort((a, b) => `${a.schema}.${a.name}`.localeCompare(`${b.schema}.${b.name}`)), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))), composites }
 }
 
+export function warnNumericPrecision(numericRisks, remainingBytes = Infinity) {
+  if (!numericRisks.size) return
+  const message = `Data API numeric precision: ${[...numericRisks].sort().join(',')}`
+  if (Buffer.byteLength(message) + 1 <= remainingBytes) console.error(message)
+}
+
 export async function main(env = process.env) {
   const validators = process.argv.includes('--validators')
+  const snapshotOnly = process.argv.includes('--snapshot')
   const numericMode = process.argv.includes('--lossless-numbers') ? 'lossless' : 'number'
-  if (numericMode === 'lossless' && (validators || process.argv.includes('--snapshot'))) throw new Error('Lossless mode applies to TypeScript types only')
-  if (validators && process.argv.includes('--snapshot')) throw new Error('Validators and snapshots are separate outputs')
-  const { snapshot, metadata } = await inspectBundle(env.DATABASE_URL, schemaNames(env.DATA_API_SCHEMAS), { validators })
-  const output = process.argv.includes('--snapshot') ? JSON.stringify({ version: 1, fingerprint: fingerprint(snapshot), snapshot }) + '\n' : validators ? generateValidators(snapshot, metadata) : generate(snapshot, fingerprint(snapshot), { numericMode })
-  if (Buffer.byteLength(output) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
+  if (numericMode === 'lossless' && (validators || snapshotOnly)) throw new Error('Lossless mode applies to TypeScript types only')
+  if (validators && snapshotOnly) throw new Error('Validators and snapshots are separate outputs')
+  const outputBytes = process.argv.includes('--contract-artifact') ? contractArtifactBytes : limits.outputBytes
+  const { snapshot, metadata, numericRisks } = await inspectBundle(env.DATABASE_URL, schemaNames(env.DATA_API_SCHEMAS), { validators })
+  const hash = fingerprint(snapshot)
+  const output = snapshotOnly
+    ? boundContractOutput('schema', JSON.stringify({ version: 1, fingerprint: hash, snapshot }) + '\n', outputBytes)
+    : validators
+      ? generateValidators(snapshot, metadata, hash, { outputBytes })
+      : generate(snapshot, hash, { numericMode, outputBytes })
+  if (!snapshotOnly && numericMode === 'number') {
+    // Older task receipts share one limit across both output streams.
+    const remainingBytes = outputBytes === limits.outputBytes ? outputBytes - Buffer.byteLength(output) : Infinity
+    warnNumericPrecision(numericRisks, remainingBytes)
+  }
   process.stdout.write(output)
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('Data API schema generation failed'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(error => {
+    console.error(error instanceof ContractOutputLimitError ? error.message : 'Data API schema generation failed')
+    process.exitCode = 1
+  })
+}
 
 // OpenAPI uses the same normalized contract as TypeScript generation. Keep
 // PostgreSQL expressions and internal catalog identifiers out of the document.

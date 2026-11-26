@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -55,23 +56,35 @@ func (s *server) issueWorkloadObjectCredential(w http.ResponseWriter, r *http.Re
 	api.WriteProblem(w, workloadCredentialProblem(caller, req.Bucket, grant.App, err))
 }
 
-// revokeUngrantedWorkloadCredentials revokes, after a project apply, the
-// workload S3 credentials of changed apps that their new `uses:` no longer
-// grants (ADR-20261122191423). Removed apps need nothing: a deleted caller's
+// reconcileWorkloadCredentials, after a project apply, rescopes or revokes
+// the workload S3 credentials of changed apps to match their new `uses:`
+// (ADR-20261122191423). Removed apps need nothing: a deleted caller's
 // credentials stop resolving. A failure is logged; the credentials then
 // lapse within the hour at the latest.
-func (s *server) revokeUngrantedWorkloadCredentials(ctx context.Context, changed []state.App) {
+func (s *server) reconcileWorkloadCredentials(ctx context.Context, changed []state.App) {
 	for _, app := range changed {
 		// Grants resolve against the app's resource account, as when the
 		// credential was issued.
 		acct, err := state.AppResourceAccount(ctx, s.store, app)
 		if err == nil {
-			err = s.object.RevokeUngrantedWorkloadCredentials(ctx, acct, app)
+			err = s.object.ReconcileWorkloadCredentials(ctx, acct, app)
 		}
 		if err != nil {
 			s.log.Warn("revoke ungranted workload credentials", "app_id", app.ID, "err", err)
 		}
 	}
+}
+
+// grantedBucketNames lists the buckets caller's uses: grants, as a request
+// may name them.
+func grantedBucketNames(caller state.App) []string {
+	var names []string
+	if caller.Manifest.Uses != nil {
+		for _, grant := range caller.Manifest.Uses.Normalized().Buckets {
+			names = append(names, grant.Bucket)
+		}
+	}
+	return names
 }
 
 func workloadCredentialProblem(caller state.App, bucket, owner string, err error) *api.Problem {
@@ -81,12 +94,13 @@ func workloadCredentialProblem(caller state.App, bucket, owner string, err error
 	}
 	switch {
 	case errors.Is(err, object.ErrWorkloadBucketAmbiguous):
-		return api.ErrValidation(fmt.Sprintf("app %q holds several bucket grants; name the bucket (?bucket= on the credential endpoint)", caller.Slug))
+		return api.NewProblem(http.StatusBadRequest, api.CodeWorkloadBucketRequired, "Bucket required",
+			fmt.Sprintf("app %q holds several bucket grants; name one with ?bucket= on the credential endpoint: %s", caller.Slug, strings.Join(grantedBucketNames(caller), ", ")))
 	case errors.Is(err, object.ErrWorkloadBucketNotGranted):
 		return api.NewProblem(http.StatusForbidden, CodeBindingNotGranted, "Binding not granted",
-			fmt.Sprintf("app %q does not declare bucket %q; add it to project.services.%s.uses.buckets (with the app that owns it) in gregale.yaml and run `gregale project apply`", caller.Slug, bucket, service))
+			fmt.Sprintf("app %q does not declare bucket %q; add it to project.services.%s.uses.buckets (with the app that owns it) in gregale.yaml and run `%s`", caller.Slug, bucket, service, bindingApplyCommand))
 	case errors.Is(err, object.ErrWorkloadBucketNotFound):
-		return api.NewProblem(http.StatusNotFound, "workload_bucket_not_found", "Granted bucket not found",
+		return api.NewProblem(http.StatusNotFound, api.CodeWorkloadBucketNotFound, "Granted bucket not found",
 			fmt.Sprintf("app %q grants a bucket of %q that does not exist or is not ready in production", caller.Slug, owner))
 	case errors.Is(err, object.ErrWorkloadCredentialLimit):
 		return api.NewProblem(http.StatusTooManyRequests, "workload_credential_limit", "Too many workload credentials",

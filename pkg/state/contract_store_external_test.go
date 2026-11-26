@@ -181,6 +181,7 @@ type contractTestStore interface {
 	state.EnvironmentBranchEgressStore
 	state.EnvironmentBranchObjectRelayStore
 	state.EnvironmentBranchSeedStore
+	state.RouteSplitStore
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
 	state.ProjectEnvironmentPromotionWorkloadSpecStore

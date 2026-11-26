@@ -27,6 +27,7 @@ type dataAPISyncCommand struct {
 
 type dataAPISyncConfig struct {
 	Output         string                   `json:"output"`
+	NumericMode    string                   `json:"numeric_mode,omitempty"`
 	Migrate        dataAPISyncCommand       `json:"migrate"`
 	Check          dataAPISyncCommand       `json:"check"`
 	Permissions    *dataAPISyncCommand      `json:"permissions,omitempty"`
@@ -141,6 +142,9 @@ func loadDataAPISyncConfig(path string) (dataAPISyncConfig, error) {
 	}
 	if config.Output == "" {
 		return config, errors.New("output is required")
+	}
+	if config.NumericMode != "" && !dataAPIDiagnosticAllowed(config.NumericMode, "number", "lossless", "exact") {
+		return config, errors.New("numeric_mode must be number, lossless or exact")
 	}
 	config.Output = dataAPISyncPath(base, config.Output)
 	parent, err := os.Stat(filepath.Dir(config.Output))
@@ -270,7 +274,7 @@ func runDataAPISync(ctx context.Context, client *api.Client, slug string, config
 		return receipt, fmt.Errorf("verify serving contract (existing types retained): %w", err)
 	}
 	receipt.ContractVerified = true
-	if err = writeDataAPITypes(config.Output, false, task.StdoutTail); err != nil {
+	if err = writeDataAPITypes(config.Output, false, dataAPITypesForMode(task, config.NumericMode)); err != nil {
 		return receipt, fmt.Errorf("write types: %w", err)
 	}
 	dataAPISyncProgress("Running client check")

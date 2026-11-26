@@ -419,6 +419,37 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Inspect public-schema metadata for a Data API connection.
+   * Requires data:read (or admin) and MFA. Runs a fixed catalog-only
+   * statement as the provider-managed read-only query identity, in a
+   * bounded read-only transaction. No request body, customer table rows,
+   * SQL expressions or credentials are returned. The query identity may
+   * be created or refreshed and a suspended database can wake. Results
+   * describe that identity, not a future Data API binding. At most 1000
+   * rows and 1 MiB of values are returned; truncated marks partial results.
+   * Cache-Control no-store.
+   *
+   * @returns ManagedPostgresQueryResponse Bounded public-schema catalog metadata.
+   * @returns Problem Invalid request, unavailable database, insufficient access, unsupported backend or rate limit.
+   * @throws ApiError
+   */
+  public static previewManagedPostgresDataApiCatalog({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresQueryResponse | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/data-api-catalog-preview',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
    * Undelete a managed PostgreSQL database
    * Returns a database whose delete is scheduled to ready, with its data, spec and restore history, while restorable_until is in the future. The plan must still allow the database's spec. After the window the database is gone and the request returns 404.
    * @returns ManagedPostgresDatabase Database returned to ready
@@ -1004,9 +1035,10 @@ export class ManagedPostgresService {
    * Runs one fixed schema inspection inside a fresh task VM from the app's
    * live deployment: `types` renders the TypeScript contract, `validators`
    * the table and RPC input validators, and `schema` the JSON contract
-   * snapshot. The receipt is an ordinary app task receipt and the output
-   * arrives in `stdout_tail`. Belongs to the Data API, so it works without
-   * the general app-task API.
+   * snapshot. By default the output arrives in `stdout_tail`. With
+   * `output=artifact`, the receipt omits the generated output and the
+   * owner can download up to 8 MiB while the task's deployment is live.
+   * Belongs to the Data API, so it works without the general app-task API.
    *
    * @returns AppTaskResponse Contract inspection admitted and queued.
    * @throws ApiError
@@ -1015,6 +1047,7 @@ export class ManagedPostgresService {
     slug,
     requestBody,
     idempotencyKey,
+    output,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1027,6 +1060,10 @@ export class ManagedPostgresService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Request a downloadable result and the larger export limit.
+     */
+    output?: 'artifact',
   }): CancelablePromise<AppTaskResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
@@ -1036,6 +1073,9 @@ export class ManagedPostgresService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'output': output,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -1056,13 +1096,14 @@ export class ManagedPostgresService {
   }
   /**
    * Get one Data API contract inspection
-   * Current or terminal receipt of a contract inspection. Any other app task is not found here.
-   * @returns AppTaskResponse Current or terminal contract inspection receipt.
+   * Reads the task receipt or downloads a completed artifact for the current serving deployment.
+   * @returns AppTaskResponse Current or terminal contract inspection receipt, or an artifact download.
    * @throws ApiError
    */
   public static getDataApiContractTask({
     slug,
     id,
+    output,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1072,6 +1113,10 @@ export class ManagedPostgresService {
      * Canonical UUID for a deployment-attached app task.
      */
     id: string,
+    /**
+     * Download the artifact from a task created with the same option.
+     */
+    output?: 'artifact',
   }): CancelablePromise<AppTaskResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -1080,10 +1125,14 @@ export class ManagedPostgresService {
         'slug': slug,
         'id': id,
       },
+      query: {
+        'output': output,
+      },
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

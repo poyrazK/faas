@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1062,6 +1063,10 @@ func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []stri
 				lines := strings.FieldsFunc(wl.ReleaseCommand, func(r rune) bool { return r == '\n' || r == '\r' })
 				fmt.Fprintf(w, "      release: %s%s\n", strings.Join(lines, "; "), source)
 			}
+			if grants := planUsesSummary(wl.Uses); grants != "" {
+				// Cross-app grants the service's workload token carries.
+				fmt.Fprintf(w, "      uses: %s\n", grants)
+			}
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
@@ -1438,4 +1443,31 @@ func planWorkloadProtocolSuffix(wl api.PlanWorkload) string {
 		out += fmt.Sprintf("  wake_ahead=%t", *wl.WakeAhead)
 	}
 	return out
+}
+
+// planUsesSummary renders a service's uses: grants on one plan line, or ""
+// when it declares none.
+func planUsesSummary(u *capgrant.Uses) string {
+	if u == nil || u.IsZero() {
+		return ""
+	}
+	n := u.Normalized()
+	var parts []string
+	for _, g := range n.Queues {
+		parts = append(parts, "queue "+g.App+"/"+g.Queue)
+	}
+	for _, g := range n.Realtime {
+		parts = append(parts, "realtime "+g.App+" "+g.Channels)
+	}
+	for _, app := range n.DelayedTasks {
+		parts = append(parts, "delayed_tasks "+app)
+	}
+	for _, g := range n.Buckets {
+		part := "bucket " + g.Bucket + " of " + g.App
+		if g.Prefix != "" {
+			part += " " + g.Prefix
+		}
+		parts = append(parts, part+" ("+g.Access+")")
+	}
+	return strings.Join(parts, "; ")
 }

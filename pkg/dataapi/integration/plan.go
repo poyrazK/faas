@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/gobwas/glob"
 )
 
 //go:embed assets/*
@@ -34,11 +36,30 @@ type Plan struct {
 	ClientDirectory string `json:"client_directory"`
 	Files           []File `json:"files"`
 	GeneratedTypes  string `json:"generated_types"`
+	WorkspaceRoot   string `json:"workspace_root,omitempty"`
+	Resume          bool   `json:"resume,omitempty"`
 	reserved        []string
 }
 
 // Build is offline and makes no changes. Existing app sources and scripts are retained.
 func Build(directory, client string) (*Plan, error) {
+	return BuildWithNumericMode(directory, client, "number")
+}
+
+// BuildWithNumericMode configures local codegen for the generated client.
+func BuildWithNumericMode(directory, client, numericMode string) (*Plan, error) {
+	return build(directory, client, numericMode, false, nil)
+}
+
+// Resume validates an existing setup without rewriting its files.
+func Resume(directory, client, numericMode string) (*Plan, error) {
+	return build(directory, client, numericMode, true, nil)
+}
+
+func build(directory, client, numericMode string, resume bool, hosted *HostedSpec) (*Plan, error) {
+	if numericMode != "number" && numericMode != "exact" && (hosted == nil || numericMode != "lossless") {
+		return nil, errors.New("numeric mode must be number or exact")
+	}
 	root, err := filepath.Abs(directory)
 	if err != nil {
 		return nil, err
@@ -71,36 +92,86 @@ func Build(directory, client string) (*Plan, error) {
 	if len(metadata) > 1<<20 || json.Unmarshal(metadata, &pkg) != nil {
 		return nil, errors.New("client package.json must be a JSON object under 1 MiB")
 	}
-	if pkg.PackageManager != "" && !strings.HasPrefix(pkg.PackageManager, "npm@") || len(pkg.Workspaces) != 0 {
-		return nil, errors.New("integration currently supports standalone npm packages, not workspaces")
+	if pkg.PackageManager != "" && !strings.HasPrefix(pkg.PackageManager, "npm@") {
+		return nil, errors.New("integration requires npm")
 	}
-	if pkg.Dependencies["typescript"] == nil && pkg.DevDependencies["typescript"] == nil {
-		return nil, errors.New("declare TypeScript 5 or newer in the client package before integrating")
-	}
+	hasTypeScript := pkg.Dependencies["typescript"] != nil || pkg.DevDependencies["typescript"] != nil
+	workspaceRoot := ""
 	for current := filepath.Join(root, client); ; current = filepath.Dir(current) {
 		for _, lock := range []string{"yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"} {
 			if _, err := os.Lstat(filepath.Join(current, lock)); !errors.Is(err, os.ErrNotExist) {
 				return nil, errors.New("integration currently supports npm lockfiles only")
 			}
 		}
+		var parent struct {
+			PackageManager  string                     `json:"packageManager"`
+			Workspaces      json.RawMessage            `json:"workspaces"`
+			Dependencies    map[string]json.RawMessage `json:"dependencies"`
+			DevDependencies map[string]json.RawMessage `json:"devDependencies"`
+		}
+		data, readErr := os.ReadFile(filepath.Join(current, "package.json"))
+		if readErr == nil && json.Unmarshal(data, &parent) == nil && len(parent.Workspaces) != 0 && string(parent.Workspaces) != "null" {
+			if current == filepath.Join(root, client) {
+				if client == "." {
+					break
+				}
+				return nil, errors.New("select a workspace member as the client directory")
+			}
+			if parent.PackageManager != "" && !strings.HasPrefix(parent.PackageManager, "npm@") {
+				return nil, errors.New("integration requires npm")
+			}
+			var patterns []string
+			if err := json.Unmarshal(parent.Workspaces, &patterns); err != nil {
+				var object struct {
+					Packages []string `json:"packages"`
+				}
+				if json.Unmarshal(parent.Workspaces, &object) == nil {
+					patterns = object.Packages
+				}
+			}
+			if len(patterns) == 0 {
+				return nil, errors.New("npm workspaces must be a nonempty list")
+			}
+			rel, err := filepath.Rel(current, filepath.Join(root, client))
+			if err != nil {
+				return nil, err
+			}
+			matched := false
+			for _, pattern := range patterns {
+				exclude := strings.HasPrefix(pattern, "!")
+				pattern = strings.TrimPrefix(pattern, "!")
+				matcher, err := glob.Compile(pattern, '/')
+				if err != nil {
+					return nil, errors.New("invalid npm workspace pattern")
+				}
+				if matcher.Match(filepath.ToSlash(rel)) {
+					matched = !exclude
+				}
+			}
+			if !matched {
+				return nil, errors.New("client directory is not an npm workspace member")
+			}
+			workspaceRoot, _ = filepath.Rel(root, current)
+			hasTypeScript = hasTypeScript || parent.Dependencies["typescript"] != nil || parent.DevDependencies["typescript"] != nil
+			break
+		}
 		if current == root {
 			break
 		}
-		var parent struct {
-			Workspaces json.RawMessage `json:"workspaces"`
-		}
-		data, readErr := os.ReadFile(filepath.Join(filepath.Dir(current), "package.json"))
-		if readErr == nil && json.Unmarshal(data, &parent) == nil && len(parent.Workspaces) != 0 {
-			return nil, errors.New("integration currently supports standalone npm packages, not workspaces")
-		}
 	}
-	p := &Plan{Directory: root, ClientDirectory: filepath.ToSlash(client), GeneratedTypes: filepath.ToSlash(filepath.Join(client, ClientSource, "database.types.ts"))}
+	if !hasTypeScript {
+		return nil, errors.New("declare TypeScript 5 or newer in the client package or workspace root before integrating")
+	}
+	p := &Plan{Directory: root, ClientDirectory: filepath.ToSlash(client), WorkspaceRoot: filepath.ToSlash(workspaceRoot), Resume: resume, GeneratedTypes: filepath.ToSlash(filepath.Join(client, ClientSource, "database.types.ts"))}
+	if hosted != nil {
+		return buildHostedPlan(p, numericMode, *hosted)
+	}
 	p.reserved = []string{"gregale-data", filepath.Join(client, ClientSource), "data-api-artifacts.json", filepath.Join(client, "vendor", "gregale-data.tgz")}
 	for _, name := range p.reserved {
 		if err := safePath(root, name); err != nil {
 			return nil, err
 		}
-		if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Lstat(filepath.Join(root, name)); !resume && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("integration destination already exists: %s; use the printed install/serve commands to continue a partial integration", name)
 		}
 	}
@@ -131,8 +202,37 @@ func Build(directory, client string) (*Plan, error) {
 		"verify":     map[string]any{"collection": Requests, "scenarios": []string{"notes-rls"}},
 		"check":      map[string]any{"directory": p.ClientDirectory, "commands": [][]string{{"npm", "exec", "--offline", "--", "tsc", "--project", ClientSource + "/tsconfig.json"}}},
 	}
+	if numericMode == "exact" {
+		config["numeric_mode"] = numericMode
+	}
 	encoded, _ := json.MarshalIndent(config, "", "  ")
 	p.Files = append(p.Files, File{Path: Config, Action: "create", Content: string(encoded) + "\n", mode: 0o644})
+	if resume {
+		for _, file := range p.Files {
+			if file.Path == "gregale-data/README.md" {
+				continue
+			}
+			if err := safePath(root, file.Path); err != nil {
+				return nil, err
+			}
+			info, err := os.Lstat(filepath.Join(root, file.Path))
+			if err != nil || !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("cannot resume: integration file %s is missing or not regular", file.Path)
+			}
+		}
+		existing, err := os.ReadFile(filepath.Join(root, Config))
+		var saved struct {
+			Version     int    `json:"version"`
+			Output      string `json:"output"`
+			NumericMode string `json:"numeric_mode"`
+		}
+		if err != nil || json.Unmarshal(existing, &saved) != nil || saved.Version != 1 || saved.Output != p.GeneratedTypes ||
+			(saved.NumericMode != numericMode && (numericMode != "number" || saved.NumericMode != "")) {
+			return nil, errors.New("cannot resume: integration configuration differs from the requested client or numeric mode")
+		}
+		p.Files = nil
+		return p, nil
+	}
 	ignore := File{Path: ".gitignore", Action: "create", mode: 0o644}
 	if data, err := os.ReadFile(filepath.Join(root, ".gitignore")); err == nil {
 		ignore.before, ignore.existed, ignore.Action = data, true, "append"

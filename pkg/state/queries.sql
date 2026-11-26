@@ -31024,7 +31024,8 @@ VALUES (sqlc.arg(id), sqlc.arg(account_id), sqlc.arg(bucket_id), sqlc.arg(caller
 -- still exists, the instance it was issued to still holds a VM, its bucket is
 -- ready and the bucket's resource owner may use object storage: the same
 -- owner rule object_storage_credential_live applies to compute keys. A grant
--- that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete).
+-- that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete);
+-- one whose access or prefix changed is rescoped (ObjectWorkloadCredentialRegrant).
 SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
        c.created_at, c.expires_at,
        b.app_id, b.org_id, b.name AS bucket_name, b.scope AS bucket_scope,
@@ -31057,6 +31058,14 @@ WHERE caller_app_id = sqlc.arg(caller_app_id) AND expires_at > now();
 
 -- name: ObjectWorkloadCredentialDelete :execrows
 DELETE FROM object_storage_workload_credentials
+WHERE caller_app_id = sqlc.arg(caller_app_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
+
+-- name: ObjectWorkloadCredentialRegrant :execrows
+-- A grant whose access or prefix changed moves the caller's live credentials
+-- for that bucket to the new scope, so a guest's (and its SDK's) cached key
+-- keeps working within what uses: still allows and loses the rest at once.
+UPDATE object_storage_workload_credentials
+SET permission = sqlc.arg(permission), key_prefix = sqlc.narg(key_prefix)
 WHERE caller_app_id = sqlc.arg(caller_app_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: ObjectWorkloadCredentialCountLive :one

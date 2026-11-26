@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RunReadOnlyStatement runs req.SQL on conn, which a provider opened as the
@@ -31,6 +33,14 @@ func RunReadOnlyStatement(ctx context.Context, conn *pgx.Conn, req ReadOnlyQuery
 		"SET LOCAL idle_in_transaction_session_timeout = " + strconv.FormatInt(QueryIdleInTransaction.Milliseconds(), 10),
 	} {
 		if _, err := tx.Exec(ctx, setting); err != nil {
+			return ReadOnlyQueryResult{}, ErrUnavailable
+		}
+	}
+	// The platform catalog query must not resolve operators or aggregates
+	// from a customer-controlled search_path. Keep arbitrary user queries'
+	// existing search_path behavior unchanged.
+	if req.SQL == api.DataAPICatalogPreviewSQL {
+		if _, err := tx.Exec(ctx, "SET LOCAL search_path = pg_catalog"); err != nil {
 			return ReadOnlyQueryResult{}, ErrUnavailable
 		}
 	}

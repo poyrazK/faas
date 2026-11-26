@@ -76,6 +76,7 @@
       "livemode",
       "provider",
       "sealed_secret",
+      "stripe_account_id",
       "updated_at"
     ],
     "kind": "account_identity"
@@ -1206,6 +1207,17 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "api_consumer_stripe_links",
+    "columns": [
+      "consumer_id",
+      "created_at",
+      "livemode",
+      "stripe_account_id",
+      "stripe_customer_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "api_consumer_trials",
@@ -2634,6 +2646,36 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_inspection_admissions",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_id",
+      "binding_revision",
+      "credential_generation",
+      "database_id",
+      "database_revision",
+      "deployment_id",
+      "nonce",
+      "runtime_generation",
+      "table_name",
+      "target_digest",
+      "task_id",
+      "trust_digest"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_inspection_executions",
+    "columns": [
+      "finished_at",
+      "protocol_version",
+      "stdout_sha256",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_tcp_listener_tls_observations",
     "columns": [
       "edge_id",
@@ -3493,7 +3535,10 @@
       "source_id",
       "source_kind",
       "statement_id",
-      "updated_at"
+      "updated_at",
+      "usage_gap_hours",
+      "usage_held_at",
+      "usage_recovered_at"
     ],
     "kind": "operational"
   },
@@ -10840,6 +10885,7 @@
       "credential_generation",
       "credential_ref",
       "cutover_id",
+      "data_api_inspection_revision",
       "database_account_id",
       "database_id",
       "deleted_at",
@@ -11151,6 +11197,7 @@
       "clone_resource_role",
       "created_at",
       "cutover_id",
+      "data_api_inspection_revision",
       "data_resource_id",
       "deleted_at",
       "desired_generation",
@@ -20717,7 +20764,8 @@
       "source_kind",
       "statement_id",
       "status",
-      "status_synced_at"
+      "status_synced_at",
+      "stripe_issue"
     ],
     "kind": "operational"
   },
@@ -23099,6 +23147,33 @@
       "kid",
       "permission",
       "secret_sealed"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_splits",
+    "columns": [
+      "account_id",
+      "created_at",
+      "edge_rule_ids",
+      "error",
+      "id",
+      "kind",
+      "lease_until",
+      "main_ram_mb",
+      "main_resized",
+      "method",
+      "path_glob",
+      "phase",
+      "previous_ram_mb",
+      "route",
+      "route_ram_mb",
+      "source_app_id",
+      "target_app_id",
+      "target_deployment_id",
+      "target_slug",
+      "updated_at",
+      "warning"
     ],
     "kind": "operational"
   }

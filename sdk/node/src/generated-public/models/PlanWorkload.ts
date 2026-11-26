@@ -13,6 +13,7 @@ import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
+import type { WorkloadUses } from './WorkloadUses.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -85,6 +86,7 @@ export type PlanWorkload = {
    * Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment.
    */
   depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
+  uses?: WorkloadUses;
   /**
    * Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none.
    */
