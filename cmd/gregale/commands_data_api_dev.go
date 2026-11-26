@@ -16,42 +16,43 @@ import (
 )
 
 type dataAPIDevOptions struct {
-	Browser           bool   `json:"browser,omitempty"`
-	AccessChecks      string `json:"access_checks,omitempty"`
-	Verify            bool   `json:"verify,omitempty"`
-	PlanCheck         bool   `json:"plan_check,omitempty"`
-	PlanBudget        string `json:"plan_budget,omitempty"`
-	Explain           bool   `json:"explain,omitempty"`
-	Collection        string `json:"collection,omitempty"`
-	PlanBaseline      string `json:"plan_baseline,omitempty"`
-	PlanScenario      string `json:"plan_scenario,omitempty"`
-	Preview           bool   `json:"preview,omitempty"`
-	Dependencies      string `json:"dependencies,omitempty"`
-	FromVersion       int    `json:"from_version,omitempty"`
-	Fixture           string `json:"fixture,omitempty"`
-	DataCheck         string `json:"data_check,omitempty"`
-	Directory         string `json:"directory"`
-	Output            string `json:"output"`
-	Port              int    `json:"port"`
-	Check             bool   `json:"check"`
-	Validators        bool   `json:"validators"`
-	CheckTypes        bool   `json:"check_types"`
-	Once              bool   `json:"once"`
-	JSON              bool   `json:"json"`
-	Watch             bool   `json:"watch"`
-	Baseline          string `json:"baseline"`
-	CheckBreaking     bool   `json:"check_breaking"`
-	Approval          string `json:"approval"`
-	AcceptedContracts string `json:"accepted_contracts"`
-	Scenario          string `json:"scenario"`
-	Replay            string `json:"replay"`
-	CLI               string `json:"cli"`
-	Config            string `json:"config"`
-	OutputSet         bool   `json:"output_set"`
-	BehaviorBaseline  string `json:"behavior_baseline,omitempty"`
-	BehaviorOutput    string `json:"behavior_output,omitempty"`
-	BehaviorReplays   string `json:"behavior_replays,omitempty"`
-	NumericMode       string `json:"numeric_mode,omitempty"`
+	WriteQualification *dataAPIWriteQualification `json:"write_qualification,omitempty"`
+	Browser            bool                       `json:"browser,omitempty"`
+	AccessChecks       string                     `json:"access_checks,omitempty"`
+	Verify             bool                       `json:"verify,omitempty"`
+	PlanCheck          bool                       `json:"plan_check,omitempty"`
+	PlanBudget         string                     `json:"plan_budget,omitempty"`
+	Explain            bool                       `json:"explain,omitempty"`
+	Collection         string                     `json:"collection,omitempty"`
+	PlanBaseline       string                     `json:"plan_baseline,omitempty"`
+	PlanScenario       string                     `json:"plan_scenario,omitempty"`
+	Preview            bool                       `json:"preview,omitempty"`
+	Dependencies       string                     `json:"dependencies,omitempty"`
+	FromVersion        int                        `json:"from_version,omitempty"`
+	Fixture            string                     `json:"fixture,omitempty"`
+	DataCheck          string                     `json:"data_check,omitempty"`
+	Directory          string                     `json:"directory"`
+	Output             string                     `json:"output"`
+	Port               int                        `json:"port"`
+	Check              bool                       `json:"check"`
+	Validators         bool                       `json:"validators"`
+	CheckTypes         bool                       `json:"check_types"`
+	Once               bool                       `json:"once"`
+	JSON               bool                       `json:"json"`
+	Watch              bool                       `json:"watch"`
+	Baseline           string                     `json:"baseline"`
+	CheckBreaking      bool                       `json:"check_breaking"`
+	Approval           string                     `json:"approval"`
+	AcceptedContracts  string                     `json:"accepted_contracts"`
+	Scenario           string                     `json:"scenario"`
+	Replay             string                     `json:"replay"`
+	CLI                string                     `json:"cli"`
+	Config             string                     `json:"config"`
+	OutputSet          bool                       `json:"output_set"`
+	BehaviorBaseline   string                     `json:"behavior_baseline,omitempty"`
+	BehaviorOutput     string                     `json:"behavior_output,omitempty"`
+	BehaviorReplays    string                     `json:"behavior_replays,omitempty"`
+	NumericMode        string                     `json:"numeric_mode,omitempty"`
 }
 
 func cmdDataAPIDev(args []string) int { return runDataAPIDev(args, nil) }
@@ -69,7 +70,7 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 	port := fs.Int("port", 8080, "loopback gateway port (0 selects a free port)")
 	check := fs.Bool("check", false, "run configured client checks")
 	validators := fs.Bool("validators", false, "generate runtime table and RPC argument validators alongside types")
-	numericMode := fs.String("numeric-mode", "number", "TypeScript JSON numbers: number, lossless (decimal strings), or exact (ExactNumber)")
+	numericMode := fs.String("numeric-mode", "", "TypeScript JSON numbers: number, lossless (decimal strings), or exact (ExactNumber)")
 	checkTypes := fs.Bool("check-types", false, "compare committed types without rewriting them (requires --once)")
 	once := fs.Bool("once", false, "verify the local workflow and exit, removing containers")
 	browser := fs.Bool("browser", false, "build and serve the starter browser with local test identities")
@@ -89,7 +90,7 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 	if *browser && (*once || rehearsal.Explain || rehearsal.Verify || preview) {
 		return printErr("Invalid browser launch", errors.New("--browser requires an interactive development session"))
 	}
-	if !dataAPIDiagnosticAllowed(*numericMode, "number", "lossless", "exact") || (*numericMode != "number" && *validators) {
+	if *numericMode != "" && (!dataAPIDiagnosticAllowed(*numericMode, "number", "lossless", "exact") || (*numericMode != "number" && *validators)) {
 		return printErr("Invalid numeric mode", errors.New("use number, lossless or exact; non-default numeric modes require types without validators"))
 	}
 	if ((*behaviorBaseline != "" || *behaviorOutput != "" || *behaviorReplays != "") && !*once) || (*behaviorReplays != "" && *behaviorBaseline == "") {
@@ -243,7 +244,7 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 			outputSet = true
 		}
 	})
-	options, err := json.Marshal(dataAPIDevOptions{NumericMode: *numericMode, BehaviorBaseline: *behaviorBaseline, BehaviorOutput: *behaviorOutput, BehaviorReplays: *behaviorReplays, Browser: *browser, Explain: rehearsal.Explain, Verify: rehearsal.Verify, AccessChecks: rehearsal.AccessChecks, PlanCheck: rehearsal.PlanCheck, PlanBudget: rehearsal.PlanBudget, Collection: rehearsal.Collection, PlanBaseline: rehearsal.PlanBaseline, PlanScenario: rehearsal.PlanScenario, Preview: preview, Dependencies: dependencies, FromVersion: rehearsal.FromVersion, Fixture: rehearsal.Fixture, DataCheck: rehearsal.DataCheck, Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Validators: *validators, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, Approval: *approval, AcceptedContracts: *acceptedContracts, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
+	options, err := json.Marshal(dataAPIDevOptions{WriteQualification: rehearsal.WriteQualification, NumericMode: *numericMode, BehaviorBaseline: *behaviorBaseline, BehaviorOutput: *behaviorOutput, BehaviorReplays: *behaviorReplays, Browser: *browser, Explain: rehearsal.Explain, Verify: rehearsal.Verify, AccessChecks: rehearsal.AccessChecks, PlanCheck: rehearsal.PlanCheck, PlanBudget: rehearsal.PlanBudget, Collection: rehearsal.Collection, PlanBaseline: rehearsal.PlanBaseline, PlanScenario: rehearsal.PlanScenario, Preview: preview, Dependencies: dependencies, FromVersion: rehearsal.FromVersion, Fixture: rehearsal.Fixture, DataCheck: rehearsal.DataCheck, Directory: base, Output: target, Port: *port, Check: *check, CheckTypes: *checkTypes, Validators: *validators, Once: *once, JSON: jsonOutput, Watch: *watch, Baseline: *baseline, CheckBreaking: *checkBreaking, Approval: *approval, AcceptedContracts: *acceptedContracts, CLI: cli, Replay: *replay, Scenario: *scenario, Config: *config, OutputSet: outputSet})
 	if err != nil {
 		return printErr("Could not prepare local options", err)
 	}

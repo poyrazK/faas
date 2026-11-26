@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { randomBytes, createHash } from 'node:crypto'
 import http from 'node:http'
 import { readFile, writeFile, rename, unlink, mkdir, lstat, readdir, open } from 'node:fs/promises'
-import { constants } from 'node:fs'
+import { constants, realpathSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -14,12 +14,19 @@ import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose'
 import { runtimeConfig, acceptedContracts, servingContracts, limits } from './config.mjs'
 import { createServer, tokenVerifier } from './server.mjs'
 import { checkPublicRelations, checkPublicFunctions, loadRowSecurity } from './access.mjs'
-import { inspect, inspectBundle, generate, fingerprint } from './types.mjs'
-import { generateValidators, inputModel } from './type-render.mjs'
+import { inspect, inspectBundle, generate, fingerprint, warnNumericPrecision } from './types.mjs'
+import { generateValidators, inputModel, contractArtifactBytes, ContractOutputLimitError } from './type-render.mjs'
 
 export function developmentTypes(snapshot, metadata, validators, numericMode = 'number') {
   if (validators && numericMode !== 'number') throw new Error('Lossless types and runtime input validators are separate outputs')
-  return validators ? generateValidators(snapshot, metadata) : generate(snapshot, fingerprint(snapshot), { numericMode })
+  const hash = fingerprint(snapshot)
+  try {
+    return validators ? generateValidators(snapshot, metadata, hash, { outputBytes: contractArtifactBytes })
+      : generate(snapshot, hash, { numericMode, outputBytes: contractArtifactBytes })
+  } catch (error) {
+    if (error instanceof ContractOutputLimitError) throw new DevFailure(error.message)
+    throw error
+  }
 }
 import { migrate } from './migrate.mjs'
 import { requestStore } from './dev-requests.mjs'
@@ -29,7 +36,7 @@ import { browserExample } from './dev-browser.mjs'
 import { permissions } from './rpc-permissions.mjs'
 import { loadDevProject, verifyProject, readLocalFile } from './dev-project.mjs'
 import { prepareRehearsal, checkUpgradeData, parseDataChecks, fixtureBinding } from './dev-upgrade.mjs'
-import { prepareAccessChecks, runAccessChecks } from './dev-access.mjs'
+import { prepareAccessChecks, runAccessChecks, validateWriteQualification } from './dev-access.mjs'
 import { inspectBehavior, compareBehavior, requireBehaviorReplays } from './behavior-contract.mjs'
 import { prepareExplain, plannerMetadata, explainRequests, printExplain, checkQueryBudgets } from './dev-explain.mjs'
 
@@ -46,14 +53,14 @@ async function readContract(path, required) {
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {
       if (!(await file.stat()).isFile()) throw new DevFailure('Contract must be a regular file')
-      const buffer = Buffer.alloc(limits.outputBytes + 1)
+      const buffer = Buffer.alloc(contractArtifactBytes + 1)
       let length = 0
       while (length < buffer.length) {
         const { bytesRead } = await file.read(buffer, length, buffer.length - length, length)
         if (!bytesRead) break
         length += bytesRead
       }
-      if (length > limits.outputBytes) throw new DevFailure('Compatibility baseline exceeds the contract output limit')
+      if (length > contractArtifactBytes) throw new DevFailure('Compatibility baseline exceeds the contract output limit')
       return buffer.subarray(0, length).toString('utf8')
     } finally { await file.close() }
   } catch (error) {
@@ -168,7 +175,7 @@ export async function run(options) {
   let project
   try { project = await loadDevProject(options) }
   catch (error) { throw new DevFailure(`Invalid development project: ${error.message}`) }
-  options = { ...options, output: project.output }
+  options = { ...options, output: project.output, numeric_mode: project.numericMode }
   if ((options.from_version || (options.fixture && !options.explain && !options.verify) || (options.data_check && !options.verify)) && !options.preview) throw new DevFailure('Upgrade options require migration preview.')
   let verificationContext
   if (options.verify) {
@@ -177,10 +184,16 @@ export async function run(options) {
       const access = options.access_checks ? await prepareAccessChecks(options.access_checks, project) : null
       if (!checks.length && !access) throw new Error("No assertions provided")
       const seedSQL = options.fixture ? await readLocalFile(options.fixture, limits.bodyBytes) : project.seedSQL
-      verificationContext = { checks, access, seedSQL, fixtureFingerprint: seedSQL === null ? null : fixtureBinding(seedSQL) }
-    } catch { throw new DevFailure('Invalid verification inputs; use a bounded version 1 check manifest and valid SQL fixture.') }
+      if (options.write_qualification && (!options.fixture || typeof seedSQL !== 'string' || !seedSQL.trim())) throw new Error('Write checks require an explicit synthetic SQL fixture.')
+      const writeQualification = options.write_qualification ? validateWriteQualification(access, project, options.write_qualification) : null
+      verificationContext = { checks, access, seedSQL, fixtureFingerprint: seedSQL === null ? null : fixtureBinding(seedSQL), writeQualification }
+    } catch { throw new DevFailure(options.write_qualification ? 'Invalid write-check inputs; use a reviewed version 4 manifest covering allowed and cross-subject denied writes on each requested operation and a valid synthetic fixture.' : 'Invalid verification inputs; use a bounded version 1 check manifest and valid SQL fixture.') }
   }
   const verification = options.verify ? { version: 1, command: 'data-api verify', status: 'failed', authorization: 'not_run', cleanup: 'not_run', checks: [] } : null
+  if (verificationContext?.writeQualification) {
+    verification.command = 'data-api write-check'
+    verification.write_qualification = { ...verificationContext.writeQualification, manifest_sha256: createHash('sha256').update(JSON.stringify(verificationContext.access)).digest('hex'), fixture_sha256: createHash('sha256').update(verificationContext.seedSQL).digest('hex') }
+  }
   let explainContext
   if (options.explain) {
     try { explainContext = await prepareExplain(options, project) }
@@ -384,6 +397,12 @@ export async function run(options) {
       try { await checkPublicRelations(connection.toString(), config.publicRead) } catch (error) { throw new DevFailure(error.message) }
     }
     const bundle = await inspectBundle(connection.toString(), ['api'], { validators: true })
+    const reportNumericRisk = risks => {
+      if (project.numericMode !== 'number' || !risks.size) return
+      warnNumericPrecision(risks)
+      console.error('Use numeric_mode "exact" with a matching TypeScript client for full precision.')
+    }
+    reportNumericRisk(bundle.numericRisks)
     config.snapshot = bundle.snapshot
     config.functions = config.snapshot.functions
     config.rowSecurity = await loadRowSecurity(connection.toString(), ['api'])
@@ -580,7 +599,7 @@ export async function run(options) {
       await permissions(ownerURL, { role: 'gregale_data_api', apply: true })
       controller.signal.throwIfAborted()
       phase = 'schema introspection'
-      const { snapshot, metadata } = await inspectBundle(connection.toString(), ['api'], { validators: true })
+      const { snapshot, metadata, numericRisks } = await inspectBundle(connection.toString(), ['api'], { validators: true })
       controller.signal.throwIfAborted()
       const nextConfig = { ...config, snapshot, functions: snapshot.functions, rowSecurity: await loadRowSecurity(connection.toString(), ['api']), fingerprint: fingerprint(snapshot), acceptedContracts: await readPolicy() }
       phase = 'accepted contracts'
@@ -605,6 +624,7 @@ export async function run(options) {
       } finally { candidate.closeAllConnections(); await new Promise(resolve => candidate.close(resolve)) }
       controller.signal.throwIfAborted()
       phase = 'writing generated types'
+      reportNumericRisk(numericRisks)
       await atomicFile(options.output, developmentTypes(snapshot, metadata, options.validators, options.numeric_mode), 0o644)
       await acceptContract(snapshot)
       Object.assign(config, nextConfig)
@@ -683,7 +703,9 @@ export async function run(options) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+let directInvocation = false
+try { directInvocation = Boolean(process.argv[1]) && (import.meta.url === pathToFileURL(process.argv[1]).href || import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) } catch {}
+if (directInvocation) {
   try { await run(JSON.parse(await readFile(process.argv[2], 'utf8'))) }
   catch (error) { console.error(error instanceof DevFailure ? error.message : 'Local Data API failed: check Node.js 22+ and the project options.'); process.exitCode = 1 }
 }

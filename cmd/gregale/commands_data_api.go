@@ -19,10 +19,16 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|delete|deploy|configure|server-key|usage|live|storage|hooks|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|integrate|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <connect|write-readiness|write-check|create|delete|deploy|configure|server-key|usage|live|storage|hooks|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|integrate|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
+	case "connect":
+		return cmdDataAPIConnect(args[1:])
+	case "write-readiness":
+		return cmdDataAPIConnectWriteReadiness(args[1:])
+	case "write-check":
+		return cmdDataAPIConnectWriteCheck(args[1:])
 	case "integrate":
 		return cmdDataAPIIntegrate(args[1:])
 	case "rotation":
@@ -80,7 +86,7 @@ func cmdDataAPI(args []string) int {
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, delete, deploy, configure, server-key, usage, live, storage, hooks, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, integrate, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use connect, create, delete, deploy, configure, server-key, usage, live, storage, hooks, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, integrate, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -140,7 +146,7 @@ func cmdDataAPIRefresh(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(result))
 	}
-	PrintOK(osStdout, "Schema refresh requested for %s; verify /healthz before using the new contract", fs.Arg(0))
+	PrintOK(osStdout, "Schema refresh requested for %s. Verify runtime readiness at %s before using the new contract", fs.Arg(0), api.DataAPIReadinessPath)
 	return 0
 }
 
@@ -149,6 +155,16 @@ func cmdDataAPICreate(args []string) int {
 }
 
 func cmdDataAPICreateContext(ctx context.Context, args []string) int {
+	return cmdDataAPICreateContextWithReceipt(ctx, args, dataAPICreateReceiptHooks{})
+}
+
+type dataAPICreateReceiptHooks struct {
+	app        func(api.AppResponse, api.ManagedPostgresDatabase) error
+	binding    func(api.ManagedPostgresBinding) error
+	deployment func(api.DeploymentResponse)
+}
+
+func cmdDataAPICreateContextWithReceipt(ctx context.Context, args []string, hooks dataAPICreateReceiptHooks) int {
 	fs := newFlagSet("data-api create", flag.ContinueOnError)
 	database := fs.String("database", "", "managed PostgreSQL name or ID")
 	schema := fs.String("schema", "api", "exposed schema (api, or public with --read-only)")
@@ -244,6 +260,11 @@ func cmdDataAPICreateContext(ctx context.Context, args []string) int {
 	if app.Type != "" && app.Type != "app" {
 		return printErr("Invalid Data API app", errors.New("data APIs require an app workload"))
 	}
+	if hooks.app != nil {
+		if err := hooks.app(app, db); err != nil {
+			return printErr("Could not record created Data API app", err)
+		}
+	}
 	// Retain partially configured intent on failure: the ordinary app and
 	// binding recovery paths own cleanup and retries, never an ad-hoc rollback.
 	settings := map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins, "DATA_API_PUBLIC_READ": *publicRead, "DATA_API_PUBLIC_RPC": *publicRPC, "DATA_API_READ_ONLY": fmt.Sprint(*readOnly)}
@@ -254,7 +275,7 @@ func cmdDataAPICreateContext(ctx context.Context, args []string) int {
 	if *aggregates {
 		settings["DATA_API_SQL_DEADLINE"], settings["DATA_API_AGGREGATES"] = "1", "1"
 	}
-	if err := configureDataAPI(ctx, client, app, db.ID, *scope, settings); err != nil {
+	if err := configureDataAPI(ctx, client, app, db.ID, *scope, settings, hooks.binding); err != nil {
 		return printErr("Data API configuration failed; the app is retained for recovery", err)
 	}
 	if *migrations != "" {
@@ -263,10 +284,10 @@ func cmdDataAPICreateContext(ctx context.Context, args []string) int {
 		}
 		return deploySingleAppDataAPI(ctx, client, app.Slug, *scope, *migrations, *releaseCommand, "15m")
 	}
-	return deployDataAPIRuntime(ctx, client, app.Slug, *scope, "")
+	return deployDataAPIRuntime(ctx, client, app.Slug, *scope, "", hooks.deployment)
 }
 
-func configureDataAPI(ctx context.Context, client *api.Client, app api.AppResponse, database, scope string, settings map[string]string) error {
+func configureDataAPI(ctx context.Context, client *api.Client, app api.AppResponse, database, scope string, settings map[string]string, callbacks ...func(api.ManagedPostgresBinding) error) error {
 	access := "data_api"
 	if settings["DATA_API_READ_ONLY"] == "true" {
 		access = "read_only"
@@ -275,8 +296,13 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 	if err != nil {
 		return err
 	}
-	if _, err = waitForManagedPostgresBinding(ctx, client, binding, addResourceDefaultWait); err != nil {
+	if binding, err = waitForManagedPostgresBinding(ctx, client, binding, addResourceDefaultWait); err != nil {
 		return err
+	}
+	if len(callbacks) > 0 && callbacks[0] != nil {
+		if err := callbacks[0](binding); err != nil {
+			return err
+		}
 	}
 	// PostgreSQL's extra egress port stays subject to the plan gate; plans
 	// without extra ports rely on the binding's own database egress.
@@ -388,11 +414,8 @@ func cmdDataAPITypes(args []string) int {
 	if err != nil {
 		return printErr("Schema generation failed", err)
 	}
-	switch *numericMode {
-	case "lossless":
-		task.StdoutTail = dataAPILosslessTypes(task.StdoutTail)
-	case "exact":
-		task.StdoutTail = dataAPIExactTypes(task.StdoutTail)
+	if !*snapshot {
+		task.StdoutTail = dataAPITypesForMode(task, *numericMode)
 	}
 	if err = writeDataAPITypes(*output, *check, task.StdoutTail); err != nil {
 		return printErr("Could not export schema types", err)
@@ -424,6 +447,22 @@ func cmdDataAPITypes(args []string) int {
 	return 0
 }
 
+var dataAPINumericRisk = regexp.MustCompile(`(?m)^Data API numeric precision: (bigint,numeric|bigint|numeric)$`)
+var dataAPIContractOutputLimit = regexp.MustCompile(`(?m)^Data API contract output limit: (types|validators|schema) exceeds (1048576|8388608) bytes$`)
+
+func dataAPITypesForMode(task api.AppTaskResponse, numericMode string) string {
+	switch numericMode {
+	case "lossless":
+		return dataAPILosslessTypes(task.StdoutTail)
+	case "exact":
+		return dataAPIExactTypes(task.StdoutTail)
+	}
+	if risk := dataAPINumericRisk.FindStringSubmatch(task.StderrTail); risk != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Data API numeric precision: PostgreSQL %s may lose precision with JavaScript numbers. Select exact numeric mode and pass dataAPINumericMode to your client.\n", risk[1])
+	}
+	return task.StdoutTail
+}
+
 var dataAPITypeTokens = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|//[^\n]*|\bnumber\b`)
 
 func dataAPIExactTypes(source string) string {
@@ -433,7 +472,7 @@ func dataAPIExactTypes(source string) string {
 		}
 		return token
 	})
-	return "import type { ExactNumber } from '@gregale/data'\n" + strings.Replace(result, "// Generated by gregale data-api types. Do not edit.\n", "// Generated by gregale data-api types. Do not edit.\n// numericMode: exact (tagged JSON numbers).\n", 1)
+	return "import type { ExactNumber } from '@gregale/data'\n" + strings.Replace(result, "// Generated by gregale data-api types. Do not edit.\n", "// Generated by gregale data-api types. Do not edit.\n// numericMode: exact (tagged JSON numbers).\n", 1) + "\nexport const dataAPINumericMode = \"exact\" as const\n"
 }
 
 func dataAPILosslessTypes(source string) string {
@@ -444,7 +483,7 @@ func dataAPILosslessTypes(source string) string {
 		return token
 	})
 	result = strings.Replace(result, "export type Json = string | string |", "export type Json = string |", 1)
-	return strings.Replace(result, "// Generated by gregale data-api types. Do not edit.\n", "// Generated by gregale data-api types. Do not edit.\n// numericMode: lossless (all JSON numbers are decimal strings).\n", 1)
+	return strings.Replace(result, "// Generated by gregale data-api types. Do not edit.\n", "// Generated by gregale data-api types. Do not edit.\n// numericMode: lossless (all JSON numbers are decimal strings).\n", 1) + "\nexport const dataAPINumericMode = \"lossless\" as const\n"
 }
 
 func generateDataAPIInputValidators(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
@@ -463,7 +502,7 @@ func generateDataAPITypes(ctx context.Context, client *api.Client, slug string) 
 // route (ADR-20261027123814); an apid that predates it gets the same command
 // as an ordinary app task.
 func runDataAPIContractTask(ctx context.Context, client *api.Client, slug string, kind api.DataAPIContractTaskKind, operation string) (api.AppTaskResponse, error) {
-	task, err := client.CreateDataAPIContractTask(ctx, slug, kind)
+	task, err := client.CreateDataAPIContractArtifactTask(ctx, slug, kind)
 	legacy := routeNotOffered(err)
 	if legacy {
 		task, err = client.CreateAppTask(ctx, slug, kind.Request())
@@ -503,16 +542,35 @@ func waitDataAPIContractTask(ctx context.Context, client *api.Client, slug strin
 		}
 	}
 	if task.Status != api.AppTaskStatusSucceeded {
+		if limit := dataAPIContractOutputLimit.FindStringSubmatch(task.StderrTail); limit != nil {
+			detail := "reduce the schema exposed by this Data API"
+			if limit[2] == "1048576" {
+				detail = "upgrade the serving Data API runtime and management API for larger downloads"
+			}
+			return task, fmt.Errorf("%s; %s", limit[0], detail)
+		}
 		return task, fmt.Errorf("task %s ended with status %s", task.ID, task.Status)
 	}
-	if snapshot {
+	outputLimit := api.AppTaskDefaultMaxOutputBytes
+	if !legacy && api.IsDataAPIContractArtifactTask(task.Command, task.CommandShell) {
 		if task.OutputTruncated {
+			return task, fmt.Errorf("data API contract artifact exceeded its %d-byte output limit", api.DataAPIContractArtifactBytes)
+		}
+		content, err := client.DownloadDataAPIContractArtifact(ctx, slug, task.ID, task.DeploymentID)
+		if err != nil {
+			return task, err
+		}
+		task.StdoutTail = string(content)
+		outputLimit = api.DataAPIContractArtifactBytes
+	}
+	if snapshot {
+		if task.OutputTruncated || len(task.StdoutTail) > outputLimit {
 			return task, errors.New("schema snapshot was truncated")
 		}
 		_, err := parseDataAPIContract([]byte(task.StdoutTail))
 		return task, err
 	}
-	if task.OutputTruncated || len(task.StdoutTail) > api.AppTaskDefaultMaxOutputBytes || !strings.HasPrefix(task.StdoutTail, "// Generated by gregale data-api types. Do not edit.\n") || !dataAPIFingerprint.MatchString(task.StdoutTail) {
+	if task.OutputTruncated || len(task.StdoutTail) > outputLimit || !strings.HasPrefix(task.StdoutTail, "// Generated by gregale data-api types. Do not edit.\n") || !dataAPIFingerprint.MatchString(task.StdoutTail) {
 		return task, errors.New("schema generation returned incomplete or invalid output")
 	}
 	return task, nil

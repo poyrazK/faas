@@ -78,13 +78,16 @@ export function hostArchive(bundle) {
   return entry
 }
 
-export async function verifyLock(client, sdk) {
-  const lock = await readJSON(`${client}/package-lock.json`, 16 * 1024 * 1024)
+export async function verifyLock(client, sdk, workspaceRoot = client, workspace = '') {
+  const lock = await readJSON(`${workspaceRoot}/package-lock.json`, 16 * 1024 * 1024)
   const pkg = await readJSON(`${client}/package.json`)
-  const entry = lock.packages?.['node_modules/@gregale/data']
+  const entry = workspace
+    ? lock.packages?.[`${workspace}/node_modules/@gregale/data`] ?? lock.packages?.['node_modules/@gregale/data']
+    : lock.packages?.['node_modules/@gregale/data']
+  const resolved = workspace ? `file:${workspace}/vendor/gregale-data.tgz` : 'file:vendor/gregale-data.tgz'
   if (pkg.dependencies?.['@gregale/data'] !== 'file:vendor/gregale-data.tgz' ||
-      lock.packages?.['']?.dependencies?.['@gregale/data'] !== 'file:vendor/gregale-data.tgz' ||
-      entry?.version !== sdk.version || entry?.resolved !== 'file:vendor/gregale-data.tgz' || entry?.integrity !== sdk.integrity) {
+      lock.packages?.[workspace]?.dependencies?.['@gregale/data'] !== 'file:vendor/gregale-data.tgz' ||
+      entry?.version !== sdk.version || entry?.resolved !== resolved || entry?.integrity !== sdk.integrity) {
     throw new Error('Client lockfile differs from the pinned SDK; run artifacts.mjs pin and commit the updated lockfile')
   }
 }

@@ -70,7 +70,7 @@ export async function loadDevProject(options) {
     legacy = true
     config = { version: 1, identities: { alice: { subject: 'alice' }, bob: { subject: 'bob' } } }
   }
-  if (!fields(config, ['version', 'migrations', 'output', 'identities', 'verify', 'seed', 'check', 'public_read', 'public_rpc', 'allow_without_rls']) || config.version !== 1) throw new Error('Use a version 1 development config with known fields.')
+  if (!fields(config, ['version', 'migrations', 'output', 'numeric_mode', 'identities', 'verify', 'seed', 'check', 'public_read', 'public_rpc', 'allow_without_rls']) || config.version !== 1) throw new Error('Use a version 1 development config with known fields.')
   if (!object(config.identities) || Object.keys(config.identities).length < 2 || Object.keys(config.identities).length > 100) throw new Error('Configure two to 100 local test identities.')
   const identities = Object.fromEntries(Object.entries(config.identities).map(([name, value]) => {
     if (!identifier.test(name) || reserved.has(name) || !fields(value, ['subject', 'claims', 'read_only']) || (value.read_only !== undefined && typeof value.read_only !== 'boolean') || typeof value.subject !== 'string' || !value.subject || value.subject.length > 256 || (value.claims !== undefined && (!object(value.claims) || Object.keys(value.claims).some(key => reserved.has(key))))) throw new Error('Use named identities with subjects and non-reserved custom claims.')
@@ -84,6 +84,11 @@ export async function loadDevProject(options) {
     if (!fields(config.verify, ['collection', 'scenarios']) || !Array.isArray(config.verify.scenarios) || !config.verify.scenarios.length || new Set(config.verify.scenarios).size !== config.verify.scenarios.length || config.verify.scenarios.some(name => typeof name !== 'string' || !identifier.test(name))) throw new Error('Configure required verification scenarios.')
     verification = { collection: await projectPath(base, config.verify.collection), scenarios: config.verify.scenarios }
   }
+  const modes = ['number', 'lossless', 'exact']
+  if (config.numeric_mode !== undefined && !modes.includes(config.numeric_mode)) throw new Error('Use number, lossless or exact for numeric_mode.')
+  const numericMode = options.numeric_mode ?? config.numeric_mode ?? 'number'
+  if (!modes.includes(numericMode)) throw new Error('Use number, lossless or exact for numeric_mode.')
+  if (options.validators && numericMode !== 'number') throw new Error('Non-default numeric modes require types without validators.')
   const output = options.output_set || !config.output ? options.output : resolve(base, config.output)
   await protectMigrationOutput(migrations, output)
   if (config.output !== undefined && (typeof config.output !== 'string' || !config.output || isAbsolute(config.output) || (relative(base, resolve(base, config.output)) === '..' || relative(base, resolve(base, config.output)).startsWith('..' + sep)))) throw new Error('Use a project-relative types output.')
@@ -114,7 +119,7 @@ export async function loadDevProject(options) {
   if (config.public_read !== undefined && (!Array.isArray(config.public_read) || !config.public_read.length || config.public_read.some(name => typeof name !== 'string'))) throw new Error('Use public_read as a list of schema.relation names.')
   if (config.public_rpc !== undefined && (!Array.isArray(config.public_rpc) || !config.public_rpc.length || config.public_rpc.some(name => typeof name !== 'string'))) throw new Error('Use public_rpc as a list of schema.function names.')
   if (config.allow_without_rls !== undefined && (!Array.isArray(config.allow_without_rls) || !config.allow_without_rls.length || config.allow_without_rls.some(name => typeof name !== 'string'))) throw new Error('Use allow_without_rls as a list of schema.relation names.')
-  const project = { base, migrations, output, identities, verification, seedSQL, check: { directory: checkDirectory, commands: check.commands }, legacy, ...(config.public_read ? { publicRead: config.public_read.join(',') } : {}), ...(config.public_rpc ? { publicRpc: config.public_rpc.join(',') } : {}), ...(config.allow_without_rls ? { allowWithoutRls: config.allow_without_rls.join(',') } : {}) }
+  const project = { base, migrations, output, numericMode, identities, verification, seedSQL, check: { directory: checkDirectory, commands: check.commands }, legacy, ...(config.public_read ? { publicRead: config.public_read.join(',') } : {}), ...(config.public_rpc ? { publicRpc: config.public_rpc.join(',') } : {}), ...(config.allow_without_rls ? { allowWithoutRls: config.allow_without_rls.join(',') } : {}) }
   await verificationScenarios(project)
   return project
 }

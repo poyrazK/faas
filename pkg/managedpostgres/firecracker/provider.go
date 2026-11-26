@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/dataapiinspectioncommand"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/pgextension"
@@ -76,14 +77,16 @@ type shape struct {
 
 // Config is the driver's view of its BackendConfig.
 type Config struct {
-	Region          string
-	HostSuffix      string
-	Port            uint16
-	TLSMode         string
-	Database        string
-	Majors          []int
-	Classes         map[managedpostgres.ServiceClass]shape
-	MaxStorageBytes int64
+	Region     string
+	HostSuffix string
+	Port       uint16
+	TLSMode    string
+	// DataAPIInspectionTrustSHA256 pins the CA set authorized for inspection.
+	DataAPIInspectionTrustSHA256 string
+	Database                     string
+	Majors                       []int
+	Classes                      map[managedpostgres.ServiceClass]shape
+	MaxStorageBytes              int64
 	// MaxRestoreWindowSeconds turns point-in-time restore on when positive
 	// (set only where dbbackupd archives the database nodes' WAL) and bounds
 	// a spec's restore window.
@@ -148,6 +151,12 @@ func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 			return Config{}, fmt.Errorf("firecracker: invalid tls_mode %q", v)
 		}
 		cfg.TLSMode = v
+	}
+	if v := backend.DataAPIInspectionTrustSHA256; v != "" {
+		if !dataapiinspectioncommand.ValidTrustBundleFingerprint(v) {
+			return Config{}, errors.New("firecracker: invalid data_api_inspection_trust_sha256")
+		}
+		cfg.DataAPIInspectionTrustSHA256 = v
 	}
 	if v := s[settingDatabase]; v != "" {
 		if !identifierPattern.MatchString(v) || v == "postgres" {

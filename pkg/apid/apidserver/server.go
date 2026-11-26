@@ -2124,6 +2124,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getDatabaseStatus))))
 	// ADR-20261117215858 §2: read-only SQL as the database's agent query login.
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/query", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDataReadSurface...)(s.queryManagedPostgresDatabase))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/data-api-catalog-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDataReadSurface...)(s.previewManagedPostgresDataAPICatalog))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/migration-check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.checkManagedPostgresMigration)))))
@@ -2277,6 +2278,8 @@ func (s *server) handler() http.Handler {
 	// before app lookup so a disabled host reveals no app existence. Public
 	// admission is manual-only; release tasks remain an internal consumer.
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTasks))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-api-inspections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDataAPIInspection)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api-inspections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDataAPIInspection))))
 	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationCutover)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationCutovers))))
 	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers/{plan}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationCutover))))

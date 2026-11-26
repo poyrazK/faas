@@ -21,7 +21,7 @@ func (q *Queries) ApplyManagedPostgresBindingTimeoutPolicy(ctx context.Context, 
 }
 
 const dueManagedPostgresBindingTimeoutPolicies = `-- name: DueManagedPostgresBindingTimeoutPolicies :many
-SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready, b.cutover_id, b.connection_limit, b.database_account_id FROM native_postgres_binding_timeouts p
+SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready, b.cutover_id, b.connection_limit, b.database_account_id, b.data_api_inspection_revision FROM native_postgres_binding_timeouts p
 JOIN managed_postgres_bindings b ON b.id = p.binding_id
 WHERE p.applied_at IS NULL AND p.retry_at <= now()
   AND b.state = 'ready' AND b.rotation_previous_generation IS NULL
@@ -63,6 +63,7 @@ func (q *Queries) DueManagedPostgresBindingTimeoutPolicies(ctx context.Context, 
 			&i.CutoverID,
 			&i.ConnectionLimit,
 			&i.DatabaseAccountID,
+			&i.DataApiInspectionRevision,
 		); err != nil {
 			return nil, err
 		}
