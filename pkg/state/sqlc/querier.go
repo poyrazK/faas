@@ -773,7 +773,7 @@ type Querier interface {
 	CommitPublicationSchema(ctx context.Context, db DBTX, arg CommitPublicationSchemaParams) (CommitPublicationSchemaRow, error)
 	CommitPublicationSource(ctx context.Context, db DBTX, arg CommitPublicationSourceParams) (CommitPublicationSourceRow, error)
 	CommitReceiptIdentity(ctx context.Context, db DBTX, arg CommitReceiptIdentityParams) (CommitReceiptIdentityRow, error)
-	CommitRelayObservationSummary(ctx context.Context, db DBTX, freshAfter pgtype.Timestamptz) (CommitRelayObservationSummaryRow, error)
+	CommitRelayObservationSummary(ctx context.Context, db DBTX, arg CommitRelayObservationSummaryParams) (CommitRelayObservationSummaryRow, error)
 	CommitSourceForManagedAdmission(ctx context.Context, db DBTX, arg CommitSourceForManagedAdmissionParams) (CommitSourceForManagedAdmissionRow, error)
 	CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error)
 	CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitTenantAppScopeParams) (string, error)

@@ -29313,7 +29313,7 @@ func (m *MemStore) ListConsumerKeysForApp(ctx context.Context, accountID, appID 
 	defer m.mu.Unlock()
 	var out []ConsumerKey
 	for _, k := range m.consumerKeys {
-		if k.AccountID == accountID && k.AppID == appID {
+		if k.AccountID == accountID && k.AppID == appID && k.EnvironmentID == "" {
 			out = append(out, k)
 		}
 	}
@@ -29380,7 +29380,7 @@ func (m *MemStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, app
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, k := range m.consumerKeys {
-		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix {
+		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix && k.EnvironmentID == "" {
 			if tenantID := m.platformTenantByConsumer[k.ConsumerID]; tenantID != "" {
 				if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
 					return ConsumerKey{}, ErrNotFound

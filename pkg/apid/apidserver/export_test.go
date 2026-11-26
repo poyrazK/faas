@@ -1963,6 +1963,17 @@ func (s *server) EnableEnvironmentBranchesForTest(t *testing.T) {
 	}
 }
 
+// EnableStageAPIConsumersForTest turns stage_api_consumers_enabled on.
+func (s *server) EnableStageAPIConsumersForTest(t *testing.T) {
+	t.Helper()
+	if s.runtimeConfig == nil {
+		s.runtimeConfig = newRuntimeConfigManager(nil)
+	}
+	if err := s.runtimeConfig.apply(runtimeConfigStageAPIConsumers, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
 

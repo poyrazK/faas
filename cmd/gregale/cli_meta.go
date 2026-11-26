@@ -3837,7 +3837,7 @@ var cliCommands = []cliCommand{
 					{Name: "report", Short: "Compare held-out customers with everyone else on an event", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "event", Short: "the event whose senders count as converted", Value: "EVENT", Req: true}, {Name: "from", Short: "start (RFC 3339; default 30 days ago)", Value: "TIME"}, {Name: "until", Short: "end (RFC 3339; default now)", Value: "TIME"}}},
 				}},
 			}},
-			{Name: "notifications", Short: "Send experiment decisions and stale-flag digests to notification channels", Subcommands: []cliSub{
+			{Name: "notifications", Short: "Send experiment decisions and stale-flag digests to channels", Subcommands: []cliSub{
 				{Name: "get", Short: "Show the environment's flag notification channels", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 				{Name: "set", Short: "Send the environment's flag notifications to these channels", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "channel", Short: "notification channel ID (repeatable; gregale alert channel list)", Value: "id", Req: true}}},
 				{Name: "clear", Short: "Turn the environment's flag notifications off", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
@@ -3879,11 +3879,14 @@ var cliCommands = []cliCommand{
 			"gregale api consumer plan set my-api CONSUMER_ID --plan free",
 		},
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List an app's API consumers", Positionals: []string{"<slug>"}},
+			{Name: "list", Short: "List an app's API consumers", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "environment", Short: "project environment whose consumers to list; omitted is production", Value: "ENV"},
+			}},
 			{Name: "create", Short: "Register an API consumer", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "external-ref", Short: "stable consumer reference", Value: "REF", Req: true},
 				{Name: "name", Short: "consumer display name", Value: "TEXT", Req: true},
 				{Name: "trial-days", Short: "free trial from the next minute: usage is priced at zero for this many days", Value: "N"},
+				{Name: "environment", Short: "project environment whose consumers to create it in; trials are production's; omitted is production", Value: "ENV"},
 			}},
 			{Name: "info", Short: "Show one API consumer", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "revoke", Short: "Revoke an API consumer; its keys stop authenticating", Positionals: []string{"<slug>", "<consumer-id>"}},
@@ -4011,7 +4014,7 @@ var cliCommands = []cliCommand{
 			{Name: "signup-delete", Short: "Turn sign-up off; pending sign-ups can no longer complete", Positionals: []string{"<slug>"}},
 			{Name: "signups", Short: "List the app's latest sign-ups", Positionals: []string{"<slug>"}},
 			{Name: "identities", Short: "List MCP OAuth sign-ins and the consumers they bill to", Positionals: []string{"<slug>"}},
-			{Name: "identity-delete", Short: "Unlink an MCP OAuth sign-in from its consumer so it can link to another key",
+			{Name: "identity-delete", Short: "Unlink an MCP OAuth sign-in so it can link to another key",
 				Positionals: []string{"<slug>", "<identity-id>"}},
 		},
 	},

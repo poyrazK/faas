@@ -3014,6 +3014,11 @@ from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
 from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
 from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
 from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
+from .managed_postgres_custom_role import ManagedPostgresCustomRole
+from .managed_postgres_custom_role_default_for_item import ManagedPostgresCustomRoleDefaultForItem
+from .managed_postgres_custom_role_granted_to_item import ManagedPostgresCustomRoleGrantedToItem
+from .managed_postgres_custom_role_list import ManagedPostgresCustomRoleList
+from .managed_postgres_custom_role_state import ManagedPostgresCustomRoleState
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
@@ -5555,6 +5560,9 @@ from .put_issue_saved_view_request import PutIssueSavedViewRequest
 from .put_issue_team_request import PutIssueTeamRequest
 from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_managed_postgres_custom_role_request import PutManagedPostgresCustomRoleRequest
+from .put_managed_postgres_custom_role_request_default_for_item import PutManagedPostgresCustomRoleRequestDefaultForItem
+from .put_managed_postgres_custom_role_request_granted_to_item import PutManagedPostgresCustomRoleRequestGrantedToItem
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
@@ -10221,6 +10229,11 @@ __all__ = (
     "ManagedPostgresConnectionBudgetModel",
     "ManagedPostgresConnectionBudgetState",
     "ManagedPostgresConnectionBudgetVersion",
+    "ManagedPostgresCustomRole",
+    "ManagedPostgresCustomRoleDefaultForItem",
+    "ManagedPostgresCustomRoleGrantedToItem",
+    "ManagedPostgresCustomRoleList",
+    "ManagedPostgresCustomRoleState",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",
@@ -12574,6 +12587,9 @@ __all__ = (
     "PutIssueTeamRequest",
     "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
+    "PutManagedPostgresCustomRoleRequest",
+    "PutManagedPostgresCustomRoleRequestDefaultForItem",
+    "PutManagedPostgresCustomRoleRequestGrantedToItem",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIFeedbackRequest",

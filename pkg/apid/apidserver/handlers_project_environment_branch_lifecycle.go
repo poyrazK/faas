@@ -322,8 +322,10 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
+	// A pull request's branch stays its pull request's: githubd only uses a
+	// branch with the PR's number, and its data follows the previews setting.
 	spec := environmentBranchSpec{parent: branch.ParentSlug, slug: branch.Slug, egress: branch.EgressMode,
-		privateNetworks: branch.PrivateNetworks, ttl: environmentBranchResetTTL(branch)}
+		privateNetworks: branch.PrivateNetworks, ttl: environmentBranchResetTTL(branch), pullRequest: branch.PullRequestNumber}
 	if problem := s.environmentBranchEgressProblem(spec.egress, spec.privateNetworks); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -352,6 +354,12 @@ func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Re
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not reset the environment branch"))
 		return
+	}
+	// Only now that the old branch is gone: a pull request branch's reset
+	// starts from an empty database again. A purge that fails leaves the
+	// database to the new branch and the sweep, so the reset goes on.
+	if err := s.purgeEnvironmentBranchPreviewDatabases(ctx, branch); err != nil && s.log != nil {
+		s.log.Warn("environment branch reset kept its empty databases", "environment_id", branch.EnvironmentID, "err", err)
 	}
 	response, problem := s.branchProjectEnvironment(ctx, store, acct, project, spec)
 	if problem != nil {
