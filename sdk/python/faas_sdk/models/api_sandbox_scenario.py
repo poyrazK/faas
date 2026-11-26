@@ -22,6 +22,8 @@ T = TypeVar("T", bound="APISandboxScenario")
 
 @_attrs_define
 class APISandboxScenario:
+    """Saved scenario definition and revision metadata."""
+
     name: str
     requests: list[APISandboxExampleRequest]
     seed: APISandboxScenarioInputSeed

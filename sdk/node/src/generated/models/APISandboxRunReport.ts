@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxRunStep } from './APISandboxRunStep.js';
+/**
+ * Run outcome and recorded steps with their request or delivery identifiers.
+ */
 export type APISandboxRunReport = {
   id: string;
   source_deployment_id: string;

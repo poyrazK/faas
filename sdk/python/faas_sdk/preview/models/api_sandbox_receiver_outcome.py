@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxReceiverOutcome")
 
 @_attrs_define
 class APISandboxReceiverOutcome:
+    """Partner-reported result of processing the retried sandbox callback."""
+
     delivery_id: UUID
     applied_count: int
     """Number of committed business effects reported by the partner."""

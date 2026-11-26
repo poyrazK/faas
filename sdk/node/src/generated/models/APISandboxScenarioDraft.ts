@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Safe scenario starting point derived from a retained request.
+ */
 export type APISandboxScenarioDraft = {
   deployment_id: string;
   source_request_id: string;

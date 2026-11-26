@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxComparisonBaseline")
 
 @_attrs_define
 class APISandboxComparisonBaseline:
+    """A retained release eligible to serve as a comparison baseline."""
+
     deployment_id: UUID
     created_at: datetime.datetime
     commit_sha: str | Unset = UNSET

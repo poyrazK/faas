@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Ordered scenario selection and revision precondition for saving a suite.
+ */
 export type APISandboxSuiteSaveRequest = {
   /**
    * Use the current suite revision or the empty string to create the suite.

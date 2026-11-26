@@ -19020,10 +19020,7 @@ paths:
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
     get:
       tags: [deployments]
       operationId: listAPISandboxComparisons
@@ -19035,22 +19032,12 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxComparisonsResponse'}
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: comparison
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxComparisonID'
     get:
       tags: [deployments]
       operationId: getAPISandboxComparison
@@ -19058,15 +19045,11 @@ paths:
       description: Poll until verdict is passed, regression, or inconclusive. Both receipts use the same saved scenario revision.
       responses:
         '200':
-          description: Comparison data.
+          description: The selected comparison and its two run receipts.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxComparisonReport'}
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
     put:
       tags: [deployments]
       operationId: createAPISandboxComparison
@@ -19088,18 +19071,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxComparisonReport'}
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
     get:
       tags: [deployments]
       operationId: listAPISandboxRuns
@@ -19110,37 +19086,15 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxRunsResponse'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not access this release.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or run unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Scenario runs are unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     get:
       tags: [deployments]
       operationId: getAPISandboxRun
@@ -19151,26 +19105,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxRunReport'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not access this release.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or run unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Scenario runs are unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
     put:
       tags: [deployments]
       operationId: createAPISandboxRun
@@ -19194,47 +19132,17 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxRunReport'}
-        '400':
-          description: Invalid run request.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not access this release.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or run unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Scenario runs are unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The scenario changed, the run ID is in use, or the release is ineligible.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/invite:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     post:
       tags: [deployments]
       operationId: issueAPISandboxRunInvite
@@ -19246,31 +19154,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxPartnerInviteResponse'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not access this release.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or run unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Scenario runs are unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The run is not accepting invitations or an invite was already redeemed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '410':
           description: Sandbox has ended.
           content:
@@ -19279,14 +19167,8 @@ paths:
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/report-link:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     post:
       tags: [deployments]
       operationId: shareAPISandboxRun
@@ -19298,42 +19180,16 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxRunShareResponse'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not access this release.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or run unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Scenario runs are unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The scenario run is still in progress.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     post:
       tags: [deployments]
       operationId: createAPISandboxReceiverInvite
@@ -19350,11 +19206,7 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxReceiverInvite'}
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
     get:
       tags: [deployments]
       operationId: getAPISandboxReceiverInvite
@@ -19366,17 +19218,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxReceiverInvite'}
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
   /v1/api-sandbox-runs/{run}/receiver-invite:
     parameters:
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     get:
       tags: [deployments]
       operationId: getAPISandboxReceiverProof
@@ -19390,11 +19235,7 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxReceiverProof'}
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
     post:
       tags: [deployments]
       operationId: verifyAPISandboxReceiver
@@ -19413,17 +19254,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxReceiverCredentials'}
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
   /v1/api-sandbox-runs/{run}/receiver-ready:
     parameters:
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     post:
       tags: [deployments]
       operationId: readyAPISandboxReceiver
@@ -19434,17 +19268,10 @@ paths:
       responses:
         '204':
           description: The owner can start the run.
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
   /v1/api-sandbox-runs/{run}/receiver-outcome:
     parameters:
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     post:
       tags: [deployments]
       operationId: recordAPISandboxReceiverOutcome
@@ -19460,17 +19287,10 @@ paths:
       responses:
         '204':
           description: The outcome was recorded.
-        default:
-          description: The request could not be completed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/APISandboxProblem'}
   /v1/api-sandbox-runs/{run}/report:
     parameters:
-      - name: run
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
     get:
       tags: [deployments]
       operationId: readSharedAPISandboxRun
@@ -19483,11 +19303,7 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxRunReport'}
-        '401':
-          description: The report link is invalid or expired.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '429':
           description: Too many invalid requests.
           content:
@@ -19545,8 +19361,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
-        '503':
-          description: Scenario library unavailable.
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/api-sandbox-scenarios/{scenario}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -19568,8 +19383,7 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
-        '503':
-          description: Scenario library unavailable.
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
     put:
       tags: [apps, deployments]
       operationId: putAPISandboxLibraryScenario
@@ -19592,17 +19406,13 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
-        '503':
-          description: Scenario library unavailable.
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
     delete:
       tags: [apps, deployments]
       operationId: deleteAPISandboxLibraryScenario
       summary: Remove a scenario from the app's library.
       parameters:
-        - name: expected_revision
-          in: query
-          required: true
-          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/SandboxScenarioExpectedRevision'
       responses:
         '204':
           description: Scenario removed. Existing sandbox runs retain their pinned definition.
@@ -19612,15 +19422,11 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
-        '503':
-          description: Scenario library unavailable.
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
     get:
       tags: [deployments]
       operationId: getReleaseAPISandboxScenario
@@ -19631,26 +19437,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxScenarioResponse'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not access this release.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Scenario storage unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
     put:
       tags: [deployments]
       operationId: putReleaseAPISandboxScenario
@@ -19667,43 +19457,16 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxScenarioResponse'}
-        '400':
-          description: Invalid scenario definition.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not access this release.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Scenario storage unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The release is ineligible for API sandboxes or the scenario revision changed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandboxes:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
     get:
       tags: [deployments]
       operationId: listReleaseAPISandboxes
@@ -19715,47 +19478,17 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxListResponse'}
-        '400':
-          description: Invalid request.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller or plan does not allow this action.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or sandbox unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The release or sandbox is ineligible.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Provisioning or storage unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: sandbox
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
     put:
       tags: [deployments]
       operationId: ensureReleaseAPISandbox
@@ -19782,36 +19515,12 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
-        '400':
-          description: Invalid request.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller or plan does not allow this action.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or sandbox unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The release or sandbox is ineligible.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Provisioning or storage unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
     delete:
       tags: [deployments]
       operationId: endReleaseAPISandbox
@@ -19820,47 +19529,17 @@ paths:
       responses:
         '204':
           description: Sandbox ended.
-        '400':
-          description: Invalid request.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller or plan does not allow this action.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or sandbox unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The release or sandbox is ineligible.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Provisioning or storage unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/invites:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: sandbox
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
     post:
       tags: [deployments]
       operationId: createReleaseAPISandboxInvite
@@ -19872,47 +19551,17 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxInviteResponse'}
-        '400':
-          description: Invalid request.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller or plan does not allow this action.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Release or sandbox unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The release or sandbox is ineligible.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Provisioning or storage unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner/invite:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: sandbox
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
     post:
       tags: [deployments]
       operationId: issueReleaseAPISandboxPartnerInvite
@@ -19924,31 +19573,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxPartnerInviteResponse'}
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not manage this sandbox.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Partner sandbox unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Partner access could not be updated.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: Revoke redeemed access before replacing the invite.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '410':
           description: The sandbox lease has ended.
           content:
@@ -19957,14 +19586,8 @@ paths:
   /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - name: deployment
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
-      - name: sandbox
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
     delete:
       tags: [deployments]
       operationId: revokeReleaseAPISandboxPartner
@@ -19972,32 +19595,13 @@ paths:
       responses:
         '204':
           description: Partner access revoked.
-        '401':
-          description: Invalid credentials.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The caller may not manage this sandbox.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '404':
-          description: Partner sandbox unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: Partner access could not be updated.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/api-sandboxes/{sandbox}/redeem:
     parameters:
-      - name: sandbox
-        in: path
-        required: true
-        schema: {type: string, format: uuid}
+      - $ref: '#/components/parameters/ReleaseSandboxID'
     post:
       tags: [deployments]
       operationId: redeemAPISandboxPartnerInvite
@@ -20011,31 +19615,15 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxInviteResponse'}
-        '401':
-          description: The invite is expired, invalid, revoked, or redeemed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '403':
-          description: The current plan does not allow consumer keys.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
-        '409':
-          description: The sandbox has not passed readiness checks or key quota was reached.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '429':
           description: Too many invalid redemption attempts.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
-        '503':
-          description: The invitation could not be redeemed.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/api-sandboxes/{sandbox}/invite:
     get:
       tags: [deployments]
@@ -20045,21 +19633,14 @@ paths:
       security:
         - apiSandboxInvite: []
       parameters:
-        - name: sandbox
-          in: path
-          required: true
-          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/ReleaseSandboxID'
       responses:
         '200':
           description: Sandbox access and release receipt.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/APISandboxResponse'}
-        '401':
-          description: Invitation unavailable.
-          content:
-            application/problem+json:
-              schema: {$ref: '#/components/schemas/Problem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
   /v1/apps/{slug}/invoke/async:
     post:
       tags: [invocations]
@@ -28755,6 +28336,36 @@ components:
         type: string
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
   parameters:
+    ReleaseSandboxID:
+      name: sandbox
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+      description: UUID of the isolated copy of the release.
+    SandboxComparisonID:
+      name: comparison
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+      description: UUID of the retained sandbox comparison.
+    SandboxScenarioExpectedRevision:
+      name: expected_revision
+      in: query
+      required: true
+      schema: {type: string, format: uuid}
+      description: Latest scenario revision required to delete the saved scenario.
+    SandboxScenarioRunID:
+      name: run
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+      description: UUID of the scenario run this request addresses.
+    SandboxSourceDeploymentID:
+      name: deployment
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+      description: UUID of the release selected as the sandbox source.
     AgentActivityBefore:
       name: before
       in: query
@@ -28994,6 +28605,7 @@ components:
         /members/:user_id routes.
   schemas:
     APISandboxJSONAssertion:
+      description: Expected scalar at a JSON Pointer in a sandbox response.
       type: object
       required: [pointer, equals]
       properties:
@@ -29005,11 +28617,13 @@ components:
           description: Expected JSON scalar value, including null.
           type: [string, number, boolean, 'null']
     APISandboxReceiverInviteRequest:
+      description: Saved scenario revision to use for a partner receiver invitation.
       type: object
       required: [scenario_revision]
       properties:
         scenario_revision: {type: string, format: uuid}
     APISandboxReceiverInvite:
+      description: Lifecycle state of a partner invitation to verify a webhook receiver.
       type: object
       required: [run_id, scenario_revision, expires_at, status]
       properties:
@@ -29019,17 +28633,20 @@ components:
         status: {type: string, enum: [pending, verified, ready, expired]}
         token: {type: string, description: Returned once when creating the invite.}
     APISandboxReceiverProof:
+      description: String the invited receiver serves to prove ownership of the callback endpoint.
       type: object
       required: [proof, expires_at]
       properties:
         proof: {type: string}
         expires_at: {type: string, format: date-time}
     APISandboxReceiverURL:
+      description: Callback endpoint submitted by the partner for an ownership check.
       type: object
       required: [url]
       properties:
         url: {type: string, format: uri, maxLength: 2048, description: Exact public HTTPS endpoint on port 443.}
     APISandboxReceiverCredentials:
+      description: Signing secret and outcome credential issued after receiver verification.
       type: object
       required: [signing_secret, outcome_token, expires_at]
       properties:
@@ -29037,12 +28654,14 @@ components:
         outcome_token: {type: string}
         expires_at: {type: string, format: date-time}
     APISandboxReceiverOutcome:
+      description: Partner-reported result of processing the retried sandbox callback.
       type: object
       required: [delivery_id, applied_count]
       properties:
         delivery_id: {type: string, format: uuid}
         applied_count: {type: integer, minimum: 0, maximum: 1000, description: Number of committed business effects reported by the partner.}
     APISandboxSuite:
+      description: Ordered set of saved scenarios used to check releases of an app.
       type: object
       required: [revision, scenario_ids]
       properties:
@@ -29056,6 +28675,7 @@ components:
           uniqueItems: true
           items: {type: string, format: uuid}
     APISandboxSuiteResponse:
+      description: The app's saved suite, or null when the app has no suite.
       type: object
       required: [suite]
       properties:
@@ -29064,6 +28684,7 @@ components:
             - $ref: '#/components/schemas/APISandboxSuite'
             - type: 'null'
     APISandboxSuiteSaveRequest:
+      description: Ordered scenario selection and revision precondition for saving a suite.
       type: object
       required: [expected_revision, scenario_ids]
       properties:
@@ -29079,12 +28700,14 @@ components:
           uniqueItems: true
           items: {type: string, format: uuid}
     APISandboxComparisonRequest:
+      description: Baseline release and scenario revision used for a two-release comparison.
       type: object
       required: [baseline_deployment_id, scenario_revision]
       properties:
         baseline_deployment_id: {type: string, format: uuid}
         scenario_revision: {type: string, format: uuid}
     APISandboxComparisonBaseline:
+      description: A retained release eligible to serve as a comparison baseline.
       type: object
       required: [deployment_id, created_at]
       properties:
@@ -29092,6 +28715,7 @@ components:
         commit_sha: {type: string}
         created_at: {type: string, format: date-time}
     APISandboxComparisonReport:
+      description: Paired scenario results and the verdict for a sandbox comparison.
       type: object
       required: [id, baseline_deployment_id, candidate_deployment_id, scenario_revision, scenario_name, verdict, baseline, candidate, created_at]
       properties:
@@ -29109,6 +28733,7 @@ components:
         candidate: {$ref: '#/components/schemas/APISandboxRunReport'}
         created_at: {type: string, format: date-time}
     APISandboxComparisonsResponse:
+      description: Eligible baselines and recent comparisons for the selected release.
       type: object
       required: [comparisons, baselines]
       properties:
@@ -29119,6 +28744,7 @@ components:
           type: array
           items: {$ref: '#/components/schemas/APISandboxComparisonBaseline'}
     APISandboxRunRequest:
+      description: Saved scenario revision and execution mode for a fresh sandbox run.
       type: object
       required: [scenario_revision]
       properties:
@@ -29126,6 +28752,7 @@ components:
         mode: {type: string, enum: [automated, partner], default: automated}
         partner_webhook: {type: boolean, description: Use the receiver registered for this outbound run.}
     APISandboxRunStep:
+      description: Redacted evidence for one request or webhook step in a scenario.
       type: object
       required: [index, title, method, duration_ms]
       properties:
@@ -29152,6 +28779,7 @@ components:
         failed_assertion: {type: integer, minimum: 1}
         failed_pointer: {type: string}
     APISandboxRunReport:
+      description: Run outcome and recorded steps with their request or delivery identifiers.
       type: object
       required: [id, source_deployment_id, scenario_revision, scenario_name, mode, status, steps, created_at]
       properties:
@@ -29173,6 +28801,7 @@ components:
         started_at: {type: string, format: date-time}
         finished_at: {type: string, format: date-time}
     APISandboxRunsResponse:
+      description: Recent scenario run reports for one release.
       type: object
       required: [runs]
       properties:
@@ -29183,12 +28812,14 @@ components:
           type: array
           items: {$ref: '#/components/schemas/APISandboxReceiverInvite'}
     APISandboxRunShareResponse:
+      description: Read-only credential and expiry for sharing a completed run report.
       type: object
       required: [token, expires_at]
       properties:
         token: {type: string}
         expires_at: {type: string, format: date-time}
     APISandboxExampleRequest:
+      description: Synthetic request and response expectations saved in a scenario.
       type: object
       required: [title, method, path, expected_status]
       properties:
@@ -29203,6 +28834,7 @@ components:
           maxItems: 5
           items: {$ref: '#/components/schemas/APISandboxJSONAssertion'}
     APISandboxScenarioGuide:
+      description: Instructions and example requests that can be shown to a partner.
       type: object
       required: [name, requests]
       properties:
@@ -29239,6 +28871,7 @@ components:
           description: Assertions on the job result carried by the callback.
           items: {$ref: '#/components/schemas/APISandboxJSONAssertion'}
     APISandboxScenarioInput:
+      description: Editable scenario content, including fixtures and request expectations.
       allOf:
         - $ref: '#/components/schemas/APISandboxScenarioGuide'
         - type: object
@@ -29253,6 +28886,7 @@ components:
             outbound_webhook:
               $ref: '#/components/schemas/APISandboxOutboundWebhook'
     APISandboxScenarioSaveRequest:
+      description: Definition and optional revision precondition for saving a release scenario.
       allOf:
         - $ref: '#/components/schemas/APISandboxScenarioInput'
         - type: object
@@ -29264,6 +28898,7 @@ components:
               type: string
               description: Required with source_request_id. Use the draft revision, or the empty string if the release had no scenario. A changed revision returns 409.
     APISandboxLibraryScenarioSummary:
+      description: Name and current revision of a scenario in the app library.
       type: object
       required: [id, name, revision]
       properties:
@@ -29271,6 +28906,7 @@ components:
         name: {type: string, maxLength: 100}
         revision: {type: string, format: uuid}
     APISandboxLibraryScenario:
+      description: Saved library scenario with its private provenance, when available.
       type: object
       required: [id, scenario]
       properties:
@@ -29281,6 +28917,7 @@ components:
           format: uuid
           description: Private Debugger provenance of this scenario.
     APISandboxScenarioLibraryResponse:
+      description: Reusable scenario summaries for a single app.
       type: object
       required: [scenarios]
       properties:
@@ -29289,6 +28926,7 @@ components:
           maxItems: 50
           items: {$ref: '#/components/schemas/APISandboxLibraryScenarioSummary'}
     APISandboxLibraryScenarioSaveRequest:
+      description: Reusable scenario definition and required revision precondition.
       allOf:
         - $ref: '#/components/schemas/APISandboxScenarioInput'
         - type: object
@@ -29301,6 +28939,7 @@ components:
               type: string
               description: Private retained request identifier from a Debugger draft for this app. Accepted on creation.
     APISandboxScenario:
+      description: Saved scenario definition and revision metadata.
       allOf:
         - $ref: '#/components/schemas/APISandboxScenarioInput'
         - type: object
@@ -29308,6 +28947,7 @@ components:
           properties:
             revision: {type: string, format: uuid}
     APISandboxScenarioReceipt:
+      description: Shareable scenario guide and revision without its database seed.
       allOf:
         - $ref: '#/components/schemas/APISandboxScenarioGuide'
         - type: object
@@ -29315,6 +28955,7 @@ components:
           properties:
             revision: {type: string, format: uuid}
     APISandboxScenarioResponse:
+      description: A release's current scenario and optional source request identifier.
       type: object
       required: [scenario]
       properties:
@@ -29337,12 +28978,14 @@ components:
         revoked_at: {type: string, format: date-time}
         first_success_at: {type: string, format: date-time}
     APISandboxPartnerInviteResponse:
+      description: One-time credential used to exchange an invitation for a partner key.
       type: object
       required: [partner, token]
       properties:
         partner: {$ref: '#/components/schemas/APISandboxPartnerResponse'}
         token: {type: string, description: One-time invite token exchanged through the sandbox redemption endpoint.}
     APISandboxCreateRequest:
+      description: Configuration for a fresh copy of an API release.
       type: object
       properties:
         smoke_path:
@@ -29358,6 +29001,7 @@ components:
           maxLength: 100
           description: Optional recipient label. Requires scenario_revision and creates a private copy. Raw partner progress is available to the owner.
     APISandboxVerification:
+      description: Readiness evidence from probing the sandbox API and its OpenAPI document.
       type: object
       required: [deployment_id, checked_at, openapi_status]
       properties:
@@ -29366,6 +29010,7 @@ components:
         openapi_status: {type: integer, minimum: 200, maximum: 299}
         smoke_status: {type: integer, minimum: 200, maximum: 299}
     APISandboxFailure:
+      description: Setup failure code and guidance for recovering with a new sandbox.
       type: object
       required: [code, detail]
       properties:
@@ -29373,6 +29018,7 @@ components:
         detail: {type: string}
         http_status: {type: integer, minimum: 100, maximum: 599}
     APISandboxResponse:
+      description: Status and access details for a retained release's isolated API copy.
       type: object
       required: [id, source_deployment_id, status, url, openapi_url, expires_at]
       properties:
@@ -29392,6 +29038,7 @@ components:
         scenario: {$ref: '#/components/schemas/APISandboxScenarioReceipt'}
         partner: {$ref: '#/components/schemas/APISandboxPartnerResponse'}
     APISandboxListResponse:
+      description: API copies provisioned from the selected release.
       type: object
       required: [sandboxes]
       properties:
@@ -29399,6 +29046,7 @@ components:
           type: array
           items: {$ref: '#/components/schemas/APISandboxResponse'}
     APISandboxInviteResponse:
+      description: Sandbox-specific bearer key and guide for using the isolated API.
       type: object
       required: [sandbox, token]
       properties:
@@ -65291,6 +64939,11 @@ components:
         grant_token: {type: string, writeOnly: true}
         path: {type: string, minLength: 1, maxLength: 256}
   responses:
+    APISandboxProblem:
+      description: The sandbox operation returned an HTTP problem.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
     EdgeRulesVersionMismatch:
       description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
       content:

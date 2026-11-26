@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { APISandboxRunReport } from './APISandboxRunReport.js';
 import type { APISandboxRunStep } from './APISandboxRunStep.js';
+/**
+ * Paired scenario results and the verdict for a sandbox comparison.
+ */
 export type APISandboxComparisonReport = {
   id: string;
   baseline_deployment_id: string;

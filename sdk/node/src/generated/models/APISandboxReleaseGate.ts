@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Current suite requirement and the run evaluated at release admission.
+ */
 export type APISandboxReleaseGate = {
   /**
    * Current requirement status or the recorded decision after command admission.

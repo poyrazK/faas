@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Redacted evidence for one request or webhook step in a scenario.
+ */
 export type APISandboxRunStep = {
   index: number;
   title: string;

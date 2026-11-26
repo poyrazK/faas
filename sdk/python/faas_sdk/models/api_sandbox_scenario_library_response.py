@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxScenarioLibraryResponse")
 
 @_attrs_define
 class APISandboxScenarioLibraryResponse:
+    """Reusable scenario summaries for a single app."""
+
     scenarios: list[APISandboxLibraryScenarioSummary]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

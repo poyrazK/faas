@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxReleaseGate")
 
 @_attrs_define
 class APISandboxReleaseGate:
+    """Current suite requirement and the run evaluated at release admission."""
+
     status: APISandboxReleaseGateStatus
     """Current requirement status or the recorded decision after command admission."""
     suite_run_id: UUID | Unset = UNSET

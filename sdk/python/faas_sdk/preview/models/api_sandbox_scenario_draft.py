@@ -18,6 +18,8 @@ T = TypeVar("T", bound="APISandboxScenarioDraft")
 
 @_attrs_define
 class APISandboxScenarioDraft:
+    """Safe scenario starting point derived from a retained request."""
+
     deployment_id: UUID
     source_request_id: UUID
     expected_revision: str

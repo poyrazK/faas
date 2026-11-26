@@ -31,6 +31,8 @@ T = TypeVar("T", bound="APISandboxSuiteRunReport")
 
 @_attrs_define
 class APISandboxSuiteRunReport:
+    """Aggregate verdict and per-scenario evidence for a regression suite run."""
+
     id: UUID
     suite_revision: UUID
     baseline_deployment_id: UUID

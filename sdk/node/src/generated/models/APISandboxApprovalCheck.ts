@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxComparisonReport } from './APISandboxComparisonReport.js';
+/**
+ * Comparison evidence attached to a held release, with its current verdict.
+ */
 export type APISandboxApprovalCheck = {
   comparison: APISandboxComparisonReport;
   /**

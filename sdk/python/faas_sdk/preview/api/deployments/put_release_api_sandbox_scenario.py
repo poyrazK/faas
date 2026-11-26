@@ -106,7 +106,8 @@ def sync_detailed(
     Args:
         slug (str):
         deployment (UUID):
-        body (APISandboxScenarioSaveRequest):
+        body (APISandboxScenarioSaveRequest): Definition and optional revision precondition for
+            saving a release scenario.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,7 +144,8 @@ def sync(
     Args:
         slug (str):
         deployment (UUID):
-        body (APISandboxScenarioSaveRequest):
+        body (APISandboxScenarioSaveRequest): Definition and optional revision precondition for
+            saving a release scenario.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,7 +177,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         deployment (UUID):
-        body (APISandboxScenarioSaveRequest):
+        body (APISandboxScenarioSaveRequest): Definition and optional revision precondition for
+            saving a release scenario.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,7 +213,8 @@ async def asyncio(
     Args:
         slug (str):
         deployment (UUID):
-        body (APISandboxScenarioSaveRequest):
+        body (APISandboxScenarioSaveRequest): Definition and optional revision precondition for
+            saving a release scenario.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

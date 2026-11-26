@@ -3201,7 +3201,10 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -3238,7 +3241,10 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -3283,7 +3289,10 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -3305,6 +3314,9 @@ export class AppsService {
      * Stable, app-scoped scenario UUID.
      */
     scenario: string,
+    /**
+     * Latest scenario revision required to delete the saved scenario.
+     */
     expectedRevision: string,
   }): CancelablePromise<void> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -3328,7 +3340,10 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }

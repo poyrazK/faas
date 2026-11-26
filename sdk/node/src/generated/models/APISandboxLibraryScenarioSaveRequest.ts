@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxScenarioInput } from './APISandboxScenarioInput.js';
+/**
+ * Reusable scenario definition and required revision precondition.
+ */
 export type APISandboxLibraryScenarioSaveRequest = (APISandboxScenarioInput & {
   /**
    * Current revision for an edit, or the empty string for a new scenario.

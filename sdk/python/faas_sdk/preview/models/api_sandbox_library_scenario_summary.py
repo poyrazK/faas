@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxLibraryScenarioSummary")
 
 @_attrs_define
 class APISandboxLibraryScenarioSummary:
+    """Name and current revision of a scenario in the app library."""
+
     id: UUID
     name: str
     revision: UUID

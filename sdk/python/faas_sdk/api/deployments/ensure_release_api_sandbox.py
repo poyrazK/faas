@@ -122,7 +122,7 @@ def sync_detailed(
         slug (str):
         deployment (UUID):
         sandbox (UUID):
-        body (APISandboxCreateRequest | Unset):
+        body (APISandboxCreateRequest | Unset): Configuration for a fresh copy of an API release.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,7 +163,7 @@ def sync(
         slug (str):
         deployment (UUID):
         sandbox (UUID):
-        body (APISandboxCreateRequest | Unset):
+        body (APISandboxCreateRequest | Unset): Configuration for a fresh copy of an API release.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,7 +199,7 @@ async def asyncio_detailed(
         slug (str):
         deployment (UUID):
         sandbox (UUID):
-        body (APISandboxCreateRequest | Unset):
+        body (APISandboxCreateRequest | Unset): Configuration for a fresh copy of an API release.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -238,7 +238,7 @@ async def asyncio(
         slug (str):
         deployment (UUID):
         sandbox (UUID):
-        body (APISandboxCreateRequest | Unset):
+        body (APISandboxCreateRequest | Unset): Configuration for a fresh copy of an API release.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -107,7 +107,8 @@ def sync_detailed(
     Args:
         id (UUID):
         run (UUID):
-        body (APISandboxSuiteRunRequest):
+        body (APISandboxSuiteRunRequest): Saved suite revision and live baseline pinned for this
+            run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,7 +146,8 @@ def sync(
     Args:
         id (UUID):
         run (UUID):
-        body (APISandboxSuiteRunRequest):
+        body (APISandboxSuiteRunRequest): Saved suite revision and live baseline pinned for this
+            run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,7 +180,8 @@ async def asyncio_detailed(
     Args:
         id (UUID):
         run (UUID):
-        body (APISandboxSuiteRunRequest):
+        body (APISandboxSuiteRunRequest): Saved suite revision and live baseline pinned for this
+            run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,7 +217,8 @@ async def asyncio(
     Args:
         id (UUID):
         run (UUID):
-        body (APISandboxSuiteRunRequest):
+        body (APISandboxSuiteRunRequest): Saved suite revision and live baseline pinned for this
+            run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -19,6 +19,8 @@ T = TypeVar("T", bound="APISandboxReceiverInvite")
 
 @_attrs_define
 class APISandboxReceiverInvite:
+    """Lifecycle state of a partner invitation to verify a webhook receiver."""
+
     run_id: UUID
     scenario_revision: UUID
     expires_at: datetime.datetime

@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxReceiverProof")
 
 @_attrs_define
 class APISandboxReceiverProof:
+    """String the invited receiver serves to prove ownership of the callback endpoint."""
+
     proof: str
     expires_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxSuiteResponse")
 
 @_attrs_define
 class APISandboxSuiteResponse:
+    """The app's saved suite, or null when the app has no suite."""
+
     suite: APISandboxSuite | None
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

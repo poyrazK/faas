@@ -18,6 +18,8 @@ T = TypeVar("T", bound="APISandboxScenarioResponse")
 
 @_attrs_define
 class APISandboxScenarioResponse:
+    """A release's current scenario and optional source request identifier."""
+
     scenario: APISandboxScenario | None
     source_request_id: UUID | Unset = UNSET
     """Private Debugger provenance, present when the saved scenario originated from a retained request."""

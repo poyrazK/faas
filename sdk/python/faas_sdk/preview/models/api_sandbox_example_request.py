@@ -21,6 +21,8 @@ T = TypeVar("T", bound="APISandboxExampleRequest")
 
 @_attrs_define
 class APISandboxExampleRequest:
+    """Synthetic request and response expectations saved in a scenario."""
+
     title: str
     method: APISandboxExampleRequestMethod
     path: str

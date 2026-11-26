@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxRunRequest")
 
 @_attrs_define
 class APISandboxRunRequest:
+    """Saved scenario revision and execution mode for a fresh sandbox run."""
+
     scenario_revision: UUID
     mode: APISandboxRunRequestMode | Unset = "automated"
     partner_webhook: bool | Unset = UNSET

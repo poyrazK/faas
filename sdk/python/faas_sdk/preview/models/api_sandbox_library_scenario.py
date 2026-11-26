@@ -18,8 +18,11 @@ T = TypeVar("T", bound="APISandboxLibraryScenario")
 
 @_attrs_define
 class APISandboxLibraryScenario:
+    """Saved library scenario with its private provenance, when available."""
+
     id: UUID
     scenario: APISandboxScenario
+    """Saved scenario definition and revision metadata."""
     source_request_id: UUID | Unset = UNSET
     """Private Debugger provenance of this scenario."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

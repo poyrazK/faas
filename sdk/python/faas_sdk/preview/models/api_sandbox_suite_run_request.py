@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxSuiteRunRequest")
 
 @_attrs_define
 class APISandboxSuiteRunRequest:
+    """Saved suite revision and live baseline pinned for this run."""
+
     suite_revision: UUID
     baseline_deployment_id: UUID
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

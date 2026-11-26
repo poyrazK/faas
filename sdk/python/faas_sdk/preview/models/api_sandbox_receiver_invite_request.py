@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxReceiverInviteRequest")
 
 @_attrs_define
 class APISandboxReceiverInviteRequest:
+    """Saved scenario revision to use for a partner receiver invitation."""
+
     scenario_revision: UUID
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

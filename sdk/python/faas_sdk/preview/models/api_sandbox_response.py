@@ -23,6 +23,8 @@ T = TypeVar("T", bound="APISandboxResponse")
 
 @_attrs_define
 class APISandboxResponse:
+    """Status and access details for a retained release's isolated API copy."""
+
     id: UUID
     source_deployment_id: UUID
     status: APISandboxResponseStatus
@@ -34,8 +36,11 @@ class APISandboxResponse:
     deployment_id: UUID | Unset = UNSET
     smoke_path: str | Unset = UNSET
     failure: APISandboxFailure | Unset = UNSET
+    """Setup failure code and guidance for recovering with a new sandbox."""
     verification: APISandboxVerification | Unset = UNSET
+    """Readiness evidence from probing the sandbox API and its OpenAPI document."""
     scenario: APISandboxScenarioReceipt | Unset = UNSET
+    """Shareable scenario guide and revision without its database seed."""
     partner: APISandboxPartnerResponse | Unset = UNSET
     """Owner-only partner progress."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxReceiverCredentials")
 
 @_attrs_define
 class APISandboxReceiverCredentials:
+    """Signing secret and outcome credential issued after receiver verification."""
+
     signing_secret: str
     outcome_token: str
     expires_at: datetime.datetime

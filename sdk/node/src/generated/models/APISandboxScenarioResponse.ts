@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxScenario } from './APISandboxScenario.js';
+/**
+ * A release's current scenario and optional source request identifier.
+ */
 export type APISandboxScenarioResponse = {
   scenario: (APISandboxScenario | null);
   /**

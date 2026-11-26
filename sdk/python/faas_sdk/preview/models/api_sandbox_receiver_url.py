@@ -11,6 +11,8 @@ T = TypeVar("T", bound="APISandboxReceiverURL")
 
 @_attrs_define
 class APISandboxReceiverURL:
+    """Callback endpoint submitted by the partner for an ownership check."""
+
     url: str
     """Exact public HTTPS endpoint on port 443."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

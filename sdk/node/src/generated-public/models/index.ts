@@ -1297,6 +1297,7 @@ export type { ReleaseFreezeWeekly } from './ReleaseFreezeWeekly.js';
 export type { ReleaseGateResult } from './ReleaseGateResult.js';
 export type { ReleaseOutcomeCheck } from './ReleaseOutcomeCheck.js';
 export type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
+export type { ReleaseSandboxID } from './ReleaseSandboxID.js';
 export type { ReleaseTimeline } from './ReleaseTimeline.js';
 export type { ReleaseTimelineEvent } from './ReleaseTimelineEvent.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
@@ -1372,6 +1373,10 @@ export type { RuntimePolicySchedulerStatus } from './RuntimePolicySchedulerStatu
 export type { RuntimePolicyStatusResponse } from './RuntimePolicyStatusResponse.js';
 export type { RuntimeReleaseResponse } from './RuntimeReleaseResponse.js';
 export type { RuntimeUpgradePreviewResponse } from './RuntimeUpgradePreviewResponse.js';
+export type { SandboxComparisonID } from './SandboxComparisonID.js';
+export type { SandboxScenarioExpectedRevision } from './SandboxScenarioExpectedRevision.js';
+export type { SandboxScenarioRunID } from './SandboxScenarioRunID.js';
+export type { SandboxSourceDeploymentID } from './SandboxSourceDeploymentID.js';
 export type { SaveStoredWorkflowDraftRequest } from './SaveStoredWorkflowDraftRequest.js';
 export type { SaveStoredWorkflowLiveSuiteRequest } from './SaveStoredWorkflowLiveSuiteRequest.js';
 export type { SaveStoredWorkflowTestSuiteRequest } from './SaveStoredWorkflowTestSuiteRequest.js';

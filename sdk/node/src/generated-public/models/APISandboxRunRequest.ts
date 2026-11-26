@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Saved scenario revision and execution mode for a fresh sandbox run.
+ */
 export type APISandboxRunRequest = {
   scenario_revision: string;
   mode?: 'automated' | 'partner';

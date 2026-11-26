@@ -11,6 +11,8 @@ T = TypeVar("T", bound="APISandboxJSONAssertion")
 
 @_attrs_define
 class APISandboxJSONAssertion:
+    """Expected scalar at a JSON Pointer in a sandbox response."""
+
     pointer: str
     """JSON Pointer into the response. An empty string selects the response root."""
     equals: bool | float | None | str

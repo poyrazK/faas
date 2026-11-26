@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxVerification")
 
 @_attrs_define
 class APISandboxVerification:
+    """Readiness evidence from probing the sandbox API and its OpenAPI document."""
+
     deployment_id: UUID
     checked_at: datetime.datetime
     openapi_status: int

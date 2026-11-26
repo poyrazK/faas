@@ -16,6 +16,8 @@ T = TypeVar("T", bound="APISandboxComparisonsResponse")
 
 @_attrs_define
 class APISandboxComparisonsResponse:
+    """Eligible baselines and recent comparisons for the selected release."""
+
     comparisons: list[APISandboxComparisonReport]
     baselines: list[APISandboxComparisonBaseline]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -18,6 +18,8 @@ T = TypeVar("T", bound="APISandboxScenarioGuide")
 
 @_attrs_define
 class APISandboxScenarioGuide:
+    """Instructions and example requests that can be shown to a partner."""
+
     name: str
     requests: list[APISandboxExampleRequest]
     seeded_ids: APISandboxScenarioGuideSeededIds | Unset = UNSET

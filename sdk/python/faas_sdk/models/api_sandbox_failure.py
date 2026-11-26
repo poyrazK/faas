@@ -13,6 +13,8 @@ T = TypeVar("T", bound="APISandboxFailure")
 
 @_attrs_define
 class APISandboxFailure:
+    """Setup failure code and guidance for recovering with a new sandbox."""
+
     code: str
     detail: str
     http_status: int | Unset = UNSET

@@ -6,6 +6,9 @@ import type { APISandboxFailure } from './APISandboxFailure.js';
 import type { APISandboxPartnerResponse } from './APISandboxPartnerResponse.js';
 import type { APISandboxScenarioReceipt } from './APISandboxScenarioReceipt.js';
 import type { APISandboxVerification } from './APISandboxVerification.js';
+/**
+ * Status and access details for a retained release's isolated API copy.
+ */
 export type APISandboxResponse = {
   /**
    * The leading requests executed by the partner before the platform checks final state.

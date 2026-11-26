@@ -116,7 +116,8 @@ def sync_detailed(
         slug (str):
         deployment (UUID):
         run (UUID):
-        body (APISandboxRunRequest):
+        body (APISandboxRunRequest): Saved scenario revision and execution mode for a fresh
+            sandbox run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,7 +158,8 @@ def sync(
         slug (str):
         deployment (UUID):
         run (UUID):
-        body (APISandboxRunRequest):
+        body (APISandboxRunRequest): Saved scenario revision and execution mode for a fresh
+            sandbox run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,7 +195,8 @@ async def asyncio_detailed(
         slug (str):
         deployment (UUID):
         run (UUID):
-        body (APISandboxRunRequest):
+        body (APISandboxRunRequest): Saved scenario revision and execution mode for a fresh
+            sandbox run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -232,7 +235,8 @@ async def asyncio(
         slug (str):
         deployment (UUID):
         run (UUID):
-        body (APISandboxRunRequest):
+        body (APISandboxRunRequest): Saved scenario revision and execution mode for a fresh
+            sandbox run.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

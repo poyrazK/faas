@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxScenarioInput } from './APISandboxScenarioInput.js';
+/**
+ * Definition and optional revision precondition for saving a release scenario.
+ */
 export type APISandboxScenarioSaveRequest = (APISandboxScenarioInput & {
   /**
    * Private retained request provenance from a draft for this release.

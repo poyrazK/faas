@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Lifecycle state of a partner invitation to verify a webhook receiver.
+ */
 export type APISandboxReceiverInvite = {
   run_id: string;
   scenario_revision: string;

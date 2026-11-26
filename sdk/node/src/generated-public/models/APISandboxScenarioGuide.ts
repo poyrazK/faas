@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxExampleRequest } from './APISandboxExampleRequest.js';
+/**
+ * Instructions and example requests that can be shown to a partner.
+ */
 export type APISandboxScenarioGuide = {
   name: string;
   /**

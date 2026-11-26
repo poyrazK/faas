@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxComparisonRequest")
 
 @_attrs_define
 class APISandboxComparisonRequest:
+    """Baseline release and scenario revision used for a two-release comparison."""
+
     baseline_deployment_id: UUID
     scenario_revision: UUID
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -25,7 +25,10 @@ T = TypeVar("T", bound="APISandboxApprovalCheck")
 
 @_attrs_define
 class APISandboxApprovalCheck:
+    """Comparison evidence attached to a held release, with its current verdict."""
+
     comparison: APISandboxComparisonReport
+    """Paired scenario results and the verdict for a sandbox comparison."""
     verdict: APISandboxApprovalCheckVerdict
     """Current verdict for release review."""
     stale_reason: APISandboxApprovalCheckStaleReason | Unset = UNSET

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxScenarioInput } from './APISandboxScenarioInput.js';
+/**
+ * Saved scenario definition and revision metadata.
+ */
 export type APISandboxScenario = (APISandboxScenarioInput & {
   revision: string;
 });

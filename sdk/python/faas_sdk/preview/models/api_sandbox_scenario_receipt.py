@@ -19,6 +19,8 @@ T = TypeVar("T", bound="APISandboxScenarioReceipt")
 
 @_attrs_define
 class APISandboxScenarioReceipt:
+    """Shareable scenario guide and revision without its database seed."""
+
     name: str
     requests: list[APISandboxExampleRequest]
     revision: UUID

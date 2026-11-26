@@ -435,7 +435,9 @@ func mapPostgresError(err error) error {
 	case pgerrcode.ForeignKeyViolation:
 		return ErrNotFound
 	case pgerrcode.CheckViolation:
-		if postgresError.ConstraintName == "managed_postgres_resize_conflict" || postgresError.ConstraintName == "managed_postgres_cutover_conflict" || postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
+		switch postgresError.ConstraintName {
+		case "managed_postgres_resize_conflict", "managed_postgres_cutover_conflict", "managed_postgres_database_has_bindings",
+			"managed_postgres_database_has_restore_descendants", "managed_postgres_sandbox_binding":
 			return ErrConflict
 		}
 		return fmt.Errorf("%w: %s", ErrInvalid, postgresError.ConstraintName)

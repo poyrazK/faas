@@ -12,6 +12,8 @@ T = TypeVar("T", bound="APISandboxRunShareResponse")
 
 @_attrs_define
 class APISandboxRunShareResponse:
+    """Read-only credential and expiry for sharing a completed run report."""
+
     token: str
     expires_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

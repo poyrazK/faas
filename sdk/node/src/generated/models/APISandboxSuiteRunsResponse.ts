@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { APISandboxReleaseGate } from './APISandboxReleaseGate.js';
 import type { APISandboxSuiteRunSummary } from './APISandboxSuiteRunSummary.js';
+/**
+ * Recent suite runs, automatic launch status, and release admission status.
+ */
 export type APISandboxSuiteRunsResponse = {
   /**
    * Latest automatic launch status for this candidate when the app has requested an automatic run.

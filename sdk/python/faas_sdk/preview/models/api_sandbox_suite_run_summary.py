@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxSuiteRunSummary")
 
 @_attrs_define
 class APISandboxSuiteRunSummary:
+    """Progress and timestamps for a regression suite run."""
+
     id: UUID
     suite_revision: UUID
     baseline_deployment_id: UUID

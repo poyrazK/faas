@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxPartnerResponse } from './APISandboxPartnerResponse.js';
+/**
+ * One-time credential used to exchange an invitation for a partner key.
+ */
 export type APISandboxPartnerInviteResponse = {
   partner: APISandboxPartnerResponse;
   /**

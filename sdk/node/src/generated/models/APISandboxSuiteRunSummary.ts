@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Progress and timestamps for a regression suite run.
+ */
 export type APISandboxSuiteRunSummary = {
   id: string;
   suite_revision: string;

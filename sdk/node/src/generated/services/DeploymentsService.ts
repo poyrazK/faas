@@ -2698,7 +2698,7 @@ export class DeploymentsService {
     id,
   }: {
     /**
-     * Held candidate deployment UUID.
+     * UUID of the candidate deployment held before its release command.
      */
     id: string,
   }): CancelablePromise<APISandboxSuiteRunsResponse> {
@@ -2724,7 +2724,7 @@ export class DeploymentsService {
     run,
   }: {
     /**
-     * Held candidate deployment UUID.
+     * UUID of the candidate deployment held before its release command.
      */
     id: string,
     /**
@@ -2757,7 +2757,7 @@ export class DeploymentsService {
     requestBody,
   }: {
     /**
-     * Held candidate deployment UUID.
+     * UUID of the candidate deployment held before its release command.
      */
     id: string,
     /**
@@ -2788,12 +2788,15 @@ export class DeploymentsService {
    * List sandbox checks for a release approval.
    * Lists prior checks and the current availability, serving baseline, and saved scenario. Inspect each check verdict for stale evidence.
    * @returns APISandboxApprovalChecksResponse Sandbox approval evidence.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static listSandboxApprovalChecks({
     id,
   }: {
+    /**
+     * UUID of the candidate deployment held before its release command.
+     */
     id: string,
   }): CancelablePromise<APISandboxApprovalChecksResponse | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -2807,15 +2810,21 @@ export class DeploymentsService {
   /**
    * Read a sandbox approval check.
    * Use the top-level verdict. It becomes stale if the candidate artifact, production baseline, or baseline scenario changes. The nested comparison preserves historical run receipts.
-   * @returns APISandboxApprovalCheck Sandbox approval evidence.
-   * @returns Problem The request could not be completed.
+   * @returns APISandboxApprovalCheck The selected comparison and its current approval verdict.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static getSandboxApprovalCheck({
     id,
     check,
   }: {
+    /**
+     * UUID of the candidate deployment held before its release command.
+     */
     id: string,
+    /**
+     * Client-generated UUID of the comparison attached to the approval.
+     */
     check: string,
   }): CancelablePromise<APISandboxApprovalCheck | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -2831,7 +2840,7 @@ export class DeploymentsService {
    * Compare the held build with the current serving release in two sandboxes.
    * Uses the live baseline and scenario revision returned by the list endpoint. The production release must still be waiting before its release command. Reuse the check UUID and original inputs to retry.
    * @returns APISandboxApprovalCheck The same check already exists.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static createSandboxApprovalCheck({
@@ -2839,7 +2848,13 @@ export class DeploymentsService {
     check,
     requestBody,
   }: {
+    /**
+     * UUID of the candidate deployment held before its release command.
+     */
     id: string,
+    /**
+     * Client-generated UUID of the comparison attached to the approval.
+     */
     check: string,
     requestBody: APISandboxComparisonRequest,
   }): CancelablePromise<APISandboxApprovalCheck | Problem> {
@@ -4052,7 +4067,7 @@ export class DeploymentsService {
    * List recent sandbox release comparisons and previous eligible baselines.
    * The candidate comes from the deployment path. Baselines are retained releases of the same application, most recent first.
    * @returns APISandboxComparisonsResponse Comparison data.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static listApiSandboxComparisons({
@@ -4063,6 +4078,9 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
   }): CancelablePromise<APISandboxComparisonsResponse | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4077,8 +4095,8 @@ export class DeploymentsService {
   /**
    * Read the current comparison verdict and its two run receipts.
    * Poll until verdict is passed, regression, or inconclusive. Both receipts use the same saved scenario revision.
-   * @returns APISandboxComparisonReport Comparison data.
-   * @returns Problem The request could not be completed.
+   * @returns APISandboxComparisonReport The selected comparison and its two run receipts.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static getApiSandboxComparison({
@@ -4090,7 +4108,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the retained sandbox comparison.
+     */
     comparison: string,
   }): CancelablePromise<APISandboxComparisonReport | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4107,7 +4131,7 @@ export class DeploymentsService {
    * Run the same saved sandbox scenario on two retained releases.
    * The candidate comes from the deployment path. Choose a different retained baseline from the same application and use a current app library or candidate scenario revision. Reuse the comparison UUID with the same inputs to retry.
    * @returns APISandboxComparisonReport An identical comparison request already exists.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static createApiSandboxComparison({
@@ -4120,7 +4144,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the retained sandbox comparison.
+     */
     comparison: string,
     requestBody: APISandboxComparisonRequest,
   }): CancelablePromise<APISandboxComparisonReport | Problem> {
@@ -4149,6 +4179,9 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
   }): CancelablePromise<APISandboxRunsResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4159,10 +4192,13 @@ export class DeploymentsService {
         'deployment': deployment,
       },
       errors: {
-        401: `Invalid credentials.`,
-        403: `The caller may not access this release.`,
-        404: `Release or run unavailable.`,
-        503: `Scenario runs are unavailable.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4180,7 +4216,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
   }): CancelablePromise<APISandboxRunReport> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4192,10 +4234,13 @@ export class DeploymentsService {
         'run': run,
       },
       errors: {
-        401: `Invalid credentials.`,
-        403: `The caller may not access this release.`,
-        404: `Release or run unavailable.`,
-        503: `Scenario runs are unavailable.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4216,7 +4261,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
     requestBody: APISandboxRunRequest,
   }): CancelablePromise<APISandboxRunReport> {
@@ -4231,12 +4282,15 @@ export class DeploymentsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid run request.`,
-        401: `Invalid credentials.`,
-        403: `The caller may not access this release.`,
-        404: `Release or run unavailable.`,
-        409: `The scenario changed, the run ID is in use, or the release is ineligible.`,
-        503: `Scenario runs are unavailable.`,
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4255,7 +4309,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
   }): CancelablePromise<APISandboxPartnerInviteResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4267,12 +4327,15 @@ export class DeploymentsService {
         'run': run,
       },
       errors: {
-        401: `Invalid credentials.`,
-        403: `The caller may not access this release.`,
-        404: `Release or run unavailable.`,
-        409: `The run is not accepting invitations or an invite was already redeemed.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         410: `Sandbox has ended.`,
-        503: `Scenario runs are unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4291,7 +4354,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
   }): CancelablePromise<APISandboxRunShareResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4303,18 +4372,21 @@ export class DeploymentsService {
         'run': run,
       },
       errors: {
-        401: `Invalid credentials.`,
-        403: `The caller may not access this release.`,
-        404: `Release or run unavailable.`,
-        409: `The scenario run is still in progress.`,
-        503: `Scenario runs are unavailable.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
   /**
    * Invite a partner to verify a webhook receiver.
    * Reserves a one-time invite for a new run ID and an outbound scenario revision. No sandbox is provisioned until the owner starts the run.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @returns APISandboxReceiverInvite Setup status and one-time token.
    * @throws ApiError
    */
@@ -4328,7 +4400,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
     requestBody: APISandboxReceiverInviteRequest,
   }): CancelablePromise<Problem | APISandboxReceiverInvite> {
@@ -4348,7 +4426,7 @@ export class DeploymentsService {
    * Read the receiver setup status.
    * Read readiness for this release without returning any credentials.
    * @returns APISandboxReceiverInvite Receiver setup status.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static getApiSandboxReceiverInvite({
@@ -4360,7 +4438,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
   }): CancelablePromise<APISandboxReceiverInvite | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4377,12 +4461,15 @@ export class DeploymentsService {
    * Read the endpoint ownership proof.
    * Use the one-time receiver invite as the bearer token. Configure the exact HTTPS callback URL to return the proof as the GET response body.
    * @returns APISandboxReceiverProof Ownership proof.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static getApiSandboxReceiverProof({
     run,
   }: {
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
   }): CancelablePromise<APISandboxReceiverProof | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4397,13 +4484,16 @@ export class DeploymentsService {
    * Verify the partner receiver and redeem the invitation.
    * Use the one-time invite as the bearer token. The platform makes a redirect-free HTTPS GET to the submitted URL. Successful verification consumes the invite and returns the run-scoped signing secret and outcome token once.
    * @returns APISandboxReceiverCredentials Run-scoped receiver credentials.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static verifyApiSandboxReceiver({
     run,
     requestBody,
   }: {
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
     requestBody: APISandboxReceiverURL,
   }): CancelablePromise<APISandboxReceiverCredentials | Problem> {
@@ -4420,12 +4510,15 @@ export class DeploymentsService {
   /**
    * Confirm the partner is ready to receive the callback.
    * Use the outcome token as the bearer token after installing the run signing secret in the test receiver.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static readyApiSandboxReceiver({
     run,
   }: {
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
   }): CancelablePromise<Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4439,13 +4532,16 @@ export class DeploymentsService {
   /**
    * Submit the processor outcome for the retried delivery.
    * Use the outcome token as the bearer token. Submit the count of committed business effects for the stable delivery ID after the second attempt. A 409 can indicate the retry has yet to be recorded or the outcome window has closed. A repeat of the same accepted outcome is idempotent while the token is active.
-   * @returns Problem The request could not be completed.
+   * @returns Problem The sandbox operation returned an HTTP problem.
    * @throws ApiError
    */
   public static recordApiSandboxReceiverOutcome({
     run,
     requestBody,
   }: {
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
     requestBody: APISandboxReceiverOutcome,
   }): CancelablePromise<Problem> {
@@ -4467,6 +4563,9 @@ export class DeploymentsService {
   public static readSharedApiSandboxRun({
     run,
   }: {
+    /**
+     * UUID of the scenario run this request addresses.
+     */
     run: string,
   }): CancelablePromise<APISandboxRunReport> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4476,7 +4575,7 @@ export class DeploymentsService {
         'run': run,
       },
       errors: {
-        401: `The report link is invalid or expired.`,
+        401: `code: unauthorized`,
         429: `Too many invalid requests.`,
       },
     });
@@ -4566,7 +4665,10 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4603,7 +4705,10 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4648,7 +4753,10 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4670,6 +4778,9 @@ export class DeploymentsService {
      * Stable, app-scoped scenario UUID.
      */
     scenario: string,
+    /**
+     * Latest scenario revision required to delete the saved scenario.
+     */
     expectedRevision: string,
   }): CancelablePromise<void> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4693,7 +4804,10 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Scenario library unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4710,6 +4824,9 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
   }): CancelablePromise<APISandboxScenarioResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4720,10 +4837,13 @@ export class DeploymentsService {
         'deployment': deployment,
       },
       errors: {
-        401: `Invalid credentials.`,
-        403: `The caller may not access this release.`,
-        404: `Release unavailable.`,
-        503: `Scenario storage unavailable.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4742,6 +4862,9 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
     requestBody: APISandboxScenarioSaveRequest,
   }): CancelablePromise<APISandboxScenarioResponse> {
@@ -4755,12 +4878,15 @@ export class DeploymentsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid scenario definition.`,
-        401: `Invalid credentials.`,
-        403: `The caller may not access this release.`,
-        404: `Release unavailable.`,
-        409: `The release is ineligible for API sandboxes or the scenario revision changed.`,
-        503: `Scenario storage unavailable.`,
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4778,6 +4904,9 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
   }): CancelablePromise<APISandboxListResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4788,12 +4917,15 @@ export class DeploymentsService {
         'deployment': deployment,
       },
       errors: {
-        400: `Invalid request.`,
-        401: `Invalid credentials.`,
-        403: `The caller or plan does not allow this action.`,
-        404: `Release or sandbox unavailable.`,
-        409: `The release or sandbox is ineligible.`,
-        503: `Provisioning or storage unavailable.`,
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4813,7 +4945,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the isolated copy of the release.
+     */
     sandbox: string,
     requestBody?: APISandboxCreateRequest,
   }): CancelablePromise<APISandboxResponse> {
@@ -4828,13 +4966,16 @@ export class DeploymentsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid request.`,
-        401: `Invalid credentials.`,
-        403: `The caller or plan does not allow this action.`,
-        404: `Release or sandbox unavailable.`,
-        409: `The release or sandbox is ineligible.`,
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         410: `Sandbox lease has ended.`,
-        503: `Provisioning or storage unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4853,7 +4994,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the isolated copy of the release.
+     */
     sandbox: string,
   }): CancelablePromise<void> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4865,12 +5012,15 @@ export class DeploymentsService {
         'sandbox': sandbox,
       },
       errors: {
-        400: `Invalid request.`,
-        401: `Invalid credentials.`,
-        403: `The caller or plan does not allow this action.`,
-        404: `Release or sandbox unavailable.`,
-        409: `The release or sandbox is ineligible.`,
-        503: `Provisioning or storage unavailable.`,
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4889,7 +5039,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the isolated copy of the release.
+     */
     sandbox: string,
   }): CancelablePromise<APISandboxInviteResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4901,12 +5057,15 @@ export class DeploymentsService {
         'sandbox': sandbox,
       },
       errors: {
-        400: `Invalid request.`,
-        401: `Invalid credentials.`,
-        403: `The caller or plan does not allow this action.`,
-        404: `Release or sandbox unavailable.`,
-        409: `The release or sandbox is ineligible.`,
-        503: `Provisioning or storage unavailable.`,
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4925,7 +5084,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the isolated copy of the release.
+     */
     sandbox: string,
   }): CancelablePromise<APISandboxPartnerInviteResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4937,12 +5102,15 @@ export class DeploymentsService {
         'sandbox': sandbox,
       },
       errors: {
-        401: `Invalid credentials.`,
-        403: `The caller may not manage this sandbox.`,
-        404: `Partner sandbox unavailable.`,
-        409: `Revoke redeemed access before replacing the invite.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         410: `The sandbox lease has ended.`,
-        503: `Partner access could not be updated.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4960,7 +5128,13 @@ export class DeploymentsService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * UUID of the release selected as the sandbox source.
+     */
     deployment: string,
+    /**
+     * UUID of the isolated copy of the release.
+     */
     sandbox: string,
   }): CancelablePromise<void> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4972,10 +5146,13 @@ export class DeploymentsService {
         'sandbox': sandbox,
       },
       errors: {
-        401: `Invalid credentials.`,
-        403: `The caller may not manage this sandbox.`,
-        404: `Partner sandbox unavailable.`,
-        503: `Partner access could not be updated.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -4988,6 +5165,9 @@ export class DeploymentsService {
   public static redeemApiSandboxPartnerInvite({
     sandbox,
   }: {
+    /**
+     * UUID of the isolated copy of the release.
+     */
     sandbox: string,
   }): CancelablePromise<APISandboxInviteResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -4997,11 +5177,14 @@ export class DeploymentsService {
         'sandbox': sandbox,
       },
       errors: {
-        401: `The invite is expired, invalid, revoked, or redeemed.`,
-        403: `The current plan does not allow consumer keys.`,
-        409: `The sandbox has not passed readiness checks or key quota was reached.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
         429: `Too many invalid redemption attempts.`,
-        503: `The invitation could not be redeemed.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
       },
     });
   }
@@ -5014,6 +5197,9 @@ export class DeploymentsService {
   public static getApiSandboxInvite({
     sandbox,
   }: {
+    /**
+     * UUID of the isolated copy of the release.
+     */
     sandbox: string,
   }): CancelablePromise<APISandboxResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -5023,7 +5209,7 @@ export class DeploymentsService {
         'sandbox': sandbox,
       },
       errors: {
-        401: `Invitation unavailable.`,
+        401: `code: unauthorized`,
       },
     });
   }

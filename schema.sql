@@ -15112,6 +15112,34 @@ $$;
 
 
 --
+-- Name: guard_api_sandbox_postgres_binding(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_api_sandbox_postgres_binding() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM apps
+        WHERE id = NEW.app_id AND starts_with(preview_of_slug, 'api-sandbox:')
+          AND NOT (
+              NEW.database_id = NEW.app_id AND NEW.scope = 'default'
+              AND ((NEW.environment_key = 'DATABASE_URL' AND NEW.access = 'read_write')
+                  OR (NEW.environment_key = 'MIGRATION_DATABASE_URL' AND NEW.access = 'migration'))
+          )
+    ) OR EXISTS (
+        SELECT 1 FROM apps
+        WHERE id = NEW.database_id AND id <> NEW.app_id AND starts_with(preview_of_slug, 'api-sandbox:')
+    ) THEN
+        RAISE EXCEPTION 'API sandbox database bindings are dedicated to the sandbox'
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'managed_postgres_sandbox_binding';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_app_managed_postgres_bindings(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -98083,6 +98111,13 @@ CREATE TRIGGER managed_postgres_resource_owner BEFORE INSERT OR UPDATE OF org_id
 --
 
 CREATE TRIGGER managed_postgres_restore_sources_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_restore_sources();
+
+
+--
+-- Name: managed_postgres_bindings managed_postgres_sandbox_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_sandbox_binding_guard BEFORE INSERT OR UPDATE OF app_id, database_id, scope, environment_key, access ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_api_sandbox_postgres_binding();
 
 
 --

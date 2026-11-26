@@ -14,6 +14,8 @@ T = TypeVar("T", bound="APISandboxSuiteSaveRequest")
 
 @_attrs_define
 class APISandboxSuiteSaveRequest:
+    """Ordered scenario selection and revision precondition for saving a suite."""
+
     expected_revision: str
     """Use the current suite revision or the empty string to create the suite."""
     scenario_ids: list[UUID]

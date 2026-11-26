@@ -23,6 +23,8 @@ T = TypeVar("T", bound="APISandboxApprovalChecksResponse")
 
 @_attrs_define
 class APISandboxApprovalChecksResponse:
+    """Prior approval checks and inputs available for a new check."""
+
     availability: APISandboxApprovalChecksResponseAvailability
     checks: list[APISandboxApprovalCheck]
     baseline_deployment_id: UUID | Unset = UNSET

@@ -20,6 +20,8 @@ T = TypeVar("T", bound="APISandboxRunStep")
 
 @_attrs_define
 class APISandboxRunStep:
+    """Redacted evidence for one request or webhook step in a scenario."""
+
     index: int
     title: str
     method: str

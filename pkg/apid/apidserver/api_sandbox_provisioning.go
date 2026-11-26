@@ -169,6 +169,9 @@ func (s *server) stageAPISandboxRelease(ctx context.Context, app state.App, op *
 	case errors.Is(err, managedpostgres.ErrNotInPlan):
 		failAPISandboxOperation(op, "database_plan", "The current plan does not support developer PostgreSQL.")
 		return nil
+	case errors.Is(err, managedpostgres.ErrConflict):
+		failAPISandboxOperation(op, "database_conflict", "The sandbox could not reserve its dedicated PostgreSQL database. Create a new sandbox.")
+		return nil
 	case err != nil:
 		return err
 	}

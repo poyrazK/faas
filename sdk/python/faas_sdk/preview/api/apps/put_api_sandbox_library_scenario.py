@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 from uuid import UUID
 
@@ -39,7 +39,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> APISandboxLibraryScenario | Any | Problem | None:
+) -> APISandboxLibraryScenario | Problem | None:
     if response.status_code == 200:
         response_200 = APISandboxLibraryScenario.from_dict(response.json())
 
@@ -76,7 +76,8 @@ def _parse_response(
         return response_429
 
     if response.status_code == 503:
-        response_503 = cast(Any, None)
+        response_503 = Problem.from_dict(response.json())
+
         return response_503
 
     if client.raise_on_unexpected_status:
@@ -87,7 +88,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[APISandboxLibraryScenario | Any | Problem]:
+) -> Response[APISandboxLibraryScenario | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -102,7 +103,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: APISandboxLibraryScenarioSaveRequest,
-) -> Response[APISandboxLibraryScenario | Any | Problem]:
+) -> Response[APISandboxLibraryScenario | Problem]:
     """Save a reusable sandbox scenario.
 
      Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision
@@ -111,14 +112,15 @@ def sync_detailed(
     Args:
         slug (str):
         scenario (UUID):
-        body (APISandboxLibraryScenarioSaveRequest):
+        body (APISandboxLibraryScenarioSaveRequest): Reusable scenario definition and required
+            revision precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[APISandboxLibraryScenario | Any | Problem]
+        Response[APISandboxLibraryScenario | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -140,7 +142,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: APISandboxLibraryScenarioSaveRequest,
-) -> APISandboxLibraryScenario | Any | Problem | None:
+) -> APISandboxLibraryScenario | Problem | None:
     """Save a reusable sandbox scenario.
 
      Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision
@@ -149,14 +151,15 @@ def sync(
     Args:
         slug (str):
         scenario (UUID):
-        body (APISandboxLibraryScenarioSaveRequest):
+        body (APISandboxLibraryScenarioSaveRequest): Reusable scenario definition and required
+            revision precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        APISandboxLibraryScenario | Any | Problem
+        APISandboxLibraryScenario | Problem
     """
 
     return sync_detailed(
@@ -173,7 +176,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: APISandboxLibraryScenarioSaveRequest,
-) -> Response[APISandboxLibraryScenario | Any | Problem]:
+) -> Response[APISandboxLibraryScenario | Problem]:
     """Save a reusable sandbox scenario.
 
      Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision
@@ -182,14 +185,15 @@ async def asyncio_detailed(
     Args:
         slug (str):
         scenario (UUID):
-        body (APISandboxLibraryScenarioSaveRequest):
+        body (APISandboxLibraryScenarioSaveRequest): Reusable scenario definition and required
+            revision precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[APISandboxLibraryScenario | Any | Problem]
+        Response[APISandboxLibraryScenario | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -209,7 +213,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: APISandboxLibraryScenarioSaveRequest,
-) -> APISandboxLibraryScenario | Any | Problem | None:
+) -> APISandboxLibraryScenario | Problem | None:
     """Save a reusable sandbox scenario.
 
      Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision
@@ -218,14 +222,15 @@ async def asyncio(
     Args:
         slug (str):
         scenario (UUID):
-        body (APISandboxLibraryScenarioSaveRequest):
+        body (APISandboxLibraryScenarioSaveRequest): Reusable scenario definition and required
+            revision precondition.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        APISandboxLibraryScenario | Any | Problem
+        APISandboxLibraryScenario | Problem
     """
 
     return (

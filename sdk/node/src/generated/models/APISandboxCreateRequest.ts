@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Configuration for a fresh copy of an API release.
+ */
 export type APISandboxCreateRequest = {
   /**
    * Optional absolute path on the sandbox host to check with GET. Use the same value when retrying with this sandbox UUID.

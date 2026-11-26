@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxComparisonReport } from './APISandboxComparisonReport.js';
+/**
+ * The result of comparing a saved scenario on both releases in a suite.
+ */
 export type APISandboxSuiteScenarioResult = {
   scenario_id: string;
   scenario_name: string;

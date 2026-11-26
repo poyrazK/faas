@@ -21,6 +21,8 @@ T = TypeVar("T", bound="APISandboxScenarioInput")
 
 @_attrs_define
 class APISandboxScenarioInput:
+    """Editable scenario content, including fixtures and request expectations."""
+
     name: str
     requests: list[APISandboxExampleRequest]
     seed: APISandboxScenarioInputSeed

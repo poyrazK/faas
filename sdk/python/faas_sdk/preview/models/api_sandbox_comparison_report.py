@@ -32,6 +32,8 @@ T = TypeVar("T", bound="APISandboxComparisonReport")
 
 @_attrs_define
 class APISandboxComparisonReport:
+    """Paired scenario results and the verdict for a sandbox comparison."""
+
     id: UUID
     baseline_deployment_id: UUID
     candidate_deployment_id: UUID
@@ -39,12 +41,15 @@ class APISandboxComparisonReport:
     scenario_name: str
     verdict: APISandboxComparisonReportVerdict
     baseline: APISandboxRunReport
+    """Run outcome and recorded steps with their request or delivery identifiers."""
     candidate: APISandboxRunReport
+    """Run outcome and recorded steps with their request or delivery identifiers."""
     created_at: datetime.datetime
     reason: APISandboxComparisonReportReason | Unset = UNSET
     failure_side: APISandboxComparisonReportFailureSide | Unset = UNSET
     failure_code: str | Unset = UNSET
     first_failing_step: APISandboxRunStep | Unset = UNSET
+    """Redacted evidence for one request or webhook step in a scenario."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

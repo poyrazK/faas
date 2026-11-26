@@ -22,11 +22,14 @@ T = TypeVar("T", bound="APISandboxSuiteScenarioResult")
 
 @_attrs_define
 class APISandboxSuiteScenarioResult:
+    """The result of comparing a saved scenario on both releases in a suite."""
+
     scenario_id: UUID
     scenario_name: str
     scenario_revision: UUID
     status: APISandboxSuiteScenarioResultStatus
     comparison: APISandboxComparisonReport | Unset = UNSET
+    """Paired scenario results and the verdict for a sandbox comparison."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

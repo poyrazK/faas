@@ -36,6 +36,12 @@
       <p id="changes-code"></p>
       <ul id="changes-list"></ul>
     </section>
+    <section id="sandbox-suite" hidden>
+      <h2>Required sandbox suite</h2>
+      <p id="sandbox-suite-status" role="status"></p>
+      <button type="button" id="sandbox-suite-run" hidden>Run sandbox suite</button>
+      <p id="sandbox-suite-error" role="alert" hidden></p>
+    </section>
     <section id="sandbox-checks" hidden>
       <h2>Sandbox checks</h2>
       <p id="sandbox-check-status" role="status"></p>
@@ -76,8 +82,17 @@
       try { const p = await response.json(); return p.detail || p.title || ('HTTP ' + response.status); }
       catch (_) { return 'HTTP ' + response.status; }
     };
+    let approvalStatus;
+    const renderSummary = () => {
+      const s = approvalStatus;
+      if (!s) return;
+      const waitingForSuite = s.state === 'approved' && s.require_passing_sandbox_suite && requiredSuiteGate !== 'admitted';
+      text('summary', waitingForSuite ? 'Human approval is recorded. The release command still needs a passing sandbox suite.' : states[s.state] || s.state);
+    };
     const render = (s) => {
-      text('summary', states[s.state] || s.state);
+      approvalStatus = s;
+      renderSummary();
+      renderSandboxSuite();
       text('app', s.app);
       text('release', s.deployment_id);
       text('deployer', s.deployed_by);
@@ -137,6 +152,7 @@
       render(await response.json());
     };
     const sandboxEndpoint = endpoint + '/sandbox-checks';
+    const sandboxSuiteEndpoint = endpoint + '/sandbox-suite-runs';
     const sandboxVerdicts = {
       running: 'Comparing releases',
       passed: 'Both passed',
@@ -155,18 +171,108 @@
       unsupported: 'This release is unavailable for a sandbox check.'
     };
     let sandboxInputs, sandboxTimer, sandboxAttempt;
+    let sandboxSuite, sandboxSuiteTimer, sandboxSuiteAttempt;
+    let requiredSuiteGate, loadingSandboxSuite = false, submittingSandboxSuite = false;
     let sandboxSubmitting = false;
+    const sandboxSuiteStatus = {
+      no_suite: 'Save a regression suite on the app to continue.',
+      unavailable: 'The candidate or its live baseline is unavailable for a suite run.',
+      waiting: 'Waiting for a passing sandbox suite.',
+      stale: 'The latest run no longer matches the releases or saved scenarios. Run the suite again.',
+      failed: 'The latest run did not meet the release requirement. Run the suite again before the deadline.',
+      passed: 'The suite passed. Waiting for release command admission.',
+      admitted: 'The release command was queued with a passing sandbox suite.'
+    };
+    const suiteWindowOpen = () => approvalStatus?.require_passing_sandbox_suite &&
+      ['waiting', 'approved'].includes(approvalStatus.state) && Date.parse(approvalStatus.expires_at) > Date.now();
+    const renderSandboxSuite = () => {
+      const latest = sandboxSuite?.runs?.[0];
+      const showing = approvalStatus?.require_passing_sandbox_suite || requiredSuiteGate === 'admitted';
+      const running = latest && !latest.finished_at;
+      const open = suiteWindowOpen();
+      $('sandbox-suite').hidden = !showing;
+      const button = $('sandbox-suite-run');
+      button.hidden = !open || sandboxInputs?.availability !== 'ready' || !sandboxSuite?.release_gate ||
+        ['admitted', 'passed', 'no_suite'].includes(requiredSuiteGate);
+      button.disabled = Boolean(running || submittingSandboxSuite);
+      button.textContent = latest ? 'Run sandbox suite again' : 'Run sandbox suite';
+      let message = sandboxSuiteStatus[requiredSuiteGate] || 'Checking the required suite.';
+      if (showing && !open && requiredSuiteGate !== 'admitted' && requiredSuiteGate !== 'passed') {
+        message = 'The approval window has closed.';
+      } else if (requiredSuiteGate === 'waiting' && running) {
+        message = 'Suite in progress · ' + latest.completed_count + ' of ' + latest.scenario_count + ' scenarios complete.';
+      }
+      text('sandbox-suite-status', message);
+    };
+    const loadSandboxSuite = async () => {
+      if (!approvalStatus?.require_passing_sandbox_suite || loadingSandboxSuite) return;
+      clearTimeout(sandboxSuiteTimer);
+      loadingSandboxSuite = true;
+      try {
+        const response = await fetch(sandboxSuiteEndpoint, { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' });
+        if (!response.ok) throw new Error(await problemText(response));
+        sandboxSuite = await response.json();
+        requiredSuiteGate = sandboxSuite.release_gate?.status;
+        renderSandboxSuite();
+        renderSummary();
+      } catch (_) {
+        text('sandbox-suite-status', 'Could not load the suite status. Retrying.');
+      } finally {
+        loadingSandboxSuite = false;
+        if (requiredSuiteGate !== 'admitted' && (suiteWindowOpen() || requiredSuiteGate === 'passed')) {
+          sandboxSuiteTimer = setTimeout(loadSandboxSuite, 3000);
+        }
+      }
+    };
+    const startSandboxSuite = async () => {
+      if (!suiteWindowOpen() || sandboxInputs?.availability !== 'ready' || $('sandbox-suite-run').disabled) return;
+      const baseline = sandboxInputs.baseline_deployment_id;
+      const app = approvalStatus.app;
+      submittingSandboxSuite = true;
+      $('sandbox-suite-error').hidden = true;
+      renderSandboxSuite();
+      try {
+        const config = await fetch('/v1/apps/' + encodeURIComponent(app) + '/api-sandbox-suite', {
+          credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer'
+        });
+        if (!config.ok) throw new Error(await problemText(config));
+        const { suite } = await config.json();
+        if (!suite?.revision) throw new Error('Save a regression suite on the app before running it here.');
+        if (!sandboxSuiteAttempt || sandboxSuiteAttempt.baseline !== baseline || sandboxSuiteAttempt.revision !== suite.revision) {
+          sandboxSuiteAttempt = { id: crypto.randomUUID(), baseline, revision: suite.revision };
+        }
+        const attempt = sandboxSuiteAttempt;
+        const response = await fetch(sandboxSuiteEndpoint + '/' + encodeURIComponent(attempt.id), {
+          method: 'PUT', credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ baseline_deployment_id: attempt.baseline, suite_revision: attempt.revision })
+        });
+        if (!response.ok) throw new Error(await problemText(response));
+        const run = await response.json();
+        sandboxSuite.runs = [run, ...(sandboxSuite.runs || []).filter(item => item.id !== run.id)];
+        sandboxSuiteAttempt = undefined;
+      } catch (error) {
+        text('sandbox-suite-error', error.message || 'Could not start the sandbox suite. Try again.');
+        $('sandbox-suite-error').hidden = false;
+      } finally {
+        submittingSandboxSuite = false;
+        renderSandboxSuite();
+        loadSandboxSuite();
+      }
+    };
     const renderSandboxChecks = (data) => {
       sandboxInputs = data;
+      renderSandboxSuite();
       const check = data.checks[0];
-      const ready = data.availability === 'ready';
+      const ready = data.availability === 'ready' && Boolean(data.scenario_revision);
       const running = data.checks.some(entry => entry.verdict === 'running');
       $('sandbox-checks').hidden = !check && data.availability === 'not_waiting';
       $('sandbox-check-run').hidden = !ready;
       $('sandbox-check-run').disabled = running || sandboxSubmitting;
       const outcome = check
         ? check.comparison.scenario_name + ' · ' + sandboxVerdicts[check.verdict]
-        : ready ? 'Compare this build with the live release using ' + data.scenario_name + '.' : sandboxUnavailable[data.availability];
+        : ready ? 'Compare this build with the live release using ' + data.scenario_name + '.' :
+          data.availability === 'ready' ? 'Save a scenario on the live release to run an individual check.' : sandboxUnavailable[data.availability];
       const stale = check && sandboxStaleReasons[check.stale_reason];
       text('sandbox-check-status', stale ? outcome + '. ' + stale : outcome);
       const step = check && check.comparison.first_failing_step;
@@ -178,7 +284,7 @@
           (step.request_id ? ' · Request ID ' + step.request_id : ''));
       }
       clearTimeout(sandboxTimer);
-      if (running || ready || check) {
+      if (running || data.availability === 'ready' || check || suiteWindowOpen()) {
         sandboxTimer = setTimeout(() => { if (!sandboxSubmitting) loadSandboxChecks().catch(() => {}); }, running ? 2500 : 15000);
       }
     };
@@ -219,6 +325,7 @@
         loadSandboxChecks().catch(() => {});
       }
     };
+    $('sandbox-suite-run').addEventListener('click', startSandboxSuite);
     $('sandbox-check-run').addEventListener('click', startSandboxCheck);
     const decide = async (decision) => {
       const comment = $('comment').value.trim();
@@ -232,6 +339,7 @@
         });
         if (!response.ok) { text('result', await problemText(response)); return; }
         render(await response.json());
+        loadSandboxSuite();
         text('result', decision === 'approve' ? 'Your approval is recorded.' : 'Your rejection is recorded.');
       } catch (_) { text('result', 'Could not reach Gregale. Try again.'); }
       finally { $('approve').disabled = false; $('reject').disabled = false; }
@@ -242,7 +350,7 @@
     if (intent === 'approve') { $('approve').classList.add('suggested'); }
     if (intent === 'reject') { $('reject').classList.add('suggested'); }
     history.replaceState(null, '', location.pathname);
-    load().catch(() => text('summary', 'Could not reach Gregale. Try again.'));
+    load().then(loadSandboxSuite).catch(() => text('summary', 'Could not reach Gregale. Try again.'));
     loadChanges().catch(() => {});
     loadSandboxChecks().catch(() => {});
   </script>

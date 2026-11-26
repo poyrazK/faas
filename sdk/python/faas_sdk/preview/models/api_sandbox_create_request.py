@@ -14,6 +14,8 @@ T = TypeVar("T", bound="APISandboxCreateRequest")
 
 @_attrs_define
 class APISandboxCreateRequest:
+    """Configuration for a fresh copy of an API release."""
+
     smoke_path: str | Unset = UNSET
     """Optional absolute path on the sandbox host to check with GET. Use the same value when retrying with this
     sandbox UUID."""

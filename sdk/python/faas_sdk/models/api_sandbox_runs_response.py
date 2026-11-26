@@ -18,6 +18,8 @@ T = TypeVar("T", bound="APISandboxRunsResponse")
 
 @_attrs_define
 class APISandboxRunsResponse:
+    """Recent scenario run reports for one release."""
+
     runs: list[APISandboxRunReport]
     receiver_invites: list[APISandboxReceiverInvite] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

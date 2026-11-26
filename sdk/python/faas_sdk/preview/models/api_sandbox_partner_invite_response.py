@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxPartnerInviteResponse")
 
 @_attrs_define
 class APISandboxPartnerInviteResponse:
+    """One-time credential used to exchange an invitation for a partner key."""
+
     partner: APISandboxPartnerResponse
     """Owner-only partner progress."""
     token: str

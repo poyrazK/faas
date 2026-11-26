@@ -15,6 +15,8 @@ T = TypeVar("T", bound="APISandboxListResponse")
 
 @_attrs_define
 class APISandboxListResponse:
+    """API copies provisioned from the selected release."""
+
     sandboxes: list[APISandboxResponse]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

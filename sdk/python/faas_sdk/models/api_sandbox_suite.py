@@ -14,6 +14,8 @@ T = TypeVar("T", bound="APISandboxSuite")
 
 @_attrs_define
 class APISandboxSuite:
+    """Ordered set of saved scenarios used to check releases of an app."""
+
     revision: UUID
     scenario_ids: list[UUID]
     run_before_approval: bool | Unset = UNSET

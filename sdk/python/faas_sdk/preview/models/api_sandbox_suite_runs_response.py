@@ -22,10 +22,13 @@ T = TypeVar("T", bound="APISandboxSuiteRunsResponse")
 
 @_attrs_define
 class APISandboxSuiteRunsResponse:
+    """Recent suite runs, automatic launch status, and release admission status."""
+
     runs: list[APISandboxSuiteRunSummary]
     automatic_status: APISandboxSuiteRunsResponseAutomaticStatus | Unset = UNSET
     """Latest automatic launch status for this candidate when the app has requested an automatic run."""
     release_gate: APISandboxReleaseGate | Unset = UNSET
+    """Current suite requirement and the run evaluated at release admission."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

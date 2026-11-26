@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxJSONAssertion } from './APISandboxJSONAssertion.js';
+/**
+ * Synthetic request and response expectations saved in a scenario.
+ */
 export type APISandboxExampleRequest = {
   title: string;
   method: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';

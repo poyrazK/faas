@@ -25,12 +25,15 @@ func TestPgAPISandboxReleaseAdmissionRequiresReceipt(t *testing.T) {
 		t.Helper()
 		d, err := store.CreateDeployment(ctx, state.Deployment{
 			AppID: appID, Scope: scope, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate",
-			Status: state.DeploySnapshotting, ReleaseCommand: []string{"migrate"},
+			ReleaseCommand: []string{"migrate"},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := store.SetDeploymentRootfs(ctx, d.ID, "/apps/held.ext4", "held.ext4", 1024); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateDeploymentStatus(ctx, d.ID, state.DeploySnapshotting, ""); err != nil {
 			t.Fatal(err)
 		}
 		return d.ID

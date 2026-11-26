@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APISandboxScenario } from './APISandboxScenario.js';
+/**
+ * Saved library scenario with its private provenance, when available.
+ */
 export type APISandboxLibraryScenario = {
   id: string;
   scenario: APISandboxScenario;

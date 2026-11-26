@@ -97,7 +97,8 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (APISandboxSuiteSaveRequest):
+        body (APISandboxSuiteSaveRequest): Ordered scenario selection and revision precondition
+            for saving a suite.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,7 +133,8 @@ def sync(
 
     Args:
         slug (str):
-        body (APISandboxSuiteSaveRequest):
+        body (APISandboxSuiteSaveRequest): Ordered scenario selection and revision precondition
+            for saving a suite.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -162,7 +164,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (APISandboxSuiteSaveRequest):
+        body (APISandboxSuiteSaveRequest): Ordered scenario selection and revision precondition
+            for saving a suite.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,7 +198,8 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (APISandboxSuiteSaveRequest):
+        body (APISandboxSuiteSaveRequest): Ordered scenario selection and revision precondition
+            for saving a suite.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Ordered set of saved scenarios used to check releases of an app.
+ */
 export type APISandboxSuite = {
   revision: string;
   /**

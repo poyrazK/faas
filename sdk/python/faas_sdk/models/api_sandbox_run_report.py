@@ -21,6 +21,8 @@ T = TypeVar("T", bound="APISandboxRunReport")
 
 @_attrs_define
 class APISandboxRunReport:
+    """Run outcome and recorded steps with their request or delivery identifiers."""
+
     id: UUID
     source_deployment_id: UUID
     scenario_revision: UUID
