@@ -57,10 +57,10 @@ func TestSavedDeployConfigurationReadOnly(t *testing.T) {
 			if mode == "wrong-app" {
 				f.response.AppID = "other-app"
 			}
-			err := s.refreshCronActivation(t.Context(), f)
+			activationErr := s.refreshCronActivation(t.Context(), f)
 			wantErr := mode == "conflicted" || mode == "discarded" || mode == "newer-intent" || mode == "wrong-app"
-			if (err != nil) != wantErr || f.reads != 1 || f.writes != 0 {
-				t.Fatalf("err=%v reads=%d writes=%d", err, f.reads, f.writes)
+			if (activationErr != nil) != wantErr || f.reads != 1 || f.writes != 0 {
+				t.Fatalf("err=%v reads=%d writes=%d", activationErr, f.reads, f.writes)
 			}
 			if mode == "wrong-app" {
 				if s.record.CronConfiguration != nil {
@@ -98,8 +98,11 @@ func TestSavedDeployConfigurationReadOnly(t *testing.T) {
 			if err := json.Unmarshal(data, &saved); err != nil || saved.CronConfiguration == nil {
 				t.Fatalf("saved=%+v err=%v", saved, err)
 			}
-			if wantErr && s.recovery("configuration").Configuration == nil {
-				t.Fatal("JSON recovery omitted diagnostic")
+			if wantErr {
+				recovery := s.recoveryForError("configuration", 0, activationErr)
+				if recovery.Configuration == nil || recovery.ResumeCommand != "" || recovery.NextCommand != recovery.InspectCommand {
+					t.Fatalf("terminal cron recovery=%+v", recovery)
+				}
 			}
 		})
 	}

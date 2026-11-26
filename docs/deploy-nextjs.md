@@ -174,7 +174,7 @@ browser bundle when it builds, so they are not read at runtime: commit them in
 ## Add PostgreSQL
 
 ```bash
-gregale add postgres --app my-site --region <region>
+gregale add postgres --app my-site
 ```
 
 The connection URL arrives as `DATABASE_URL`, for server components, route

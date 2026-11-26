@@ -76,7 +76,7 @@ gregale logs my-api
 
 ```bash
 gregale env set --app my-api SECRET_KEY="$SECRET_KEY"
-gregale add postgres --app my-api --region <region>
+gregale add postgres --app my-api
 ```
 
 Values arrive as environment variables; the database URL as `DATABASE_URL`,

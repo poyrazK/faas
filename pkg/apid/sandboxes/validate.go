@@ -59,8 +59,9 @@ func (h *Handler) admission(ctx context.Context, acct state.Account, body create
 		a.WorkspaceSnapshotID = id.String()
 	}
 	checks := []func() *api.Problem{
-		func() *api.Problem { return validKind(&a) },
+		func() *api.Problem { return h.validKind(acct.Plan, &a) },
 		func() *api.Problem { return validPreset(acct.Plan, &a, in.Image, in.Template, in.RAMMB) },
+		func() *api.Problem { return validShape(acct.Plan, &a, in) },
 		func() *api.Problem { return validImageSource(in) },
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
 		func() *api.Problem { return validNetwork(&a, in.Network, h.WebNetwork) },
@@ -74,7 +75,20 @@ func (h *Handler) admission(ctx context.Context, acct state.Account, body create
 			return a, prob
 		}
 	}
-	idle, lifetime, prob := bounds(acct.Plan, in.IdleTimeoutS, in.LifetimeS)
+	if a.Kind == api.SandboxKindPersistent {
+		// A persistent session has no lifetime (ADR-20261122132055 §1): its
+		// expires_at is when it next pauses, which agentd moves on resume.
+		if in.LifetimeS != 0 {
+			return a, api.ErrValidation("a persistent session has no lifetime_s; it pauses after SandboxPersistentRunMaxSec of running")
+		}
+		// Nor an idle timeout: it pauses after the plan's
+		// SandboxPersistentIdlePauseSec without calls.
+		if in.IdleTimeoutS != 0 {
+			return a, api.ErrValidation("a persistent session has no idle_timeout_s; it pauses after SandboxPersistentIdlePauseSec without calls")
+		}
+		in.LifetimeS = api.SandboxPersistentRunMaxSec[idx]
+	}
+	idle, lifetime, prob := bounds(acct.Plan, in.IdleTimeoutS, in.LifetimeS, a.Kind == api.SandboxKindPersistent)
 	if prob != nil {
 		return a, prob
 	}
@@ -155,15 +169,52 @@ func validImageSource(in api.CreateSandboxRequest) *api.Problem {
 	return nil
 }
 
-func validKind(a *agentstore.SandboxAdmission) *api.Problem {
+func (h *Handler) validKind(plan api.Plan, a *agentstore.SandboxAdmission) *api.Problem {
 	switch a.Kind {
 	case "", api.SandboxKindEphemeral:
 		a.Kind = api.SandboxKindEphemeral
 		return nil
 	case api.SandboxKindPersistent:
-		return api.ErrSandboxUnsupported("kind", "persistent sessions need their own decision (ADR-20261027090014 §5); use ephemeral")
+		// ADR-20261122132055: on once agentd, schedd and vmmd serve them.
+		if !h.Persistent {
+			return api.ErrSandboxUnsupported("kind", "persistent sessions are not available on this platform yet; use ephemeral")
+		}
+		max := api.SandboxPersistentMax[plan.PlanIndex()]
+		if max == 0 {
+			return api.ErrAgentLimit(plan, "SandboxPersistentMax", 0, 1)
+		}
+		a.PersistentMax = max
+		return nil
 	}
 	return api.ErrValidation("kind must be ephemeral or persistent")
+}
+
+// validShape checks a persistent session's vCPUs and workspace volume
+// (ADR-20261122132055 §4, §5); an ephemeral session takes neither.
+func validShape(plan api.Plan, a *agentstore.SandboxAdmission, in api.CreateSandboxRequest) *api.Problem {
+	idx := plan.PlanIndex()
+	if a.Kind != api.SandboxKindPersistent {
+		if in.VCPU != 0 || in.VolumeGB != 0 {
+			return api.ErrValidation("vcpu and volume_gb size persistent sessions only")
+		}
+		return nil
+	}
+	volume := in.VolumeGB
+	if volume == 0 {
+		volume = min(api.SandboxVolumeDefaultGB, api.SandboxVolumeMaxGB[idx])
+	}
+	switch max := api.SandboxPersistentVCPUMax[idx]; {
+	case in.VCPU < 0:
+		return api.ErrValidation(fmt.Sprintf("vcpu must be at least 1; got %d", in.VCPU))
+	case in.VCPU > max:
+		return api.ErrAgentLimit(plan, "SandboxPersistentVCPUMax", max, in.VCPU)
+	case volume < 1:
+		return api.ErrValidation(fmt.Sprintf("volume_gb must be at least 1; got %d", volume))
+	case volume > api.SandboxVolumeMaxGB[idx]:
+		return api.ErrAgentLimit(plan, "SandboxVolumeMaxGB", api.SandboxVolumeMaxGB[idx], volume)
+	}
+	a.VCPU, a.VolumeGB = in.VCPU, volume
+	return nil
 }
 
 // validPreset resolves the preset and the session's RAM: the preset's
@@ -172,6 +223,9 @@ func validKind(a *agentstore.SandboxAdmission) *api.Problem {
 // to SandboxImageDefaultRAMMB.
 func validPreset(plan api.Plan, a *agentstore.SandboxAdmission, image, template string, ramMB int) *api.Problem {
 	max := api.AgentRunRAMMBMax[plan.PlanIndex()]
+	if a.Kind == api.SandboxKindPersistent {
+		max = api.SandboxPersistentRAMMBMax[plan.PlanIndex()]
+	}
 	defaultRAM := api.SandboxImageDefaultRAMMB
 	switch {
 	case image != "" && template != "":
@@ -200,7 +254,11 @@ func validPreset(plan api.Plan, a *agentstore.SandboxAdmission, image, template 
 	case ramMB < 512 || ramMB%512 != 0:
 		return api.ErrValidation(fmt.Sprintf("ram_mb must be a multiple of 512 from 512; got %d", ramMB))
 	case ramMB > max:
-		return api.ErrAgentLimit(plan, "AgentRunRAMMBMax", max, ramMB)
+		limit := "AgentRunRAMMBMax"
+		if a.Kind == api.SandboxKindPersistent {
+			limit = "SandboxPersistentRAMMBMax"
+		}
+		return api.ErrAgentLimit(plan, limit, max, ramMB)
 	}
 	a.RAMMB = ramMB
 	return nil
@@ -242,8 +300,11 @@ func validNetwork(a *agentstore.SandboxAdmission, n *api.SandboxNetwork, web boo
 
 // bounds resolves an idle timeout and a lifetime in seconds: omitted ones
 // take SandboxIdleExpirySec and the plan's SandboxMaxLifetimeSec.
-func bounds(plan api.Plan, idle, lifetime int) (int, int, *api.Problem) {
+func bounds(plan api.Plan, idle, lifetime int, persistent bool) (int, int, *api.Problem) {
 	max := api.SandboxMaxLifetimeSec[plan.PlanIndex()]
+	if persistent {
+		max = api.SandboxPersistentRunMaxSec[plan.PlanIndex()]
+	}
 	if idle == 0 {
 		idle = api.SandboxIdleExpirySec
 	}
@@ -264,6 +325,12 @@ func bounds(plan api.Plan, idle, lifetime int) (int, int, *api.Problem) {
 // timeouts applies a change request to a session: the lifetime counts from
 // the session's creation and must still end after now.
 func (h *Handler) timeouts(acct state.Account, sb agentstore.Sandbox, body api.UpdateSandboxRequest) (int, time.Time, *api.Problem) {
+	if sb.Kind == api.SandboxKindPersistent {
+		// Its expires_at is its next pause or the end of its retention, and
+		// its idle pause is the plan's (ADR-20261122132055 §1): neither is
+		// the session's to change.
+		return 0, time.Time{}, api.ErrValidation("a persistent session has no idle_timeout_s or lifetime_s to change; pause or close it instead")
+	}
 	idle, expires := sb.IdleTimeoutSec, sb.ExpiresAt
 	lifetime := int(sb.ExpiresAt.Sub(sb.CreatedAt) / time.Second)
 	if body.IdleTimeoutS != nil {
@@ -276,7 +343,7 @@ func (h *Handler) timeouts(acct state.Account, sb agentstore.Sandbox, body api.U
 	if body.IdleTimeoutS != nil && idle == 0 || body.LifetimeS != nil && lifetime == 0 {
 		return 0, time.Time{}, api.ErrValidation("idle_timeout_s and lifetime_s must be at least 1")
 	}
-	idle, lifetime, prob := bounds(acct.Plan, idle, lifetime)
+	idle, lifetime, prob := bounds(acct.Plan, idle, lifetime, sb.Kind == api.SandboxKindPersistent)
 	if prob != nil {
 		return 0, time.Time{}, prob
 	}

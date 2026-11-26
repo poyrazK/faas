@@ -11,7 +11,10 @@ export type CreateManagedPostgresDatabaseRequest = {
    */
   request_id?: string;
   name: string;
-  region: string;
+  /**
+   * Optional. Omit it to use the platform's default placement, which GET /v1/postgres/capabilities reports.
+   */
+  region?: string;
   postgres_major?: number;
   service_class?: 'development' | 'burstable' | 'production';
   availability?: 'single_zone' | 'high_availability';
