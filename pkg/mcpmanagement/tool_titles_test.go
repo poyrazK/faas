@@ -7,7 +7,8 @@ import (
 )
 
 // The Claude Connectors Directory rejects a connector whose tools lack a
-// title or a readOnlyHint/destructiveHint annotation.
+// title or a readOnlyHint/destructiveHint annotation. Its submission check
+// reads annotations.title, not the top-level title, so both carry it.
 func TestEveryToolHasATitleAndSafetyHints(t *testing.T) {
 	owners := map[string]string{}
 	for _, tool := range toolsetCatalog(t, nil) {
@@ -20,6 +21,10 @@ func TestEveryToolHasATitleAndSafetyHints(t *testing.T) {
 		owners[tool.Title] = tool.Name
 		if tool.Annotations == nil || tool.Annotations.DestructiveHint == nil {
 			t.Errorf("%s: missing readOnlyHint/destructiveHint annotations", tool.Name)
+			continue
+		}
+		if tool.Annotations.Title != tool.Title {
+			t.Errorf("%s: annotations.title %q, want the tool title %q", tool.Name, tool.Annotations.Title, tool.Title)
 		}
 	}
 }
