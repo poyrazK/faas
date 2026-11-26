@@ -19990,6 +19990,45 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/billing-connections/stripe/setup:
+    put:
+      tags: [account]
+      operationId: putStripeSetup
+      x-internal: true
+      summary: Connect Stripe or replace the key reviewed in Monetize.
+      description: Creates a draft-only Stripe connection or rotates the reviewed key in the same mode, preserving existing collection and tax settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutStripeSetupRequest' }
+      responses:
+        '200':
+          description: The stored connection with the key masked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Stripe rejected the key, its format, or a change of mode.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Stripe could not be reached through the public edge.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/statement-invoices:
     get:
       tags: [account]
@@ -20019,6 +20058,101 @@ paths:
               schema: { $ref: '#/components/schemas/StatementInvoiceListResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/account/statement-invoices/{statement_id}/refresh:
+    post:
+      tags: [account]
+      operationId: refreshStripeStatementInvoicePayment
+      x-internal: true
+      summary: Check the current Stripe payment status of one exported app consumer invoice.
+      description: Reads the invoice from Stripe and updates Gregale's recorded balance after verifying the invoice identity and mode.
+      parameters:
+        - name: statement_id
+          in: path
+          required: true
+          description: App consumer usage statement linked to the Stripe invoice.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Invoice export with the verified payment state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Stripe refused the configured key.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not confirm the current balance.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/statement-invoices/{statement_id}/send:
+    parameters:
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized app consumer statement with a completed Stripe draft export.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [account]
+      operationId: reviewStripeInvoiceSend
+      x-internal: true
+      summary: Review the live Stripe draft and its manual payment terms.
+      description: Reads the intended recipient, Stripe amount due, mode and due date before owner approval.
+      responses:
+        '200':
+          description: Stripe invoice details bound to a review token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StripeInvoiceSendReview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '502':
+          description: Stripe was unavailable during the draft review.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [account]
+      operationId: sendReviewedStripeInvoice
+      x-internal: true
+      summary: Issue and send one approved Stripe invoice for manual payment.
+      description: Revalidates the reviewed terms, finalizes the existing draft and resumes delivery on retry without creating a new invoice.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendStripeInvoiceRequest' }
+      responses:
+        '200':
+          description: Same invoice export with its delivery receipt and payment state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Stripe rejected the reviewed invoice operation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: The provider response was inconclusive. Retry the same reviewed invoice.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/billing-runs:
     get:
@@ -20134,6 +20268,178 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/billing-runs/{id}/collections:
+    get:
+      tags: [account]
+      operationId: getBillingRunCollections
+      x-internal: true
+      summary: Read recorded Stripe payment totals for a completed draft billing run.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Completed draft billing run whose invoice payments are summarized.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Whole-run totals split by currency and Stripe mode.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunCollectionsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/account/billing-runs/{id}/draft-exports:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Completed draft billing run.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [account]
+      operationId: reviewBillingRunDraftExports
+      x-internal: true
+      summary: Review Stripe draft export eligibility for one page of a completed run.
+      description: Reads the original run items and checks the current statements and connection without calling Stripe.
+      parameters:
+        - name: cursor
+          in: query
+          description: The previous review page's next_cursor.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Draft eligibility, amounts after credits and the Stripe connection version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunDraftExportReview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [account]
+      operationId: approveBillingRunDraftExport
+      x-internal: true
+      summary: Finalize a reviewed usage statement and export a Stripe draft.
+      description: |
+        Rechecks the run item, revision, customer, Stripe connection and amount due after credits.
+        The approval applies to one item of the selection. A retry resumes or returns the same export.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveBillingRunDraftExportRequest' }
+      responses:
+        '200':
+          description: The receipt for the approved run item and its Stripe draft.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Stripe refused the draft.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: The provider request failed. Retry resumes the export.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/billing-runs/{id}/draft-exports/{consumer_id}/stripe-customer:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Completed draft run containing the blocked statement.
+        schema: { type: string, format: uuid }
+      - name: consumer_id
+        in: path
+        required: true
+        description: API consumer whose Stripe billing customer is missing.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [account]
+      operationId: linkBillingRunStripeCustomer
+      x-internal: true
+      summary: Link a Stripe customer from a blocked draft review row.
+      description: Verifies a customer in the reviewed Stripe account and mode and saves it for future draft reviews.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkBillingRunStripeCustomerRequest' }
+      responses:
+        '204': { description: The verified Stripe customer link is saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The Stripe customer is unavailable with the connected credential.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not verify the account or customer for this link.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/billing-runs/{id}/usage-holds/{consumer_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Completed draft billing run with recorded usage holds.
+        schema: { type: string, format: uuid }
+      - name: consumer_id
+        in: path
+        required: true
+        description: App consumer held for a request telemetry gap.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [account]
+      operationId: getBillingRunUsageHold
+      x-internal: true
+      summary: Read the captured evidence for a billing run usage hold.
+      description: Compares the recorded minimum with the current billing ledger for each affected UTC hour.
+      responses:
+        '200':
+          description: Captured gap hours and the run item's current status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunUsageHold' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [account]
+      operationId: recheckBillingRunUsageHold
+      x-internal: true
+      summary: Recheck usage for a single held app consumer.
+      description: Preserves observed gaps and refreshes the customer's draft once the billing ledger covers every recorded hour.
+      responses:
+        '200':
+          description: Updated gap evidence and either the held item or its recovered draft.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunUsageHold' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /v1/account/billing-run-schedule:
     get:
       tags: [account]
@@ -20187,6 +20493,54 @@ paths:
         '204': { description: Schedule removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/billing-run-schedule/draft:
+    put:
+      tags: [account]
+      operationId: putDraftBillingRunSchedule
+      x-internal: true
+      summary: Create a draft-only monthly schedule or change its delay.
+      description: Creates the schedule only if absent, or adjusts the reviewed version while preserving the next month and billing options.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutDraftBillingRunScheduleRequest' }
+      responses:
+        '200':
+          description: The saved draft schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The delay is outside the supported range.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [account]
+      operationId: deleteDraftBillingRunSchedule
+      x-internal: true
+      summary: Disable the reviewed draft-only schedule.
+      description: Removes the matching draft schedule. Any billing run already started continues.
+      parameters:
+        - name: expected_updated_at
+          in: query
+          required: true
+          description: The reviewed schedule version as returned in updated_at.
+          schema: { type: string, format: date-time }
+      responses:
+        '204': { description: Draft schedule removed. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/account/platform-tenants/{id}/webhooks:
     parameters:
@@ -23666,6 +24020,49 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/monetization-funnel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getAPIMonetizationFunnel
+      x-internal: true
+      summary: Read customer monetization milestones for one app.
+      description: Counts milestones independently for up to 50 recent app customer registrations in the last 120 days. Completed Stripe test signups and platform-managed customers are excluded.
+      responses:
+        '200':
+          description: Registration cohort and observed pricing and live Stripe collection milestones.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIMonetizationFunnelResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/billing-progress:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: App customer whose billing setup progress is being checked.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [consumers]
+      operationId: getAPIConsumerBillingProgress
+      x-internal: true
+      summary: Read first-invoice progress for one app customer.
+      description: Summarizes authoritative usage and pricing, the relevant statement and invoice, and any confirmed live payment.
+      responses:
+        '200':
+          description: Billing milestones with timestamps and a bounded recent usage check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIConsumerBillingProgressResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumers/{consumer_id}/usage/quote:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -23993,6 +24390,66 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503':
           description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the app consumer statement export. Sent as 503 by the public edge.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: consumer_id
+        in: path
+        required: true
+        description: Consumer whose finalized statement will be exported.
+        schema: { type: string, format: uuid }
+      - name: statement_id
+        in: path
+        required: true
+        description: Finalized statement revision to turn into a Stripe draft.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [consumers]
+      operationId: exportAPIConsumerUsageStatementStripeDraft
+      x-internal: true
+      summary: Export a finalized app consumer statement as a Stripe draft.
+      description: |
+        Requires a Stripe connection set to draft collection. Refuses an
+        unfinished export configured to send or charge, including when that
+        export started concurrently. Requires the same Stripe test or live
+        mode as the reviewed draft. Uses the verified customer link for that
+        Stripe account and mode, falling back to a Stripe customer ID in the
+        consumer's external reference. The export pins the customer for retries.
+        Repeating the request returns the same draft. Requires a verified
+        admin session with fresh MFA step-up.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [livemode]
+              properties:
+                livemode: { type: boolean, description: "The Stripe mode reviewed before export." }
+      responses:
+        '200':
+          description: The completed Stripe draft export.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: The statement or Stripe customer cannot be invoiced.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached. Retry to resume the same export.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -105969,6 +106426,97 @@ components:
         trial: { type: boolean, description: "A minute of the consumer's free trial, quoted at zero." }
         unit: { type: string, description: "The quoted minute's price stream when it is not request." }
 
+    APIMonetizationFunnelResponse:
+      description: Usage, invoicing, and payment milestones for a recent app consumer registration cohort.
+      type: object
+      required: [since, until, total_registered, registered, priced_in_first_30_days, live_invoice_sent, live_payment, next_billable_month, next_month_live_payment, second_invoice_review]
+      properties:
+        since: { type: string, format: date-time, description: Inclusive registration cohort start in UTC. }
+        until: { type: string, format: date-time, description: Exclusive registration cohort end in UTC. }
+        total_registered: { type: integer, minimum: 0, description: All registrations in the cohort before applying the sample limit. }
+        registered: { type: integer, minimum: 0, maximum: 50, description: Registrations included in the milestone counts. }
+        priced_in_first_30_days: { type: integer, minimum: 0, description: Customers with positively priced usage during their first 30 days. }
+        live_invoice_sent: { type: integer, minimum: 0, description: Customers with a live Stripe invoice send recorded by Gregale. }
+        live_payment: { type: integer, minimum: 0, description: Customers with a recorded positive live Stripe invoice payment. }
+        next_billable_month: { type: integer, minimum: 0, description: Paying customers with a later non-overlapping billing month that has a finalized positive statement balance. }
+        next_month_live_payment: { type: integer, minimum: 0, description: Customers with another positive live payment in their next billable UTC month. }
+        second_invoice_review:
+          type: array
+          maxItems: 50
+          description: One next-cycle review row per customer with a first live payment and a later billable statement or actionable draft.
+          items: { $ref: '#/components/schemas/APISecondInvoiceReview' }
+
+    APISecondInvoiceReview:
+      description: Next-cycle statement and billing status for an app consumer with a confirmed first payment.
+      type: object
+      required: [consumer_id, name, month, statement_id, status]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        name: { type: string, description: App customer display name. }
+        month: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', description: UTC month of the selected statement. }
+        statement_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [usage_hold, statement_draft, ready_to_export, stripe_draft, awaiting_payment, paid, test_invoice, review_invoice]
+        hold_run_id: { type: string, format: uuid, description: Completed draft run with the active usage hold. }
+
+    APIConsumerBillingProgressResponse:
+      description: Current onboarding milestones for one app consumer billing identity.
+      type: object
+      required: [consumer_id, registered_at, usage]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        registered_at: { type: string, format: date-time }
+        usage: { $ref: '#/components/schemas/APIConsumerBillingUsageProgress' }
+        first_priced_at:
+          type: string
+          format: date-time
+          description: First minute with a positive priced charge in the customer's first 30 days.
+        statement: { $ref: '#/components/schemas/APIConsumerBillingStatementProgress' }
+        invoice: { $ref: '#/components/schemas/APIConsumerBillingInvoiceProgress' }
+        first_live_paid_at:
+          type: string
+          format: date-time
+          description: Earliest recorded positive invoice payment in live mode for this customer.
+
+    APIConsumerBillingUsageProgress:
+      description: Summary of recent durable requests and priced usage through the last complete minute.
+      type: object
+      required: [since, until, status, request_count, unpriced_units, amount_millicents]
+      properties:
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        status: { type: string, enum: [waiting, not_billable, unpriced, included, priced, mixed_currency] }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+
+    APIConsumerBillingStatementProgress:
+      description: Statement associated with the chosen invoice, or the most relevant statement to review.
+      type: object
+      required: [id, status, amount_due_millicents, unpriced_units]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [draft, finalized] }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+
+    APIConsumerBillingInvoiceProgress:
+      description: Provider invoice status as recorded by the account's payment sync.
+      type: object
+      required: [id, provider, livemode]
+      properties:
+        id: { type: string }
+        provider: { $ref: '#/components/schemas/BillingProvider' }
+        livemode: { type: boolean }
+        payment_status: { type: string, enum: [draft, open, paid, void, uncollectible, deleted] }
+        sent_at: { type: string, format: date-time }
+        paid_at:
+          type: string
+          format: date-time
+          description: Provider timestamp for a confirmed positive payment on this invoice.
+
     APIConsumerUsageQuoteResponse:
       description: "Deterministic estimate from durable API consumer usage and versioned app pricing; not an invoice."
       type: object
@@ -137990,6 +138538,20 @@ components:
       type: string
       enum: [stripe, paddle, lago]
 
+    PutStripeSetupRequest:
+      description: Restricted Stripe credential and optional reviewed connection version for guided setup.
+      type: object
+      required: [secret_key]
+      properties:
+        secret_key:
+          type: string
+          writeOnly: true
+          description: Stripe restricted key. Returned connection metadata contains only the last four characters.
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: The reviewed connection version for rotation. Omit to create only if there is no connected Stripe key.
+
     PutBillingConnectionRequest:
       description: "The account's own key for one billing provider."
       type: object
@@ -138053,6 +138615,31 @@ components:
         hosted_invoice_url: { type: string, format: uri, description: "The provider's customer-facing invoice or checkout page once there is one." }
         overdue: { type: boolean, description: "Open, past its due date, with an amount remaining." }
         status_synced_at: { type: string, format: date-time }
+
+        stripe_send_pending: { type: boolean, description: "A reviewed Stripe issuance or delivery can be resumed." }
+        stripe_issued_at: { type: string, format: date-time, description: "When Stripe finalized this reviewed draft." }
+        stripe_sent_at: { type: string, format: date-time, description: "When Stripe accepted the manual invoice send." }
+
+    StripeInvoiceSendReview:
+      description: Provider-confirmed terms shown for owner approval before manual Stripe delivery.
+      type: object
+      required: [invoice_id, stripe_customer, recipient_email, currency, amount_due_minor, due_at, livemode, review_token]
+      properties:
+        invoice_id: { type: string }
+        stripe_customer: { type: string }
+        recipient_email: { type: string, format: email }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_due_minor: { type: integer, format: int64, minimum: 1 }
+        due_at: { type: string, format: date-time }
+        livemode: { type: boolean }
+        review_token: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    SendStripeInvoiceRequest:
+      description: Explicit approval to send the reviewed invoice for manual payment.
+      type: object
+      required: [review_token]
+      properties:
+        review_token: { type: string, pattern: '^[0-9a-f]{64}$' }
 
     StatementInvoiceListResponse:
       description: "One page of an account's exported invoices, newest first."
@@ -138640,6 +139227,39 @@ components:
           enum: [draft, open, paid, void, uncollectible, deleted]
           description: "Payment status of the invoice exported for the item's statement."
 
+        usage_recovered_at: { type: string, format: date-time, description: "When a recheck recovered the held draft." }
+
+    BillingRunUsageHold:
+      description: Billing run usage hold evidence and its current ledger comparison.
+      type: object
+      required: [item, hours, missing_requests]
+      properties:
+        item: { $ref: '#/components/schemas/BillingRunItemResponse' }
+        held_at: { type: string, format: date-time, description: "When the run recorded the original gap." }
+        missing_requests:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Minimum successful requests still missing from the ledger across recorded hours.
+        hours:
+          type: array
+          items: { $ref: '#/components/schemas/BillingRunUsageHoldHour' }
+
+    BillingRunUsageHoldHour:
+      description: Successful request counts for one UTC hour with evidence of a gap.
+      type: object
+      required: [hour, ledger_requests_at_hold, telemetry_requests_at_hold, required_requests, ledger_requests]
+      properties:
+        hour: { type: string, format: date-time }
+        ledger_requests_at_hold: { type: integer, format: int64, minimum: 0 }
+        telemetry_requests_at_hold: { type: integer, format: int64, minimum: 0 }
+        required_requests:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Highest successful request count captured from telemetry for this hour.
+        ledger_requests: { type: integer, format: int64, minimum: 0 }
+
     BillingRunItemListResponse:
       description: "One page of a billing run's customers, ordered by kind and ID."
       type: object
@@ -138659,6 +139279,103 @@ components:
         export: { $ref: '#/components/schemas/BillingRunExport' }
         hold_on_gaps: { type: boolean, description: "Hold app consumers with completeness gaps in scheduled runs (default true)." }
         delay_hours: { type: integer, minimum: 1, maximum: 240, description: "Hours after month end before the run starts (default 24)." }
+
+    BillingRunDraftExportRow:
+      type: object
+      description: Live review of one billing run item for Stripe draft export.
+      required: [id, customer_name, status]
+      properties:
+        id: { type: string }
+        consumer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        stripe_customer: { type: string }
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        currency: { type: string }
+        amount_due_millicents:
+          type: integer
+          format: int64
+          description: Projected amount due after credit, before provider tax and rounding.
+        status: { type: string, enum: [ready, blocked, exported] }
+        reason: { type: string }
+        blocker_code: { type: string, enum: [stripe_customer_missing] }
+        invoice: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
+    BillingRunCollectionTotal:
+      type: object
+      description: Recorded Stripe payments and balances for one currency and mode in the run.
+      required: [currency, livemode, amount_paid_minor, amount_outstanding_minor, amount_overdue_minor, awaiting_check, invoices_due, paid_by_due_date]
+      properties:
+        currency: { type: string }
+        livemode: { type: boolean }
+        amount_paid_minor: { type: integer, format: int64, minimum: 0 }
+        amount_outstanding_minor: { type: integer, format: int64, minimum: 0 }
+        amount_overdue_minor: { type: integer, format: int64, minimum: 0 }
+        awaiting_check:
+          type: integer
+          minimum: 0
+          description: Issued or sent invoices with an unconfirmed balance.
+        invoices_due:
+          type: integer
+          minimum: 0
+          description: Invoices with a positive recorded payment or balance whose due date has passed.
+        paid_by_due_date: { type: integer, minimum: 0 }
+    BillingRunCollectionsResponse:
+      description: Recorded Stripe payment totals for a completed billing run, grouped by currency and Stripe mode.
+      type: object
+      required: [totals]
+      properties:
+        totals:
+          type: array
+          items: { $ref: '#/components/schemas/BillingRunCollectionTotal' }
+    BillingRunDraftExportReview:
+      type: object
+      description: One page of a run's review and the current draft-only connection, when available.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BillingRunDraftExportRow' }
+        next_cursor: { type: string }
+        livemode: { type: boolean }
+        connection_updated_at: { type: string, format: date-time }
+        connection_problem: { type: string }
+    ApproveBillingRunDraftExportRequest:
+      type: object
+      description: The exact Stripe draft and its amount due as shown in the review.
+      required: [consumer_id, statement_id, revision, currency, amount_due_millicents, stripe_customer, livemode, connection_updated_at]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        currency: { type: string }
+        amount_due_millicents: { type: integer, format: int64, minimum: 1 }
+        stripe_customer: { type: string }
+        livemode: { type: boolean }
+        connection_updated_at: { type: string, format: date-time }
+
+    LinkBillingRunStripeCustomerRequest:
+      type: object
+      description: The Stripe customer and original draft review being linked.
+      required: [stripe_customer, statement_id, livemode, connection_updated_at]
+      properties:
+        stripe_customer: { type: string, maxLength: 255, pattern: '^cus_[A-Za-z0-9]+$' }
+        statement_id: { type: string, format: uuid }
+        livemode: { type: boolean }
+        connection_updated_at: { type: string, format: date-time }
+
+    PutDraftBillingRunScheduleRequest:
+      description: Timing and optional reviewed version for a monthly draft schedule.
+      type: object
+      properties:
+        delay_hours:
+          type: integer
+          minimum: 1
+          maximum: 240
+          description: Hours after month end when the schedule starts the run. Defaults to 24.
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: The reviewed draft schedule version. Omit to create only if there is no schedule.
 
     BillingRunScheduleResponse:
       description: "The account's billing run schedule and the month it bills next."

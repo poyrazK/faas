@@ -2270,6 +2270,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// whose successor adopts the guests.
 	impl.WithInstanceBridgeHandoff(cfg.AdoptRunningVMs && cfg.AdoptionRecord)
 	impl.ReconcileInstanceBridgeUnits(ctx)
+	// Bridge activity counters in shadow (connection-survival ADR P1d):
+	// returns at once unless FAAS_INSTANCE_BRIDGE_CONTROL=1.
+	go impl.RunInstanceBridgeActivityShadow(ctx)
 	if err := enableDatabaseVMs(ctx, impl, cfg.DatabaseVMs, mgr.JailLeases(), log); err != nil {
 		return err
 	}

@@ -31530,12 +31530,14 @@ CREATE TABLE public.account_billing_connections (
     collection text DEFAULT 'none'::text NOT NULL,
     days_until_due integer DEFAULT 30 NOT NULL,
     automatic_tax boolean DEFAULT false NOT NULL,
+    stripe_account_id text,
     CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
     CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text]))) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
     CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
-    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
+    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
+    CONSTRAINT account_billing_connections_stripe_account_chk CHECK (((stripe_account_id IS NULL) OR ((provider = 'stripe'::text) AND (stripe_account_id ~ '^acct_[A-Za-z0-9]+$'::text))))
 );
 
 
@@ -33458,6 +33460,21 @@ CREATE TABLE public.api_consumer_spend_caps (
 --
 
 COMMENT ON TABLE public.api_consumer_spend_caps IS 'Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).';
+
+
+--
+-- Name: api_consumer_stripe_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_stripe_links (
+    consumer_id uuid NOT NULL,
+    stripe_account_id text NOT NULL,
+    livemode boolean NOT NULL,
+    stripe_customer_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_stripe_links_account_chk CHECK ((stripe_account_id ~ '^acct_[A-Za-z0-9]+$'::text)),
+    CONSTRAINT api_consumer_stripe_links_customer_chk CHECK ((stripe_customer_id ~ '^cus_[A-Za-z0-9]+$'::text))
+);
 
 
 --
@@ -36323,6 +36340,9 @@ CREATE TABLE public.billing_run_items (
     attempts integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    usage_gap_hours jsonb,
+    usage_held_at timestamp with time zone,
+    usage_recovered_at timestamp with time zone,
     CONSTRAINT billing_run_items_app_chk CHECK (((source_kind = 'app_consumer'::text) = (app_id IS NOT NULL))),
     CONSTRAINT billing_run_items_completeness_chk CHECK (((completeness IS NULL) OR (completeness = ANY (ARRAY['verified'::text, 'partial'::text, 'gaps_detected'::text, 'unverifiable'::text])))),
     CONSTRAINT billing_run_items_counts_chk CHECK (((attempts >= 0) AND (exported_count >= 0) AND ((revision IS NULL) OR (revision >= 1)))),
@@ -64479,6 +64499,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     claim_token uuid,
     claimed_until timestamp with time zone,
     handoff_reserved boolean DEFAULT false NOT NULL,
+    stripe_issue jsonb,
     CONSTRAINT usage_statement_invoice_exports_attempt_chk CHECK ((attempt >= 0)),
     CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT usage_statement_invoice_exports_claim_chk CHECK (((claim_token IS NULL) = (claimed_until IS NULL))),
@@ -66024,6 +66045,14 @@ ALTER TABLE ONLY public.api_consumer_signups
 
 ALTER TABLE ONLY public.api_consumer_spend_caps
     ADD CONSTRAINT api_consumer_spend_caps_pkey PRIMARY KEY (consumer_id);
+
+
+--
+-- Name: api_consumer_stripe_links api_consumer_stripe_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_stripe_links
+    ADD CONSTRAINT api_consumer_stripe_links_pkey PRIMARY KEY (consumer_id, stripe_account_id, livemode);
 
 
 --
@@ -101321,6 +101350,14 @@ ALTER TABLE ONLY public.api_consumer_spend_caps
 
 ALTER TABLE ONLY public.api_consumer_spend_caps
     ADD CONSTRAINT api_consumer_spend_caps_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_stripe_links api_consumer_stripe_links_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_stripe_links
+    ADD CONSTRAINT api_consumer_stripe_links_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --

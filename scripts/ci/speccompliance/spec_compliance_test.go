@@ -2229,8 +2229,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1502, ADR-1507 statement invoice exports
 		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1503 month-end billing runs
-		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1506 consumer billing self-service
-		filepath.Join(root, "pkg", "api", "consumer_signup.go"),       // ADR-20261021143000 consumer self-service sign-up
+		filepath.Join(root, "pkg", "api", "billing_run_draft_exports.go"),
+		filepath.Join(root, "pkg", "api", "billing_run_collections.go"),
+		filepath.Join(root, "pkg", "api", "consumer_billing.go"), // ADR-1506 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "consumer_billing_progress.go"),
+		filepath.Join(root, "pkg", "apid", "apidserver", "handlers_api_monetization_funnel.go"),
+		filepath.Join(root, "pkg", "api", "consumer_signup.go"), // ADR-20261021143000 consumer self-service sign-up
 		filepath.Join(root, "pkg", "api", "consumer_credit_packs.go"),
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans

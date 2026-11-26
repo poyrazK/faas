@@ -118,17 +118,18 @@ type AccountAsyncQuotum struct {
 
 // Sealed credentials for exporting usage statements to the account's own payment provider; only key_last4 and livemode are ever returned.
 type AccountBillingConnection struct {
-	AccountID    pgtype.UUID
-	Provider     string
-	SealedSecret []byte
-	KeyLast4     string
-	Livemode     bool
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ApiUrl       pgtype.Text
-	Collection   string
-	DaysUntilDue int32
-	AutomaticTax bool
+	AccountID       pgtype.UUID
+	Provider        string
+	SealedSecret    []byte
+	KeyLast4        string
+	Livemode        bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ApiUrl          pgtype.Text
+	Collection      string
+	DaysUntilDue    int32
+	AutomaticTax    bool
+	StripeAccountID pgtype.Text
 }
 
 // Operator-issued EUR-cent credits; one credit cent offsets one GB-RAM-hour of overage at the current public rate.
@@ -1052,6 +1053,14 @@ type ApiConsumerSpendCap struct {
 	NextCheckAt          pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+}
+
+type ApiConsumerStripeLink struct {
+	ConsumerID       pgtype.UUID
+	StripeAccountID  string
+	Livemode         bool
+	StripeCustomerID string
+	CreatedAt        pgtype.Timestamptz
 }
 
 // One free trial per API consumer (ADR-1314): usage in [starts_at, ends_at) is priced at zero.
@@ -2809,6 +2818,9 @@ type BillingRunItem struct {
 	Attempts         int32
 	NextAttemptAt    pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	UsageGapHours    []byte
+	UsageHeldAt      pgtype.Timestamptz
+	UsageRecoveredAt pgtype.Timestamptz
 }
 
 // One Product Control customer (app and platform tenant) of a billing run (ADR-20261018212918).
@@ -17930,6 +17942,7 @@ type UsageStatementInvoiceExport struct {
 	ClaimToken           pgtype.UUID
 	ClaimedUntil         pgtype.Timestamptz
 	HandoffReserved      bool
+	StripeIssue          []byte
 }
 
 type WarmHint struct {

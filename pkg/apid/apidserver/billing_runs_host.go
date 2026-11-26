@@ -76,18 +76,52 @@ func (h billingRunsHost) FinalizeConsumerStatement(ctx context.Context, acct sta
 }
 
 func (h billingRunsHost) ConsumerCompleteness(ctx context.Context, acct state.Account, appID, consumerID string,
-	start, end time.Time) (string, int64, error) {
+	start, end time.Time) (billing.APIConsumerUsageCompleteness, error) {
 	from, until, checkable := completenessWindow(start, end, time.Now())
 	if !checkable {
-		return billing.CompletenessUnverifiable, 0, nil
+		return billing.APIConsumerUsageCompleteness{Status: billing.CompletenessUnverifiable}, nil
 	}
-	result, err := h.s.consumerUsageCompleteness(ctx, acct.ID, appID, consumerID, from, until)
-	return result.Status, result.MissingRequests, err
+	return h.s.consumerUsageCompleteness(ctx, acct.ID, appID, consumerID, from, until)
 }
 
 func (h billingRunsHost) ExportConsumerStatement(ctx context.Context, acct state.Account, consumer state.APIConsumer,
 	statement state.APIConsumerUsageStatement, provider string) (state.StatementInvoiceExport, *api.Problem) {
 	return h.s.statementInvoices.ExportAppConsumer(ctx, acct, consumer, statement, provider, "")
+}
+
+func (h billingRunsHost) ReviewConsumerDraftExport(ctx context.Context, acct state.Account, consumer state.APIConsumer,
+	statement state.APIConsumerUsageStatement, conn state.BillingConnection) (string, *api.StatementInvoiceExportResponse, *api.Problem) {
+	return h.s.statementInvoices.ReviewAppConsumerDraft(ctx, acct, consumer, statement, conn)
+}
+
+func (h billingRunsHost) LinkConsumerStripeCustomer(ctx context.Context, acct state.Account, consumer state.APIConsumer,
+	conn state.BillingConnection, customer string) *api.Problem {
+	return h.s.statementInvoices.LinkAppConsumerStripeCustomer(ctx, acct, consumer, conn, customer)
+}
+
+func (h billingRunsHost) FinalizeReviewedConsumerStatement(ctx context.Context, acct state.Account,
+	statement state.APIConsumerUsageStatement, due int64) (state.APIConsumerUsageStatement, *api.Problem) {
+	store, ok := h.s.store.(state.ReviewedAPIConsumerStatementStore)
+	if !ok {
+		return state.APIConsumerUsageStatement{}, api.ErrInternal("reviewed usage statement finalization is unavailable")
+	}
+	finalized, changed, err := store.FinalizeReviewedAPIConsumerUsageStatement(ctx, acct.ID, statement.AppID, statement.ConsumerID, statement.ID, due)
+	if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNotFound) {
+		return finalized, api.NewProblem(http.StatusConflict, api.CodeConflict, "Statement changed",
+			"the revision or amount after credits changed; review the draft again")
+	}
+	if err != nil {
+		return finalized, apiConsumerStatementFinalizeProblem(err)
+	}
+	if changed {
+		h.s.recordAPIConsumerStatementFinalized(ctx, acct, finalized)
+	}
+	return finalized, nil
+}
+
+func (h billingRunsHost) ExportReviewedConsumerDraft(ctx context.Context, acct state.Account, consumer state.APIConsumer,
+	statement state.APIConsumerUsageStatement, customer string, conn state.BillingConnection) (api.StatementInvoiceExportResponse, *api.Problem) {
+	return h.s.statementInvoices.ExportReviewedAppConsumerDraft(ctx, acct, consumer, statement, customer, conn)
 }
 
 func (h billingRunsHost) DraftTenantStatement(ctx context.Context, acct state.Account, tenantID string,

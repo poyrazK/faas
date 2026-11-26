@@ -43,6 +43,26 @@ const (
 	sdkPackageName = "api"
 )
 
+// The paid pilot uses these contracts in the console. An operation requires
+// SDK coverage when its x-internal marker is removed.
+var monetizationConsoleRoutes = map[string]bool{
+	"DELETE /v1/account/billing-run-schedule/draft":                                              true,
+	"GET /v1/account/billing-runs/{id}/collections":                                              true,
+	"GET /v1/account/billing-runs/{id}/draft-exports":                                            true,
+	"GET /v1/account/billing-runs/{id}/usage-holds/{consumer_id}":                                true,
+	"GET /v1/account/statement-invoices/{statement_id}/send":                                     true,
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/billing-progress":                               true,
+	"GET /v1/apps/{slug}/monetization-funnel":                                                    true,
+	"POST /v1/account/billing-runs/{id}/draft-exports":                                           true,
+	"POST /v1/account/billing-runs/{id}/usage-holds/{consumer_id}":                               true,
+	"POST /v1/account/statement-invoices/{statement_id}/refresh":                                 true,
+	"POST /v1/account/statement-invoices/{statement_id}/send":                                    true,
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft": true,
+	"PUT /v1/account/billing-connections/stripe/setup":                                           true,
+	"PUT /v1/account/billing-run-schedule/draft":                                                 true,
+	"PUT /v1/account/billing-runs/{id}/draft-exports/{consumer_id}/stripe-customer":              true,
+}
+
 // routeExclude lists spec routes that have no SDK method by design.
 // Authentication/transport exceptions apply only to this SDK gate. Routes
 // intentionally absent from OpenAPI also belong in
@@ -3374,6 +3394,14 @@ func loadSpec(path string) (map[string]map[string]any, error) {
 			m := on.Content[j].Value
 			switch m {
 			case "get", "post", "put", "patch", "delete":
+				if monetizationConsoleRoutes[strings.ToUpper(m)+" "+pn.Value] {
+					var operation struct {
+						Internal bool `yaml:"x-internal"`
+					}
+					if err := on.Content[j+1].Decode(&operation); err == nil && operation.Internal {
+						continue
+					}
+				}
 				methods[m] = true
 			}
 		}

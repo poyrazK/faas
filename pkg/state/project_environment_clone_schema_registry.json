@@ -76,6 +76,7 @@
       "livemode",
       "provider",
       "sealed_secret",
+      "stripe_account_id",
       "updated_at"
     ],
     "kind": "account_identity"
@@ -1206,6 +1207,17 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "api_consumer_stripe_links",
+    "columns": [
+      "consumer_id",
+      "created_at",
+      "livemode",
+      "stripe_account_id",
+      "stripe_customer_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "api_consumer_trials",
@@ -3523,7 +3535,10 @@
       "source_id",
       "source_kind",
       "statement_id",
-      "updated_at"
+      "updated_at",
+      "usage_gap_hours",
+      "usage_held_at",
+      "usage_recovered_at"
     ],
     "kind": "operational"
   },
@@ -20749,7 +20764,8 @@
       "source_kind",
       "statement_id",
       "status",
-      "status_synced_at"
+      "status_synced_at",
+      "stripe_issue"
     ],
     "kind": "operational"
   },
