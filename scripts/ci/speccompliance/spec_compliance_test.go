@@ -2335,6 +2335,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
 	}
+	// The preview response embeds the stable database switch's fields.
+	for field := range dtos["DatabaseSwitch"] {
+		dtos["MigrationDatabaseSwitch"][field] = true
+	}
 	addRuntimeBuildSchemas(t, root, spec, dtos)
 	// The guest, scheduler and API share diagnostic DTOs. Check their
 	// fields under the OpenAPI names.

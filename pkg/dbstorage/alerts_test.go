@@ -56,7 +56,7 @@ func TestStorageAlertsSurviveDeliveryRestartAndRecoverAfterGrowth(t *testing.T) 
 		CREATE TABLE orgs (id uuid PRIMARY KEY, personal_org boolean, personal_owner_account_id uuid,
 			deleted_pending boolean, deletion_requested_at timestamptz);
 		CREATE TABLE org_memberships (org_id uuid, account_id uuid, role text, removed_at timestamptz);
-		CREATE TABLE accounts (id uuid PRIMARY KEY, email text, status text, deletion_requested_at timestamptz, email_verified_at timestamptz);`)
+		CREATE TABLE accounts (id uuid PRIMARY KEY, email text, status text, deletion_requested_at timestamptz, email_verified_at timestamptz, plan text NOT NULL DEFAULT 'pro');`)
 	for _, path := range []string{"20261126083648850_native_postgres_storage_samples.sql", "20261126083649068_native_postgres_storage_alerts.sql"} {
 		raw, err := os.ReadFile("../../migrations/" + path)
 		if err != nil {
@@ -124,7 +124,7 @@ func TestStorageAlertsSurviveDeliveryRestartAndRecoverAfterGrowth(t *testing.T) 
 	var delivered []string
 	received := make(map[string]bool)
 	send := func(_ context.Context, a Alert, recipient AlertRecipient) error {
-		if recipient.AccountID != owner.String() || recipient.Email != "owner@example.test" {
+		if recipient.AccountID != owner.String() || recipient.OrgID != org.String() || recipient.Plan != "pro" || recipient.Email != "owner@example.test" {
 			return errors.New("sent to the wrong owner")
 		}
 		if !received[a.ID] {

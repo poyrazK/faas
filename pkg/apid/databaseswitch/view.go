@@ -15,7 +15,7 @@ func View(sw state.DatabaseSwitch, revision func(id string) int) api.DatabaseSwi
 		FromDeploymentID: sw.FromDeploymentID, TargetDeploymentID: sw.TargetDeploymentID,
 		UndoneDeploymentIDs: append([]string{}, sw.UndoneDeploymentIDs...), KeepsRelease: sw.KeepsRelease(),
 		SourceDatabaseID: sw.SourceDatabaseID, TargetDatabaseID: sw.TargetDatabaseID, TargetName: sw.TargetName,
-		RestorePoint: stamp(sw.RestorePoint), MigrationOperationID: sw.MigrationOperationID,
+		RestorePoint: stamp(sw.RestorePoint),
 		Drain: api.DatabaseSwitchDrain{Retired: sw.Drain.Retired, Parked: sw.Drain.Parked,
 			Pending: sw.Drain.Pending, Blocked: sw.Drain.Blocked},
 		FailureCode: sw.FailureCode, FailureDetail: sw.FailureDetail, LastErrorCode: sw.LastErrorCode,

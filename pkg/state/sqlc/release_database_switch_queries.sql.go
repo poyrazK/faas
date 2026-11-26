@@ -387,18 +387,25 @@ func (q *Queries) ListDrainingReleaseDatabaseSwitches(ctx context.Context, db DB
 const listReleaseDatabaseSwitches = `-- name: ListReleaseDatabaseSwitches :many
 SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until FROM release_database_switches
  WHERE account_id = $1::uuid AND app_id = $2::uuid
+   AND (migration_operation_id IS NOT NULL) = $3::boolean
  ORDER BY created_at DESC, id DESC
- LIMIT $3::integer
+ LIMIT $4::integer
 `
 
 type ListReleaseDatabaseSwitchesParams struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
+	Migration bool
 	MaxRows   int32
 }
 
 func (q *Queries) ListReleaseDatabaseSwitches(ctx context.Context, db DBTX, arg ListReleaseDatabaseSwitchesParams) ([]ReleaseDatabaseSwitch, error) {
-	rows, err := db.Query(ctx, listReleaseDatabaseSwitches, arg.AccountID, arg.AppID, arg.MaxRows)
+	rows, err := db.Query(ctx, listReleaseDatabaseSwitches,
+		arg.AccountID,
+		arg.AppID,
+		arg.Migration,
+		arg.MaxRows,
+	)
 	if err != nil {
 		return nil, err
 	}

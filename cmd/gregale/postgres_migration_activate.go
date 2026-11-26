@@ -52,7 +52,7 @@ func activatePostgresMigration(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(sw))
 		}
-		PrintOK(osStdout, "Database switch %s started. Follow it with gregale release rollback status %s %s --wait.", sw.ID, *app, sw.ID)
+		PrintOK(osStdout, "Database switch %s started. Follow it with gregale release rollback status %s %s --migration --wait.", sw.ID, *app, sw.ID)
 		return 0
 	}
 	return followDatabaseSwitch(client, *app, sw, databaseSwitchDefaultTimeout, 2*time.Second)

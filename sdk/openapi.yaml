@@ -50630,13 +50630,13 @@ components:
         note: {type: string, description: "What the person recorded about the database."}
         checked_at: {type: string, format: date-time}
     DatabaseSwitch:
-      description: "A durable switch to a managed PostgreSQL database. The app is fenced while its bindings change."
+      description: "A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
       type: object
-      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, drain, phase_started_at, created_at, updated_at]
+      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, restore_point, drain, phase_started_at, created_at, updated_at]
       properties:
         id: {type: string, format: uuid}
         app_id: {type: string, format: uuid}
-        scope: {type: string, description: "The deployment scope whose database bindings change."}
+        scope: {type: string, description: "The deployment scope the rollback restores."}
         phase:
           type: string
           enum: [restoring, staging, verifying, fencing, settling, draining, switching, resuming, aborting, completed, failed, cancelled]
@@ -50654,7 +50654,7 @@ components:
         source_database_name: {type: string}
         target_database_id: {type: string, format: uuid, description: "The restored copy, once its restore has started."}
         target_name: {type: string, description: "Name of the restored copy."}
-        restore_point: {type: string, format: date-time, description: "The recovery timestamp for restore switches. Writes after this moment stay only in the source database."}
+        restore_point: {type: string, format: date-time, description: "Writes after this moment stay only in the source database."}
         drain:
           $ref: '#/components/schemas/DatabaseSwitchDrain'
         failure_code: {type: string, description: "Why a switch failed or was cancelled, or why it is aborting."}

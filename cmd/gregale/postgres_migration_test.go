@@ -122,6 +122,10 @@ func TestPostgresMigrationActivateCLI(t *testing.T) {
 			_, _ = w.Write([]byte(`{"registry_version":1,"plan":"pro","capabilities":[],"hidden_capabilities":[]}`))
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop/database-switches/migration/"+verification {
+			_ = json.NewEncoder(w).Encode(api.MigrationDatabaseSwitch{DatabaseSwitch: api.DatabaseSwitch{ID: verification, Phase: "completed", TargetName: "orders-native"}, MigrationOperationID: operation})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/apps/shop/database-switches/migration" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -136,12 +140,16 @@ func TestPostgresMigrationActivateCLI(t *testing.T) {
 			t.Errorf("activation request = %+v, error = %v", req, err)
 		}
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(api.DatabaseSwitch{ID: verification, MigrationOperationID: operation, Phase: "staging"})
+		_ = json.NewEncoder(w).Encode(api.MigrationDatabaseSwitch{DatabaseSwitch: api.DatabaseSwitch{ID: verification, Phase: "staging"}, MigrationOperationID: operation})
 	})
 	code, out, stderr := runSwitchCLI(t, server, "postgres", "migrate", "activate", restoreSwitchDB,
 		"--source", source, "--app", "shop", "--env", "staging", "--request-id", operation,
 		"--verification-id", verification, "--source-writes-paused", "--no-wait")
 	if code != 0 || !strings.Contains(out, verification) {
 		t.Fatalf("activation switch was not returned: exit=%d stdout=%q stderr=%q", code, out, stderr)
+	}
+	code, out, stderr = runSwitchCLI(t, server, "release", "rollback", "status", "shop", verification, "--migration", "--wait")
+	if code != 0 || !strings.Contains(out, "now uses the native PostgreSQL database orders-native") {
+		t.Fatalf("migration switch status: exit=%d stdout=%q stderr=%q", code, out, stderr)
 	}
 }

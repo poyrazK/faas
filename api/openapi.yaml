@@ -34636,11 +34636,27 @@ paths:
   /v1/apps/{slug}/database-switches/migration:
     parameters:
       - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listMigrationDatabaseSwitches
+      summary: List native PostgreSQL migration switches.
+      description: Recorded migration activations for the app, newest first.
+      responses:
+        '200':
+          description: The app's migration switches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationDatabaseSwitchList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
     post:
       tags: [deployments]
       operationId: activateManagedPostgresMigration
       summary: Activate a verified native PostgreSQL migration for one app environment
-      description: Starts a durable binding switch for a managed source and a single-zone native target. The operator keeps source writers paused through activation. Follow progress using the returned database switch.
+      description: Starts a durable binding switch for a managed source and a single-zone native target. The operator keeps source writers paused through activation. Follow progress using the migration switch ID.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -34653,8 +34669,59 @@ paths:
           description: "The migration activation is queued for the application environment."
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+              schema: { $ref: '#/components/schemas/MigrationDatabaseSwitch' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/migration/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Migration activation UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getMigrationDatabaseSwitch
+      summary: Read a native PostgreSQL migration switch.
+      description: Reports the activation phase, drain counts and outcome for a verified migration.
+      responses:
+        '200':
+          description: The recorded migration activation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationDatabaseSwitch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/migration/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the migration activation to cancel.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [deployments]
+      operationId: cancelMigrationDatabaseSwitch
+      summary: Cancel a native PostgreSQL migration switch.
+      description: The app keeps its current release and database. Once the bindings start switching, this operation returns database_switch_not_cancellable.
+      responses:
+        '202':
+          description: Cancellation recorded for the migration activation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationDatabaseSwitch' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -131685,14 +131752,13 @@ components:
         source_writes_paused: { type: boolean, description: The operator confirms source writers are paused and drained. Must be true. }
         scope: { type: string, default: default }
     DatabaseSwitch:
-      description: "A durable switch to a managed PostgreSQL database. The app is fenced while its bindings change."
+      description: "A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
       type: object
-      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, drain, phase_started_at, created_at, updated_at]
+      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, restore_point, drain, phase_started_at, created_at, updated_at]
       properties:
-        migration_operation_id: { type: string, format: uuid }
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        scope: { type: string, description: "The deployment scope whose database bindings change." }
+        scope: { type: string, description: "The deployment scope the rollback restores." }
         phase:
           type: string
           enum: [restoring, staging, verifying, fencing, settling, draining, switching, resuming, aborting, completed, failed, cancelled]
@@ -131710,7 +131776,7 @@ components:
         source_database_name: { type: string }
         target_database_id: { type: string, format: uuid, description: "The restored copy, once its restore has started." }
         target_name: { type: string, description: "Name of the restored copy." }
-        restore_point: { type: string, format: date-time, description: "The recovery timestamp for restore switches. Writes after this moment stay only in the source database." }
+        restore_point: { type: string, format: date-time, description: "Writes after this moment stay only in the source database." }
         drain:
           $ref: '#/components/schemas/DatabaseSwitchDrain'
         failure_code: { type: string, description: "Why a switch failed or was cancelled, or why it is aborting." }
@@ -131725,6 +131791,57 @@ components:
         phase_started_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    MigrationDatabaseSwitch:
+      description: "A durable binding switch to a verified native PostgreSQL migration target. The app is fenced while its bindings change."
+      type: object
+      required: [migration_operation_id, id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, drain, phase_started_at, created_at, updated_at]
+      properties:
+        migration_operation_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string, description: "The deployment scope whose database bindings change." }
+        phase:
+          type: string
+          enum: [restoring, staging, verifying, fencing, settling, draining, switching, resuming, aborting, completed, failed, cancelled]
+          description: "The app pauses during fencing and resumes after the bindings switch. If cancellation wins, the activation unwinds."
+        from_deployment_id: { type: string, format: uuid, description: "The release serving when the migration activation was requested." }
+        from_revision: { type: integer, minimum: 0 }
+        target_deployment_id: { type: string, format: uuid, description: "The app release serving before and after the migration." }
+        target_revision: { type: integer, minimum: 0 }
+        undone_deployment_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "Empty for a migration switch."
+        keeps_release: { type: boolean, description: "The app stays on its current release." }
+        source_database_id: { type: string, format: uuid, description: "The source database the app leaves." }
+        source_database_name: { type: string }
+        target_database_id: { type: string, format: uuid, description: "The native target database." }
+        target_name: { type: string, description: "Name of the native target database." }
+        restore_point: { type: string, format: date-time, description: "Omitted for migration activations." }
+        drain:
+          $ref: '#/components/schemas/DatabaseSwitchDrain'
+        failure_code: { type: string, description: "Reason the migration activation failed, was cancelled, or is aborting." }
+        failure_detail: { type: string }
+        last_error_code: { type: string, description: "The last transient error during migration activation." }
+        requested_by: { type: string }
+        cancel_requested_at: { type: string, format: date-time }
+        fenced_at: { type: string, format: date-time }
+        release_switched_at: { type: string, format: date-time }
+        activated_at: { type: string, format: date-time, description: "When the bindings moved to the native target." }
+        finished_at: { type: string, format: date-time }
+        phase_started_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    MigrationDatabaseSwitchList:
+      description: "Recorded migration activations ordered by request time."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MigrationDatabaseSwitch' }
 
     CreateDatabaseSwitchRequest:
       description: "Restore a managed database the app binds and move the app to the copy, keeping its code."

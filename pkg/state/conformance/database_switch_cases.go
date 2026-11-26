@@ -113,7 +113,7 @@ func testDatabaseSwitches(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("switch after completion: %v", err)
 	}
-	listed, err := store.ListDatabaseSwitches(fx.Ctx, fx.Account.ID, fx.App.ID, 10)
+	listed, err := store.ListDatabaseSwitches(fx.Ctx, fx.Account.ID, fx.App.ID, false, 10)
 	if err != nil || len(listed) != 2 {
 		t.Fatalf("listed = %+v, %v", listed, err)
 	}

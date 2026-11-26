@@ -3588,12 +3588,27 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/rollbacks/{operation}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCheckedRollback)))
 	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackApp)))))
 	// ADR-20261023181931: rollbacks that restore the database.
-	mux.HandleFunc("GET /v1/apps/{slug}/database-switches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listDatabaseSwitches)))
-	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDatabaseSwitch)))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.listDatabaseSwitches(w, r, acct, false)
+	})))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/migration", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.listDatabaseSwitches(w, r, acct, true)
+	})))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.getDatabaseSwitch(w, r, acct, false)
+	})))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/migration/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.getDatabaseSwitch(w, r, acct, true)
+	})))
 	// Amendment 3: a restore that switches the app and keeps its code.
 	mux.HandleFunc("POST /v1/apps/{slug}/database-switches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDatabaseSwitch)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.activateManagedPostgresMigration))))
-	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelDatabaseSwitch))))
+	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.cancelDatabaseSwitch(w, r, acct, false)
+	}))))
+	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/migration/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.cancelDatabaseSwitch(w, r, acct, true)
+	}))))
 	// SAFE-RELEASES-R (issue #976 / ADR-122): the operator
 	// manual-rollout-recovery escape hatch. The CLI subcommand
 	// `gregale rollouts recover <slug>` is the canonical caller;

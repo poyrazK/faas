@@ -3496,6 +3496,9 @@ from .migration_cutover_status import MigrationCutoverStatus
 from .migration_cutover_traffic import MigrationCutoverTraffic
 from .migration_cutover_traffic_coverage import MigrationCutoverTrafficCoverage
 from .migration_cutover_traffic_status import MigrationCutoverTrafficStatus
+from .migration_database_switch import MigrationDatabaseSwitch
+from .migration_database_switch_list import MigrationDatabaseSwitchList
+from .migration_database_switch_phase import MigrationDatabaseSwitchPhase
 from .migration_dependency_checks import MigrationDependencyChecks
 from .migration_dns_record import MigrationDNSRecord
 from .migration_dns_record_type import MigrationDNSRecordType
@@ -10797,6 +10800,9 @@ __all__ = (
     "MigrationCutoverTraffic",
     "MigrationCutoverTrafficCoverage",
     "MigrationCutoverTrafficStatus",
+    "MigrationDatabaseSwitch",
+    "MigrationDatabaseSwitchList",
+    "MigrationDatabaseSwitchPhase",
     "MigrationDependencyChecks",
     "MigrationDNSRecord",
     "MigrationDNSRecordType",

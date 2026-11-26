@@ -104,7 +104,7 @@ type DatabaseSwitchStore interface {
 	// otherwise).
 	DatabaseSwitch(ctx context.Context, accountID, id string) (DatabaseSwitch, error)
 	// ListDatabaseSwitches lists an app's switches, newest first.
-	ListDatabaseSwitches(ctx context.Context, accountID, appID string, limit int) ([]DatabaseSwitch, error)
+	ListDatabaseSwitches(ctx context.Context, accountID, appID string, migration bool, limit int) ([]DatabaseSwitch, error)
 	// ClaimDueDatabaseSwitches leases up to limit active switches whose
 	// retry time has come and whose lease is free or expired.
 	ClaimDueDatabaseSwitches(ctx context.Context, token string, now, until time.Time, limit int) ([]DatabaseSwitch, error)
@@ -229,12 +229,12 @@ func (m *MemStore) DatabaseSwitch(_ context.Context, accountID, id string) (Data
 	return copyDatabaseSwitch(sw), nil
 }
 
-func (m *MemStore) ListDatabaseSwitches(_ context.Context, accountID, appID string, limit int) ([]DatabaseSwitch, error) {
+func (m *MemStore) ListDatabaseSwitches(_ context.Context, accountID, appID string, migration bool, limit int) ([]DatabaseSwitch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []DatabaseSwitch
 	for _, sw := range m.databaseSwitches {
-		if sw.AccountID == accountID && sw.AppID == appID {
+		if sw.AccountID == accountID && sw.AppID == appID && (sw.MigrationOperationID != "") == migration {
 			out = append(out, copyDatabaseSwitch(sw))
 		}
 	}

@@ -1817,6 +1817,8 @@ export type { MigrationCutover } from './models/MigrationCutover.js';
 export type { MigrationCutoverActionRequest } from './models/MigrationCutoverActionRequest.js';
 export type { MigrationCutoverList } from './models/MigrationCutoverList.js';
 export type { MigrationCutoverTraffic } from './models/MigrationCutoverTraffic.js';
+export type { MigrationDatabaseSwitch } from './models/MigrationDatabaseSwitch.js';
+export type { MigrationDatabaseSwitchList } from './models/MigrationDatabaseSwitchList.js';
 export type { MigrationDependencyChecks } from './models/MigrationDependencyChecks.js';
 export type { MigrationDNSRecord } from './models/MigrationDNSRecord.js';
 export type { MigrationServiceConnectionCheck } from './models/MigrationServiceConnectionCheck.js';

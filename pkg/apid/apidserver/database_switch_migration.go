@@ -50,7 +50,7 @@ func (s *server) activateManagedPostgresMigration(w http.ResponseWriter, r *http
 	}
 	ctx := r.Context()
 	if existing, err := switches.DatabaseSwitch(ctx, acct.ID, req.VerificationID); err == nil {
-		writeMigrationSwitchRetry(w, s.databaseSwitchView(ctx, existing), existing, app, req)
+		writeMigrationSwitchRetry(w, s.migrationDatabaseSwitchView(ctx, existing), existing, app, req)
 		return
 	} else if !errors.Is(err, state.ErrNotFound) {
 		api.WriteProblem(w, databaseSwitchCreateProblem(app, err))
@@ -67,7 +67,7 @@ func (s *server) activateManagedPostgresMigration(w http.ResponseWriter, r *http
 	created, err := switches.CreateDatabaseSwitch(ctx, sw)
 	if errors.Is(err, state.ErrConflict) {
 		if existing, readErr := switches.DatabaseSwitch(ctx, acct.ID, req.VerificationID); readErr == nil {
-			writeMigrationSwitchRetry(w, s.databaseSwitchView(ctx, existing), existing, app, req)
+			writeMigrationSwitchRetry(w, s.migrationDatabaseSwitchView(ctx, existing), existing, app, req)
 			return
 		}
 	}
@@ -81,10 +81,10 @@ func (s *server) activateManagedPostgresMigration(w http.ResponseWriter, r *http
 		"migration_operation_id": created.MigrationOperationID,
 	})
 	s.appendDatabaseSwitchAudit(ctx, created, "requested")
-	writeJSON(w, http.StatusAccepted, s.databaseSwitchView(ctx, created))
+	writeJSON(w, http.StatusAccepted, s.migrationDatabaseSwitchView(ctx, created))
 }
 
-func writeMigrationSwitchRetry(w http.ResponseWriter, view api.DatabaseSwitch, sw state.DatabaseSwitch, app state.App, req api.ActivateManagedPostgresMigrationRequest) {
+func writeMigrationSwitchRetry(w http.ResponseWriter, view api.MigrationDatabaseSwitch, sw state.DatabaseSwitch, app state.App, req api.ActivateManagedPostgresMigrationRequest) {
 	if sw.AppID != app.ID || sw.Scope != req.Scope || sw.MigrationOperationID != req.OperationID ||
 		sw.SourceDatabaseID != req.SourceDatabaseID || sw.TargetDatabaseID != req.TargetDatabaseID {
 		api.WriteProblem(w, api.ErrDatabaseSwitchUnavailable("This verification ID already names another database switch.", ""))

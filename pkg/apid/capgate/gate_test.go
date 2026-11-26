@@ -32,6 +32,8 @@ func TestNativePostgresOperationsRequireOptIn(t *testing.T) {
 		"/v1/orgs/{org}/postgres/databases/{id}/exports/{export_id}/download",
 		"/v1/postgres/bindings/{id}/timeouts",
 		"/v1/apps/{slug}/database-switches/migration",
+		"/v1/apps/{slug}/database-switches/migration/{id}",
+		"/v1/apps/{slug}/database-switches/migration/{id}/cancel",
 		"/v1/postgres/databases/{id}/upgrade-rehearsals/{rehearsal_id}",
 	} {
 		if owner, ok := gate.Capability(path); !ok || owner != capability ||

@@ -29,6 +29,7 @@ SELECT * FROM release_database_switches
 -- name: ListReleaseDatabaseSwitches :many
 SELECT * FROM release_database_switches
  WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+   AND (migration_operation_id IS NOT NULL) = sqlc.arg(migration)::boolean
  ORDER BY created_at DESC, id DESC
  LIMIT sqlc.arg(max_rows)::integer;
 

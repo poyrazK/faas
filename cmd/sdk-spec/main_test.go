@@ -4,8 +4,11 @@ package main
 import (
 	"bytes"
 	"os"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestSDKSpecInSync(t *testing.T) {
@@ -34,12 +37,23 @@ func TestSDKSpecKeepsNativePostgresOperationsInPreview(t *testing.T) {
 	}
 	for _, token := range []string{
 		"/query-insights:", "/masked-branches:", "/upgrade-rehearsals:", "/backup-schedule:",
-		"/database-switches/migration:", "replica_only", "migration_operation_id:", "masked_branch:",
+		"/database-switches/migration:", "/database-switches/migration/", "MigrationDatabaseSwitch:", "replica_only", "migration_operation_id:", "masked_branch:",
 		"ManagedPostgresStorageStatus:", "ManagedPostgresBackupStatus:", "ManagedPostgresReplicaStatus:",
 	} {
 		if strings.Contains(string(spec), token) {
 			t.Errorf("native PostgreSQL preview token %q leaked into the default SDK", token)
 		}
+	}
+	var doc struct {
+		Components struct {
+			Schemas map[string]struct{ Required []string }
+		}
+	}
+	if err := yaml.Unmarshal(spec, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(doc.Components.Schemas["DatabaseSwitch"].Required, "restore_point") {
+		t.Fatal("the stable database switch requires a restore point")
 	}
 }
 

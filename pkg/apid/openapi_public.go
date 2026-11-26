@@ -237,7 +237,6 @@ func hideNativePostgresFields(root *yaml.Node) []*yaml.Node {
 	schemas := mappingValue(mappingValue(root, "components"), "schemas")
 	var removed []*yaml.Node
 	for schema, fields := range map[string][]string{
-		"DatabaseSwitch":                        {"migration_operation_id"},
 		"ManagedPostgresDatabase":               {"masked_branch"},
 		"ResourceStatus":                        {"storage", "maintenance", "backup", "replica"},
 		"RestoreManagedPostgresDatabaseRequest": {"region"},

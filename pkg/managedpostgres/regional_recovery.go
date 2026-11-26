@@ -101,7 +101,7 @@ func (s *Service) regionalRecoveryStatus(ctx context.Context, source Database) *
 	now := s.now().UTC()
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	result, err := reader.CheckRecoveryTarget(ctx, databaseDataResource(source), source.Spec.PostgresMajor, now.Add(-time.Second), true)
+	result, _, err := s.latestRegionalRecovery(ctx, reader, source, now)
 	if err != nil {
 		return unknown
 	}
@@ -125,29 +125,32 @@ func (s *Service) prepareRegionalRestore(ctx context.Context, source Database, r
 	if err != nil {
 		return target, point, err
 	}
-	checkAt := point
 	spec := source.Spec
+	var result api.ManagedPostgresRecoveryStatus
 	if request.Latest {
-		checkAt = now.Add(-time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		var major int
+		result, major, err = s.latestRegionalRecovery(ctx, reader, source, now)
+		spec.PostgresMajor = major
+		if result.RecoveryPoint != nil {
+			point = result.RecoveryPoint.UTC().Truncate(time.Microsecond)
+		}
 	} else {
 		if !withinRecoveryWindow(source, now, point) {
 			return target, point, ErrInvalid
 		}
-		// Read the catalog's major history before checking WAL on the
-		// destination. The restore can run without contacting the source VM.
+		// Read the major history from the catalog without waking the source.
 		spec, err = s.resolveRestoreSpec(ctx, source, point, false)
 		if err != nil {
 			return target, point, err
 		}
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		result, err = reader.CheckRecoveryTarget(ctx, databaseDataResource(source), spec.PostgresMajor, point, false)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	result, err := reader.CheckRecoveryTarget(ctx, databaseDataResource(source), spec.PostgresMajor, checkAt, request.Latest)
 	if err != nil {
 		return target, point, err
-	}
-	if request.Latest && result.RecoveryPoint != nil {
-		point = result.RecoveryPoint.UTC().Truncate(time.Microsecond)
 	}
 	if result.Outcome != "covered" || !withinRecoveryWindow(source, now, point) {
 		return target, point, fmt.Errorf("%w: no verified recovery point in %s (%s)", ErrConflict, backend.Region, result.Reason)
@@ -157,6 +160,60 @@ func (s *Service) prepareRegionalRestore(ctx context.Context, source Database, r
 	target.Spec.Region = backend.Region
 	target.BackendID, target.BackendFingerprint = backend.ID, backend.Fingerprint
 	return target, point, nil
+}
+
+// latestRegionalRecovery tries the current archive first. If the destination
+// is behind an upgrade, probe each retained major before its upgrade boundary
+// so a newer base backup cannot hide the older one.
+func (s *Service) latestRegionalRecovery(ctx context.Context, reader recoveryReader, source Database, now time.Time) (api.ManagedPostgresRecoveryStatus, int, error) {
+	major := source.Spec.PostgresMajor
+	latest := now.Add(-time.Second)
+	resource := databaseDataResource(source)
+	result, err := reader.CheckRecoveryTarget(ctx, resource, major, latest, true)
+	if err == nil && usableRegionalRecoveryPoint(source, now, result, latest) {
+		return result, major, nil
+	}
+	if result.Outcome == "covered" {
+		result.Outcome = "unverified"
+		result.Reason = "recovery_point_outside_window"
+		result.RecoveryPoint = nil
+	}
+	home, resolveErr := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
+	if resolveErr != nil {
+		return result, major, err
+	}
+	historyReader, ok := home.Provider.(RestoreMajorHistoryReader)
+	if !ok {
+		return result, major, err
+	}
+	history, historyErr := historyReader.RestoreMajorHistory(ctx, restoreSourceDefinition(source))
+	if historyErr != nil {
+		return result, major, err
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		span := history[i]
+		checkAt := latest
+		if !checkAt.Before(span.Until) {
+			checkAt = span.Until.Add(-time.Microsecond)
+		}
+		if !withinRecoveryWindow(source, now, checkAt) {
+			break
+		}
+		candidate, probeErr := reader.CheckRecoveryTarget(ctx, resource, span.PostgresMajor, checkAt, true)
+		if probeErr != nil || !usableRegionalRecoveryPoint(source, now, candidate, checkAt) {
+			continue
+		}
+		if i > 0 && candidate.RecoveryPoint.Before(history[i-1].Until) {
+			continue
+		}
+		return candidate, span.PostgresMajor, nil
+	}
+	return result, major, err
+}
+
+func usableRegionalRecoveryPoint(source Database, now time.Time, result api.ManagedPostgresRecoveryStatus, checkAt time.Time) bool {
+	return result.Outcome == "covered" && result.RecoveryPoint != nil && !result.RecoveryPoint.After(checkAt) &&
+		withinRecoveryWindow(source, now, *result.RecoveryPoint)
 }
 
 func withinRecoveryWindow(source Database, now, point time.Time) bool {

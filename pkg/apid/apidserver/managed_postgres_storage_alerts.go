@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/dbstorage"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 func (s *server) runManagedPostgresStorageAlerts(ctx context.Context, pool *pgxpool.Pool) {
@@ -38,6 +39,10 @@ func (s *server) runManagedPostgresStorageAlerts(ctx context.Context, pool *pgxp
 }
 
 func (s *server) sendManagedPostgresStorageAlert(ctx context.Context, alert dbstorage.Alert, recipient dbstorage.AlertRecipient) error {
+	subject := platformflags.Subject{AccountID: recipient.AccountID, OrgID: recipient.OrgID, Plan: recipient.Plan}
+	if s.capGate == nil || !s.nativePostgresOperationsEnabled(subject) {
+		return nil
+	}
 	var title, impact string
 	switch alert.State {
 	case "low_space":

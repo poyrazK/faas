@@ -51,6 +51,8 @@ func ReadAlerts(ctx context.Context, pool *pgxpool.Pool, ids []pgtype.UUID) ([]A
 
 type AlertRecipient struct {
 	AccountID string
+	OrgID     string
+	Plan      string
 	Email     string
 }
 
@@ -125,7 +127,7 @@ func claimAlert(ctx context.Context, pool *pgxpool.Pool) (alertDelivery, error) 
 func deliverToAlertOwner(ctx context.Context, pool *pgxpool.Pool, a alertDelivery, send func(context.Context, Alert, AlertRecipient) error) error {
 	var owner AlertRecipient
 	err := pool.QueryRow(ctx, `
-		SELECT a.id::text, a.email
+		SELECT a.id::text, CASE WHEN o.personal_org THEN '' ELSE o.id::text END, a.plan, a.email
 		FROM managed_postgres_databases d JOIN orgs o ON o.id = d.org_id
 		JOIN accounts a ON a.id = CASE WHEN o.personal_org THEN o.personal_owner_account_id ELSE (
 			SELECT m.account_id FROM org_memberships m
@@ -134,7 +136,7 @@ func deliverToAlertOwner(ctx context.Context, pool *pgxpool.Pool, a alertDeliver
 		WHERE d.id = $1::uuid AND d.provider_resource_id = d.id::text AND d.state IN ('ready', 'updating')
 			AND d.clone_resource_role = 'target' AND NOT o.deleted_pending AND o.deletion_requested_at IS NULL
 			AND a.status IN ('active', 'past_due') AND a.deletion_requested_at IS NULL AND a.email_verified_at IS NOT NULL`, a.DatabaseID).
-		Scan(&owner.AccountID, &owner.Email)
+		Scan(&owner.AccountID, &owner.OrgID, &owner.Plan, &owner.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

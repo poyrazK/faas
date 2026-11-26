@@ -7,7 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.activate_managed_postgres_migration_request import ActivateManagedPostgresMigrationRequest
-from ...models.database_switch import DatabaseSwitch
+from ...models.migration_database_switch import MigrationDatabaseSwitch
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -39,9 +39,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> DatabaseSwitch | Problem | None:
+) -> MigrationDatabaseSwitch | Problem | None:
     if response.status_code == 202:
-        response_202 = DatabaseSwitch.from_dict(response.json())
+        response_202 = MigrationDatabaseSwitch.from_dict(response.json())
 
         return response_202
 
@@ -88,7 +88,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[DatabaseSwitch | Problem]:
+) -> Response[MigrationDatabaseSwitch | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -103,11 +103,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ActivateManagedPostgresMigrationRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Response[DatabaseSwitch | Problem]:
+) -> Response[MigrationDatabaseSwitch | Problem]:
     """Activate a verified native PostgreSQL migration for one app environment
 
      Starts a durable binding switch for a managed source and a single-zone native target. The operator
-    keeps source writers paused through activation. Follow progress using the returned database switch.
+    keeps source writers paused through activation. Follow progress using the migration switch ID.
 
     Args:
         slug (str):
@@ -120,7 +120,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DatabaseSwitch | Problem]
+        Response[MigrationDatabaseSwitch | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -142,11 +142,11 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ActivateManagedPostgresMigrationRequest,
     idempotency_key: str | Unset = UNSET,
-) -> DatabaseSwitch | Problem | None:
+) -> MigrationDatabaseSwitch | Problem | None:
     """Activate a verified native PostgreSQL migration for one app environment
 
      Starts a durable binding switch for a managed source and a single-zone native target. The operator
-    keeps source writers paused through activation. Follow progress using the returned database switch.
+    keeps source writers paused through activation. Follow progress using the migration switch ID.
 
     Args:
         slug (str):
@@ -159,7 +159,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DatabaseSwitch | Problem
+        MigrationDatabaseSwitch | Problem
     """
 
     return sync_detailed(
@@ -176,11 +176,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ActivateManagedPostgresMigrationRequest,
     idempotency_key: str | Unset = UNSET,
-) -> Response[DatabaseSwitch | Problem]:
+) -> Response[MigrationDatabaseSwitch | Problem]:
     """Activate a verified native PostgreSQL migration for one app environment
 
      Starts a durable binding switch for a managed source and a single-zone native target. The operator
-    keeps source writers paused through activation. Follow progress using the returned database switch.
+    keeps source writers paused through activation. Follow progress using the migration switch ID.
 
     Args:
         slug (str):
@@ -193,7 +193,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DatabaseSwitch | Problem]
+        Response[MigrationDatabaseSwitch | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -213,11 +213,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ActivateManagedPostgresMigrationRequest,
     idempotency_key: str | Unset = UNSET,
-) -> DatabaseSwitch | Problem | None:
+) -> MigrationDatabaseSwitch | Problem | None:
     """Activate a verified native PostgreSQL migration for one app environment
 
      Starts a durable binding switch for a managed source and a single-zone native target. The operator
-    keeps source writers paused through activation. Follow progress using the returned database switch.
+    keeps source writers paused through activation. Follow progress using the migration switch ID.
 
     Args:
         slug (str):
@@ -230,7 +230,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DatabaseSwitch | Problem
+        MigrationDatabaseSwitch | Problem
     """
 
     return (

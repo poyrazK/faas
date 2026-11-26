@@ -3640,6 +3640,8 @@
       "parent": "managed-postgres",
       "routes": [
         "/v1/apps/{}/database-switches/migration",
+        "/v1/apps/{}/database-switches/migration/{}",
+        "/v1/apps/{}/database-switches/migration/{}/cancel",
         "/v1/orgs/{}/postgres/bindings/{}/timeouts",
         "/v1/orgs/{}/postgres/databases/{}/autovacuum",
         "/v1/orgs/{}/postgres/databases/{}/backup-schedule",

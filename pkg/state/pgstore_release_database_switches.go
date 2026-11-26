@@ -124,12 +124,12 @@ func (s *PgStore) DatabaseSwitch(ctx context.Context, accountID, id string) (Dat
 	return databaseSwitchFromRow(row), nil
 }
 
-func (s *PgStore) ListDatabaseSwitches(ctx context.Context, accountID, appID string, limit int) ([]DatabaseSwitch, error) {
+func (s *PgStore) ListDatabaseSwitches(ctx context.Context, accountID, appID string, migration bool, limit int) ([]DatabaseSwitch, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
 	rows, err := sqlc.New().ListReleaseDatabaseSwitches(ctx, s.pool, sqlc.ListReleaseDatabaseSwitchesParams{
-		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), MaxRows: int32(limit)}) //nolint:gosec // bounded above
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Migration: migration, MaxRows: int32(limit)}) //nolint:gosec // bounded above
 	if err != nil {
 		return nil, mapErr(err)
 	}

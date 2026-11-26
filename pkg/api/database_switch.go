@@ -41,8 +41,7 @@ type DatabaseSwitch struct {
 	TargetName       string `json:"target_name"`
 	// RestorePoint is the moment the copy is restored to: writes after it
 	// stay only in the source database.
-	RestorePoint         string `json:"restore_point,omitempty"`
-	MigrationOperationID string `json:"migration_operation_id,omitempty"`
+	RestorePoint string `json:"restore_point,omitempty"`
 	// Drain counts the fenced app's instances: retired with a native
 	// receipt, parked (no process; snapshot invalidated), still pending, or
 	// blocking the switch.
@@ -75,6 +74,17 @@ type DatabaseSwitchDrain struct {
 // DatabaseSwitchList is an app's switches, newest first.
 type DatabaseSwitchList struct {
 	Items []DatabaseSwitch `json:"items"`
+}
+
+// MigrationDatabaseSwitch reports a live binding switch to a verified subscriber.
+type MigrationDatabaseSwitch struct {
+	DatabaseSwitch
+	MigrationOperationID string `json:"migration_operation_id,omitempty"`
+}
+
+// MigrationDatabaseSwitchList is the preview history for one app.
+type MigrationDatabaseSwitchList struct {
+	Items []MigrationDatabaseSwitch `json:"items"`
 }
 
 // ListDatabaseSwitches lists an app's database switches, newest first
@@ -135,9 +145,30 @@ type ActivateManagedPostgresMigrationRequest struct {
 	Scope              string `json:"scope,omitempty"`
 }
 
-func (c *Client) ActivateManagedPostgresMigration(ctx context.Context, slug string, req ActivateManagedPostgresMigrationRequest) (DatabaseSwitch, error) {
-	var out DatabaseSwitch
+func (c *Client) ActivateManagedPostgresMigration(ctx context.Context, slug string, req ActivateManagedPostgresMigrationRequest) (MigrationDatabaseSwitch, error) {
+	var out MigrationDatabaseSwitch
 	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/migration", req, &out)
+}
+
+// ListMigrationDatabaseSwitches returns preview migration activations, newest first.
+func (c *Client) ListMigrationDatabaseSwitches(ctx context.Context, slug string) ([]MigrationDatabaseSwitch, error) {
+	var out MigrationDatabaseSwitchList
+	if err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/migration", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// GetMigrationDatabaseSwitch reads one preview migration activation.
+func (c *Client) GetMigrationDatabaseSwitch(ctx context.Context, slug, id string) (MigrationDatabaseSwitch, error) {
+	var out MigrationDatabaseSwitch
+	return out, c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/migration/"+url.PathEscape(id), nil, &out)
+}
+
+// CancelMigrationDatabaseSwitch requests cancellation before the bindings switch.
+func (c *Client) CancelMigrationDatabaseSwitch(ctx context.Context, slug, id string) (MigrationDatabaseSwitch, error) {
+	var out MigrationDatabaseSwitch
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/database-switches/migration/"+url.PathEscape(id)+"/cancel", nil, &out)
 }
 
 // DatabaseSwitchFinished reports whether a switch phase ends it.

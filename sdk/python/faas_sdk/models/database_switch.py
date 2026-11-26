@@ -20,12 +20,15 @@ T = TypeVar("T", bound="DatabaseSwitch")
 
 @_attrs_define
 class DatabaseSwitch:
-    """A durable switch to a managed PostgreSQL database. The app is fenced while its bindings change."""
+    """A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to
+    restore_point as a new database, and the app moves to it and to the target release while it is fenced.
+
+    """
 
     id: UUID
     app_id: UUID
     scope: str
-    """The deployment scope whose database bindings change."""
+    """The deployment scope the rollback restores."""
     phase: DatabaseSwitchPhase
     """From fencing until completed the app does not serve. aborting unwinds everything done before the bindings
     switched."""
@@ -37,6 +40,8 @@ class DatabaseSwitch:
     """The database the app leaves. It keeps every write."""
     target_name: str
     """Name of the restored copy."""
+    restore_point: datetime.datetime
+    """Writes after this moment stay only in the source database."""
     drain: DatabaseSwitchDrain
     """A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot
     invalidated), still pending, or blocking the switch."""
@@ -54,8 +59,6 @@ class DatabaseSwitch:
     source_database_name: str | Unset = UNSET
     target_database_id: UUID | Unset = UNSET
     """The restored copy, once its restore has started."""
-    restore_point: datetime.datetime | Unset = UNSET
-    """The recovery timestamp for restore switches. Writes after this moment stay only in the source database."""
     failure_code: str | Unset = UNSET
     """Why a switch failed or was cancelled, or why it is aborting."""
     failure_detail: str | Unset = UNSET
@@ -90,6 +93,8 @@ class DatabaseSwitch:
 
         target_name = self.target_name
 
+        restore_point = self.restore_point.isoformat()
+
         drain = self.drain.to_dict()
 
         phase_started_at = self.phase_started_at.isoformat()
@@ -113,10 +118,6 @@ class DatabaseSwitch:
         target_database_id: str | Unset = UNSET
         if not isinstance(self.target_database_id, Unset):
             target_database_id = str(self.target_database_id)
-
-        restore_point: str | Unset = UNSET
-        if not isinstance(self.restore_point, Unset):
-            restore_point = self.restore_point.isoformat()
 
         failure_code = self.failure_code
 
@@ -158,6 +159,7 @@ class DatabaseSwitch:
                 "undone_deployment_ids": undone_deployment_ids,
                 "source_database_id": source_database_id,
                 "target_name": target_name,
+                "restore_point": restore_point,
                 "drain": drain,
                 "phase_started_at": phase_started_at,
                 "created_at": created_at,
@@ -176,8 +178,6 @@ class DatabaseSwitch:
             field_dict["source_database_name"] = source_database_name
         if target_database_id is not UNSET:
             field_dict["target_database_id"] = target_database_id
-        if restore_point is not UNSET:
-            field_dict["restore_point"] = restore_point
         if failure_code is not UNSET:
             field_dict["failure_code"] = failure_code
         if failure_detail is not UNSET:
@@ -225,6 +225,8 @@ class DatabaseSwitch:
 
         target_name = d.pop("target_name")
 
+        restore_point = datetime.datetime.fromisoformat(d.pop("restore_point"))
+
         drain = DatabaseSwitchDrain.from_dict(d.pop("drain"))
 
         phase_started_at = datetime.datetime.fromisoformat(d.pop("phase_started_at"))
@@ -254,13 +256,6 @@ class DatabaseSwitch:
             target_database_id = UNSET
         else:
             target_database_id = UUID(_target_database_id)
-
-        _restore_point = d.pop("restore_point", UNSET)
-        restore_point: datetime.datetime | Unset
-        if isinstance(_restore_point, Unset):
-            restore_point = UNSET
-        else:
-            restore_point = datetime.datetime.fromisoformat(_restore_point)
 
         failure_code = d.pop("failure_code", UNSET)
 
@@ -314,6 +309,7 @@ class DatabaseSwitch:
             undone_deployment_ids=undone_deployment_ids,
             source_database_id=source_database_id,
             target_name=target_name,
+            restore_point=restore_point,
             drain=drain,
             phase_started_at=phase_started_at,
             created_at=created_at,
@@ -324,7 +320,6 @@ class DatabaseSwitch:
             keeps_release=keeps_release,
             source_database_name=source_database_name,
             target_database_id=target_database_id,
-            restore_point=restore_point,
             failure_code=failure_code,
             failure_detail=failure_detail,
             last_error_code=last_error_code,

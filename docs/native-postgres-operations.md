@@ -247,8 +247,8 @@ gregale postgres migrate activate orders-native --source orders-neon --app order
 ```
 
 Pass `--env` for a named environment. The verification UUID is also the
-switch ID and can be reused to follow the same request. The receipt must
-still be fresh when the bindings change. Gregale halts replication and
+switch ID. Use `gregale release rollback status orders-api "$VERIFICATION_ID" --migration --wait`
+to follow the same request. The receipt must still be fresh when the bindings change. Gregale halts replication and
 confirms the subscriber is still at the verified position. The app pauses
 while Gregale drains its instances, switches its bindings, retires the old
 managed credentials, and opens the target. The app resumes on the same release. If the switch fails before changing
@@ -391,11 +391,11 @@ and can offer an earlier point that it can still verify.
 
 The restore creates a new database in the recovery region using only its
 archive. You can choose an earlier point with `--point-in-time`. Gregale
-must verify the requested point before reserving the copy. The first
-version verifies a bounded range of WAL on the initial timeline of the
-current PostgreSQL major. When it cannot prove that the archive covers a
-point, it reports that evidence as unverified. Regional recovery needs
-the Gregale control plane and the configured destination to be available.
+must verify the requested point before reserving the copy. If the destination
+has yet to verify a point after a major upgrade, status and `--latest` can use
+the newest verified point on a retained older major. When Gregale cannot prove
+that the archive covers a point, it reports the archive as unverified. Regional
+recovery needs the Gregale control plane and the configured destination.
 
 Disable the preference with `gregale postgres recovery-region orders --off`.
 
