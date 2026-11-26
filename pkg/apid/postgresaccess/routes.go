@@ -48,6 +48,9 @@ var actions = map[string]authz.OrgAction{
 	// Read-only queries return rows: the members who may bind an app to the
 	// database, and so read its rows through that app (ADR-20261117215858).
 	"POST /v1/postgres/databases/{id}/query": authz.OrgActionBindPostgres,
+	// The Data API catalog preview reads the database's tables and columns:
+	// the same members as a query.
+	"POST /v1/postgres/databases/{id}/data-api-catalog-preview": authz.OrgActionBindPostgres,
 }
 
 func Action(pattern string) (authz.OrgAction, bool) {

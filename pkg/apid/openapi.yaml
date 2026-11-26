@@ -97356,7 +97356,7 @@ components:
         database_id: { type: string }
         enabled: { type: boolean }
     ManagedPostgresActivity:
-      description: Why a database was awake in a period (ADR-20261125231222). Causes are best guesses from timing.
+      description: Why a database was awake in a period. Causes are best guesses from timing.
       type: object
       required: [database_id, database_name, since, until, starts, awake_seconds, causes, compute_starts, hints, docs_url]
       properties:
@@ -97692,7 +97692,7 @@ components:
           type: string
           enum: [compute_ceiling, egress, inactive]
         databases:
-          description: The month's compute by database, most first, with each one's recorded starts and awake time (ADR-20261125231222); omitted when it could not be read.
+          description: The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it could not be read.
           type: array
           items: { $ref: '#/components/schemas/ManagedPostgresDatabaseUsage' }
     ManagedPostgresOverage:

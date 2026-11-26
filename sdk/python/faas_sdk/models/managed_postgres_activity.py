@@ -20,7 +20,7 @@ T = TypeVar("T", bound="ManagedPostgresActivity")
 
 @_attrs_define
 class ManagedPostgresActivity:
-    """Why a database was awake in a period (ADR-20261125231222). Causes are best guesses from timing."""
+    """Why a database was awake in a period. Causes are best guesses from timing."""
 
     database_id: str
     database_name: str

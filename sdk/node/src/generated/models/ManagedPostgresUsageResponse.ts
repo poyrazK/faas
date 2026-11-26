@@ -74,7 +74,7 @@ export type ManagedPostgresUsageResponse = {
    */
   hold?: 'compute_ceiling' | 'egress' | 'inactive';
   /**
-   * The month's compute by database, most first, with each one's recorded starts and awake time (ADR-20261125231222); omitted when it could not be read.
+   * The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it could not be read.
    */
   databases?: Array<ManagedPostgresDatabaseUsage>;
 };

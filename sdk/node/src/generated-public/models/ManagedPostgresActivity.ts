@@ -6,7 +6,7 @@ import type { ManagedPostgresActivityCause } from './ManagedPostgresActivityCaus
 import type { ManagedPostgresActivityComputeStart } from './ManagedPostgresActivityComputeStart.js';
 import type { ManagedPostgresActivityHint } from './ManagedPostgresActivityHint.js';
 /**
- * Why a database was awake in a period (ADR-20261125231222). Causes are best guesses from timing.
+ * Why a database was awake in a period. Causes are best guesses from timing.
  */
 export type ManagedPostgresActivity = {
   database_id: string;

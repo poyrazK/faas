@@ -92,8 +92,8 @@ class ManagedPostgresUsageResponse:
     """Set while every database of the account is held, with the same reason each database reports. Egress holds
     one database at a time, so it is reported on that database, not here."""
     databases: list[ManagedPostgresDatabaseUsage] | Unset = UNSET
-    """The month's compute by database, most first, with each one's recorded starts and awake time
-    (ADR-20261125231222); omitted when it could not be read."""
+    """The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it
+    could not be read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
