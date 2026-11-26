@@ -4,7 +4,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE api_sandbox_comparisons (
+CREATE TABLE IF NOT EXISTS api_sandbox_comparisons (
     id uuid PRIMARY KEY,
     baseline_run_id uuid NOT NULL UNIQUE REFERENCES api_sandbox_runs(id) ON DELETE CASCADE,
     candidate_run_id uuid NOT NULL UNIQUE REFERENCES api_sandbox_runs(id) ON DELETE CASCADE,

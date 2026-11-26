@@ -4,11 +4,11 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-ALTER TABLE api_sandbox_suites ADD COLUMN run_before_approval boolean NOT NULL DEFAULT false;
-ALTER TABLE api_sandbox_suite_runs ADD COLUMN automatic boolean NOT NULL DEFAULT false,
-    ADD COLUMN waiting_for_capacity boolean NOT NULL DEFAULT false;
+ALTER TABLE api_sandbox_suites ADD COLUMN IF NOT EXISTS run_before_approval boolean NOT NULL DEFAULT false;
+ALTER TABLE api_sandbox_suite_runs ADD COLUMN IF NOT EXISTS automatic boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS waiting_for_capacity boolean NOT NULL DEFAULT false;
 
-CREATE TABLE api_sandbox_suite_auto_requests (
+CREATE TABLE IF NOT EXISTS api_sandbox_suite_auto_requests (
     deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
     run_id uuid NOT NULL UNIQUE,
     status text NOT NULL DEFAULT 'queued' CHECK (status IN (
@@ -19,7 +19,7 @@ CREATE TABLE api_sandbox_suite_auto_requests (
     CHECK ((next_attempt_at IS NULL) = (status IN ('started', 'approval_ended', 'disabled')))
 );
 
-CREATE INDEX api_sandbox_suite_auto_requests_due ON api_sandbox_suite_auto_requests (next_attempt_at, deployment_id)
+CREATE INDEX IF NOT EXISTS api_sandbox_suite_auto_requests_due ON api_sandbox_suite_auto_requests (next_attempt_at, deployment_id)
     WHERE next_attempt_at IS NOT NULL;
 
 -- +goose Down

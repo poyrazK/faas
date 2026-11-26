@@ -4,7 +4,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE app_api_sandbox_scenarios (
+CREATE TABLE IF NOT EXISTS app_api_sandbox_scenarios (
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     id uuid NOT NULL,
     revision uuid NOT NULL,

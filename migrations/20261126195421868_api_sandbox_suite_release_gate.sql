@@ -5,9 +5,9 @@
 SET LOCAL lock_timeout = '5s';
 
 ALTER TABLE app_release_approval_policies
-    ADD COLUMN require_passing_sandbox_suite boolean NOT NULL DEFAULT false;
+    ADD COLUMN IF NOT EXISTS require_passing_sandbox_suite boolean NOT NULL DEFAULT false;
 
-CREATE TABLE api_sandbox_release_admissions (
+CREATE TABLE IF NOT EXISTS api_sandbox_release_admissions (
     deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
     task_id uuid NOT NULL UNIQUE REFERENCES app_tasks(id) ON DELETE CASCADE,
     suite_run_id uuid NOT NULL
@@ -16,7 +16,7 @@ CREATE TABLE api_sandbox_release_admissions (
 -- The receipt and release task are committed together. Keeping this check
 -- in Postgres also fences release-command writers from a previous version.
 -- +goose StatementBegin
-CREATE FUNCTION require_api_sandbox_release_admission() RETURNS trigger
+CREATE OR REPLACE FUNCTION require_api_sandbox_release_admission() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
     policy app_release_approval_policies%ROWTYPE;
@@ -53,10 +53,21 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE CONSTRAINT TRIGGER api_sandbox_release_command_requires_admission
-AFTER INSERT ON app_tasks DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW WHEN (NEW.kind = 'release')
-EXECUTE FUNCTION require_api_sandbox_release_admission();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'app_tasks'::regclass AND tgname = 'api_sandbox_release_command_requires_admission'
+    ) THEN
+        CREATE CONSTRAINT TRIGGER api_sandbox_release_command_requires_admission
+        AFTER INSERT ON app_tasks DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW WHEN (NEW.kind = 'release')
+        EXECUTE FUNCTION require_api_sandbox_release_admission();
+    END IF;
+END;
+$$;
+-- +goose StatementEnd
 
 -- +goose Down
 DROP TRIGGER api_sandbox_release_command_requires_admission ON app_tasks;

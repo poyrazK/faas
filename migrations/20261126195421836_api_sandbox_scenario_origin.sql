@@ -4,7 +4,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-ALTER TABLE api_sandbox_scenarios ADD COLUMN source_request_id uuid;
+ALTER TABLE api_sandbox_scenarios ADD COLUMN IF NOT EXISTS source_request_id uuid;
 
 -- +goose Down
 ALTER TABLE api_sandbox_scenarios DROP COLUMN source_request_id;

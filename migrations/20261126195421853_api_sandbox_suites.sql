@@ -4,13 +4,13 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE api_sandbox_suites (
+CREATE TABLE IF NOT EXISTS api_sandbox_suites (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     revision uuid NOT NULL,
     scenario_ids uuid[] NOT NULL CHECK (cardinality(scenario_ids) <= 5 AND array_position(scenario_ids, NULL) IS NULL)
 );
 
-CREATE TABLE api_sandbox_suite_runs (
+CREATE TABLE IF NOT EXISTS api_sandbox_suite_runs (
     id uuid PRIMARY KEY,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     suite_revision uuid NOT NULL,
@@ -33,11 +33,11 @@ CREATE TABLE api_sandbox_suite_runs (
     CHECK (failure_code = '' OR finished_at IS NOT NULL)
 );
 
-CREATE UNIQUE INDEX api_sandbox_suite_runs_active_app ON api_sandbox_suite_runs (app_id) WHERE finished_at IS NULL;
-CREATE INDEX api_sandbox_suite_runs_due ON api_sandbox_suite_runs (next_attempt_at, id) WHERE finished_at IS NULL;
-CREATE INDEX api_sandbox_suite_runs_candidate ON api_sandbox_suite_runs (candidate_deployment_id, created_at DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS api_sandbox_suite_runs_active_app ON api_sandbox_suite_runs (app_id) WHERE finished_at IS NULL;
+CREATE INDEX IF NOT EXISTS api_sandbox_suite_runs_due ON api_sandbox_suite_runs (next_attempt_at, id) WHERE finished_at IS NULL;
+CREATE INDEX IF NOT EXISTS api_sandbox_suite_runs_candidate ON api_sandbox_suite_runs (candidate_deployment_id, created_at DESC, id DESC);
 
-CREATE TABLE api_sandbox_suite_scenarios (
+CREATE TABLE IF NOT EXISTS api_sandbox_suite_scenarios (
     suite_run_id uuid NOT NULL REFERENCES api_sandbox_suite_runs(id) ON DELETE CASCADE,
     position smallint NOT NULL CHECK (position BETWEEN 0 AND 4),
     scenario_id uuid NOT NULL,

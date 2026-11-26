@@ -5,10 +5,10 @@
 SET LOCAL lock_timeout = '5s';
 
 ALTER TABLE api_sandbox_runs
-    ADD COLUMN partner_webhook boolean NOT NULL DEFAULT false,
-    ADD COLUMN partner_outcome_until timestamptz;
+    ADD COLUMN IF NOT EXISTS partner_webhook boolean NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS partner_outcome_until timestamptz;
 
-CREATE TABLE api_sandbox_webhook_partners (
+CREATE TABLE IF NOT EXISTS api_sandbox_webhook_partners (
     run_id uuid PRIMARY KEY,
     source_deployment_id uuid NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
     scenario_revision uuid NOT NULL,
@@ -23,8 +23,8 @@ CREATE TABLE api_sandbox_webhook_partners (
     CHECK ((outcome_at IS NULL) = (outcome_count IS NULL))
 );
 
-CREATE INDEX api_sandbox_webhook_partners_source ON api_sandbox_webhook_partners (source_deployment_id);
-CREATE INDEX api_sandbox_webhook_partners_expiry ON api_sandbox_webhook_partners (expires_at);
+CREATE INDEX IF NOT EXISTS api_sandbox_webhook_partners_source ON api_sandbox_webhook_partners (source_deployment_id);
+CREATE INDEX IF NOT EXISTS api_sandbox_webhook_partners_expiry ON api_sandbox_webhook_partners (expires_at);
 
 -- +goose Down
 DROP TABLE api_sandbox_webhook_partners;

@@ -36,15 +36,26 @@ WHERE status = 'active' AND preview_pr_state = 'open' AND preview_expires_at > n
   AND manifest->>'api_sandbox_source_deployment_id' <> ''
 ON CONFLICT DO NOTHING;
 
-ALTER TABLE apps ADD CONSTRAINT api_sandbox_fixed_egress
-    CHECK (coalesce(preview_of_slug, '') NOT LIKE 'api-sandbox:%'
-        OR (egress_allowlist = ARRAY['127.0.0.1/32'::cidr] AND cardinality(egress_ports) = 0))
-    NOT VALID;
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'apps'::regclass AND conname = 'api_sandbox_fixed_egress'
+    ) THEN
+        ALTER TABLE apps ADD CONSTRAINT api_sandbox_fixed_egress
+            CHECK (coalesce(preview_of_slug, '') NOT LIKE 'api-sandbox:%'
+                OR (egress_allowlist = ARRAY['127.0.0.1/32'::cidr] AND cardinality(egress_ports) = 0))
+            NOT VALID;
+    END IF;
+END;
+$$;
+-- +goose StatementEnd
 
 -- The sandbox's generated app ID also reserves its one database. Guard both
 -- ends so the isolated database and its temporary credentials stay together.
 -- +goose StatementBegin
-CREATE FUNCTION guard_api_sandbox_postgres_binding() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_api_sandbox_postgres_binding() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     IF EXISTS (
@@ -67,9 +78,21 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER managed_postgres_sandbox_binding_guard
-BEFORE INSERT OR UPDATE OF app_id, database_id, scope, environment_key, access ON managed_postgres_bindings
-FOR EACH ROW EXECUTE FUNCTION guard_api_sandbox_postgres_binding();
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'managed_postgres_bindings'::regclass
+          AND tgname = 'managed_postgres_sandbox_binding_guard'
+    ) THEN
+        CREATE TRIGGER managed_postgres_sandbox_binding_guard
+        BEFORE INSERT OR UPDATE OF app_id, database_id, scope, environment_key, access ON managed_postgres_bindings
+        FOR EACH ROW EXECUTE FUNCTION guard_api_sandbox_postgres_binding();
+    END IF;
+END;
+$$;
+-- +goose StatementEnd
 
 -- +goose Down
 DROP TRIGGER managed_postgres_sandbox_binding_guard ON managed_postgres_bindings;
