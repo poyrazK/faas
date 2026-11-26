@@ -66,7 +66,7 @@ func (s *PgStore) EnrollAPIConsumerIdentity(ctx context.Context, in APIConsumerE
 	// A consumer whose identity row is gone keeps its ref unless a link
 	// closed it; re-attaching it is not a new sign-up.
 	c, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+` from api_consumers
-		where app_id = $1::uuid and external_ref = $2`, in.AppID, ref))
+		where app_id = $1::uuid and external_ref = $2 and environment_id is null`, in.AppID, ref))
 	created := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !created {
 		return APIConsumerIdentity{}, APIConsumer{}, false, fmt.Errorf("get enrolled consumer: %w", err)

@@ -23,7 +23,7 @@ type ObservationCollector struct {
 }
 
 func NewObservationCollector(store ObservationStore) *ObservationCollector {
-	names := []string{"observation_snapshot_success", "enabled_sources", "unknown_sources", "failing_sources", "pending_events", "blocked_events", "oldest_pending_timestamp_seconds"}
+	names := []string{"observation_snapshot_success", "enabled_sources", "unknown_sources", "failing_sources", "pending_events", "blocked_events", "oldest_pending_timestamp_seconds", "cleanup_unknown_sources", "cleanup_eligible_events"}
 	help := []string{
 		"Whether the shared Commit observation snapshot could be read; zero means all observations are unknown.",
 		"Enabled Commit sources in the shared platform ledger.",
@@ -32,6 +32,8 @@ func NewObservationCollector(store ObservationStore) *ObservationCollector {
 		"Unaccepted unblocked events across fresh known Commit source observations.",
 		"Blocked events across fresh known Commit source observations.",
 		"Oldest pending row insertion timestamp across fresh known observations; zero when none is observed. This is not a commit timestamp.",
+		"Enabled sources without a fresh cleanup backlog observation.",
+		"Accepted rows past retention across fresh source observations; partial when cleanup sources are unknown.",
 	}
 	c := &ObservationCollector{store: store}
 	for i, name := range names {
@@ -49,12 +51,12 @@ func (c *ObservationCollector) Describe(ch chan<- *prometheus.Desc) {
 func (c *ObservationCollector) Collect(ch chan<- prometheus.Metric) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	snapshot, err := c.store.CommitRelayObservationSummary(ctx, time.Now().UTC().Add(-commitwork.ObservationMaxAge))
+	snapshot, err := c.store.CommitRelayObservationSummary(ctx, time.Now().UTC().Add(-commitwork.ObservationGracePeriod))
 	if err != nil {
 		ch <- prometheus.MustNewConstMetric(c.descs[0], prometheus.GaugeValue, 0)
 		return
 	}
-	values := []float64{1, float64(snapshot.EnabledSources), float64(snapshot.UnknownSources), float64(snapshot.FailingSources), float64(snapshot.PendingEvents), float64(snapshot.BlockedEvents), snapshot.OldestPendingTimestamp}
+	values := []float64{1, float64(snapshot.EnabledSources), float64(snapshot.UnknownSources), float64(snapshot.FailingSources), float64(snapshot.PendingEvents), float64(snapshot.BlockedEvents), snapshot.OldestPendingTimestamp, float64(snapshot.CleanupUnknownSources), float64(snapshot.CleanupEligibleEvents)}
 	for i, value := range values {
 		ch <- prometheus.MustNewConstMetric(c.descs[i], prometheus.GaugeValue, value)
 	}

@@ -814,6 +814,7 @@ type ApiConsumer struct {
 	RevokedAt             pgtype.Timestamptz
 	PlatformTenantID      pgtype.UUID
 	PlatformTenantManaged bool
+	EnvironmentID         pgtype.UUID
 }
 
 // Per-app rule blocking API consumers whose exported invoice is unpaid that many days after its due date (ADR-1315).
@@ -3355,37 +3356,60 @@ type CommitReceipt struct {
 	SchemaVersion           string
 }
 
+type CommitReceiptUsage struct {
+	Shard                int16
+	ReceiptCount         int64
+	PayloadJsonBytes     int64
+	Initialized          bool
+	ReconciledAt         pgtype.Timestamptz
+	ScanInProgress       bool
+	ScanCursor           pgtype.UUID
+	ScanCount            int64
+	ScanPayloadJsonBytes int64
+	ReconcileToken       pgtype.UUID
+	RetryAt              pgtype.Timestamptz
+}
+
 type CommitReplayRequest struct {
-	AccountID   pgtype.UUID
-	SourceID    pgtype.UUID
-	EventID     pgtype.UUID
-	State       string
-	Generation  int64
-	RequestedAt pgtype.Timestamptz
+	AccountID     pgtype.UUID
+	SourceID      pgtype.UUID
+	EventID       pgtype.UUID
+	State         string
+	Generation    int64
+	RequestedAt   pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
 }
 
 type CommitSource struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Name                 string
-	Enabled              bool
-	SealedConnection     []byte
-	CredentialRevision   int64
-	RelayStatus          string
-	LastCheckedAt        pgtype.Timestamptz
-	PendingEvents        pgtype.Int8
-	BlockedEvents        pgtype.Int8
-	OldestPendingAt      pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	OperationPolicy      pgtype.Text
-	ContractVersion      int32
-	AllowTenantSelection bool
-	Destination          string
-	QueueName            pgtype.Text
-	ChangesFeeds         []byte
-	ManagedDatabaseID    pgtype.UUID
-	PollIntervalMs       int32
+	ID                           pgtype.UUID
+	AccountID                    pgtype.UUID
+	AppID                        pgtype.UUID
+	Name                         string
+	Enabled                      bool
+	SealedConnection             []byte
+	CredentialRevision           int64
+	RelayStatus                  string
+	LastCheckedAt                pgtype.Timestamptz
+	PendingEvents                pgtype.Int8
+	BlockedEvents                pgtype.Int8
+	OldestPendingAt              pgtype.Timestamptz
+	CreatedAt                    pgtype.Timestamptz
+	OperationPolicy              pgtype.Text
+	ContractVersion              int32
+	AllowTenantSelection         bool
+	Destination                  string
+	QueueName                    pgtype.Text
+	ChangesFeeds                 []byte
+	ManagedDatabaseID            pgtype.UUID
+	PollIntervalMs               int32
+	RelayNextPollAt              pgtype.Timestamptz
+	RelayPollToken               pgtype.UUID
+	RelayPollBackoffMs           int32
+	CleanupEligibleEvents        pgtype.Int8
+	CleanupObservedAt            pgtype.Timestamptz
+	RelayReservedDeferredCheckAt pgtype.Timestamptz
+	RelayConnectMs               pgtype.Int4
+	RelayConnectObservedAt       pgtype.Timestamptz
 }
 
 // Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
@@ -3497,19 +3521,20 @@ type ComputeNodeKey struct {
 }
 
 type ConsumerKey struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Name         string
-	Prefix       string
-	HashedSecret []byte
-	Scopes       []string
-	ExpiresAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	RevokedAt    pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ConsumerID   pgtype.UUID
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Name          string
+	Prefix        string
+	HashedSecret  []byte
+	Scopes        []string
+	ExpiresAt     pgtype.Timestamptz
+	LastUsedAt    pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	ConsumerID    pgtype.UUID
+	EnvironmentID pgtype.UUID
 }
 
 type ContainerHostPortLease struct {

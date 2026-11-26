@@ -156,7 +156,7 @@ func (m *MemStore) EnrollAPIConsumerIdentity(_ context.Context, in APIConsumerEn
 	for _, existing := range m.apiConsumers {
 		// A consumer whose identity row is gone keeps its ref unless a link
 		// closed it; re-attaching it is not a new sign-up.
-		if existing.AppID == in.AppID && existing.ExternalRef == ref {
+		if existing.AppID == in.AppID && existing.ExternalRef == ref && existing.EnvironmentID == "" {
 			c = existing
 		}
 	}

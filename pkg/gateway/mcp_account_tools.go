@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"mime"
 	"net/http"
 	"sync"
@@ -62,26 +61,13 @@ type mcpAccountRequest struct {
 	cursor       bool
 }
 
-// mcpAccountRequestOf reads r's JSON-RPC envelope, which mcpPolicyRequest
-// already bounded and restored, and restores it again.
+// mcpAccountRequestOf reads r's JSON-RPC envelope (readMCPEnvelope).
 func (h *Handler) mcpAccountRequestOf(r *http.Request) mcpAccountRequest {
-	if h.mcpAccountTools == nil || r.Method != http.MethodPost || r.Body == nil {
+	if h.mcpAccountTools == nil {
 		return mcpAccountRequest{}
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, api.MCPPolicyMaxRequestBytes+1))
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	if err != nil || len(body) > api.MCPPolicyMaxRequestBytes {
-		return mcpAccountRequest{}
-	}
-	var envelope struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-		Params struct {
-			Name   string  `json:"name"`
-			Cursor *string `json:"cursor"`
-		} `json:"params"`
-	}
-	if json.Unmarshal(body, &envelope) != nil {
+	envelope, ok := readMCPEnvelope(r)
+	if !ok {
 		return mcpAccountRequest{}
 	}
 	out := mcpAccountRequest{method: envelope.Method, id: envelope.ID, cursor: envelope.Params.Cursor != nil}

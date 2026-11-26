@@ -33,6 +33,7 @@ func (h *Handler) applyMCPConsumerKeyPolicy(w http.ResponseWriter, r *http.Reque
 		return true
 	}
 	h.applyMCPBilling(r, app, p, call)
+	h.markMCPRequest(r, app)
 	r.Header.Set(api.MCPGatewayAuthorizedHeader, rule.ID)
 	h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
 	return false

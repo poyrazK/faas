@@ -6,8 +6,7 @@ creates before their first start. Windmill, for example, needs
 row-level security. Gregale never hands out an administrator login, so it
 creates these roles for you: you declare them on a managed database and
 grant them to the database's own logins, which switch to them with
-`SET ROLE`. This is a preview capability, on Hobby and above
-([ADR-20261116213000](adr/20261116213000-custom-postgres-group-roles.md)).
+`SET ROLE`. Custom roles are in beta, on Hobby and above.
 
 ## Declare roles
 
@@ -45,6 +44,10 @@ gregale postgres roles grant  windmill-db windmill_admin --to read_write --defau
 gregale postgres roles revoke windmill-db windmill_user --from read_only
 gregale postgres roles delete windmill-db windmill_admin
 ```
+
+A custom role can run the functions and procedures in schema `public` that
+your migrations create, as the `read_write` logins can.
+Table privileges are yours to grant from a migration.
 
 Dropping a role revokes it from every login and hands any object it owns to
 the database's schema owner. A role another role is a member of is dropped
@@ -84,15 +87,16 @@ been granted.
    `read_write` logins start every session as `windmill_admin`. Its user
    requests still switch to `windmill_user` with `SET LOCAL ROLE`.
 
-2. Bind the server and the workers with `read_write`, and give the server a
-   `migration` binding as well. A running app never receives the `migration`
-   login; only release commands do:
+2. Bind the app with `read_write`, and give it a `migration` binding as
+   well. A running app never receives the `migration` login; only release
+   commands do:
 
    ```sh
    gregale postgres attach windmill-db windmill --env DATABASE_URL --access read_write
    gregale postgres attach windmill-db windmill --env MIGRATION_DATABASE_URL --access migration
-   gregale postgres attach windmill-db windmill-worker --env DATABASE_URL --access read_write
    ```
+
+   A separate worker app binds `DATABASE_URL` with `read_write` only.
 
 3. Run Windmill's migrations in a release command. Windmill migrates its
    schema when it starts, so the release command starts the server against
@@ -107,7 +111,16 @@ been granted.
    i=0
    while [ "$i" -lt 600 ]; do
      if curl -fsS http://127.0.0.1:8001/api/version >/dev/null 2>&1; then
-       kill "$pid"; wait "$pid" 2>/dev/null || true; exit 0
+       kill "$pid"; wait "$pid" 2>/dev/null || true
+       # Windmill adds a daily audit table only 3 days ahead, at runtime,
+       # which a read_write login cannot do; a missing one fails logins.
+       psql "$MIGRATION_DATABASE_URL" -v ON_ERROR_STOP=1 -X -q -c "DO \$\$
+       DECLARE d date; BEGIN
+         FOR d IN SELECT generate_series(current_date, current_date + 365, interval '1 day')::date LOOP
+           EXECUTE format('CREATE TABLE IF NOT EXISTS %I PARTITION OF audit_partitioned FOR VALUES FROM (%L) TO (%L)',
+                          'audit_' || to_char(d, 'YYYYMMDD'), d, d + 1);
+         END LOOP; END \$\$"
+       exit 0
      fi
      kill -0 "$pid" 2>/dev/null || exit 1
      sleep 1; i=$((i + 1))
@@ -129,12 +142,25 @@ been granted.
    `read_write` login cannot. The upstream Windmill images are larger than
    the app filesystem, so build from a Dockerfile that copies only the
    `windmill` binary from `ghcr.io/windmill-labs/windmill-slim` onto
-   `debian:trixie-slim`.
+   `debian:trixie-slim`, with `postgresql-client` for the release command.
+   For TypeScript jobs, add Bun (`COPY --from=oven/bun:1.4.4
+   /usr/local/bin/bun /usr/bin/bun`) and run `MODE=standalone`, the API and
+   one worker in one app. Set `BASE_URL` to the app's URL.
+
+   The release command creates the audit tables a year ahead, so redeploy
+   at least once a year. Windmill still logs `permission denied for schema
+   public` when it tries to create them itself; the tables exist, so those
+   lines are harmless.
 
 4. Deploy. Windmill's own role setup only notices that the roles exist, its
    migrations grant them their tables, and its requests switch to them with
    `SET LOCAL ROLE`, as they do on a database prepared with Windmill's
-   `init-db-as-superuser.sql`.
+   `init-db-as-superuser.sql`. Log in with Windmill's default
+   `admin@windmill.dev` / `changeme` and change the password.
+
+While the app is scaled to zero its worker does not run, so schedules and
+queued jobs wait for the next request. Keep one instance warm if they must
+run on time.
 
 ## Branches and restores
 

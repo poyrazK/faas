@@ -76,7 +76,7 @@ func (s *PgStore) ApplyPlatformTenantSelfConsumers(ctx context.Context, in Apply
 	for _, surface := range surfaces {
 		item := PlatformTenantSelfConsumerApplyItem{SurfaceID: surface.id}
 		consumer, err := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
-			from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 for update`,
+			from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 and environment_id is null for update`,
 			in.AccountID, surface.appID, in.ExternalRef))
 		if err == nil {
 			if !samePlatformTenantSelfConsumer(consumer, in.TenantID, in.Name) {
@@ -142,7 +142,7 @@ func (s *PgStore) ApplyPlatformTenantSelfConsumers(ctx context.Context, in Apply
 			// Resolve an account-owner create that raced this bundle, but never
 			// adopt a different name, revoked row, or other tenant's identity.
 			consumer, err = scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
-				from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 for update`,
+				from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 and environment_id is null for update`,
 				in.AccountID, result.Consumers[index].Consumer.AppID, in.ExternalRef))
 			if err != nil {
 				return PlatformTenantSelfConsumersResult{}, err

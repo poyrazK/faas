@@ -180,9 +180,17 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	manager := commitmanaged.Manager{Store: state.NewPgStore((*e.Pool())), Identities: []*age.X25519Identity{identity}, Open: func(ctx context.Context, _ string, _ commitwork.NetworkPolicy) (*pgxpool.Pool, error) {
 		return pgxpool.NewWithConfig(ctx, customer.Config().Copy())
 	}}
-	if err := manager.Tick(ctx); err != nil {
-		t.Fatal(err)
+	pollSource := func() {
+		t.Helper()
+		if _, err := (*e.Pool()).Exec(ctx, `UPDATE commit_sources SET relay_next_poll_at='-infinity',
+ last_checked_at=clock_timestamp()-interval '5 seconds' WHERE id=$1::uuid`, src.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
+	pollSource()
 	managedReceipt, err := state.NewPgStore((*e.Pool())).CommitReceiptByEvent(ctx, (*e.Acct()).ID, src.ID, managedEvent.ID)
 	if err != nil {
 		t.Fatalf("managed handoff: %v", err)
@@ -211,9 +219,7 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if _, err := customer.Exec(ctx, `INSERT INTO gregale_outbox(event_id,event_type,payload) VALUES($1::uuid,' ','{}')`, blockedID); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
+	pollSource()
 	blocked := e.Do(t, http.MethodGet, "/v1/commit-sources/"+src.ID+"/blocked-events", nil, nil)
 	if blocked.Code != http.StatusOK {
 		t.Fatalf("blocked listing: %d %s", blocked.Code, blocked.Body.String())
@@ -234,9 +240,7 @@ func TestCommitPostgresToAPIHandoff(t *testing.T) {
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("replay request: %d %s", replay.Code, replay.Body.String())
 	}
-	if err := manager.Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
+	pollSource()
 	if _, err := state.NewPgStore((*e.Pool())).CommitReceiptByEvent(ctx, (*e.Acct()).ID, src.ID, blockedID); err != nil {
 		t.Fatalf("blocked replay acceptance: %v", err)
 	}
