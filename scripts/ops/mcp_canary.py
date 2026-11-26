@@ -4,7 +4,7 @@
 Answers one question from the outside: can a customer host an MCP server on
 Gregale right now, and can an agent reach Gregale's own hosted MCP? It uses
 only public endpoints and the released CLI, never control-plane SSH, so it
-keeps working when operator access is broken (see ADR-20261123100000).
+keeps working when operator access is broken (see ADR-20261123100100).
 
 Checks (each retried once; a pass on retry is reported as flaky, not failed):
   deploy      fresh Go starter from the released CLI + canary tools, promoted

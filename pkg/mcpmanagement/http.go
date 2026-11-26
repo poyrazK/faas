@@ -278,6 +278,18 @@ func (r *remoteServer) redirectAllowed(value string) bool {
 	return false
 }
 
+func (r *remoteServer) isPublicDiscoveryMetadataPath(path string) bool {
+	if path == "/.well-known/oauth-protected-resource/mcp" {
+		return true
+	}
+	if r.opts.Hosted {
+		return path == "/.well-known/oauth-authorization-server/mcp" ||
+			path == "/.well-known/openid-configuration/mcp"
+	}
+	return path == "/.well-known/oauth-protected-resource" ||
+		path == "/.well-known/oauth-authorization-server"
+}
+
 func (r *remoteServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", r.resourceMetadata)
@@ -307,7 +319,16 @@ func (r *remoteServer) handler() http.Handler {
 			http.Error(w, "Unrecognized host", http.StatusForbidden)
 			return
 		}
-		if origin := req.Header.Get("Origin"); origin != "" && origin != r.origin {
+		if r.isPublicDiscoveryMetadataPath(req.URL.Path) &&
+			(req.Method == http.MethodGet || req.Method == http.MethodHead || req.Method == http.MethodOptions) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, MCP-Protocol-Version")
+			if req.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		} else if origin := req.Header.Get("Origin"); origin != "" && origin != r.origin {
 			http.Error(w, "Origin is not allowed", http.StatusForbidden)
 			return
 		}

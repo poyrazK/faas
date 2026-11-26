@@ -24,6 +24,10 @@ export type ManagedPostgresDatabase = {
    * True when the database has its own suspend timeout rather than the platform default.
    */
   suspend_timeout_custom?: boolean;
+  /**
+   * True when the database starts when an app bound to it wakes.
+   */
+  wake_with_app?: boolean;
   storage_limit_bytes: number;
   restore_window_seconds: number;
   restore_source_database_id?: string | null;

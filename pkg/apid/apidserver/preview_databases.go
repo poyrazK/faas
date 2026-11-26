@@ -159,6 +159,10 @@ func (s *server) setManagedPostgresPreviews(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	mode := managedpostgres.PreviewMode(req.Previews)
+	if mode == managedpostgres.PreviewsMasked && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
 	var database managedpostgres.Database
 	var err error
 	if mode == managedpostgres.PreviewsMasked && req.MaskingPolicy != nil {

@@ -529,12 +529,12 @@ The service-class mapping is:
 | --- | ---: |
 | `development` | 0.25–1 CU |
 | `burstable` | 0.25–2 CU |
-| `production` | 1–4 CU (0.5–4 CU accepted) |
+| `production` | 0.5–4 CU (1–4 CU accepted) |
 
-Production moves to 0.5–4 CU over two releases
-([ADR-20261124221402](adr/20261124221402-neon-production-class-half-cu-floor.md)):
-every neond now reads a database at either range as `production`, and a later
-release starts provisioning at 0.5 CU.
+Production moved from 1–4 to 0.5–4 CU over two releases
+([ADR-20261124221402](adr/20261124221402-neon-production-class-half-cu-floor.md)).
+New production databases start at 0.5 CU; one created at 1–4 CU before stays
+there and still reads as `production` until its class changes.
 
 Only `single_zone` is advertised. Gregale does not claim a portable
 high-availability promise merely because Neon storage has internal redundancy.
@@ -543,6 +543,21 @@ high-availability promise merely because Neon storage has internal redundancy.
 `managed_postgres_policy.suspend_timeout_seconds` default (120 s) when it has
 none; false disables compute suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
+
+A customer can opt a scale-to-zero database into starting when an app bound
+to it wakes (`gregale postgres app-wake set DB on`,
+[ADR-20261125105038](adr/20261125105038-managed-postgres-wake-with-app.md)).
+Every apid listens to schedd's `instance_changed`; on an instance entering
+`waking` or `cold_booting` it claims the app's opted-in databases (one
+replica per start, at most once a minute each; 10 seconds when the claim
+found the compute running or the start failed) and calls Neon's endpoint
+start through neond, unpaced. Closing managed PostgreSQL operations stops
+these starts too. Roll out neond, which allows the `start endpoint` route,
+before apid; an older neond refuses the call and the database starts on the
+app's first query as before.
+`apid_managed_postgres_wake_starts_total{outcome}` counts claims (`started`,
+`running`, `failed`, `unsupported`).
+
 PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
 end of life in November 2026 and is not supported (owner, 2026-11-12); Neon
 has no in-place major upgrade, and no upgrade path from 14 is offered.
@@ -608,6 +623,19 @@ archive data until the mirror applies the release. Recovery also checks the
 mirror when the primary returns an empty catalog or lacks a backup consistent
 at the requested time. See
 [ADR-20261105120854](adr/20261105120854-managed-postgres-mirror-retention-safety.md).
+
+### Check extension compatibility before an in-place upgrade
+
+For an account in the in-place major-upgrade preview, check the installed
+extensions against the target PostgreSQL image.
+
+```sh
+gregale postgres upgrade orders --major 18 --check
+```
+
+The check lists incompatible extension names and installed versions.
+Gregale checks again before stopping a running database for an upgrade.
+PostgreSQL runs its full `pg_upgrade --check` before modifying the cluster.
 
 ## Safety boundary
 

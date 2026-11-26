@@ -20,10 +20,10 @@ class RestoreManagedPostgresDatabaseRequest:
 
     name: str
     region: str | Unset = UNSET
-    """Recover from the archive in the configured recovery region."""
+    """Recover from the configured region's archive. When point_in_time is omitted, use the latest verified point
+    in that archive."""
     point_in_time: datetime.datetime | Unset = UNSET
-    """A time inside the source's restore_range. Omit it to use the latest point. A regional restore uses the
-    latest point verified in the recovery archive."""
+    """A time inside the source's restore_range. Omit it to use the latest point."""
     ttl_seconds: int | Unset = UNSET
     """Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is
     never touched. The database shows expires_at."""

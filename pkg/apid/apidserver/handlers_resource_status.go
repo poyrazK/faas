@@ -55,6 +55,11 @@ func (s *server) getDatabaseStatus(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	status := conditions.Database(managedPostgresView(database), time.Now())
+	if !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
 	storage, err := s.managedPostgres.StorageStatuses(r.Context(), []managedpostgres.Database{database})
 	if err != nil {
 		s.log.Warn("could not read database storage status", "database_id", database.ID, "err", err)
@@ -66,7 +71,6 @@ func (s *server) getDatabaseStatus(w http.ResponseWriter, r *http.Request, acct 
 			s.log.Warn("could not read database auto-grow status", "database_id", database.ID, "err", err)
 		}
 	}
-	status := conditions.Database(managedPostgresView(database), time.Now())
 	status.Maintenance, err = s.managedPostgres.MaintenanceStatus(r.Context(), database)
 	if err != nil {
 		s.log.Warn("could not read database maintenance status", "database_id", database.ID, "err", err)

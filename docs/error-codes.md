@@ -1506,6 +1506,12 @@ HTTP 422 Unprocessable Entity · Invalid traffic_percent
 
 See [Progressive rollouts](rollouts.md).
 
+### `invalid_wake_with_app`
+
+HTTP 422 Unprocessable Entity · Invalid wake-with-app setting
+
+See [Managed PostgreSQL](postgres.md#plans).
+
 ### `invalid_warm_pool_size`
 
 HTTP 422 Unprocessable Entity · Invalid warm_pool_size; Invalid max_concurrency for warm_pool_size
@@ -2774,6 +2780,28 @@ HTTP 503 Service Unavailable · Releases are paused
 
 See [Release approvals, freezes and schedules](release-controls.md).
 
+### `postgres_bypass_rls_conflict`
+
+HTTP 409 Conflict · BYPASSRLS conflicts with Data API or Auth
+
+Use a separate database for the tool that needs BYPASSRLS, or declare the role without --bypass-rls.
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_bypass_rls_unavailable`
+
+HTTP 422 Unprocessable Entity · BYPASSRLS unavailable
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_custom_role_default_taken`
+
+HTTP 409 Conflict · Default role already set
+
+Remove it there first (gregale postgres roles create &lt;database> &lt;role> --default-for '' on that role).
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
 ### `postgres_custom_roles_limit`
 
 HTTP 409 Conflict · Custom role limit reached
@@ -4015,6 +4043,12 @@ The response's `title` and `detail` describe the failure.
 ### `wake_queue_full`
 
 The response's `title` and `detail` describe the failure.
+
+### `wake_with_app_unsupported`
+
+HTTP 409 Conflict · Database cannot start with its app
+
+See [Managed PostgreSQL](postgres.md#plans).
 
 ### `webhook_outbox_full`
 

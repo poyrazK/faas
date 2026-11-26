@@ -77,7 +77,13 @@ const (
 	// step 13): variables every later command gets, under its own request's
 	// env. guest-init keeps them in memory only; the result names them and
 	// never carries their values.
-	OpSessionEnv     = "session_env"
+	OpSessionEnv = "session_env"
+	// OpCodeRun runs code in a code context's Jupyter kernel
+	// (ADR-20261027090013 step 14). Its stdout and stderr stream as frames;
+	// the result carries rich outputs, the error and the execution count.
+	OpCodeRun = "code_run"
+	// OpCodeContext creates, lists, restarts or removes code contexts.
+	OpCodeContext    = "code_context"
 	OpFileRead       = "file_read"
 	OpFileWrite      = "file_write"
 	OpFileList       = "file_list"
@@ -133,6 +139,8 @@ const (
 	MaxBackgroundCommands = 32
 	// MaxInputBytes bounds one exec_input's stdin bytes.
 	MaxInputBytes = 1 << 20
+	// MaxCodeBytes bounds one code_run's code.
+	MaxCodeBytes = 1 << 20
 	// StopGrace is how long a timed-out command has between SIGTERM and
 	// SIGKILL.
 	StopGrace = 2 * time.Second
@@ -211,6 +219,14 @@ type Request struct {
 	// port_connect
 	Port int `json:"port,omitempty"`
 
+	// code_run and code_context. Context names a code context (empty: the
+	// default one); Action is a CodeAction; Language and Workdir go with
+	// create. TimeoutMillis and MaxOutputBytes bound a run.
+	Code     string `json:"code,omitempty"`
+	Context  string `json:"context,omitempty"`
+	Action   string `json:"action,omitempty"`
+	Language string `json:"language,omitempty"`
+
 	// template_start; the ready timeout is TimeoutMillis.
 	StartCmd string `json:"start_cmd,omitempty"`
 	ReadyCmd string `json:"ready_cmd,omitempty"`
@@ -238,6 +254,10 @@ func (r Request) Validate() error {
 		err = firstError(validHandle(r.Handle), r.validateInput())
 	case OpSessionEnv:
 		err = validEnv(r.Env)
+	case OpCodeRun:
+		err = r.validateCodeRun()
+	case OpCodeContext:
+		err = r.validateCodeContext()
 	case OpFileRead:
 		err = firstError(validPath("path", r.Path), bounded("max_bytes", r.MaxBytes, MaxWriteBytes))
 	case OpFileWrite:
@@ -266,6 +286,56 @@ func (r Request) Validate() error {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	return nil
+}
+
+// Code context actions (code_context).
+const (
+	CodeActionCreate  = "create"
+	CodeActionList    = "list"
+	CodeActionRestart = "restart"
+	CodeActionRemove  = "remove"
+)
+
+// codeContextRE is a code context's ID: "default" or a driver-made hex ID.
+var codeContextRE = regexp.MustCompile(`^[a-z0-9]{1,32}$`)
+
+// codeLanguageRE is a code context's language name.
+var codeLanguageRE = regexp.MustCompile(`^[a-z0-9_+-]{1,32}$`)
+
+func validCodeContext(c string, required bool) error {
+	if c == "" && !required {
+		return nil
+	}
+	if !codeContextRE.MatchString(c) {
+		return errors.New("context is not a code context ID")
+	}
+	return nil
+}
+
+func (r Request) validateCodeRun() error {
+	if len(r.Code) > MaxCodeBytes || strings.IndexByte(r.Code, 0) >= 0 || !utf8.ValidString(r.Code) {
+		return fmt.Errorf("code must be at most %d bytes of UTF-8 without NUL", MaxCodeBytes)
+	}
+	return firstError(validCodeContext(r.Context, false), positive("timeout_ms", r.TimeoutMillis, MaxTimeoutMillis),
+		positive("max_output_bytes", r.MaxOutputBytes, MaxOutputBytes))
+}
+
+func (r Request) validateCodeContext() error {
+	switch r.Action {
+	case CodeActionCreate:
+		if r.Language != "" && !codeLanguageRE.MatchString(r.Language) {
+			return errors.New("language is not a language name")
+		}
+		if len(r.Workdir) > MaxPathBytes || strings.IndexByte(r.Workdir, 0) >= 0 {
+			return errors.New("workdir is too long or holds NUL")
+		}
+		return nil
+	case CodeActionList:
+		return nil
+	case CodeActionRestart, CodeActionRemove:
+		return validCodeContext(r.Context, true)
+	}
+	return fmt.Errorf("action must be one of %s, %s, %s or %s", CodeActionCreate, CodeActionList, CodeActionRestart, CodeActionRemove)
 }
 
 // validEnv checks a command's or the session's environment.
@@ -427,6 +497,43 @@ func firstError(errs ...error) error {
 		}
 	}
 	return nil
+}
+
+// CodeOutput is one rich output of a run: a display or the run's value
+// (IsMainResult), as MIME type to value.
+type CodeOutput struct {
+	Data         map[string]json.RawMessage `json:"data"`
+	IsMainResult bool                       `json:"is_main_result,omitempty"`
+}
+
+// CodeError is the exception a run raised.
+type CodeError struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	Traceback string `json:"traceback"`
+}
+
+// CodeRunResult answers code_run. Its stdout and stderr came as frames.
+type CodeRunResult struct {
+	Results         []CodeOutput `json:"results"`
+	Error           *CodeError   `json:"error,omitempty"`
+	ExecutionCount  *int         `json:"execution_count,omitempty"`
+	TimedOut        bool         `json:"timed_out,omitempty"`
+	OutputTruncated bool         `json:"output_truncated,omitempty"`
+}
+
+// CodeContext is a code context: its own kernel, language and directory.
+type CodeContext struct {
+	ID       string `json:"id"`
+	Language string `json:"language"`
+	Cwd      string `json:"cwd"`
+}
+
+// CodeContextResult answers code_context: the created context, or the
+// session's contexts for list; nothing for restart and remove.
+type CodeContextResult struct {
+	Context  *CodeContext  `json:"context,omitempty"`
+	Contexts []CodeContext `json:"contexts,omitempty"`
 }
 
 // SessionEnvResult answers session_env: the names now set, sorted.

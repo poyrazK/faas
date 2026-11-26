@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { DatabaseSwitchDrain } from './DatabaseSwitchDrain.js';
 /**
- * A durable switch to a restored managed PostgreSQL database or a verified native migration target. The app is fenced while its bindings change.
+ * A durable switch to a managed PostgreSQL database. The app is fenced while its bindings change.
  */
 export type DatabaseSwitch = {
   migration_operation_id?: string;

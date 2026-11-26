@@ -55,10 +55,10 @@ class ManagedPostgresDatabase:
     """Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database."""
     suspend_timeout_custom: bool | Unset = UNSET
     """True when the database has its own suspend timeout rather than the platform default."""
+    wake_with_app: bool | Unset = UNSET
+    """True when the database starts when an app bound to it wakes."""
     restore_source_database_id: None | str | Unset = UNSET
     restore_point_in_time: datetime.datetime | None | Unset = UNSET
-    masked_branch: bool | Unset = UNSET
-    """True for a branch created by a masked logical copy."""
     last_error_code: None | str | Unset = UNSET
     deleted_at: datetime.datetime | None | Unset = UNSET
     restorable_until: datetime.datetime | Unset = UNSET
@@ -117,6 +117,8 @@ class ManagedPostgresDatabase:
 
         suspend_timeout_custom = self.suspend_timeout_custom
 
+        wake_with_app = self.wake_with_app
+
         restore_source_database_id: None | str | Unset
         if isinstance(self.restore_source_database_id, Unset):
             restore_source_database_id = UNSET
@@ -130,8 +132,6 @@ class ManagedPostgresDatabase:
             restore_point_in_time = self.restore_point_in_time.isoformat()
         else:
             restore_point_in_time = self.restore_point_in_time
-
-        masked_branch = self.masked_branch
 
         last_error_code: None | str | Unset
         if isinstance(self.last_error_code, Unset):
@@ -195,12 +195,12 @@ class ManagedPostgresDatabase:
             field_dict["suspend_timeout_seconds"] = suspend_timeout_seconds
         if suspend_timeout_custom is not UNSET:
             field_dict["suspend_timeout_custom"] = suspend_timeout_custom
+        if wake_with_app is not UNSET:
+            field_dict["wake_with_app"] = wake_with_app
         if restore_source_database_id is not UNSET:
             field_dict["restore_source_database_id"] = restore_source_database_id
         if restore_point_in_time is not UNSET:
             field_dict["restore_point_in_time"] = restore_point_in_time
-        if masked_branch is not UNSET:
-            field_dict["masked_branch"] = masked_branch
         if last_error_code is not UNSET:
             field_dict["last_error_code"] = last_error_code
         if deleted_at is not UNSET:
@@ -261,6 +261,8 @@ class ManagedPostgresDatabase:
 
         suspend_timeout_custom = d.pop("suspend_timeout_custom", UNSET)
 
+        wake_with_app = d.pop("wake_with_app", UNSET)
+
         def _parse_restore_source_database_id(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -286,8 +288,6 @@ class ManagedPostgresDatabase:
             return cast(datetime.datetime | None | Unset, data)
 
         restore_point_in_time = _parse_restore_point_in_time(d.pop("restore_point_in_time", UNSET))
-
-        masked_branch = d.pop("masked_branch", UNSET)
 
         def _parse_last_error_code(data: object) -> None | str | Unset:
             if data is None:
@@ -373,9 +373,9 @@ class ManagedPostgresDatabase:
             health=health,
             suspend_timeout_seconds=suspend_timeout_seconds,
             suspend_timeout_custom=suspend_timeout_custom,
+            wake_with_app=wake_with_app,
             restore_source_database_id=restore_source_database_id,
             restore_point_in_time=restore_point_in_time,
-            masked_branch=masked_branch,
             last_error_code=last_error_code,
             deleted_at=deleted_at,
             restorable_until=restorable_until,

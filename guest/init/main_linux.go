@@ -1239,7 +1239,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		// Prepare the entire repository context, including sibling workspace
 		// packages, without erasing executable bits or following symlinks.
 		if err := prepareBuildSourceModes(m.BuildContext); err != nil {
-			return writeAndPoweroff(m, fmt.Errorf("prepare source permissions: %w", err), "")
+			return writeAndPoweroff(m, fmt.Errorf("prepare source modes and times: %w", err), "")
 		}
 	}
 

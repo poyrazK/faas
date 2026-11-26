@@ -34,18 +34,18 @@ func managedPostgresBackupSchedulePath(org, database string) string {
 	return prefix + "/databases/" + url.PathEscape(database) + "/backup-schedule"
 }
 
-func (c *Client) GetManagedPostgresBackupSchedule(ctx context.Context, org, database string) (ManagedPostgresBackupSchedule, error) {
+func (c *PreviewClient) GetManagedPostgresBackupSchedule(ctx context.Context, org, database string) (ManagedPostgresBackupSchedule, error) {
 	var out ManagedPostgresBackupSchedule
 	err := c.do(ctx, http.MethodGet, managedPostgresBackupSchedulePath(org, database), nil, &out)
 	return out, err
 }
 
-func (c *Client) SetManagedPostgresBackupSchedule(ctx context.Context, org, database string, request SetManagedPostgresBackupScheduleRequest) (ManagedPostgresBackupSchedule, error) {
+func (c *PreviewClient) SetManagedPostgresBackupSchedule(ctx context.Context, org, database string, request SetManagedPostgresBackupScheduleRequest) (ManagedPostgresBackupSchedule, error) {
 	var out ManagedPostgresBackupSchedule
 	err := c.do(ctx, http.MethodPut, managedPostgresBackupSchedulePath(org, database), request, &out)
 	return out, err
 }
 
-func (c *Client) DeleteManagedPostgresBackupSchedule(ctx context.Context, org, database string) error {
+func (c *PreviewClient) DeleteManagedPostgresBackupSchedule(ctx context.Context, org, database string) error {
 	return c.do(ctx, http.MethodDelete, managedPostgresBackupSchedulePath(org, database), nil, nil)
 }

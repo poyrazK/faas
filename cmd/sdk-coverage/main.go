@@ -267,11 +267,6 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases, behind the preview-databases
 	// capability until launch.
 	"PUT /v1/postgres/databases/{id}/previews": true,
-	// ADR-20261116213000 custom Postgres roles, behind the
-	// postgres_custom_roles flag until launch.
-	"GET /v1/postgres/databases/{id}/roles":           true,
-	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
-	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -867,6 +862,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout":                                              "SetOrgManagedPostgresSuspendTimeout",
 	"GET /v1/orgs/{organization}/postgres/bindings/{id}/timeouts":                                                      "GetOrgManagedPostgresBindingTimeouts",
 	"PUT /v1/orgs/{organization}/postgres/bindings/{id}/timeouts":                                                      "SetOrgManagedPostgresBindingTimeouts",
+	"PUT /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app":                                                "SetOrgManagedPostgresWakeWithApp",
 	"POST /v1/orgs/{organization}/postgres/bindings/{id}/rotate":                                                       "RotateOrgManagedPostgresBinding",
 	"GET /v1/orgs/{organization}/postgres/usage":                                                                       "GetOrgManagedPostgresUsage",
 
@@ -1830,6 +1826,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/usage":                                                           "AccountUsage",
 	"POST /v1/postgres/databases/{id}/compute-policy":                                 "ChangeManagedPostgresComputePolicy",
 	"PUT /v1/postgres/databases/{id}/suspend-timeout":                                 "SetManagedPostgresSuspendTimeout",
+	"PUT /v1/postgres/databases/{id}/wake-with-app":                                   "SetManagedPostgresWakeWithApp",
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}":              "GetManagedPostgresComputePolicyChange",
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
@@ -1903,6 +1900,9 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/postgres/databases/{id}/maintenance-window":                              "SetManagedPostgresMaintenance",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/bindings":                                        "ListManagedPostgresBindings",
+	"GET /v1/postgres/databases/{id}/roles":                                           "ListManagedPostgresCustomRoles",  // ADR-20261116213000
+	"PUT /v1/postgres/databases/{id}/roles/{name}":                                    "PutManagedPostgresCustomRole",    // ADR-20261116213000
+	"DELETE /v1/postgres/databases/{id}/roles/{name}":                                 "DeleteManagedPostgresCustomRole", // ADR-20261116213000
 	"POST /v1/postgres/databases/{id}/bindings":                                       "CreateManagedPostgresBinding",
 	"GET /v1/postgres/bindings/{id}":                                                  "GetManagedPostgresBinding",
 	"DELETE /v1/postgres/bindings/{id}":                                               "DeleteManagedPostgresBinding",

@@ -10,7 +10,7 @@ export type CreateManagedPostgresBindingRequest = {
   scope: string;
   environment_key: string;
   /**
-   * Credential mode. Replica-only is available on native production databases and serves reads only on an eligible standby. Unsupported modes are rejected before a binding is reserved.
+   * Credential mode. Unsupported modes are rejected before a binding is reserved.
    */
   access: 'read_write' | 'read_only' | 'migration' | 'data_api' | 'auth' | 'session' | 'replica_only';
 };

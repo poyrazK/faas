@@ -86,8 +86,7 @@ def sync_detailed(
 ) -> Response[DatabaseSwitch | Problem]:
     """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
-    ID.
+     The switch's phase, databases, drain counts and outcome.
 
     Args:
         slug (str):
@@ -121,8 +120,7 @@ def sync(
 ) -> DatabaseSwitch | Problem | None:
     """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
-    ID.
+     The switch's phase, databases, drain counts and outcome.
 
     Args:
         slug (str):
@@ -151,8 +149,7 @@ async def asyncio_detailed(
 ) -> Response[DatabaseSwitch | Problem]:
     """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
-    ID.
+     The switch's phase, databases, drain counts and outcome.
 
     Args:
         slug (str):
@@ -184,8 +181,7 @@ async def asyncio(
 ) -> DatabaseSwitch | Problem | None:
     """Read a managed PostgreSQL binding switch.
 
-     The switch's phase, databases, drain counts, outcome and the restore point or migration operation
-    ID.
+     The switch's phase, databases, drain counts and outcome.
 
     Args:
         slug (str):

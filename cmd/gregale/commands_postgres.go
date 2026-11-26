@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|diagnose|sessions|cancel-query|tables|autovacuum|extensions|queries|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|auto-grow|maintenance|restore|restore-drill|upgrade-rehearsal|import|import-status|migrate|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|app-wake|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -68,16 +68,13 @@ func cmdPostgres(args []string) int {
 	case "previews":
 		return cmdPostgresPreviews(args[1:])
 	case "roles":
-		// ADR-20261116213000: dark until released (postgres_custom_roles_cli.go).
-		if !postgresCustomRolesCLI() {
-			printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
-			return unknownSubcommandChoices(os.Stderr, "postgres", nestedCliCommand("postgres"), args[0])
-		}
 		return cmdPostgresRoles(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
 		return cmdPostgresComputePolicyStatus(args[1:])
+	case "app-wake":
+		return cmdPostgresWakeWithApp(args[1:])
 	case "suspend-timeout":
 		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
@@ -143,7 +140,7 @@ func cmdPostgresAttach(args []string) int {
 	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise default)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|session|replica_only|auth")
+	access := fs.String("access", "read_write", "backend-supported credential access")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -160,7 +157,7 @@ func cmdPostgresAttach(args []string) int {
 	}
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api|session|replica_only|auth]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access MODE]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -642,7 +639,8 @@ func cmdPostgresRestore(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	const usage = "usage: gregale postgres restore DATABASE (--point-in-time RFC3339 | --region REGION --latest) (--check | --name NAME [--switch APP [--env SCOPE] [--yes] [--no-wait]])"
+	const ordinaryUsage = "usage: gregale postgres restore DATABASE --name NAME --point-in-time RFC3339 [--switch APP [--env SCOPE] [--yes] [--no-wait]]"
+	const previewUsage = "usage: gregale postgres restore DATABASE (--point-in-time RFC3339 | --region REGION --latest) (--check | --name NAME [--switch APP [--env SCOPE] [--yes] [--no-wait]])"
 	if *check {
 		valid := fs.NArg() == 1 && *pointInTime != ""
 		fs.Visit(func(f *flag.Flag) {
@@ -651,13 +649,17 @@ func cmdPostgresRestore(args []string) int {
 			}
 		})
 		if !valid {
-			PrintUsage(os.Stderr, usage, "postgres")
+			PrintUsage(os.Stderr, previewUsage, "postgres")
 			return 1
 		}
 		return cmdPostgresRestoreCheck(fs.Arg(0), *pointInTime)
 	}
 	if fs.NArg() != 1 || *name == "" || (*pointInTime != "") == *latest || *latest && *region == "" ||
 		*region != "" && *switchApp != "" || *timeout <= 0 || *interval <= 0 || (*switchApp == "" && (*scope != "" || *confirmed || *noWait)) {
+		usage := ordinaryUsage
+		if *region != "" || *latest {
+			usage = previewUsage
+		}
 		PrintUsage(os.Stderr, usage, "postgres")
 		return 1
 	}
@@ -966,6 +968,7 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 			source = "set with suspend-timeout"
 		}
 		_, _ = fmt.Fprintf(w, "  suspend_timeout:  %s (%s)\n", time.Duration(database.SuspendTimeoutSeconds)*time.Second, source)
+		_, _ = fmt.Fprintf(w, "  wake_with_app:    %t\n", database.WakeWithApp)
 	}
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))

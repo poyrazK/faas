@@ -907,6 +907,14 @@ gregale consumers signup-set my-api --display-name "Weather API" --plans free,pr
   and opens only that customer's plan change. A customer without a card
   cannot switch to a paid plan with its key
   (`409 consumer_self_service_unavailable`).
+- **In MCP clients.** An MCP client cannot read a 429 body, so a refused
+  MCP request gets an answer the client understands instead (HTTP 200).
+  A client that supports URL elicitation shows the person the upgrade page
+  (JSON-RPC error `-32042`). Other clients get a tool error, or a JSON-RPC
+  error for methods other than `tools/call`, whose text names the limit,
+  when a per-minute limit clears and the upgrade link, so the agent can
+  tell the person. The answer carries `X-Faas-Error-Code:
+  consumer_plan_limit_exceeded` and `Retry-After`.
 
 ### MCP callers become customers
 
@@ -954,6 +962,33 @@ gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,p
   consumers they bill to, and `gregale api consumer identity delete my-mcp
   ID` frees one
   (its next call starts on the free plan again, or it links again).
+
+### Let customers ask about their account from the MCP client
+
+Add `--account-tools` and every signed-in customer sees two more tools in
+your server's tool list, answered by Gregale instead of your code:
+
+```bash
+gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free \
+  --oauth-consumers --customer-plan-changes --account-tools
+```
+
+- `account_usage`: their plan and its limits (requests per minute, units
+  per month, per-tool caps), this UTC month's requests and units, units
+  left, and units per tool. It trails live calls by about a minute.
+- `account_plans`: the plans you offer with their prices, the one they are
+  on and, with `--customer-plan-changes`, an `upgrade_url` to the hosted
+  page where a person saves a card. The tool never charges or changes a
+  plan.
+
+Calls to these tools are free, do not count against the customer's plan
+and work after the plan's limit refuses other calls, so an agent can always
+find the way to upgrade. Each customer may call them 30 times a minute on
+each gateway node.
+While the option is on, the names `account_usage` and `account_plans` are
+Gregale's: a tool of yours with either name is hidden from these customers.
+Only the first page of a paginated tool list gets them. Customers who use a
+consumer key keep the key's [self-service API](#customers-manage-their-own-account).
 
 ### Know when customers sign up or change
 

@@ -4,9 +4,35 @@ import (
 	"bytes"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestNativePostgresOperationsRequireOptInForDiscovery(t *testing.T) {
+	preview := []string{"auto-grow", "backup-schedule", "diagnose", "export", "migrate", "restore-drill", "upgrade-rehearsal"}
+	for _, tc := range []struct {
+		commands []cliCommand
+		enabled  bool
+	}{
+		{publicReferenceCommands(), false},
+		{(capabilityView{all: true}).discoverableCommands(visibleCliCommands()), true},
+	} {
+		index := slices.IndexFunc(tc.commands, func(c cliCommand) bool { return c.Name == "postgres" })
+		if index < 0 {
+			t.Fatal("the existing postgres command is missing")
+		}
+		subs := tc.commands[index].Subcommands
+		if !slices.ContainsFunc(subs, func(s cliSub) bool { return s.Name == "restore" }) {
+			t.Fatal("the existing restore command is missing")
+		}
+		for _, name := range preview {
+			if got := slices.ContainsFunc(subs, func(s cliSub) bool { return s.Name == name }); got != tc.enabled {
+				t.Errorf("postgres %s discovery = %v, want %v", name, got, tc.enabled)
+			}
+		}
+	}
+}
 
 // adr: 1027 — in-place major upgrades are a preview until launch: `gregale
 // postgres upgrade` stays callable but out of customer help, completions,

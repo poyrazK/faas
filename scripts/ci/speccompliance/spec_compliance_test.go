@@ -275,10 +275,6 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases: behind the preview-databases
 	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
 	"PUT /v1/postgres/databases/{id}/previews": true,
-	// ADR-20261116213000 custom Postgres roles (postgres_custom_roles flag).
-	"GET /v1/postgres/databases/{id}/roles":           true,
-	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
-	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -569,6 +565,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/build-queue":                  true, // operator build queue report (ADR-20261123163340)
 	"GET /v1/admin/obs/memory-pressure":              true, // operator memory pressure report (ADR-20261123190507)
 	"GET /v1/admin/obs/gateway-traffic":              true, // operator gateway traffic report (ADR-20261124093000)
+	"GET /v1/admin/obs/disk-pressure":                true, // operator disk pressure report (ADR-20261124150000)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -1149,6 +1146,12 @@ var dtoExclude = map[string]bool{
 	"ObsGatewayEdgeRejection":  true,
 	"ObsGatewayReasonCount":    true,
 	"ObsGatewayAppTraffic":     true,
+	// ADR-20261124150000 operator disk pressure report.
+	"ObsDiskPressureReport": true,
+	"ObsDiskTotals":         true,
+	"ObsDiskNode":           true,
+	"ObsDiskFilesystem":     true,
+	"ObsDiskGuest":          true,
 	// ADR-20261123163340 operator build queue report.
 	"ObsBuildQueueReport":  true,
 	"ObsBuildQueueTotals":  true,

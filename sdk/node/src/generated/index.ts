@@ -1540,6 +1540,8 @@ export type { ManagedPostgresBindingTimeouts } from './models/ManagedPostgresBin
 export type { ManagedPostgresCapabilities } from './models/ManagedPostgresCapabilities.js';
 export type { ManagedPostgresComputePolicyChange } from './models/ManagedPostgresComputePolicyChange.js';
 export type { ManagedPostgresConnectionBudget } from './models/ManagedPostgresConnectionBudget.js';
+export type { ManagedPostgresCustomRole } from './models/ManagedPostgresCustomRole.js';
+export type { ManagedPostgresCustomRoleList } from './models/ManagedPostgresCustomRoleList.js';
 export type { ManagedPostgresCutover } from './models/ManagedPostgresCutover.js';
 export type { ManagedPostgresCutoverID } from './models/ManagedPostgresCutoverID.js';
 export type { ManagedPostgresCutoverMember } from './models/ManagedPostgresCutoverMember.js';
@@ -1619,6 +1621,7 @@ export type { ManagedPostgresUsageLineItem } from './models/ManagedPostgresUsage
 export type { ManagedPostgresUsageOperatorResponse } from './models/ManagedPostgresUsageOperatorResponse.js';
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { ManagedPostgresVolumeStatus } from './models/ManagedPostgresVolumeStatus.js';
+export type { ManagedPostgresWakeWithApp } from './models/ManagedPostgresWakeWithApp.js';
 export type { ManagedRealtimeAccessRequest } from './models/ManagedRealtimeAccessRequest.js';
 export type { ManagedRealtimeAccessResponse } from './models/ManagedRealtimeAccessResponse.js';
 export type { ManagedRealtimeActivityScopePath } from './models/ManagedRealtimeActivityScopePath.js';
@@ -3000,6 +3003,7 @@ export type { PutIssueSavedViewRequest } from './models/PutIssueSavedViewRequest
 export type { PutIssueTeamRequest } from './models/PutIssueTeamRequest.js';
 export type { PutIssueTrackerLinkRequest } from './models/PutIssueTrackerLinkRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
+export type { PutManagedPostgresCustomRoleRequest } from './models/PutManagedPostgresCustomRoleRequest.js';
 export type { PutOperationWebhookBindingRequest } from './models/PutOperationWebhookBindingRequest.js';
 export type { PutOutboundAIFeedbackRequest } from './models/PutOutboundAIFeedbackRequest.js';
 export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';
@@ -3514,6 +3518,7 @@ export type { SetManagedPostgresMaintenanceRequest } from './models/SetManagedPo
 export type { SetManagedPostgresQueryInsightsRequest } from './models/SetManagedPostgresQueryInsightsRequest.js';
 export type { SetManagedPostgresRecoveryRegionRequest } from './models/SetManagedPostgresRecoveryRegionRequest.js';
 export type { SetManagedPostgresSuspendTimeoutRequest } from './models/SetManagedPostgresSuspendTimeoutRequest.js';
+export type { SetManagedPostgresWakeWithAppRequest } from './models/SetManagedPostgresWakeWithAppRequest.js';
 export type { SetMCPReadinessFallbackRequest } from './models/SetMCPReadinessFallbackRequest.js';
 export type { SetMCPReadinessPagerDutyAcknowledgementsRequest } from './models/SetMCPReadinessPagerDutyAcknowledgementsRequest.js';
 export type { SetMCPReadinessPagerDutyRequest } from './models/SetMCPReadinessPagerDutyRequest.js';

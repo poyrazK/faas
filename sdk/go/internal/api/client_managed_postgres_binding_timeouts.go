@@ -25,23 +25,23 @@ type SetManagedPostgresBindingTimeoutsRequest struct {
 	IdleInTransactionMS *int32 `json:"idle_in_transaction_session_timeout_ms,omitempty"`
 }
 
-func (c *Client) GetManagedPostgresBindingTimeouts(ctx context.Context, id string) (ManagedPostgresBindingTimeouts, error) {
+func (c *PreviewClient) GetManagedPostgresBindingTimeouts(ctx context.Context, id string) (ManagedPostgresBindingTimeouts, error) {
 	return c.managedPostgresBindingTimeouts(ctx, "/v1/postgres", id, http.MethodGet, nil)
 }
 
-func (c *Client) GetOrgManagedPostgresBindingTimeouts(ctx context.Context, organization, id string) (ManagedPostgresBindingTimeouts, error) {
+func (c *PreviewClient) GetOrgManagedPostgresBindingTimeouts(ctx context.Context, organization, id string) (ManagedPostgresBindingTimeouts, error) {
 	return c.managedPostgresBindingTimeouts(ctx, orgPostgresPath(organization), id, http.MethodGet, nil)
 }
 
-func (c *Client) SetManagedPostgresBindingTimeouts(ctx context.Context, id string, req SetManagedPostgresBindingTimeoutsRequest) (ManagedPostgresBindingTimeouts, error) {
+func (c *PreviewClient) SetManagedPostgresBindingTimeouts(ctx context.Context, id string, req SetManagedPostgresBindingTimeoutsRequest) (ManagedPostgresBindingTimeouts, error) {
 	return c.managedPostgresBindingTimeouts(ctx, "/v1/postgres", id, http.MethodPut, req)
 }
 
-func (c *Client) SetOrgManagedPostgresBindingTimeouts(ctx context.Context, organization, id string, req SetManagedPostgresBindingTimeoutsRequest) (ManagedPostgresBindingTimeouts, error) {
+func (c *PreviewClient) SetOrgManagedPostgresBindingTimeouts(ctx context.Context, organization, id string, req SetManagedPostgresBindingTimeoutsRequest) (ManagedPostgresBindingTimeouts, error) {
 	return c.managedPostgresBindingTimeouts(ctx, orgPostgresPath(organization), id, http.MethodPut, req)
 }
 
-func (c *Client) managedPostgresBindingTimeouts(ctx context.Context, prefix, id, method string, req any) (ManagedPostgresBindingTimeouts, error) {
+func (c *PreviewClient) managedPostgresBindingTimeouts(ctx context.Context, prefix, id, method string, req any) (ManagedPostgresBindingTimeouts, error) {
 	var out ManagedPostgresBindingTimeouts
 	err := c.do(ctx, method, prefix+"/bindings/"+url.PathEscape(id)+"/timeouts", req, &out)
 	return out, err

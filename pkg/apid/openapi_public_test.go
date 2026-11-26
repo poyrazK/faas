@@ -33,11 +33,11 @@ func decodeSpec(t *testing.T, raw []byte) specShape {
 
 // The anonymous spec must not advertise the durable entity preview, while the
 // embedded source keeps it for SDK generation and contract tooling. API
-// monetization and the realtime preview are published here so only the
-// durable entity filter is measured.
+// monetization, realtime and catalog previews are included in this fixture
+// so only the operator path filter is measured.
 func TestPublicOpenAPIHidesDurableEntityPaths(t *testing.T) {
 	full := decodeSpec(t, OpenAPIYAML())
-	public := decodeSpec(t, PublicOpenAPIYAMLFor(allVisible))
+	public := decodeSpec(t, FilterSpec(OpenAPIYAML(), func(string) bool { return false }, allVisible))
 	hidden := 0
 	for path := range full.Paths {
 		if hiddenPublicPath(path) {
@@ -65,6 +65,19 @@ func TestPublicOpenAPIHidesDurableEntityPaths(t *testing.T) {
 	}
 	if len(public.Paths) != len(full.Paths)-hidden {
 		t.Errorf("public paths = %d, want %d", len(public.Paths), len(full.Paths)-hidden)
+	}
+}
+
+func TestPublicOpenAPIHidesNativePostgresPreview(t *testing.T) {
+	public := decodeSpec(t, PublicOpenAPIYAML())
+	if _, ok := public.Paths["/v1/postgres/databases/{id}/recovery-region"]; ok {
+		t.Error("anonymous spec exposes native PostgreSQL recovery configuration")
+	}
+	if _, ok := public.Paths["/v1/postgres/databases/{id}/restore"]; !ok {
+		t.Error("anonymous spec omits the existing PostgreSQL restore endpoint")
+	}
+	if _, ok := public.Components["schemas"]["ManagedPostgresStorageStatus"]; ok {
+		t.Error("anonymous spec exposes the native PostgreSQL storage status schema")
 	}
 }
 

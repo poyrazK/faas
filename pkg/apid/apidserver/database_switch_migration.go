@@ -18,6 +18,10 @@ func (s *server) activateManagedPostgresMigration(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	if !s.capabilityEnabledFor("database-rollbacks", acct, app) {
+		writeMissingRoute(w, r)
+		return
+	}
 	switches, ok := s.databaseSwitchStore()
 	if !ok || s.databaseSwitchWorker() == nil || s.managedPostgresBindings == nil {
 		api.WriteProblem(w, api.ErrDatabaseSwitchUnavailable("Managed PostgreSQL switches are unavailable.", ""))

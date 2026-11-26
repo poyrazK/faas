@@ -1,7 +1,7 @@
 from typing import Literal
 
 ManagedPostgresCapabilitiesCredentialAccessItem = Literal[
-    "auth", "data_api", "migration", "read_only", "read_write", "replica_only", "session"
+    "auth", "data_api", "migration", "read_only", "read_write", "session"
 ]
 
 MANAGED_POSTGRES_CAPABILITIES_CREDENTIAL_ACCESS_ITEM_VALUES: set[ManagedPostgresCapabilitiesCredentialAccessItem] = {
@@ -10,7 +10,6 @@ MANAGED_POSTGRES_CAPABILITIES_CREDENTIAL_ACCESS_ITEM_VALUES: set[ManagedPostgres
     "migration",
     "read_only",
     "read_write",
-    "replica_only",
     "session",
 }
 

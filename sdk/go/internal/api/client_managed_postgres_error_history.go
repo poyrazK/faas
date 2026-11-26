@@ -35,7 +35,7 @@ func managedPostgresErrorHistoryPath(org, database string) string {
 	return prefix + "/databases/" + url.PathEscape(database) + "/errors"
 }
 
-func (c *Client) GetManagedPostgresErrorHistory(ctx context.Context, org, database string, since time.Duration, sqlstate string, limit int) (ManagedPostgresErrorHistory, error) {
+func (c *PreviewClient) GetManagedPostgresErrorHistory(ctx context.Context, org, database string, since time.Duration, sqlstate string, limit int) (ManagedPostgresErrorHistory, error) {
 	query := url.Values{"since_seconds": {strconv.FormatInt(int64(since/time.Second), 10)}, "limit": {strconv.Itoa(limit)}}
 	if sqlstate != "" {
 		query.Set("sqlstate", sqlstate)
@@ -45,7 +45,7 @@ func (c *Client) GetManagedPostgresErrorHistory(ctx context.Context, org, databa
 	return out, err
 }
 
-func (c *Client) SetManagedPostgresErrorHistory(ctx context.Context, org, database string, request SetManagedPostgresErrorHistoryRequest) (ManagedPostgresErrorHistory, error) {
+func (c *PreviewClient) SetManagedPostgresErrorHistory(ctx context.Context, org, database string, request SetManagedPostgresErrorHistoryRequest) (ManagedPostgresErrorHistory, error) {
 	var out ManagedPostgresErrorHistory
 	err := c.do(ctx, http.MethodPut, managedPostgresErrorHistoryPath(org, database), request, &out)
 	return out, err

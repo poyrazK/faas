@@ -262,6 +262,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	timeouts := s.managedPostgresSuspendTimeoutsOrLog(r.Context(), databases)
+	wakeWithApp := s.managedPostgresWakeWithAppOrLog(r.Context(), databases)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
@@ -270,6 +271,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 			view.PlanExcess = excess[database.ID]
 			s.withManagedPostgresHold(&view, database, in, holdOK)
 			managedpg.ApplySuspendTimeout(&view, timeouts)
+			managedpg.ApplyWakeWithApp(&view, wakeWithApp)
 			items = append(items, view)
 		}
 	}
@@ -545,6 +547,7 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	s.withManagedPostgresHold(&view, database, in, holdOK)
 	managedpg.ApplySuspendTimeout(&view, s.managedPostgresSuspendTimeoutsOrLog(r.Context(), []managedpostgres.Database{database}))
+	managedpg.ApplyWakeWithApp(&view, s.managedPostgresWakeWithAppOrLog(r.Context(), []managedpostgres.Database{database}))
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -664,6 +667,10 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
+	if req.Region != "" && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
+		writeMissingRoute(w, r)
+		return
+	}
 	restore, err := managedPostgresRestoreRequest(acct.ID, source.ID, req)
 	if err != nil {
 		managedPostgresProblem(w, err)
@@ -763,6 +770,10 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 	}
 	// Application Auth is a dark launch: without it the mode is unknown.
 	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialReplicaOnly && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}

@@ -13,7 +13,7 @@ import (
 // (ADR-20261102123523): each preview environment of an app bound to it gets
 // its own database according to the selected mode.
 func cmdPostgresPreviews(args []string) int {
-	const usage = "usage: gregale postgres previews set DATABASE empty|copy|masked|off [--policy FILE]"
+	const usage = "usage: gregale postgres previews set DATABASE empty|copy|off"
 	fs := newFlagSet("postgres previews", flag.ContinueOnError)
 	policyFile := fs.String("policy", "", "JSON masking policy for masked previews")
 	if err := parseInterspersed(fs, args); err != nil {

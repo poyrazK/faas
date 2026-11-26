@@ -24,8 +24,7 @@ class CreateManagedPostgresBindingRequest:
     scope: str
     environment_key: str
     access: CreateManagedPostgresBindingRequestAccess
-    """Credential mode. Replica-only is available on native production databases and serves reads only on an
-    eligible standby. Unsupported modes are rejected before a binding is reserved."""
+    """Credential mode. Unsupported modes are rejected before a binding is reserved."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = self.app_id

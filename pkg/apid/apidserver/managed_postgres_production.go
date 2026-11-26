@@ -14,6 +14,12 @@ import (
 // provisioning to an account.
 const managedPostgresCapability = "managed-postgres"
 
+const nativePostgresOperationsCapability = "native-postgres-operations"
+
+func (s *server) nativePostgresOperationsEnabled(subject platformflags.Subject) bool {
+	return s.capGate == nil || s.capGate.Enabled(nativePostgresOperationsCapability, subject)
+}
+
 // managedPostgresReleased decides production provisioning for one account by
 // the managed-postgres capability flag, for the account's plan and the
 // request's organization. Without a gate (unit tests) every account is

@@ -41,6 +41,13 @@ type TLSCluster struct {
 
 func OpenTLSCluster(t *testing.T) *TLSCluster {
 	t.Helper()
+	return OpenTLSClusterWithDNSNames(t)
+}
+
+// OpenTLSClusterWithDNSNames additionally puts the supplied names in the
+// fixture's certificate, allowing isolated resolver tests to verify TLS names.
+func OpenTLSClusterWithDNSNames(t *testing.T, dnsNames ...string) *TLSCluster {
+	t.Helper()
 	bin := os.Getenv("FAAS_COMMIT_TLS_PG_BIN_DIR")
 	if bin == "" {
 		t.Skip("FAAS_COMMIT_TLS_PG_BIN_DIR required")
@@ -88,7 +95,7 @@ func OpenTLSCluster(t *testing.T) *TLSCluster {
 	})
 	c.own(dir)
 	var cKey string
-	c.CAPath, cKey = tlsFixtureCertificate(t, dir)
+	c.CAPath, cKey = tlsFixtureCertificate(t, dir, dnsNames...)
 	c.own(c.CAPath)
 	c.own(cKey)
 	data := filepath.Join(dir, "data")
@@ -170,14 +177,14 @@ func (c *TLSCluster) run(args ...string) {
 	}
 }
 
-func tlsFixtureCertificate(t *testing.T, dir string) (string, string) {
+func tlsFixtureCertificate(t *testing.T, dir string, dnsNames ...string) (string, string) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	certificate := x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	certificate := x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: append([]string{"localhost"}, dnsNames...), NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, &certificate, &certificate, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)

@@ -19,7 +19,6 @@ import (
 // restore_source_database_id names its source.
 func cmdPostgresBranch(args []string) int {
 	const usage = "usage: gregale postgres branch [create] <database> <name> [--from live|RFC3339] [--ttl DURATION]\n" +
-		"       gregale postgres branch masked <database> <name> --policy FILE [--ttl DURATION]\n" +
 		"       gregale postgres branch list <database>\n" +
 		"       gregale postgres branch delete <database> <name> [--yes]"
 	if len(args) == 0 {

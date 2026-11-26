@@ -21,8 +21,8 @@ type realtimePublisher interface {
 // tickRealtime shares the qualified source's credential and binding, but never
 // converts a realtime publication into an application invocation.
 func (m *Manager) tickRealtime(ctx context.Context, pool *pgxpool.Pool, src state.CommitRelaySource) (int, *commit.Backlog, error) {
-	var installed bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.gregale_realtime_outbox') IS NOT NULL`).Scan(&installed); err != nil {
+	installed, err := commit.RealtimeOutboxInstalled(ctx, pool)
+	if err != nil {
 		return 0, nil, err
 	}
 	if !installed {

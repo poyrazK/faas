@@ -22,6 +22,27 @@ func TestSDKSpecInSync(t *testing.T) {
 	}
 }
 
+func TestSDKSpecKeepsNativePostgresOperationsInPreview(t *testing.T) {
+	spec, err := render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"\n  /v1/postgres/databases/{id}/restore:", "\n  /v1/apps/{slug}/database-switches:"} {
+		if !strings.Contains(string(spec), path) {
+			t.Errorf("public PostgreSQL path %q is missing", strings.TrimSpace(path))
+		}
+	}
+	for _, token := range []string{
+		"/query-insights:", "/masked-branches:", "/upgrade-rehearsals:", "/backup-schedule:",
+		"/database-switches/migration:", "replica_only", "migration_operation_id:", "masked_branch:",
+		"ManagedPostgresStorageStatus:", "ManagedPostgresBackupStatus:", "ManagedPostgresReplicaStatus:",
+	} {
+		if strings.Contains(string(spec), token) {
+			t.Errorf("native PostgreSQL preview token %q leaked into the default SDK", token)
+		}
+	}
+}
+
 func TestSDKSpecKeepsGAAndDropsPreviewAndOperatorPaths(t *testing.T) {
 	spec, err := render()
 	if err != nil {

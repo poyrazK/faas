@@ -11,6 +11,41 @@ import (
 
 const account = "11111111-1111-4111-8111-111111111111"
 
+func TestNativePostgresOperationsRequireOptIn(t *testing.T) {
+	catalog, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const capability = "native-postgres-operations"
+	key, _ := platformflags.CapabilityFlag(capability)
+	allow := true
+	flags := platformflags.NewSet(map[string]platformflags.Definition{
+		key: {Enabled: true, Default: false, Rules: []platformflags.Rule{{ID: "native-preview", Accounts: []string{account}, Value: &allow}}},
+	})
+	gate := New(catalog, flags.Snapshot)
+	allowed := platformflags.Subject{AccountID: account, Plan: "pro"}
+	other := platformflags.Subject{AccountID: "22222222-2222-4222-8222-222222222222", Plan: "pro"}
+	hidden := map[string]bool{capability: true}
+	for _, path := range []string{
+		"/v1/postgres/databases/{id}/query-insights",
+		"/v1/orgs/{org}/postgres/databases/{id}/masked-branches",
+		"/v1/orgs/{org}/postgres/databases/{id}/exports/{export_id}/download",
+		"/v1/postgres/bindings/{id}/timeouts",
+		"/v1/apps/{slug}/database-switches/migration",
+		"/v1/postgres/databases/{id}/upgrade-rehearsals/{rehearsal_id}",
+	} {
+		if owner, ok := gate.Capability(path); !ok || owner != capability ||
+			gate.Allowed(path, other) || !gate.Allowed(path, allowed) || !gate.SpecHidden(path, hidden) {
+			t.Errorf("native preview route %q: owner=%q, got opt-in=%v default=%v", path, owner, gate.Allowed(path, allowed), gate.Allowed(path, other))
+		}
+	}
+	for _, path := range []string{"/v1/postgres/databases/{id}", "/v1/postgres/databases/{id}/restore", "/v1/apps/{slug}/database-switches"} {
+		if !gate.Allowed(path, other) || gate.SpecHidden(path, hidden) {
+			t.Errorf("existing PostgreSQL route %q was hidden", path)
+		}
+	}
+}
+
 func testCatalog() productcap.Catalog {
 	return productcap.Catalog{Version: 1, Capabilities: []productcap.Capability{
 		{ID: "apps", Maturity: productcap.MaturityGA, Core: true, Routes: []string{"=/v1/apps/{}", "/v1/apps/{}/rename"}},

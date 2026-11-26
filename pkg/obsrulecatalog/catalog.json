@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2e9f1ef3bc38d2dc4d0563540cf056bc96d6d73c167193c8e18251df4c6b5e62",
+      "revision": "013bb067b3e7c67a4a3bf5152b81be6943191e8236105054af1e70fe94c4f63c",
       "files": [
         "faas.rules.yml"
       ],
@@ -1419,11 +1419,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasApiAvailabilityBurnRateHigh",
           "definition": {
-            "expression_hash": "c7a20ec6ff2404522b768cb7ded6b8d8e103abdd48c17b1f8227c310421cc121",
+            "expression_hash": "7787a45011d4ed80be5ce50dd0bf84156fae22775f4a0bf42f94c3ac55ce6121",
             "labels_hash": "e6abf5bfcecf6cf5d42ead6e8ced3bdbb3905ca2ae85b3a8e2497e4db4bad7e3",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "c4d1d70f6d4a492f343a2e7a6e67b296b310a96e3ba344b20fece1715b06d33b"
+            "fingerprint": "733f553070558233716ebed91d79c9e3e30a6e845f89841fc068f67bcd83ecca"
           }
         },
         {
@@ -1606,6 +1606,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9a0238fdafe532cd7431768d8ed658635d3cff752af005a0cce8942ea3a6283e"
+          }
+        },
+        {
+          "id": "3229e78459a8e0b393f53ae5b6d126d54989298fdb827c90c0e8fb7ae546c7b0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasRequestTelemetryLoss",
+          "definition": {
+            "expression_hash": "155a070e99c9cd02bd7022c6bae3bb578d72a0d6ce6e5fd05a61f48f17833e67",
+            "labels_hash": "2164a7a574f26a8a44bc06f46174dafd04315fed7ba842b810f16cbc00dd9e3a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8282794b569d3778575b8b018fd3d384cd617fd513f17e82dd97a57786e55c8a"
           }
         },
         {
@@ -6970,11 +6983,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasApiAvailabilityLow",
           "definition": {
-            "expression_hash": "7971515d19e3f060af6719a0e79911307b86b791aaca1d2500806263c92dd8ec",
+            "expression_hash": "09b4df1a1a0f7ecbb4cde95e32048ecff27a98fdc9ed05768ace1b582f624bd9",
             "labels_hash": "0e1f3bb442b5e96a4716d14fe7fd29be6c5494053125220a776c6c8898884cd7",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "3b51d281e69b5c52ff3c32c8ad2cecb85b3137286580ae8904963d3d34c88b89"
+            "fingerprint": "df4577681dd222d4f1f09fcd48b56edbebd350b45f775c7256ec3b5bc2c5dd1d"
           }
         },
         {
@@ -7527,7 +7540,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "16965214df5e7f8783b3bdf3a1eda5e1cadb6a349f3bf8e376603f7c08900426",
+      "revision": "73b530814e1140d0f02578a6f94c26a643741202bdb4ded5ffed81408da1ec36",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9024,11 +9037,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasApiAvailabilityBurnRateHigh",
           "definition": {
-            "expression_hash": "c7a20ec6ff2404522b768cb7ded6b8d8e103abdd48c17b1f8227c310421cc121",
+            "expression_hash": "7787a45011d4ed80be5ce50dd0bf84156fae22775f4a0bf42f94c3ac55ce6121",
             "labels_hash": "e6abf5bfcecf6cf5d42ead6e8ced3bdbb3905ca2ae85b3a8e2497e4db4bad7e3",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "c4d1d70f6d4a492f343a2e7a6e67b296b310a96e3ba344b20fece1715b06d33b"
+            "fingerprint": "733f553070558233716ebed91d79c9e3e30a6e845f89841fc068f67bcd83ecca"
           }
         },
         {
@@ -9211,6 +9224,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9a0238fdafe532cd7431768d8ed658635d3cff752af005a0cce8942ea3a6283e"
+          }
+        },
+        {
+          "id": "3229e78459a8e0b393f53ae5b6d126d54989298fdb827c90c0e8fb7ae546c7b0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasRequestTelemetryLoss",
+          "definition": {
+            "expression_hash": "155a070e99c9cd02bd7022c6bae3bb578d72a0d6ce6e5fd05a61f48f17833e67",
+            "labels_hash": "2164a7a574f26a8a44bc06f46174dafd04315fed7ba842b810f16cbc00dd9e3a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8282794b569d3778575b8b018fd3d384cd617fd513f17e82dd97a57786e55c8a"
           }
         },
         {
@@ -14770,11 +14796,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasApiAvailabilityLow",
           "definition": {
-            "expression_hash": "7971515d19e3f060af6719a0e79911307b86b791aaca1d2500806263c92dd8ec",
+            "expression_hash": "09b4df1a1a0f7ecbb4cde95e32048ecff27a98fdc9ed05768ace1b582f624bd9",
             "labels_hash": "0e1f3bb442b5e96a4716d14fe7fd29be6c5494053125220a776c6c8898884cd7",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "3b51d281e69b5c52ff3c32c8ad2cecb85b3137286580ae8904963d3d34c88b89"
+            "fingerprint": "df4577681dd222d4f1f09fcd48b56edbebd350b45f775c7256ec3b5bc2c5dd1d"
           }
         },
         {

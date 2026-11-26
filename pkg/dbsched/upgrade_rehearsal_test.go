@@ -15,10 +15,11 @@ import (
 
 type rehearsalVMM struct {
 	*requestedDrillVMM
-	t      *testing.T
-	source string
-	point  time.Time
-	reason string
+	t        *testing.T
+	source   string
+	point    time.Time
+	reason   string
+	timeline uint32
 }
 
 func (f *rehearsalVMM) CheckLatestArchiveRestore(_ context.Context, node Node, id string, upper time.Time, major int) (dbarchive.RestoreCheck, error) {
@@ -28,7 +29,7 @@ func (f *rehearsalVMM) CheckLatestArchiveRestore(_ context.Context, node Node, i
 	if f.reason != "" {
 		return dbarchive.RestoreCheck{Outcome: dbarchive.RestoreUnverified, Reason: f.reason}, nil
 	}
-	return dbarchive.RestoreCheck{Outcome: dbarchive.RestoreCovered, RecoveryPoint: &f.point, Timeline: 2}, nil
+	return dbarchive.RestoreCheck{Outcome: dbarchive.RestoreCovered, RecoveryPoint: &f.point, Timeline: f.timeline}, nil
 }
 
 func (f *rehearsalVMM) Start(ctx context.Context, node Node, vm VM) error {
@@ -79,16 +80,18 @@ func TestUpgradeRehearsalUsesPrivateCopyAndResumes(t *testing.T) {
 	for _, tc := range []struct {
 		name, archiveReason, upgradeCode, failedPhase, errorCode string
 		loseMark                                                 bool
+		timeline                                                 uint32
 	}{
-		{name: "success"},
-		{name: "upgrade refused", upgradeCode: dbguest.ErrCodeUpgradeRefused, failedPhase: "upgrade", errorCode: dbguest.ErrCodeUpgradeRefused},
-		{name: "verification failed", loseMark: true, failedPhase: "verify", errorCode: dbguest.ErrCodeDrillMarkMissing},
+		{name: "success on timeline 1", timeline: 1},
+		{name: "upgrade refused", timeline: 2, upgradeCode: dbguest.ErrCodeUpgradeRefused, failedPhase: "upgrade", errorCode: dbguest.ErrCodeUpgradeRefused},
+		{name: "verification failed", timeline: 2, loseMark: true, failedPhase: "verify", errorCode: dbguest.ErrCodeDrillMarkMissing},
 		{name: "unverified archive", archiveReason: "timeline_unverified", failedPhase: "restore", errorCode: "timeline_unverified"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vmm.point = time.Now().UTC().Truncate(time.Microsecond)
 			vmm.recoveredTo = vmm.point.Add(-time.Millisecond)
 			vmm.upgradeCode, vmm.reason = tc.upgradeCode, tc.archiveReason
+			vmm.timeline = tc.timeline
 			key := uuid.NewString()
 			d, err := s.RequestUpgradeRehearsal(ctx, source.DatabaseID, key, 18, "app")
 			if err != nil || d.Result != DrillQueued || d.RequestID != key || d.Rehearsal.TargetMajor != 18 || !d.TargetAt.IsZero() {
@@ -116,7 +119,7 @@ func TestUpgradeRehearsalUsesPrivateCopyAndResumes(t *testing.T) {
 				sweep()
 				copy, err := store.Get(ctx, d.ID)
 				close(hold)
-				if err != nil || copy.State != stateRehearsalRestore || copy.RestoreSource != source.DatabaseID || copy.RestoreTimeline != 2 {
+				if err != nil || copy.State != stateRehearsalRestore || copy.RestoreSource != source.DatabaseID || copy.RestoreTimeline != tc.timeline {
 					t.Fatalf("private copy was not isolated from general restarts: %+v, %v", copy, err)
 				}
 				s.restoreWG.Wait()
@@ -158,7 +161,7 @@ func TestUpgradeRehearsalUsesPrivateCopyAndResumes(t *testing.T) {
 			if tc.failedPhase != "" && got.Rehearsal.Phase != tc.failedPhase {
 				t.Fatalf("failed phase = %s, want %s", got.Rehearsal.Phase, tc.failedPhase)
 			}
-			if tc.archiveReason == "" && (got.Rehearsal.RecoveryTimeline != 2 || !got.TargetAt.Equal(vmm.point) || !got.RecoveredTo.Equal(vmm.recoveredTo)) {
+			if tc.archiveReason == "" && (got.Rehearsal.RecoveryTimeline != tc.timeline || !got.TargetAt.Equal(vmm.point) || !got.RecoveredTo.Equal(vmm.recoveredTo)) {
 				t.Fatalf("lost recovery evidence: %+v", got)
 			}
 			if _, err := store.Get(ctx, d.ID); !errors.Is(err, ErrNotFound) {

@@ -398,6 +398,7 @@ sql:
       - "pkg/state/managed_postgres_preflight_queries.sql"
       - "pkg/state/managed_postgres_source_fence_queries.sql"
       - "pkg/state/managed_postgres_suspend_timeout_queries.sql"
+      - "pkg/state/managed_postgres_wake_with_app_queries.sql"
       - "pkg/state/mcp_access_policy_queries.sql"
       - "pkg/state/mfa_credential_queries.sql"
       - "pkg/state/migration_admission_queries.sql"

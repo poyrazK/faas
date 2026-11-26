@@ -214,7 +214,11 @@ func (s *server) resolveManifestPostgresBindings(
 		// Application Auth is a dark launch: without it the mode is unknown.
 		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(subject) {
 			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
-				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session, replica_only}", i, access))
+				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session}", i, access))
+		}
+		if access == managedpostgres.CredentialReplicaOnly && !s.nativePostgresOperationsEnabled(subject) {
+			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
+				"Invalid manifest", fmt.Sprintf("database[%d]: access %q is unavailable", i, access))
 		}
 		if problem := s.dataAPIAccessProblem(subject, access, fmt.Sprintf(`database[%d]: access "data_api"`, i)); problem != nil {
 			return nil, problem

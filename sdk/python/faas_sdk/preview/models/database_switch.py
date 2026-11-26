@@ -20,10 +20,7 @@ T = TypeVar("T", bound="DatabaseSwitch")
 
 @_attrs_define
 class DatabaseSwitch:
-    """A durable switch to a restored managed PostgreSQL database or a verified native migration target. The app is fenced
-    while its bindings change.
-
-    """
+    """A durable switch to a managed PostgreSQL database. The app is fenced while its bindings change."""
 
     id: UUID
     app_id: UUID

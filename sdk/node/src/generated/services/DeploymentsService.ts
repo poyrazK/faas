@@ -1442,7 +1442,7 @@ export class DeploymentsService {
   }
   /**
    * Read a managed PostgreSQL binding switch.
-   * The switch's phase, databases, drain counts, outcome and the restore point or migration operation ID.
+   * The switch's phase, databases, drain counts and outcome.
    * @returns DatabaseSwitch The switch.
    * @throws ApiError
    */

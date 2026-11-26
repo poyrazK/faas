@@ -107,8 +107,7 @@ class DeploymentResponse:
     scheduled_release: ScheduledRelease | Unset = UNSET
     """A release built ahead of time that starts its rollout at release_at."""
     database_switch: DatabaseSwitch | Unset = UNSET
-    """A durable switch to a restored managed PostgreSQL database or a verified native migration target. The app is
-    fenced while its bindings change."""
+    """A durable switch to a managed PostgreSQL database. The app is fenced while its bindings change."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
     stage_state: DeploymentStageState | Unset = UNSET

@@ -1,0 +1,80 @@
+name: Commit native KVM acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-native-exclusive-host
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify evidence and runner contracts
+        run: |
+          python3 -m unittest scripts/ci/commit_native_evidence_test.py
+          bash -n scripts/ci/run-commit-native-acceptance.sh
+          sh -n scripts/test-commit-native.sh
+
+  native:
+    name: Commit snapshot and cold boot (exclusive x86 KVM)
+    needs: contracts
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, gregale-commit-acceptance]
+    timeout-minutes: 155
+    steps:
+      - name: Select fresh evidence directory
+        run: |
+          printf 'GREGALE_COMMIT_NATIVE_EVIDENCE=%s/gregale-commit-native-%s-%s\n' \
+            "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Read the pinned Go toolchain
+        id: toolchain
+        run: |
+          version="$(awk '$1 == "toolchain" {sub(/^go/, "", $2); print $2; exit}' go.mod)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ steps.toolchain.outputs.version }}
+          cache: false
+      - name: Run isolated native acceptance
+        id: acceptance
+        run: |
+          timeout --signal=TERM --kill-after=5m 140m \
+            sudo -n /usr/bin/env -i PATH="$PATH" /bin/bash scripts/ci/run-commit-native-acceptance.sh \
+            "$GITHUB_SHA" "$GREGALE_COMMIT_NATIVE_EVIDENCE"
+      - name: Verify evidence and publish sanitized verdict
+        if: ${{ always() }}
+        env:
+          NATIVE_OUTCOME: ${{ steps.acceptance.outcome }}
+        run: |
+          sudo -n python3 scripts/ci/commit_native_evidence.py verdict \
+            --directory "$GREGALE_COMMIT_NATIVE_EVIDENCE" --expected "$GITHUB_SHA" \
+            --outcome "$NATIVE_OUTCOME"
+      - name: Show qualification summary
+        if: ${{ always() }}
+        run: cat "$GREGALE_COMMIT_NATIVE_EVIDENCE/public/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain sanitized evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: commit-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.GREGALE_COMMIT_NATIVE_EVIDENCE }}/public/summary.json
+            ${{ env.GREGALE_COMMIT_NATIVE_EVIDENCE }}/public/summary.md
+          if-no-files-found: error
+          retention-days: 14

@@ -4,6 +4,7 @@
 //
 //   POST /notes?env=KEY&body=TEXT  inserts a row, returns {body, at}
 //   GET  /notes?env=KEY            returns {bodies, now}
+//   GET  /roles?role=ROLE          custom roles: {current_user, whoami, rows}
 //   node server.js migrate STEP    runs a release command (see migrations)
 //
 // KEY names the environment variable holding the URL (DATABASE_URL by
@@ -217,6 +218,30 @@ async function notes(req, url) {
   return [200, { bodies: rows.map((row) => row[0]), now: now[0][0] }];
 }
 
+// rolesSchema is TestPostgresCustomRoles's migration, run after the journey
+// declared journey_user and journey_admin (BYPASSRLS, a member of
+// journey_user): a table only journey_user's policy opens, two rows, and a
+// function the runtime roles call (ADR-20261123112326).
+const rolesSchema = `CREATE TABLE IF NOT EXISTS journey_rls (id bigserial PRIMARY KEY, owner text NOT NULL);
+ALTER TABLE journey_rls ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS journey_own ON journey_rls;
+CREATE POLICY journey_own ON journey_rls TO journey_user USING (owner = current_setting('journey.user', true));
+GRANT SELECT ON journey_rls TO journey_user;
+CREATE OR REPLACE FUNCTION journey_whoami() RETURNS text LANGUAGE sql AS 'SELECT current_user::text';
+INSERT INTO journey_rls (owner) SELECT o FROM unnest(ARRAY['alice', 'bob']) AS o WHERE NOT EXISTS (SELECT 1 FROM journey_rls);`;
+
+// roles reads journey_rls as user alice through DATABASE_URL: as the role
+// the login starts as, or after SET LOCAL ROLE to one of the journey's roles.
+async function roles(url) {
+  const role = url.searchParams.get("role") || "";
+  if (!["", "journey_user", "journey_admin"].includes(role)) return [400, { error: "role must be journey_user or journey_admin" }];
+  const database = process.env.DATABASE_URL;
+  if (!database) return [503, { error: "DATABASE_URL is not set" }];
+  const setRole = role ? `SET LOCAL ROLE ${role}; ` : "";
+  const rows = await query(database, `BEGIN; ${setRole}SELECT set_config('journey.user', 'alice', true); SELECT current_user::text, journey_whoami(), (SELECT count(*) FROM journey_rls)::text; COMMIT;`);
+  return [200, { current_user: rows[0][0], whoami: rows[0][1], rows: Number(rows[0][2]) }];
+}
+
 // migrations are the database rollback journey's release commands
 // (TestManagedPostgresRollbackRestore). They connect through the migration
 // binding, MIGRATION_DATABASE_URL, which only the release task receives.
@@ -233,6 +258,7 @@ const migrations = {
     END $$;`,
   // The bad migration the journey rolls back: it deletes every row.
   wipe: `${schema} DELETE FROM journey_notes;`,
+  roles: rolesSchema,
 };
 
 async function migrate(step) {
@@ -256,9 +282,9 @@ function serve() {
   http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://probe");
     let status = 200, payload = { ok: true };
-    if (url.pathname === "/notes") {
+    if (url.pathname === "/notes" || url.pathname === "/roles") {
       try {
-        [status, payload] = await notes(req, url);
+        [status, payload] = url.pathname === "/notes" ? await notes(req, url) : await roles(url);
       } catch (err) {
         status = 502;
         payload = { error: err.message, code: err.code || "" };

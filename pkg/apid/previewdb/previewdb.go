@@ -180,6 +180,14 @@ type Previews interface {
 	ListPreviewsForAccount(ctx context.Context, accountID string) ([]state.App, error)
 }
 
+// PullRequestBranches lists a project's environment branches. A Previews
+// that also implements it keeps the databases of a PR environment whose pull
+// request still has a branch (ADR-20261113121342 amendment 2026-11-26): a
+// branch preview binds the same empty database an app preview would.
+type PullRequestBranches interface {
+	ListProjectEnvironmentBranches(ctx context.Context, accountID, projectID string) ([]state.ProjectEnvironmentBranch, error)
+}
+
 type environment struct {
 	id       string
 	prNumber int
@@ -192,6 +200,7 @@ type environment struct {
 // returns how many it purged.
 func (m Manager) Sweep(ctx context.Context, previews Previews, page []managedpostgres.Database, setupBefore time.Time) (int, error) {
 	open := map[string]map[environment]bool{}
+	branches := map[environment]map[int]bool{}
 	purged := 0
 	var errs error
 	for _, database := range page {
@@ -211,7 +220,15 @@ func (m Manager) Sweep(ctx context.Context, previews Previews, page []managedpos
 		if environments == nil || environments[environment{database.Preview.EnvironmentID, database.Preview.PRNumber}] {
 			continue
 		}
-		_, err := m.Purge(ctx, database.AccountID, database.ID)
+		branched, err := pullRequestBranched(ctx, previews, branches, database)
+		if err != nil {
+			errs = errors.Join(errs, err)
+			continue
+		}
+		if branched {
+			continue
+		}
+		_, err = m.Purge(ctx, database.AccountID, database.ID)
 		switch {
 		case err == nil:
 			purged++
@@ -222,6 +239,32 @@ func (m Manager) Sweep(ctx context.Context, previews Previews, page []managedpos
 		}
 	}
 	return purged, errs
+}
+
+// pullRequestBranched reports whether database's PR environment, a project,
+// still has a branch for its pull request. branches caches each project's
+// pull request numbers, keyed by account and project.
+func pullRequestBranched(ctx context.Context, previews Previews, branches map[environment]map[int]bool, database managedpostgres.Database) (bool, error) {
+	lister, ok := previews.(PullRequestBranches)
+	if !ok {
+		return false, nil
+	}
+	key := environment{id: database.AccountID + "/" + database.Preview.EnvironmentID}
+	numbers, listed := branches[key]
+	if !listed {
+		rows, err := lister.ListProjectEnvironmentBranches(ctx, database.AccountID, database.Preview.EnvironmentID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return false, fmt.Errorf("previewdb: list branches of project %s: %w", database.Preview.EnvironmentID, err)
+		}
+		numbers = map[int]bool{}
+		for _, row := range rows {
+			if row.PullRequestNumber > 0 {
+				numbers[row.PullRequestNumber] = true
+			}
+		}
+		branches[key] = numbers
+	}
+	return numbers[database.Preview.PRNumber], nil
 }
 
 // SweepAll pages through every preview database and sweeps each page.

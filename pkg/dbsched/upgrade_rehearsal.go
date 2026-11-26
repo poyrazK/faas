@@ -273,9 +273,10 @@ func (s *Scheduler) startRehearsalRestore(ctx context.Context, store *PgStore, d
 		if req.Major != d.Rehearsal.SourceMajor || s.restorable(source, req) != nil {
 			return failed("no_verified_recovery_point")
 		}
-		if check.Timeline > 1 {
-			d.Rehearsal.RecoveryTimeline = check.Timeline
+		if check.Timeline == 0 {
+			return failed("no_verified_recovery_point")
 		}
+		d.Rehearsal.RecoveryTimeline = check.Timeline
 		err = store.q.SetDatabaseUpgradeRehearsalTarget(ctx, store.pool, sqlc.SetDatabaseUpgradeRehearsalTargetParams{
 			DrillID: mustUUID(d.ID), TargetAt: pgtype.Timestamptz{Time: d.TargetAt, Valid: true}, RecoveryTimeline: int64(d.Rehearsal.RecoveryTimeline),
 		})

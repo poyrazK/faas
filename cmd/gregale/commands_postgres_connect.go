@@ -29,7 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const postgresConnectUsage = "usage: gregale postgres connect <database> [--app SLUG] [--env KEY] [--access read_write|migration|session|read_only|replica_only] [--port N] [--address A] [--proxy] [--wait-timeout D] [-- psql-args...]"
+const postgresConnectUsage = "usage: gregale postgres connect <database> [--app SLUG] [--env KEY] [--access read_write|migration|session|read_only] [--port N] [--address A] [--proxy] [--wait-timeout D] [-- psql-args...]"
 
 // postgresConnectAccessOrder is the default binding preference. Ad-hoc
 // schema work (indexes, migrations) needs write access; a session binding

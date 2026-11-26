@@ -1633,6 +1633,8 @@ export type { ManagedPostgresBindingTimeouts } from './ManagedPostgresBindingTim
 export type { ManagedPostgresCapabilities } from './ManagedPostgresCapabilities.js';
 export type { ManagedPostgresComputePolicyChange } from './ManagedPostgresComputePolicyChange.js';
 export type { ManagedPostgresConnectionBudget } from './ManagedPostgresConnectionBudget.js';
+export type { ManagedPostgresCustomRole } from './ManagedPostgresCustomRole.js';
+export type { ManagedPostgresCustomRoleList } from './ManagedPostgresCustomRoleList.js';
 export type { ManagedPostgresCutover } from './ManagedPostgresCutover.js';
 export type { ManagedPostgresCutoverID } from './ManagedPostgresCutoverID.js';
 export type { ManagedPostgresCutoverMember } from './ManagedPostgresCutoverMember.js';
@@ -1712,6 +1714,7 @@ export type { ManagedPostgresUsageLineItem } from './ManagedPostgresUsageLineIte
 export type { ManagedPostgresUsageOperatorResponse } from './ManagedPostgresUsageOperatorResponse.js';
 export type { ManagedPostgresUsageResponse } from './ManagedPostgresUsageResponse.js';
 export type { ManagedPostgresVolumeStatus } from './ManagedPostgresVolumeStatus.js';
+export type { ManagedPostgresWakeWithApp } from './ManagedPostgresWakeWithApp.js';
 export type { ManagedRealtimeAccessRequest } from './ManagedRealtimeAccessRequest.js';
 export type { ManagedRealtimeAccessResponse } from './ManagedRealtimeAccessResponse.js';
 export type { ManagedRealtimeActivityScopePath } from './ManagedRealtimeActivityScopePath.js';
@@ -2994,6 +2997,7 @@ export type { PutIssueSavedViewRequest } from './PutIssueSavedViewRequest.js';
 export type { PutIssueTeamRequest } from './PutIssueTeamRequest.js';
 export type { PutIssueTrackerLinkRequest } from './PutIssueTrackerLinkRequest.js';
 export type { PutJobRegistryCredentialRequest } from './PutJobRegistryCredentialRequest.js';
+export type { PutManagedPostgresCustomRoleRequest } from './PutManagedPostgresCustomRoleRequest.js';
 export type { PutOperationWebhookBindingRequest } from './PutOperationWebhookBindingRequest.js';
 export type { PutOutboundAIFeedbackRequest } from './PutOutboundAIFeedbackRequest.js';
 export type { PutOutboundAIPolicyRequest } from './PutOutboundAIPolicyRequest.js';
@@ -3516,6 +3520,7 @@ export type { SetManagedPostgresMaintenanceRequest } from './SetManagedPostgresM
 export type { SetManagedPostgresQueryInsightsRequest } from './SetManagedPostgresQueryInsightsRequest.js';
 export type { SetManagedPostgresRecoveryRegionRequest } from './SetManagedPostgresRecoveryRegionRequest.js';
 export type { SetManagedPostgresSuspendTimeoutRequest } from './SetManagedPostgresSuspendTimeoutRequest.js';
+export type { SetManagedPostgresWakeWithAppRequest } from './SetManagedPostgresWakeWithAppRequest.js';
 export type { SetObjectBucketAccessGrantRequest } from './SetObjectBucketAccessGrantRequest.js';
 export type { SetObjectS3CopySourceRequest } from './SetObjectS3CopySourceRequest.js';
 export type { SetObjectStorageBindingReleasePolicyRequest } from './SetObjectStorageBindingReleasePolicyRequest.js';

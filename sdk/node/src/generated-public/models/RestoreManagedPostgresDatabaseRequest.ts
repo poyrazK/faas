@@ -8,11 +8,7 @@
 export type RestoreManagedPostgresDatabaseRequest = {
   name: string;
   /**
-   * Recover from the archive in the configured recovery region.
-   */
-  region?: string;
-  /**
-   * A time inside the source's restore_range. Omit it to use the latest point. A regional restore uses the latest point verified in the recovery archive.
+   * A time inside the source's restore_range. Omit it to use the latest point.
    */
   point_in_time?: string;
   /**

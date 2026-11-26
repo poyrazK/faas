@@ -2111,6 +2111,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/suspend-timeout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresSuspendTimeout)))))
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/maintenance-window", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresMaintenance)))))
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/auto-grow", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresAutoGrow)))))
+	// Whether a database starts when a bound app wakes (ADR-20261125105038).
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/wake-with-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresWakeWithApp)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresResize(managedpg.Resizes.Post))))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresResize(managedpg.Resizes.Get)))))
 	// ADR-1027 in-place major upgrades, served by pkg/apid/managedpg: hidden
@@ -5027,6 +5029,9 @@ func (s *server) handler() http.Handler {
 	// Gateway traffic: status codes, platform errors, wake queues (ADR-20261124093000).
 	mux.HandleFunc("GET /v1/admin/obs/gateway-traffic",
 		s.authLimited(s.requireOperatorSessionRead(s.obsGatewayTraffic)))
+	// Disk pressure: host filesystems, jail tmpfs, journals, guest disks (ADR-20261124150000).
+	mux.HandleFunc("GET /v1/admin/obs/disk-pressure",
+		s.authLimited(s.requireOperatorSessionRead(s.obsDiskPressure)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",

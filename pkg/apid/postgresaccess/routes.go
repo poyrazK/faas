@@ -55,6 +55,7 @@ var actions = map[string]authz.OrgAction{
 	"PUT /v1/postgres/databases/{id}/auto-grow":                          authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/resize":                            authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/compute-policy":                    authz.OrgActionManagePostgres,
+	"PUT /v1/postgres/databases/{id}/suspend-timeout":                    authz.OrgActionManagePostgres,
 	"PUT /v1/postgres/databases/{id}/previews":                           authz.OrgActionManagePostgres,
 	"GET /v1/postgres/databases/{id}/roles":                              authz.OrgActionReadPostgres,
 	"PUT /v1/postgres/databases/{id}/roles/{name}":                       authz.OrgActionManagePostgres,
