@@ -173,6 +173,32 @@ func TestSourceRefPublic_NotPublicKeepsInstallationAnswer(t *testing.T) {
 	}
 }
 
+// An app bound to the repository whose installation is gone keeps the
+// installation answer: a public deploy would leave push-to-deploy silently
+// broken behind a stale binding.
+func TestSourceRefPublic_BoundAppKeepsInstallationAnswer(t *testing.T) {
+	e, gh := newPublicSourceTestEnv(t, 0)
+	if err := e.store.UpsertGithubInstallBinding(context.Background(), state.GitHubBinding{
+		AppID: e.appID, AccountID: e.acctID, BindingID: uuid.NewString(), InstallID: 404,
+		RepoFullName: "Gregale-Dev/Starter", ProductionBranch: "main",
+	}); err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+	rec := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{Repo: "gregale-dev/starter", Ref: "main"})
+	if rec.Code == http.StatusAccepted || gh.publicCalls != 0 {
+		t.Fatalf("status = %d, public calls = %d; want the installation refusal and no public read; body=%s", rec.Code, gh.publicCalls, rec.Body)
+	}
+	if code := bodyCode(t, rec); code != api.CodeGitHubInstallNotFound && code != api.CodeGitHubRepoNotAccessible {
+		t.Fatalf("code = %q, want the installation path's refusal", code)
+	}
+	// A binding for another repository does not block a public deploy of
+	// this one.
+	other := e.post(t, "/v1/apps/x/deployments/source-ref", api.SourceRefDeployRequest{Repo: "gregale-dev/other", Ref: "main"})
+	if other.Code != http.StatusAccepted || gh.publicCalls != 1 {
+		t.Fatalf("other repo status = %d, public calls = %d; want 202 and one public read; body=%s", other.Code, gh.publicCalls, other.Body)
+	}
+}
+
 // While public_source_deploys is off for the account, apid answers exactly
 // as it did before public reads existed and never asks githubd.
 func TestSourceRefPublic_FlagOffKeepsInstallationAnswer(t *testing.T) {

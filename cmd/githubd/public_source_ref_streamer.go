@@ -11,10 +11,11 @@
 //     that SHA, through sourceRefStreamer's helpers and under the same cap.
 //
 // The credential is FAAS_GITHUB_PUBLIC_READ_TOKEN, a fine-grained token
-// restricted to public repositories (read-only), or nothing: anonymous reads
-// get 60 REST calls per hour per egress IP. It is never an installation
-// token. The visibility check refuses a private repository even if the token
-// could read one.
+// restricted to public repositories (read-only). It is never an installation
+// token. githubd wires the streamer only when the token is set: anonymous
+// reads get 60 REST calls per hour per egress IP, a budget every account would
+// share and one account could use up. The visibility check refuses a private
+// repository even if the token could read one.
 
 package main
 

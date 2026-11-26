@@ -76,10 +76,26 @@ func (s *server) sourceRefAccessFor(acct state.Account, installID int64, install
 
 // resolveSourceRefDeployAccess is the deploy's installation lookup with the
 // public fallback. Reviewed and branch-pinned deploys keep requiring an
-// installation: their evidence names one.
+// installation: their evidence names one. So does an app bound to this
+// repository: its binding's installation failing means push-to-deploy is
+// broken, which a public deploy would hide.
 func (s *server) resolveSourceRefDeployAccess(ctx context.Context, acct state.Account, app state.App, req api.SourceRefDeployRequest) (sourceRefAccess, *api.Problem) {
 	installID, problem := s.resolveInstallToken(ctx, acct, app, req.Repo)
-	return s.sourceRefAccessFor(acct, installID, problem, req.ExpectedSource == nil && req.SourceBranch == "")
+	allowPublic := req.ExpectedSource == nil && req.SourceBranch == ""
+	if problem != nil && allowPublic && s.appBoundToRepo(ctx, acct, app, req.Repo) {
+		allowPublic = false
+	}
+	return s.sourceRefAccessFor(acct, installID, problem, allowPublic)
+}
+
+// appBoundToRepo reports whether app has a GitHub binding for repo. A lookup
+// failure counts as bound, so an unknown binding never falls back.
+func (s *server) appBoundToRepo(ctx context.Context, acct state.Account, app state.App, repo string) bool {
+	binding, err := s.store.GetGithubInstallBindingForApp(ctx, app.ID, acct.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false
+	}
+	return err != nil || canonicalGitHubRepo(binding.RepoFullName) == canonicalGitHubRepo(repo)
 }
 
 // sourceRefDeployBranch records branch intent only for installation reads; a

@@ -60,8 +60,10 @@ func TestStreamPublicSourceRefPassesBodyAndCommit(t *testing.T) {
 	if string(body) != "tar" {
 		t.Fatalf("body = %q", body)
 	}
-	if _, _, err := (&RealService{}).StreamPublicSourceRef(context.Background(), "acme/api", "main", 1); err == nil {
-		t.Fatal("unconfigured streamer must fail")
+	// Without FAAS_GITHUB_PUBLIC_READ_TOKEN githubd wires no streamer; the
+	// RPC answers Unimplemented so apid keeps the installation answer.
+	if _, _, err := (&RealService{}).StreamPublicSourceRef(context.Background(), "acme/api", "main", 1); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("unconfigured streamer err = %v, want Unimplemented", err)
 	}
 }
 

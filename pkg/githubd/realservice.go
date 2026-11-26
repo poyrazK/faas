@@ -38,6 +38,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // defaultProductionBranch is the branch fallback used when the
@@ -104,7 +106,8 @@ type RealService struct {
 	Streamer SourceRefStreamer
 	// PublicStreamer reads repositories GitHub reports as public, with no
 	// installation (ADR-20261126164847). nil-safe: StreamPublicSourceRef
-	// returns an error when it is unconfigured.
+	// answers Unimplemented when it is unconfigured, which apid reads as "no
+	// public path".
 	PublicStreamer PublicSourceRefStreamer
 	// BranchHeads resolves branch refs for webhook freshness checks and the
 	// source-ref promotion guard.
@@ -1090,7 +1093,7 @@ var _ githubdgrpc.PublicSourceRefService = (*RealService)(nil)
 // public, invalid_ref for a missing ref, source_ref_unavailable otherwise.
 func (s *RealService) StreamPublicSourceRef(ctx context.Context, repoFullName, ref string, maxArchiveBytes int64) (io.ReadCloser, string, error) {
 	if s.PublicStreamer == nil {
-		return nil, "", fmt.Errorf("githubd: public source-ref streamer not configured")
+		return nil, "", status.Error(codes.Unimplemented, "githubd: public repository reads are not configured")
 	}
 	res, err := s.PublicStreamer.StreamPublic(ctx, repoFullName, ref, maxArchiveBytes)
 	if err != nil {

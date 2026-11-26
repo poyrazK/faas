@@ -441,8 +441,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				realSvc = githubd.NewRealService(auth, tokens, checks, storeAdapter, installsAdapter, recipient, identity, auditFn).
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
 				// ADR-20261126164847: public repositories deploy without an
-				// installation, read with a public-only token (or anonymously).
-				realSvc.PublicStreamer = newPublicSourceRefStreamer(os.Getenv(publicReadTokenEnv), nil, log)
+				// installation, read with a public-only token. Without the
+				// token the RPC answers Unimplemented: anonymous reads share
+				// 60 calls an hour per IP, which one account could use up.
+				if token := strings.TrimSpace(os.Getenv(publicReadTokenEnv)); token != "" {
+					realSvc.PublicStreamer = newPublicSourceRefStreamer(token, nil, log)
+				} else {
+					log.Info("githubd: public repository reads disabled", "reason", publicReadTokenEnv+" unset")
+				}
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				realSvc.CIPullRequests = githubd.NewHTTPCIPullRequests(tokens, deps.httpClient())
 				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient(), checks.AppID)

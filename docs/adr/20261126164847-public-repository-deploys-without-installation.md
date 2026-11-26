@@ -50,9 +50,12 @@
    token here: an installation can see its own private repositories (the
    `gregale-dev` installation sees `gregale-dev`'s), and GitHub does not
    document installation tokens reading public repositories outside the
-   installation. Without the variable githubd reads anonymously, at 60 calls
-   per hour per egress IP (about 30 deploys), which suits development and
-   test only. A misconfigured token is still covered by decision 2, which
+   installation. Without the variable githubd wires no public reader and the
+   RPC answers Unimplemented, so apid keeps the installation answer:
+   anonymous reads share 60 calls per hour per egress IP, which a single
+   account's 30 public reads (two calls each) would use up for everyone.
+   The token is required before the flag in decision 7 goes on. A
+   misconfigured token is still covered by decision 2, which
    refuses every repository GitHub reports as private.
 5. **A public deploy has no branch intent.** `github_source_ref` and
    `github_installation_id` stay NULL (the existing
@@ -65,8 +68,10 @@
    the account sees the repository (or the account has none) do
    `POST /v1/apps/{slug}/deployments/source-ref` and
    `POST /v1/projects/scan/source-ref` use the public path. A deploy with
-   `expected_source` or `source_branch`, and a scan that names an
-   installation, never fall back: they keep the installation answer. On the
+   `expected_source` or `source_branch`, a deploy of an app bound to the
+   repository, and a scan that names an installation never fall back: they
+   keep the installation answer. A bound app whose installation is gone
+   must reconnect; a public deploy would hide that push-to-deploy broke. On the
    public path apid records `access: "public"` on the `deploy.source_ref`
    audit row and counts each public fetch (scan or deploy) against
    `PublicSourceFetchesPerHour` in `pkg/api/limits.go` (30 per account per
