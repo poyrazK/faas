@@ -30,13 +30,16 @@ type DatabaseActivity struct {
 }
 
 // ActivityHint is one suggestion for a cause that keeps a database awake.
-// Command, when set, is the CLI command that acts on it.
+// Command, when set, is the CLI command that looks into it; FixCommands are
+// the ready-to-run commands that change the setting the hint names, in
+// order, with every value filled in.
 type ActivityHint struct {
-	Code    string
-	Cause   string
-	AppSlug string
-	Message string
-	Command string
+	Code        string
+	Cause       string
+	AppSlug     string
+	Message     string
+	Command     string
+	FixCommands []string
 }
 
 // Activity reads why one of the account's databases was awake since a time,
@@ -118,7 +121,7 @@ func ActivityHints(database Database, causes []ComputeStartCause, suspendTimeout
 		case CauseAppWake:
 			hint.Code = "app_wake_starts_database"
 			hint.Message = fmt.Sprintf("The database starts with its apps (wake-with-app) %d times. Turn it off if the first query can wait for the start.", cause.Starts)
-			hint.Command = "gregale postgres app-wake set " + name + " off"
+			hint.FixCommands = []string{"gregale postgres app-wake set " + name + " off"}
 		case CauseAppStart:
 			hint.Code = "app_start_wakes_database"
 			hint.Message = fmt.Sprintf("%s connects when it starts, not only when a request needs the database. Connect lazily on first use.", orDash(cause.AppSlug))
@@ -133,8 +136,8 @@ func ActivityHints(database Database, causes []ComputeStartCause, suspendTimeout
 			continue
 		}
 		if suspendTimeoutSeconds > int64(api.ManagedPostgresSuspendTimeoutMinSeconds) && (cause.Cause == CauseCron || cause.Cause == CauseExternal) {
-			hint.Message += fmt.Sprintf(" The suspend timeout is %d s: `gregale postgres suspend-timeout set %s 1m` shortens each stay.",
-				suspendTimeoutSeconds, name)
+			hint.Message += fmt.Sprintf(" The suspend timeout is %d s; one minute shortens each stay.", suspendTimeoutSeconds)
+			hint.FixCommands = append(hint.FixCommands, "gregale postgres suspend-timeout set "+name+" 1m")
 		}
 		hints = append(hints, hint)
 	}

@@ -104,7 +104,7 @@ func ActivityView(a managedpostgres.DatabaseActivity) api.ManagedPostgresActivit
 	}
 	for _, hint := range a.Hints {
 		view.Hints = append(view.Hints, api.ManagedPostgresActivityHint{Code: hint.Code, Cause: hint.Cause, AppSlug: hint.AppSlug,
-			Message: hint.Message, Command: hint.Command})
+			Message: hint.Message, Command: hint.Command, FixCommands: hint.FixCommands})
 	}
 	return view
 }

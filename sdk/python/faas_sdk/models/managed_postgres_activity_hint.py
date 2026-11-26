@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -24,7 +24,10 @@ class ManagedPostgresActivityHint:
     message: str
     app_slug: str | Unset = UNSET
     command: str | Unset = UNSET
-    """The CLI command that acts on the hint, when there is one."""
+    """The CLI command that looks into the cause, when there is one."""
+    fix_commands: list[str] | Unset = UNSET
+    """Ready-to-run CLI commands that change the setting the hint names, in order, with every value filled in.
+    Absent when the fix is a code change."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +40,10 @@ class ManagedPostgresActivityHint:
         app_slug = self.app_slug
 
         command = self.command
+
+        fix_commands: list[str] | Unset = UNSET
+        if not isinstance(self.fix_commands, Unset):
+            fix_commands = self.fix_commands
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -51,6 +58,8 @@ class ManagedPostgresActivityHint:
             field_dict["app_slug"] = app_slug
         if command is not UNSET:
             field_dict["command"] = command
+        if fix_commands is not UNSET:
+            field_dict["fix_commands"] = fix_commands
 
         return field_dict
 
@@ -67,12 +76,15 @@ class ManagedPostgresActivityHint:
 
         command = d.pop("command", UNSET)
 
+        fix_commands = cast(list[str], d.pop("fix_commands", UNSET))
+
         managed_postgres_activity_hint = cls(
             code=code,
             cause=cause,
             message=message,
             app_slug=app_slug,
             command=command,
+            fix_commands=fix_commands,
         )
 
         managed_postgres_activity_hint.additional_properties = d

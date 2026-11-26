@@ -78,7 +78,10 @@ cause dominates (owner, 2026-11-26).
   time names itself and its lever (several causes can each get a hint): a cron names its schedule and suggests running it less
   often or a 1 minute suspend timeout; a running app suggests that a pool
   keeping connections open holds the compute; `external` names direct
-  connections.
+  connections. When a setting is the fix (a shorter suspend timeout for a
+  cron or external cause, wake-with-app off), the hint carries it as
+  `fix_commands`, ready to run with every value filled in; MCP returns them
+  for an agent with a shell, and applies none itself (amendment 2026-11-26).
 - **CLI.** `gregale postgres activity DATABASE [--since 24h|7d]` prints the
   summary, the starts table (started, awake, likely cause) and the hints.
   `gregale postgres usage` adds the per-database table.

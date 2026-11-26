@@ -97513,7 +97513,11 @@ components:
         cause: { type: string }
         app_slug: { type: string }
         message: { type: string }
-        command: { type: string, description: "The CLI command that acts on the hint, when there is one." }
+        command: { type: string, description: "The CLI command that looks into the cause, when there is one." }
+        fix_commands:
+          type: array
+          description: "Ready-to-run CLI commands that change the setting the hint names, in order, with every value filled in. Absent when the fix is a code change."
+          items: { type: string }
     ManagedPostgresDatabaseUsage:
       description: One database's share of the month's compute, with its recorded starts and awake time this month.
       type: object

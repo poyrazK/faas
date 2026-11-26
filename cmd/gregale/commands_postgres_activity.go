@@ -90,7 +90,10 @@ func renderPostgresActivity(a api.ManagedPostgresActivity) string {
 		for _, h := range a.Hints {
 			fmt.Fprintf(&b, "  • %s\n", h.Message)
 			if h.Command != "" {
-				fmt.Fprintf(&b, "    $ %s\n", h.Command)
+				fmt.Fprintf(&b, "    look: $ %s\n", h.Command)
+			}
+			for _, fix := range h.FixCommands {
+				fmt.Fprintf(&b, "    fix:  $ %s\n", fix)
 			}
 		}
 	}

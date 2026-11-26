@@ -1,6 +1,7 @@
 package managedpostgres
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -20,15 +21,25 @@ func TestActivityHints(t *testing.T) {
 		t.Fatalf("hints = %+v", hints)
 	}
 	if hints[0].Command != "gregale cron list --app api" || !strings.Contains(hints[0].Message, "/cron/sync") ||
-		!strings.Contains(hints[0].Message, "96 times") || !strings.Contains(hints[0].Message, "suspend-timeout set orders 1m") {
+		!strings.Contains(hints[0].Message, "96 times") || !strings.Contains(hints[0].Message, "300 s") ||
+		!slices.Equal(hints[0].FixCommands, []string{"gregale postgres suspend-timeout set orders 1m"}) {
 		t.Fatalf("cron hint = %+v", hints[0])
 	}
-	if hints[1].Command != "gregale postgres bindings list orders" {
+	if hints[1].Command != "gregale postgres bindings list orders" ||
+		!slices.Equal(hints[1].FixCommands, []string{"gregale postgres suspend-timeout set orders 1m"}) {
 		t.Fatalf("external hint = %+v", hints[1])
 	}
-	// At the shortest timeout there is nothing to shorten.
-	if hints := ActivityHints(database, causes, 60); strings.Contains(hints[0].Message, "suspend-timeout") {
-		t.Fatalf("hint at the minimum timeout = %+v", hints[0])
+	// At the shortest timeout, or an unknown one, there is nothing to run.
+	for _, timeout := range []int64{60, 0} {
+		if hints := ActivityHints(database, causes, timeout); hints[0].FixCommands != nil || strings.Contains(hints[0].Message, "one minute") {
+			t.Fatalf("hint at timeout %d = %+v", timeout, hints[0])
+		}
+	}
+	// Wake-with-app is fixed by turning it off; a code change has no command.
+	wake := ActivityHints(database, []ComputeStartCause{{Cause: CauseAppWake, Starts: 5, AwakeSeconds: 600},
+		{Cause: CauseRunningApp, AppSlug: "api", Starts: 5, AwakeSeconds: 600}}, 300)
+	if len(wake) != 2 || !slices.Equal(wake[0].FixCommands, []string{"gregale postgres app-wake set orders off"}) || wake[1].FixCommands != nil {
+		t.Fatalf("wake hints = %+v", wake)
 	}
 	database.Spec.ScaleToZero = false
 	if hints := ActivityHints(database, causes, 0); hints != nil {
