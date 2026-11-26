@@ -34,9 +34,6 @@ func TestMCPTaskGroupSubmitKeepsRecordedKeyAfterUncertainReply(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		requests++
-		if r.Header.Get("Authorization") != "Bearer current-token" {
-			t.Error("admission did not use the current token")
-		}
 		var req struct {
 			ID     int    `json:"id"`
 			Method string `json:"method"`
@@ -70,13 +67,22 @@ func TestMCPTaskGroupSubmitKeepsRecordedKeyAfterUncertainReply(t *testing.T) {
 			if req.Params.GroupID != groupID || req.Params.Binding != binding || req.Params.ToolName != "build_report" {
 				t.Error("owner preflight did not bind the saved group and tool")
 			}
-			if _, err := os.Lstat(receiptPath); !os.IsNotExist(err) {
-				t.Error("attempt recorded before verifying authorization")
+			if verifies == 1 {
+				if _, err := os.Lstat(receiptPath); !os.IsNotExist(err) {
+					t.Error("attempt recorded before verifying authorization")
+				}
 			}
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"complete","binding":%q}}`, req.ID, binding)
 		case "gregale/tasks/submit-bound":
 			submissions++
-			effectiveKey = req.Params.Meta.Key
+			if r.Header.Get("Authorization") != "Bearer current-token" {
+				t.Error("submission did not use the original token")
+			}
+			if submissions == 1 {
+				effectiveKey = req.Params.Meta.Key
+			} else if effectiveKey != req.Params.Meta.Key {
+				t.Error("retry changed the effective submission key")
+			}
 			if effectiveKey == "" || effectiveKey == planned ||
 				req.Params.Meta.Owner.GroupID != groupID || req.Params.Meta.Owner.Binding != binding ||
 				req.Params.Name != "build_report" || req.Params.Meta.Caps["elicitation"] == nil {
@@ -93,13 +99,18 @@ func TestMCPTaskGroupSubmitKeepsRecordedKeyAfterUncertainReply(t *testing.T) {
 				receipt.SubmissionKey != effectiveKey || receipt.PlannedSubmissionKey != planned || receipt.RequestSHA256 != fingerprint {
 				t.Error("admission left before the refreshed receipt was recorded")
 			}
-			w.WriteHeader(http.StatusServiceUnavailable)
+			if submissions == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"resultType":"task","taskId":"admitted-task","status":"working","createdAt":"2026-11-26T08:00:00Z","lastUpdatedAt":"2026-11-26T08:00:00Z","ttlMs":60000}}`, req.ID)
 		case "gregale/tasks/lookup":
 			lookups++
 			if effectiveKey == "" || req.Params.SubmissionKey != effectiveKey {
 				t.Error("recovery did not use the effective receipt key")
 			}
 			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32004,"message":"Task not found"}}`, req.ID)
 		default:
 			t.Errorf("unexpected method %q", req.Method)
 			w.WriteHeader(http.StatusBadRequest)
@@ -119,7 +130,7 @@ func TestMCPTaskGroupSubmitKeepsRecordedKeyAfterUncertainReply(t *testing.T) {
 		code := main.Run(args)
 		restore()
 		var result []struct{ Outcome string }
-		if err := json.Unmarshal([]byte(out.String()), &result); err != nil || code != 0 ||
+		if err := json.Unmarshal([]byte(out.String()), &result); err != nil || code != 3 ||
 			len(result) != 1 || result[0].Outcome != "unconfirmed" {
 			t.Fatalf("submit exit=%d output=%s", code, out.String())
 		}
@@ -135,6 +146,28 @@ func TestMCPTaskGroupSubmitKeepsRecordedKeyAfterUncertainReply(t *testing.T) {
 	mu.Lock()
 	if verifies != 1 || submissions != 1 || lookups != 1 {
 		t.Errorf("verifications=%d submissions=%d lookups=%d", verifies, submissions, lookups)
+	}
+	mu.Unlock()
+
+	retry := append(append([]string(nil), args...), "--retry-unconfirmed")
+	t.Setenv("GREGALE_TEST_GROUP_TOKEN", "renewed-token")
+	out, restore := main.CaptureStdout(t)
+	if code := main.Run(retry); code != 1 || !strings.Contains(out.String(), "credential_mismatch") {
+		t.Errorf("retry with renewed bearer exit=%d output=%s", code, out.String())
+	}
+	restore()
+	t.Setenv("GREGALE_TEST_GROUP_TOKEN", "current-token")
+	out, restore = main.CaptureStdout(t)
+	if code := main.Run(retry); code != 0 || !strings.Contains(out.String(), "admitted-task") {
+		t.Errorf("same-key retry exit=%d output=%s", code, out.String())
+	}
+	restore()
+	if body, err := os.ReadFile(receiptPath); err != nil || string(body) != saved {
+		t.Fatalf("retry changed the saved attempt: %v", err)
+	}
+	mu.Lock()
+	if verifies != 2 || submissions != 2 || lookups != 3 {
+		t.Errorf("after explicit retry: verifications=%d submissions=%d lookups=%d", verifies, submissions, lookups)
 	}
 	before := requests
 	mu.Unlock()

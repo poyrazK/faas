@@ -6173,12 +6173,16 @@ if (review.reviewRevision && review.forms.approval) {
 }
 ```
 
-Use the original review object with the same client and include an answer for
-every form ID. Accepted forms take an `accept` action and an object
+Use the original review object on the client and transport that fetched it.
+Fetch a new review after reconnecting. Include an answer for every form ID.
+Accepted forms take an `accept` action and an object
 `content`. They also support `decline` and `cancel` without content. For
 exact numeric answers, pass the `McpTaskReviewNumber` from a form or construct
 one from the original number text, such as
 `new McpTaskReviewNumber('0.1000000000000000001')`.
+The Node starter rejects answers that its JSON store would round or change,
+including integers outside the JavaScript safe range. Use string fields for
+values that need higher precision on Node.
 
 An `applied` outcome means the answer is recorded for the original Task.
 For `stale`, read the current forms and review them again. If the submission
@@ -6395,8 +6399,13 @@ Rerun the same command with the original plan and a current token for the
 same owner. The CLI checks the recorded attempts first and submits prepared
 members in order after it confirms the preceding admissions. A receipt
 with no confirmed Task reports `unconfirmed` and keeps its saved key. Its
-status can be checked again by repeating the command. Outcomes are returned
-in receipt order. The same directory works with the Node SDK and the CLI's
+status can be checked again by repeating the command. To retry a member that
+the server reports as missing, add `--retry-unconfirmed` and use the original
+bearer. The command rechecks group ownership and tool access and reuses the
+saved key within one minute of issuance. Outcomes are returned in receipt
+order. Exit code `0` means every member was accepted, `3` means an attempt
+remains unconfirmed, and `1` covers other incomplete submissions.
+The same directory works with the Node SDK and the CLI's
 `group status`, `group watch`, and `group stop` commands.
 
 #### Collect Task group results from TypeScript

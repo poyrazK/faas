@@ -458,7 +458,7 @@ test('a fresh CLI finds only the caller’s retained Task inbox', {
       assert.equal(template.taskId, taskId);
       assert.equal(template.version, 2);
       assert.match(template.reviewRevision, /^[0-9a-f]{64}$/);
-      template.forms.approval.response = { action: 'accept', content: { approved: true } };
+      template.forms.approval.response = { action: 'accept', content: { approved: true, rate: 0.1 } };
       await writeFile(file, JSON.stringify(template));
       return ['--task-id', taskId, '--reviewed-input-file', file];
     }
@@ -500,6 +500,33 @@ test('a fresh CLI finds only the caller’s retained Task inbox', {
     assert.equal(checks(), 3);
     assert.equal((await wait(racingTask)).result.content[0].text, 'Report was not approved.');
     assert.equal(methods.filter(method => method === 'tasks/update').length, 0);
+
+    const { reviewRevision } = JSON.parse(await readFile(reviewed[3], 'utf8'));
+    async function reviewRate(method, rate) {
+      return fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${refreshed}`, 'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream', 'Mcp-Method': method, 'MCP-Protocol-Version': '2026-07-28' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 27, method, params: {
+          taskId: older, reviewRevision, _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': { extensions: { 'io.modelcontextprotocol/tasks': {} } },
+          },
+          responses: { approval: { action: 'accept', content: { approved: true, rate: 'rate-to-review' } } },
+        } }).replace('"rate-to-review"', rate),
+      });
+    }
+    for (const method of ['gregale/tasks/respond-reviewed', 'gregale/tasks/check-reviewed-response']) {
+      for (const rate of ['0.1000000000000000001', '9007199254740993', '1e-400']) {
+        const response = await reviewRate(method, rate);
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).error.code, -32602);
+      }
+    }
+    const exact = await reviewRate('gregale/tasks/check-reviewed-response', '0.100');
+    const exactBody = await exact.text();
+    assert.equal(exact.status, 200, exactBody);
+    assert.match(exactBody, /"outcome":"applied"/);
   } finally {
     api.closeTaskSubscriptions();
     await new Promise(resolve => {

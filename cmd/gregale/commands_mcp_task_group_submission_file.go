@@ -165,11 +165,15 @@ func newMCPTaskGroupAttempt(manifest mcpTaskGroupManifest, index int, token stri
 	if mcpTaskGroupKeyAge(key) < 0 {
 		return mcpTaskGroupReceipt{}, errors.New("Task group submission key is ahead of the local clock")
 	}
+	receipt.CredentialProof = hex.EncodeToString(mcpTaskGroupCredentialProof(receipt, token))
+	return receipt, nil
+}
+
+func mcpTaskGroupCredentialProof(receipt mcpTaskGroupReceipt, token string) []byte {
 	proof := hmac.New(sha256.New, []byte(token))
 	_, _ = fmt.Fprintf(proof, "gregale/node-sdk/mcp-task-receipt/v%d:%s%s%s%s",
 		receipt.Version, receipt.EndpointSHA256, receipt.SubmissionKey, receipt.RequestSHA256, receipt.PlannedSubmissionKey)
-	receipt.CredentialProof = hex.EncodeToString(proof.Sum(nil))
-	return receipt, nil
+	return proof.Sum(nil)
 }
 
 func mcpTaskGroupKeyAge(key uuid.UUID) time.Duration {

@@ -10436,7 +10436,7 @@ gregale mcp client group ack --group ./reports --update-id UPDATE_ID
 
 Submit or continue a recoverable group of owner-bound Tasks
 
-`gregale mcp client group submit --url <URL> --token-env <ENV> --group <DIR> --plan <FILE> [--timeout <DURATION>]`
+`gregale mcp client group submit --url <URL> --token-env <ENV> --group <DIR> --plan <FILE> [--retry-unconfirmed] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10444,6 +10444,7 @@ Submit or continue a recoverable group of owner-bound Tasks
 | `--token-env <ENV>` | environment variable containing a current MCP client token | required |
 | `--group <DIR>` | private interoperable Task group directory | required |
 | `--plan <FILE>` | JSON file with the original tool calls in order | required |
+| `--retry-unconfirmed` | retry recorded submissions after a Task-not-found lookup |  |
 | `--timeout <DURATION>` | total group submission deadline (default 30s) |  |
 
 Examples:

@@ -3,6 +3,7 @@ import { createMcpTaskLeaseDeadline } from './task-lease.js';
 import { snapshotTaskOutputSchema, validateTaskOutput } from './task-output.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
+import { ProtocolError } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import { TASK_INBOX_METHOD, TASK_INBOX_DEFAULT_LIMIT, TASK_INBOX_MAX_LIMIT, TASK_INBOX_STATUSES, TASK_INBOX_CURSOR_PATTERN } from './task-inbox.js';
 export { TASK_INBOX_EXTENSION } from './task-inbox.js';
@@ -32,6 +33,48 @@ const MAX_WATCHED_TASKS = 512;
 const TASK_INPUT_REQUIRED = Symbol('task input required');
 const INPUT_METHODS = new Set(['elicitation/create', 'sampling/createMessage', 'roots/list']);
 const TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RESPOND_REVIEWED = 'gregale/tasks/respond-reviewed';
+const CHECK_REVIEWED = 'gregale/tasks/check-reviewed-response';
+// The modern MCP codec maps the older resource-not-found code -32002 to
+// invalid params. Use a distinct server-defined error for submission lookup.
+const TASK_SUBMISSION_NOT_FOUND = -32004;
+
+function normalizedDecimal(source) {
+  const number = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(source);
+  if (!number) return undefined;
+  const fraction = number[3] ?? '';
+  const digits = (number[2] + fraction).replace(/^0+/, '');
+  if (!digits) return '0';
+  let end = digits.length;
+  while (digits[end - 1] === '0') end--;
+  const exponent = Number(number[4] ?? 0) - fraction.length + digits.length - end;
+  if (Number.isSafeInteger(exponent)) return `${number[1]}${digits.slice(0, end)}e${exponent}`;
+}
+
+function preservesJSONNumber(value, source) {
+  if (!source || !Number.isFinite(value) || Object.is(value, -0)
+      || (Number.isInteger(value) && !Number.isSafeInteger(value))) return false;
+  const serialized = JSON.stringify(value);
+  return source === serialized || normalizedDecimal(source) === normalizedDecimal(serialized);
+}
+
+// Node's Task store serializes native JSON values. Reject a reviewed answer
+// before either writing it or comparing it with recorded evidence if any
+// number would change on that round trip.
+export function reviewedInputNumbersAreExact(body, raw) {
+  if (body?.method !== RESPOND_REVIEWED && body?.method !== CHECK_REVIEWED) return true;
+  if (!raw) return false;
+  const inexact = new WeakSet();
+  try {
+    const parsed = JSON.parse(new TextDecoder(raw.encoding, { fatal: true }).decode(raw.body), function (_, value, context) {
+      if (typeof value === 'number' ? !preservesJSONNumber(value, context?.source) : inexact.has(value)) inexact.add(this);
+      return value;
+    });
+    return !inexact.has(parsed?.params?.responses);
+  } catch {
+    return false;
+  }
+}
 
 export function clientSupportsMcpTasks(ctx) {
   const capabilities = ctx?.mcpReq?.envelope?.['io.modelcontextprotocol/clientCapabilities'];
@@ -543,7 +586,7 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
     },
     async getBySubmissionKey(submissionKey, authInfo, authMode, canAccessTool) {
       const task = await store.getBySubmissionKey({ submissionKey, authInfo, authMode });
-      if (!task || !canAccessTool(task.tool_name)) throw new Error('Task not found');
+      if (!task || !canAccessTool(task.tool_name)) throw new ProtocolError(TASK_SUBMISSION_NOT_FOUND, 'Task not found');
       return wireTaskMetadata(task, pollIntervalMs);
     },
     async cancel(taskID, authInfo, authMode, canAccessTool) {
@@ -639,9 +682,9 @@ export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canA
     server.server.setRequestHandler('gregale/tasks/input-review', {
       params: z.object({ taskId }),
     }, params => runtime.inputReview(params.taskId, authInfo, authMode, canAccessTool));
-    server.server.setRequestHandler('gregale/tasks/respond-reviewed', { params: reviewedResponse },
+    server.server.setRequestHandler(RESPOND_REVIEWED, { params: reviewedResponse },
       params => runtime.reviewedResponse(params, authInfo, authMode, canAccessTool, true));
-    server.server.setRequestHandler('gregale/tasks/check-reviewed-response', { params: reviewedResponse },
+    server.server.setRequestHandler(CHECK_REVIEWED, { params: reviewedResponse },
       params => runtime.reviewedResponse(params, authInfo, authMode, canAccessTool, false));
   }
   server.server.setRequestHandler('tasks/get', {

@@ -73,8 +73,7 @@ func stopMCPTaskGroupReference(ctx context.Context, client *mcphosting.Client, r
 }
 
 func taskGroupAdmissionUnconfirmed(status int, err error) bool {
-	var rpc *mcphosting.RPCError
-	return status == http.StatusNotFound || errors.As(err, &rpc) && rpc.Code == -32002 ||
+	return status == http.StatusNotFound || mcphosting.IsTaskSubmissionNotFound(err) ||
 		status == 0 && isTransportError(err)
 }
 

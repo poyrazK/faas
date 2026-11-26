@@ -207,31 +207,36 @@ func readMCPTaskGroupFile(dir *os.Root, name string, maxBytes int64) ([]byte, er
 }
 
 func (manifest mcpTaskGroupManifest) readMember(dir *os.Root, index int) (mcpTaskGroupReference, error) {
-	planned := manifest.Members[index]
 	if manifest.Version == 1 {
-		return planned.mcpTaskGroupReference, nil
+		return manifest.Members[index].mcpTaskGroupReference, nil
 	}
+	receipt, err := manifest.readMemberReceipt(dir, index)
+	return receipt.mcpTaskGroupReference, err
+}
+
+func (manifest mcpTaskGroupManifest) readMemberReceipt(dir *os.Root, index int) (mcpTaskGroupReceipt, error) {
+	planned := manifest.Members[index]
 	var receipt mcpTaskGroupReceipt
 	body, err := readMCPTaskGroupFile(dir, mcpTaskGroupReceiptName(index), maxMCPTaskGroupReceipt)
 	if err != nil {
-		return mcpTaskGroupReference{}, err
+		return mcpTaskGroupReceipt{}, err
 	}
 	if decodeCustomerOperationReceipt(body, &receipt) != nil || receipt.EndpointSHA256 != manifest.EndpointSHA256 ||
 		receipt.RequestSHA256 != planned.RequestSHA256 || !toolpublication.ValidID(receipt.CredentialProof) ||
 		!validMCPTaskGroupKey(receipt.SubmissionKey) || !validMCPTaskGroupOptionalID(receipt.TaskID) {
-		return mcpTaskGroupReference{}, errInvalidMCPTaskGroup
+		return mcpTaskGroupReceipt{}, errInvalidMCPTaskGroup
 	}
 	switch receipt.Version {
 	case 2:
 		if receipt.SubmissionKey == planned.SubmissionKey && receipt.PlannedSubmissionKey == "" {
-			return receipt.mcpTaskGroupReference, nil
+			return receipt, nil
 		}
 	case 3:
 		if receipt.PlannedSubmissionKey == planned.SubmissionKey && receipt.SubmissionKey != planned.SubmissionKey {
-			return receipt.mcpTaskGroupReference, nil
+			return receipt, nil
 		}
 	}
-	return mcpTaskGroupReference{}, errInvalidMCPTaskGroup
+	return mcpTaskGroupReceipt{}, errInvalidMCPTaskGroup
 }
 
 func mcpTaskGroupReceiptName(index int) string {

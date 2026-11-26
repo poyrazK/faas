@@ -216,7 +216,7 @@ export async function lookupMcpTaskBySubmissionKey(
   } catch (error) {
     scope.signal.throwIfAborted();
     const { status, code } = requestFailure(error);
-    throw new McpTaskSubmissionError(status === 404 || code === -32002 ? 'not_found' : 'request_failed', status);
+    throw new McpTaskSubmissionError(status === 404 || code === -32002 || code === -32004 ? 'not_found' : 'request_failed', status);
   }
   scope.signal.throwIfAborted();
   try {

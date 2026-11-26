@@ -129,6 +129,29 @@ test('one read-only check uses the same immutable answers after a lost reply', a
   }
 });
 
+test('a reconnect prevents submitting a review or confirming it to the replacement transport', async () => {
+  let transport = {};
+  const calls: string[] = [];
+  const client = {
+    ...connection(async ({ method }) => {
+      calls.push(method);
+      if (method === read) return pending;
+      assert.equal(method, write);
+      transport = {};
+      throw new TypeError('lost reply');
+    }),
+    get transport() { return transport; },
+  };
+  const oldReview = await getTaskInputReview(client, task.taskId);
+  transport = {};
+  await assert.rejects(respondToReviewedTaskInput(client, oldReview, accept), { code: 'invalid_review' });
+  assert.deepEqual(calls, [read]);
+
+  const newReview = await getTaskInputReview(client, task.taskId);
+  assert.deepEqual(await respondToReviewedTaskInput(client, newReview, accept), { outcome: 'unconfirmed' });
+  assert.deepEqual(calls, [read, read, write]);
+});
+
 test('reviewed input rejects foreign snapshots and malformed answers before transmitting', async () => {
   const client = connection(async ({ method }) => {
     assert.equal(method, read);

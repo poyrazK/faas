@@ -8,6 +8,7 @@ const completeResult = {
 };
 
 export interface McpTaskInputReviewConnection {
+  readonly transport?: object | undefined;
   getNegotiatedProtocolVersion(): string | undefined;
   getServerCapabilities(): unknown;
   request(
@@ -65,7 +66,7 @@ export class McpTaskInputReviewError extends Error {
 }
 
 const revisions = /^[0-9a-f]{64}(?![\s\S])/u;
-const connections = new WeakMap<McpTaskInputReview, McpTaskInputReviewConnection>();
+const connections = new WeakMap<McpTaskInputReview, { connection: McpTaskInputReviewConnection; transport: object | undefined }>();
 const maxForms = 16;
 const maxAnswerBytes = 256 << 10;
 
@@ -188,6 +189,7 @@ export async function getTaskInputReview(
     throw new McpTaskInputReviewError('invalid_review');
   }
   requireReviewCapability(connection);
+  const transport = connection.transport;
   const scope = operation(options);
   scope.signal.throwIfAborted();
   let value: unknown;
@@ -198,8 +200,9 @@ export async function getTaskInputReview(
     throw new McpTaskInputReviewError('request_failed', httpStatus(error));
   }
   scope.signal.throwIfAborted();
+  if (connection.transport !== transport) throw new McpTaskInputReviewError('invalid_review');
   const review = parseReview(value, taskId);
-  connections.set(review, connection);
+  connections.set(review, { connection, transport });
   return review;
 }
 
@@ -208,11 +211,15 @@ export async function respondToReviewedTaskInput(
   connection: McpTaskInputReviewConnection, review: McpTaskInputReview, answers: McpTaskReviewAnswers,
   options: McpTaskInputReviewOptions = {},
 ): Promise<McpTaskReviewOutcome> {
-  if (connections.get(review) !== connection || !review.reviewRevision) throw new McpTaskInputReviewError('invalid_review');
+  const binding = connections.get(review);
+  if (binding?.connection !== connection || binding.transport !== connection.transport || !review.reviewRevision) {
+    throw new McpTaskInputReviewError('invalid_review');
+  }
   requireReviewCapability(connection);
   const scope = operation(options);
   const params = { taskId: review.task.taskId, reviewRevision: review.reviewRevision, responses: snapshotAnswers(review, answers) };
   scope.signal.throwIfAborted();
+  if (binding.transport !== connection.transport) throw new McpTaskInputReviewError('invalid_review');
 
   try {
     const value = await connection.request({ method: 'gregale/tasks/respond-reviewed', params }, completeResult, scope);
@@ -222,7 +229,7 @@ export async function respondToReviewedTaskInput(
     if (definiteRejection(error)) throw new McpTaskInputReviewError('request_failed', httpStatus(error));
   }
 
-  if (!scope.signal.aborted) {
+  if (!scope.signal.aborted && binding.transport === connection.transport) {
     try {
       const value = await connection.request({ method: 'gregale/tasks/check-reviewed-response', params }, completeResult, scope);
       const { result, task } = taskResult(value, params.taskId);

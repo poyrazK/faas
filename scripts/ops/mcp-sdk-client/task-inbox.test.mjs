@@ -20,7 +20,7 @@ import {
   stopMcpTaskGroup, submitMcpTask, submitMcpTaskWithReceipt, watchMcpTask, watchMcpTaskGroup, watchMcpTasks, watchTaskInbox,
 } from '../../../sdk/node/dist/preview.js';
 
-test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { timeout: 45_000 }, async t => {
+test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { timeout: 60_000 }, async t => {
   const starterDir = process.env.MCP_TASKS_TEST_NODE_STARTER;
   const connectionString = process.env.MCP_TASKS_TEST_DATABASE_URL;
   assert.ok(starterDir && connectionString, 'set MCP_TASKS_TEST_NODE_STARTER and MCP_TASKS_TEST_DATABASE_URL');
@@ -120,6 +120,7 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
     return result;
   };
   let taskWatch, groupRequests, reviewReplyProbe;
+  let failBoundAdmission = false;
   const reviewedResponse = runtime.reviewedResponse.bind(runtime);
   runtime.reviewedResponse = async (params, authInfo, authMode, canAccessTool, apply) => {
     const probe = reviewReplyProbe;
@@ -142,6 +143,11 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       }
       if (method === 'gregale/tasks/input-review') groupRequests.reviews++;
       if (method === 'gregale/tasks/respond-reviewed') groupRequests.responses++;
+    }
+    if (failBoundAdmission && method === 'gregale/tasks/submit-bound') {
+      failBoundAdmission = false;
+      res.writeHead(503).end();
+      return;
     }
     if (reviewReplyProbe && method === 'gregale/tasks/respond-reviewed') {
       reviewReplyProbe.response = res;
@@ -1136,6 +1142,27 @@ test('the official SDK watches and resumes authenticated PostgreSQL Tasks', { ti
       assert.equal(groupRequests.responses, beforeReplies + 2);
       assert.equal(reviewReplyProbe.dropped, 1);
       assert.deepEqual(await readFile(join(cliGroup, 'group.json')), manifestBytes);
+
+      const retryGroup = join(groupRoot, 'cli-retry');
+      const retryPlan = join(groupRoot, 'cli-retry-plan.json');
+      await writeFile(retryPlan, JSON.stringify(['first', 'second'].map(name => ({
+        toolName: 'build_report', arguments: { report: 'CLI retry group ' + name, steps: 1 },
+      }))), { mode: 0o600 });
+      const beforeRetry = groupRequests.submissions;
+      failBoundAdmission = true;
+      await assert.rejects(runGroupCLI('submit', retryGroup, renewedToken, '--plan', retryPlan), error =>
+        error.code === 3 && JSON.parse(error.stdout).map(entry => entry.outcome).join() === 'unconfirmed,prepared');
+      const attemptPath = join(retryGroup, 'member-0.json');
+      const attempt = await readFile(attemptPath);
+      const { submissionKey } = JSON.parse(attempt);
+      await assert.rejects(lookupMcpTaskBySubmissionKey(cliOwner, submissionKey), { code: 'not_found' });
+      const retried = await runGroupCLI('submit', retryGroup, renewedToken, '--plan', retryPlan, '--retry-unconfirmed')
+        .catch(error => assert.fail(error.stdout || error.stderr || error.message));
+      assert.deepEqual(retried.map(entry => entry.outcome), ['accepted', 'accepted']);
+      assert.deepEqual(await readFile(attemptPath), attempt);
+      const observed = await lookupMcpTaskBySubmissionKey(cliOwner, submissionKey);
+      assert.equal(observed.taskId, retried[0].task.taskId);
+      assert.equal(groupRequests.submissions, beforeRetry + 3);
     }
   } finally {
     admissionProbe?.release.resolve();

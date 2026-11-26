@@ -359,6 +359,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "token-env", Short: "environment variable containing a current MCP client token", Value: "ENV", Req: true},
 			{Name: "group", Short: "private interoperable Task group directory", Value: "DIR", Req: true},
 			{Name: "plan", Short: "JSON file with the original tool calls in order", Value: "FILE", Req: true},
+			{Name: "retry-unconfirmed", Short: "retry recorded submissions after a Task-not-found lookup", Bool: true},
 			{Name: "timeout", Short: "total group submission deadline (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp client group submit --url https://reports.example.com/mcp --token-env MCP_TOKEN --group ./reports --plan ./calls.json"}},
 		{Name: "task-group-review", Short: "Export private reviewed-input templates for paused Task group members", Flags: []cliFlag{

@@ -742,6 +742,22 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     return res.json({ jsonrpc: '2.0', id: req.body.id, result: { resultType: 'complete', binding: pin } });
   }
 
+  const reviewedInputBodies = new WeakMap();
+  const verifyReviewedInput = config.auth.mode === 'external-oauth' && taskRuntime?.supportsReviewedInput?.();
+  const parseJSON = express.json({
+    limit: '1mb',
+    verify: verifyReviewedInput
+      ? (req, _res, body, encoding) => { reviewedInputBodies.set(req, { body, encoding }); }
+      : undefined,
+  });
+  function checkReviewedInput(req, res, next) {
+    const raw = reviewedInputBodies.get(req);
+    reviewedInputBodies.delete(req);
+    if (verifyReviewedInput && !tasks.reviewedInputNumbersAreExact(req.body, raw)) {
+      return jsonRpcError(res, req.body?.id ?? null, -32602, 'Reviewed Task input contains a number that cannot be stored exactly', 400);
+    }
+    return next();
+  }
   app.use(config.endpoint, (req, res, next) => {
     // api-key and oauth-proxy servers trust only requests Gregale's gateway
     // admitted (it removes any caller-supplied value); without its policy
@@ -749,7 +765,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
     if (gatewayOnly && !String(req.headers['gregale-mcp-gateway-authorized'] ?? '').trim()) return res.status(401).json({ error: 'gateway_policy_required' });
     if (!catalogStatus().ready) return res.status(503).set('Retry-After', '5').json({ error: 'catalog_contract_mismatch' });
     next();
-  }, auth.middleware, express.json({ limit: '1mb' }), authorizeBoundTask, auth.authorizeCall);
+  }, auth.middleware, parseJSON, checkReviewedInput, authorizeBoundTask, auth.authorizeCall);
   app.all(config.endpoint, (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Accel-Buffering', 'no');
