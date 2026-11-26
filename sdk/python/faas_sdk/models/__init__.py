@@ -460,7 +460,6 @@ from .create_binding_verification_run_request_service_targets import CreateBindi
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
-from .create_data_api_inspection_request import CreateDataAPIInspectionRequest
 from .create_database_switch_request import CreateDatabaseSwitchRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
@@ -555,11 +554,6 @@ from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
-from .data_api_inspection_response import DataAPIInspectionResponse
-from .data_api_inspection_response_binding_identity import DataAPIInspectionResponseBindingIdentity
-from .data_api_inspection_response_binding_identity_status import DataAPIInspectionResponseBindingIdentityStatus
-from .data_api_inspection_response_observation import DataAPIInspectionResponseObservation
-from .data_api_inspection_response_task_status import DataAPIInspectionResponseTaskStatus
 from .database_switch import DatabaseSwitch
 from .database_switch_drain import DatabaseSwitchDrain
 from .database_switch_list import DatabaseSwitchList
@@ -1218,6 +1212,13 @@ from .managed_execution_workflow_response_status import ManagedExecutionWorkflow
 from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
+from .managed_postgres_activity import ManagedPostgresActivity
+from .managed_postgres_activity_cause import ManagedPostgresActivityCause
+from .managed_postgres_activity_cause_cause import ManagedPostgresActivityCauseCause
+from .managed_postgres_activity_compute_start import ManagedPostgresActivityComputeStart
+from .managed_postgres_activity_compute_start_cause import ManagedPostgresActivityComputeStartCause
+from .managed_postgres_activity_hint import ManagedPostgresActivityHint
+from .managed_postgres_activity_hint_code import ManagedPostgresActivityHintCode
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -1244,6 +1245,7 @@ from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_database_usage import ManagedPostgresDatabaseUsage
 from .managed_postgres_health import ManagedPostgresHealth
 from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
@@ -3691,7 +3693,6 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
-    "CreateDataAPIInspectionRequest",
     "CreateDatabaseSwitchRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
@@ -3780,11 +3781,6 @@ __all__ = (
     "DailyUsageListResponse",
     "DailyUsagePoint",
     "DailyUsageResponse",
-    "DataAPIInspectionResponse",
-    "DataAPIInspectionResponseBindingIdentity",
-    "DataAPIInspectionResponseBindingIdentityStatus",
-    "DataAPIInspectionResponseObservation",
-    "DataAPIInspectionResponseTaskStatus",
     "DatabaseSwitch",
     "DatabaseSwitchDrain",
     "DatabaseSwitchList",
@@ -4421,6 +4417,13 @@ __all__ = (
     "ManagedOperationEffect",
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
+    "ManagedPostgresActivity",
+    "ManagedPostgresActivityCause",
+    "ManagedPostgresActivityCauseCause",
+    "ManagedPostgresActivityComputeStart",
+    "ManagedPostgresActivityComputeStartCause",
+    "ManagedPostgresActivityHint",
+    "ManagedPostgresActivityHintCode",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
@@ -4447,6 +4450,7 @@ __all__ = (
     "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresDatabaseUsage",
     "ManagedPostgresHealth",
     "ManagedPostgresHealthComputeState",
     "ManagedPostgresHealthLastErrorCode",

@@ -141,7 +141,10 @@ func (s *BindingService) bindingTimeoutSettings(ctx context.Context, accountID, 
 	return status, err
 }
 
-func (s *BindingService) attachBindingTimeouts(ctx context.Context, request *CredentialRequest) error {
+func (s *BindingService) attachBindingTimeouts(ctx context.Context, provider Provider, request *CredentialRequest) error {
+	if _, ok := provider.(BindingTimeoutProvider); !ok {
+		return nil
+	}
 	store, ok := s.bindings.(bindingTimeoutStore)
 	if !ok || !bindingTimeoutAccess(request.Access) {
 		return nil

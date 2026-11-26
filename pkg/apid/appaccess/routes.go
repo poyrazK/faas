@@ -231,7 +231,15 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/analytics/timeseries":      authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/route-customers": authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/route-resources": authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/mcp-tool-insights":         authz.OrgActionReadApp,
+	// A route split creates an app, writes edge rules, resizes and may
+	// delete the app it made; it takes the strictest of those (owner,
+	// admin), as edge rules and app deletion do (ADR-20261121170000
+	// amendment 2).
+	"POST /v1/apps/{slug}/route-splits":        authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/route-splits":         authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/route-splits/{id}":    authz.OrgActionReadApp,
+	"DELETE /v1/apps/{slug}/route-splits/{id}": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/mcp-tool-insights":    authz.OrgActionReadApp,
 
 	// Credentials a company app issues (ADR-20261026151103 amendment 1).
 	// Each one is shown once to the member who mints or sets it and keeps

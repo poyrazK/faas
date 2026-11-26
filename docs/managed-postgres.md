@@ -558,6 +558,16 @@ app's first query as before.
 `apid_managed_postgres_wake_starts_total{outcome}` counts claims (`started`,
 `running`, `failed`, `unsupported`).
 
+The usage sweep's idle-tail read also records each `start_compute` and
+`suspend_compute` it sees in `managed_postgres_compute_starts`, with a cause
+picked in SQL from `managed_postgres_wake_with_app`, `cron.fired` and
+`wake.admitted` events and live instances of the apps bound at the start
+([ADR-20261125231222](adr/20261125231222-managed-postgres-activity.md)). It
+sends no extra Neon requests, so a window the idle-tail budget skips leaves a
+gap. Rows are pruned after 30 days, at most hourly. `gregale postgres
+activity` and `GET /v1/postgres/databases/{id}/activity` read them; roll out
+the migration before apid.
+
 PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
 end of life in November 2026 and is not supported (owner, 2026-11-12); Neon
 has no in-place major upgrade, and no upgrade path from 14 is offered.

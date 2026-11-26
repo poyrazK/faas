@@ -1497,7 +1497,7 @@ gregale release rollback my-api --to v41 --restore-databases
 
 Show, follow or cancel a rollback that restores the database
 
-`gregale release rollback status [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--operation <UUID>] [--json] <slug> <switch-id>`
+`gregale release rollback status [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--operation <UUID>] [--migration] [--json] <slug> <switch-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1506,6 +1506,7 @@ Show, follow or cancel a rollback that restores the database
 | `--timeout <duration>` | wait deadline (default 60m) |  |
 | `--poll-interval <duration>` | poll interval (default 2s) |  |
 | `--operation <UUID>` | read this rollback operation instead of a switch |  |
+| `--migration` | show or cancel a native PostgreSQL migration switch |  |
 | `--json` | machine-readable output |  |
 
 Examples:
@@ -5082,6 +5083,25 @@ Drop a custom role; what it owns goes to the schema owner
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | skip the typed confirmation |  |
+
+### postgres activity
+
+Show what kept a database awake: starts, causes and what to do
+
+`gregale postgres activity [--since <PERIOD>] <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <PERIOD>` | period: a duration such as 24h or 7d, or an RFC 3339 time (default 24h) |  |
+
+Examples:
+
+```sh
+gregale postgres activity orders-db
+gregale postgres activity orders-db --since 7d
+```
+
+Causes are best guesses from timing: wake-with-app, a cron, a request, an app connecting at start, a running app, or a client outside Gregale. Starts are kept 30 days.
 
 ### postgres restore
 

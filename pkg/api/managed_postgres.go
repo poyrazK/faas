@@ -277,6 +277,10 @@ type ManagedPostgresUsageResponse struct {
 	// compute_ceiling or inactive, as on each database. Egress holds one
 	// database at a time and is reported on that database only.
 	Hold string `json:"hold,omitempty"`
+	// Databases splits the month's compute by database, most first, with
+	// each one's recorded starts and awake time (ADR-20261125231222);
+	// omitted when it could not be read.
+	Databases []ManagedPostgresDatabaseUsage `json:"databases,omitempty"`
 }
 
 // Why the platform holds a managed database (ManagedPostgresDatabase.Hold).

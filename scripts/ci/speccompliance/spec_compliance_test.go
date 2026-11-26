@@ -2144,6 +2144,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "managed_postgres_compute_policy.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_accounting_reconciliation.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_activity.go"), // ADR-20261125231222: why a database is awake
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
@@ -2317,7 +2318,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "managed_postgres_auto_grow.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_maintenance.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_restore_check.go"),
-		filepath.Join(root, "pkg", "api", "managed_postgres_activity.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_native_diagnostics.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_extensions.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_query_insights.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_masked_branch.go"),
@@ -2420,6 +2421,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	dtos["RouteResourcesResponse"] = routePeaksResponse
 	dtos["RouteResourceAttribution"] = routePeakDTOs["RouteReport"]
 	dtos["RouteResourceSplit"] = routePeakDTOs["Split"]
+
+	// ADR-20261121170000 amendment 2: applied route splits.
+	routeSplitDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "route_splits.go")})
+	if err != nil {
+		t.Fatalf("scan route split DTOs: %v", err)
+	}
+	dtos["CreateRouteSplitRequest"] = routeSplitDTOs["CreateRouteSplitRequest"]
+	dtos["RouteSplit"] = routeSplitDTOs["RouteSplitResponse"]
+	dtos["RouteSplitsResponse"] = routeSplitDTOs["RouteSplitsResponse"]
 
 	// ADR-20261123110137: per-tool MCP insights.
 	mcpInsightDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "mcp_tool_insights.go")})

@@ -2,9 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { CreateDataAPIInspectionRequest } from '../models/CreateDataAPIInspectionRequest.js';
 import type { CreateManagedExecutionWorkflowRequest } from '../models/CreateManagedExecutionWorkflowRequest.js';
-import type { DataAPIInspectionResponse } from '../models/DataAPIInspectionResponse.js';
 import type { ExecutionWorkflowResponse } from '../models/ExecutionWorkflowResponse.js';
 import type { ManagedExecutionWorkflowResponse } from '../models/ManagedExecutionWorkflowResponse.js';
 import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
@@ -129,98 +127,6 @@ export class RunsService {
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
-      },
-    });
-  }
-  /**
-   * Inspect a managed Data API binding from its app deployment.
-   * Admits a read-only task pinned to the selected binding and a single
-   * current deployment. Requires deployment write and managed PostgreSQL
-   * read access. Binding identity stays unknown until evidence is checked.
-   *
-   * @returns DataAPIInspectionResponse Inspection admitted.
-   * @throws ApiError
-   */
-  public static createDataApiInspection({
-    slug,
-    requestBody,
-    idempotencyKey,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    requestBody: CreateDataAPIInspectionRequest,
-    /**
-     * Idempotency key for the POST. Stored for 24h. On replay the server
-     * returns the original response with `Idempotent-Replayed: true`.
-     *
-     */
-    idempotencyKey?: string,
-  }): CancelablePromise<DataAPIInspectionResponse> {
-    return __request(this?.clientConfig ?? OpenAPI, {
-      method: 'POST',
-      url: '/v1/apps/{slug}/data-api-inspections',
-      path: {
-        'slug': slug,
-      },
-      headers: {
-        'Idempotency-Key': idempotencyKey,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        409: `code: conflict`,
-        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
-      },
-    });
-  }
-  /**
-   * Get a point-in-time Data API binding inspection.
-   * A verified identity matches the provider's expected target and CA
-   * trust at inspection time. It does not establish row authorization.
-   *
-   * @returns DataAPIInspectionResponse Current inspection status and binding identity.
-   * @throws ApiError
-   */
-  public static getDataApiInspection({
-    slug,
-    id,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Canonical UUID for a deployment-attached app task.
-     */
-    id: string,
-  }): CancelablePromise<DataAPIInspectionResponse> {
-    return __request(this?.clientConfig ?? OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/data-api-inspections/{id}',
-      path: {
-        'slug': slug,
-        'id': id,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }

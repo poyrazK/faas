@@ -109,3 +109,18 @@ func TestBindingTimeoutPolicyPersistsAcrossRetryAndRotation(t *testing.T) {
 		t.Fatalf("rotating credential got %+v, want %+v", got, status.BindingTimeoutPolicy)
 	}
 }
+
+func TestBindingRotationWithoutNativeTimeoutTable(t *testing.T) {
+	f := newPostgresRotationFixture(t, false)
+	ctx := t.Context()
+	// A provider without timeout support can rotate credentials even when
+	// the native timeout catalog has not been installed.
+	if _, err := f.store.pool.Exec(ctx, `ALTER TABLE native_postgres_binding_timeouts
+		RENAME TO suspended_native_postgres_binding_timeouts`); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := f.service.Rotate(ctx, f.binding.AccountID, f.binding.ID)
+	if err != nil || binding.CredentialGeneration != f.binding.CredentialGeneration+1 {
+		t.Fatalf("rotate without native timeout catalog: %+v, %v", binding, err)
+	}
+}

@@ -306,7 +306,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	}
 
 	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
-	if err := s.attachBindingTimeouts(ctx, &credentialRequest); err != nil {
+	if err := s.attachBindingTimeouts(ctx, backend.Provider, &credentialRequest); err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "timeout_policy_unavailable", ErrUnavailable, s.retryInterval)
 	}
 	if credentialRequest.CustomRoles, credentialRequest.CustomRoleDefault, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {

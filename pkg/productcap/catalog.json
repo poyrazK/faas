@@ -1350,6 +1350,8 @@
       "routes": [
         "/dashboard/apps/{}/data-api",
         "/v1/apps/{}/data-api",
+        "/v1/apps/{}/data-api-inspections",
+        "/v1/postgres/databases/{}/data-api-catalog-preview",
         "/v1/runtime/data-api"
       ],
       "cli": [
@@ -3308,6 +3310,7 @@
         "/v1/postgres/capabilities",
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
+        "/v1/postgres/databases/{}/activity",
         "/v1/postgres/databases/{}/connection-budget",
         "/v1/postgres/databases/{}/query",
         "/v1/postgres/databases/{}/suspend-timeout",
@@ -5564,7 +5567,9 @@
       "acceptance_test": "pkg/routeresources/analyze_test.go::TestAnalyzeFindsHeavyRoute",
       "parent": "metrics",
       "routes": [
-        "/v1/apps/{}/analytics/route-resources"
+        "/v1/apps/{}/analytics/route-resources",
+        "/v1/apps/{}/route-splits",
+        "/v1/apps/{}/route-splits/{}"
       ],
       "cli": [
         "route-resources"

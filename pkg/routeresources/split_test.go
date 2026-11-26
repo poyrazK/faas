@@ -48,6 +48,54 @@ func TestSuggestSplitDeclines(t *testing.T) {
 	}
 }
 
+func cpuReport() Report {
+	return Report{
+		MemPeakP50MB:   180,
+		HighCPUMinutes: 5,
+		Routes: []RouteReport{
+			{Route: "POST /v1/render", Method: "POST", HighCPUMinutes: 5, HighCPUShare: 1, PresenceShare: 0.2},
+			{Route: "GET /v1/items", Method: "GET", HighCPUMinutes: 5, HighCPUShare: 1, PresenceShare: 1},
+		},
+	}
+}
+
+func TestSuggestSplitCPU(t *testing.T) {
+	s := SuggestSplit(cpuReport(), 512, 2048, SplitOptions{})
+	if s == nil {
+		t.Fatal("no split suggested")
+	}
+	if s.Kind != SplitCPU || s.Route != "POST /v1/render" || s.PathGlob != "/v1/render" ||
+		s.RouteRAMMB != 512 || s.MainRAMMB != 512 || s.HighCPUMinutes != 5 || s.Reason == "" {
+		t.Fatalf("split = %+v", *s)
+	}
+}
+
+func TestSuggestSplitPrefersMemory(t *testing.T) {
+	r := heavyReport()
+	r.HighCPUMinutes = 5
+	r.Routes = append(r.Routes, RouteReport{Route: "POST /v1/render", HighCPUMinutes: 5, HighCPUShare: 1, PresenceShare: 0.2})
+	s := SuggestSplit(r, 2048, 2048, SplitOptions{})
+	if s == nil || s.Kind != SplitMemory || s.Route != "POST /v1/exports/{id}" {
+		t.Fatalf("split = %+v", s)
+	}
+}
+
+func TestSuggestSplitCPUDeclines(t *testing.T) {
+	cases := map[string]func(*Report){
+		"too few peaks":    func(r *Report) { r.Routes[0].HighCPUMinutes = 2 },
+		"route runs often": func(r *Report) { r.Routes[0].PresenceShare = 0.5 },
+		"share too low":    func(r *Report) { r.Routes[0].HighCPUShare = 0.6 },
+		"folded route":     func(r *Report) { r.Routes[0].Route = "__route_other__" },
+	}
+	for name, mutate := range cases {
+		r := cpuReport()
+		mutate(&r)
+		if s := SuggestSplit(r, 512, 2048, SplitOptions{}); s != nil {
+			t.Errorf("%s: suggested %+v", name, *s)
+		}
+	}
+}
+
 func TestSuggestSplitFlagsOverPlan(t *testing.T) {
 	s := SuggestSplit(heavyReport(), 1024, 1024, SplitOptions{})
 	if s == nil || !s.RouteRAMOverPlan || s.MainRAMMB != 256 {

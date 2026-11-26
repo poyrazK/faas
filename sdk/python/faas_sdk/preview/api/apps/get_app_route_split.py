@@ -1,25 +1,24 @@
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
-from uuid import UUID
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.data_api_inspection_response import DataAPIInspectionResponse
 from ...models.problem import Problem
+from ...models.route_split import RouteSplit
 from ...types import Response
 
 
 def _get_kwargs(
     slug: str,
-    id: UUID,
+    id: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/data-api-inspections/{id}".format(
+        "url": "/v1/apps/{slug}/route-splits/{id}".format(
             slug=quote(str(slug), safe=""),
             id=quote(str(id), safe=""),
         ),
@@ -28,11 +27,9 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> DataAPIInspectionResponse | Problem | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Problem | RouteSplit | None:
     if response.status_code == 200:
-        response_200 = DataAPIInspectionResponse.from_dict(response.json())
+        response_200 = RouteSplit.from_dict(response.json())
 
         return response_200
 
@@ -56,10 +53,10 @@ def _parse_response(
 
         return response_429
 
-    if response.status_code == 501:
-        response_501 = Problem.from_dict(response.json())
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
 
-        return response_501
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -69,7 +66,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[DataAPIInspectionResponse | Problem]:
+) -> Response[Problem | RouteSplit]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,25 +77,22 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
-    id: UUID,
+    id: str,
     *,
-    client: AuthenticatedClient,
-) -> Response[DataAPIInspectionResponse | Problem]:
-    """Get a point-in-time Data API binding inspection.
-
-     A verified identity matches the provider's expected target and CA
-    trust at inspection time. It does not establish row authorization.
+    client: AuthenticatedClient | Client,
+) -> Response[Problem | RouteSplit]:
+    """One route split.
 
     Args:
         slug (str):
-        id (UUID):
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DataAPIInspectionResponse | Problem]
+        Response[Problem | RouteSplit]
     """
 
     kwargs = _get_kwargs(
@@ -115,25 +109,22 @@ def sync_detailed(
 
 def sync(
     slug: str,
-    id: UUID,
+    id: str,
     *,
-    client: AuthenticatedClient,
-) -> DataAPIInspectionResponse | Problem | None:
-    """Get a point-in-time Data API binding inspection.
-
-     A verified identity matches the provider's expected target and CA
-    trust at inspection time. It does not establish row authorization.
+    client: AuthenticatedClient | Client,
+) -> Problem | RouteSplit | None:
+    """One route split.
 
     Args:
         slug (str):
-        id (UUID):
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DataAPIInspectionResponse | Problem
+        Problem | RouteSplit
     """
 
     return sync_detailed(
@@ -145,25 +136,22 @@ def sync(
 
 async def asyncio_detailed(
     slug: str,
-    id: UUID,
+    id: str,
     *,
-    client: AuthenticatedClient,
-) -> Response[DataAPIInspectionResponse | Problem]:
-    """Get a point-in-time Data API binding inspection.
-
-     A verified identity matches the provider's expected target and CA
-    trust at inspection time. It does not establish row authorization.
+    client: AuthenticatedClient | Client,
+) -> Response[Problem | RouteSplit]:
+    """One route split.
 
     Args:
         slug (str):
-        id (UUID):
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[DataAPIInspectionResponse | Problem]
+        Response[Problem | RouteSplit]
     """
 
     kwargs = _get_kwargs(
@@ -178,25 +166,22 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
-    id: UUID,
+    id: str,
     *,
-    client: AuthenticatedClient,
-) -> DataAPIInspectionResponse | Problem | None:
-    """Get a point-in-time Data API binding inspection.
-
-     A verified identity matches the provider's expected target and CA
-    trust at inspection time. It does not establish row authorization.
+    client: AuthenticatedClient | Client,
+) -> Problem | RouteSplit | None:
+    """One route split.
 
     Args:
         slug (str):
-        id (UUID):
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        DataAPIInspectionResponse | Problem
+        Problem | RouteSplit
     """
 
     return (

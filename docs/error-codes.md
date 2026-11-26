@@ -1344,6 +1344,12 @@ See [Application companions](companions.md), [Networking](networking.md).
 
 HTTP 500 Internal Server Error or 503 Service Unavailable · Many operations send this code; the response's `title` and `detail` name the failure.
 
+### `invalid_activity_since`
+
+HTTP 422 Unprocessable Entity · Invalid activity period
+
+See [Managed PostgreSQL](postgres.md#why-is-my-database-awake).
+
 ### `invalid_autoscale_target_cpu_pct`
 
 HTTP 422 Unprocessable Entity · Invalid autoscale target CPU%
@@ -3477,6 +3483,18 @@ See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 ### `route_health_blocked`
 
 HTTP 409 Conflict · Route health gate blocked
+
+### `route_split_changed`
+
+HTTP 409 Conflict · Suggestion changed
+
+### `route_split_in_flight`
+
+HTTP 409 Conflict · Split in flight; Undo in progress
+
+### `route_split_unsupported`
+
+HTTP 409 Conflict or 422 Unprocessable Entity · No live build; Split not supported for this app
 
 ### `run_artifact_destination_limit`
 

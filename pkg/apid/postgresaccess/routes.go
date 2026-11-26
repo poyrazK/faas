@@ -56,6 +56,7 @@ var actions = map[string]authz.OrgAction{
 	"POST /v1/postgres/databases/{id}/resize":                            authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/compute-policy":                    authz.OrgActionManagePostgres,
 	"PUT /v1/postgres/databases/{id}/suspend-timeout":                    authz.OrgActionManagePostgres,
+	"PUT /v1/postgres/databases/{id}/wake-with-app":                      authz.OrgActionManagePostgres,
 	"PUT /v1/postgres/databases/{id}/previews":                           authz.OrgActionManagePostgres,
 	"GET /v1/postgres/databases/{id}/roles":                              authz.OrgActionReadPostgres,
 	"PUT /v1/postgres/databases/{id}/roles/{name}":                       authz.OrgActionManagePostgres,
@@ -71,6 +72,7 @@ var actions = map[string]authz.OrgAction{
 	// organization, owners included, was refused them.
 	"GET /v1/postgres/databases/{id}/status":                authz.OrgActionReadPostgres,
 	"GET /v1/postgres/databases/{id}/connection-budget":     authz.OrgActionReadPostgres,
+	"GET /v1/postgres/databases/{id}/activity":              authz.OrgActionReadPostgres,
 	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": authz.OrgActionReadPostgres,
 	"GET /v1/postgres/overage":                              authz.OrgActionReadPostgresUsage,
 	"PUT /v1/postgres/overage":                              authz.OrgActionManagePostgres,
@@ -85,6 +87,9 @@ var actions = map[string]authz.OrgAction{
 	// Read-only queries return rows: the members who may bind an app to the
 	// database, and so read its rows through that app (ADR-20261117215858).
 	"POST /v1/postgres/databases/{id}/query": authz.OrgActionBindPostgres,
+	// The Data API catalog preview reads the database's tables and columns:
+	// the same members as a query.
+	"POST /v1/postgres/databases/{id}/data-api-catalog-preview": authz.OrgActionBindPostgres,
 }
 
 func Action(pattern string) (authz.OrgAction, bool) {
