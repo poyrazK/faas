@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestBuildSourceModesPreserveExecutablesAndSkipSymlinks(t *testing.T) {
@@ -49,5 +50,42 @@ func TestBuildSourceModesPreserveExecutablesAndSkipSymlinks(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("symlink target changed to %o", info.Mode().Perm())
+	}
+}
+
+// The CLI packs every entry at the Unix epoch; build tools that copy only
+// newer sources skip such files, so extraction moves them to a stable date.
+func TestBuildSourceModesMoveEpochTimes(t *testing.T) {
+	root := t.TempDir()
+	epoch, kept := filepath.Join(root, "src/main/resources/data/tags.json"), filepath.Join(root, "pom.xml")
+	for _, path := range []string{epoch, kept} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	zero := time.Unix(0, 0)
+	for _, path := range []string{epoch, filepath.Dir(epoch)} {
+		if err := os.Chtimes(path, zero, zero); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recent := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(kept, recent, recent); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareBuildSourceModes(root); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]time.Time{epoch: buildSourceStableTime, filepath.Dir(epoch): buildSourceStableTime, kept: recent} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.ModTime().Equal(want) {
+			t.Errorf("%s: mtime %s, want %s", path, info.ModTime().UTC(), want)
+		}
 	}
 }
