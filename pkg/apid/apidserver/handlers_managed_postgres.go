@@ -262,6 +262,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	timeouts := s.managedPostgresSuspendTimeoutsOrLog(r.Context(), databases)
+	wakeWithApp := s.managedPostgresWakeWithAppOrLog(r.Context(), databases)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
@@ -270,6 +271,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 			view.PlanExcess = excess[database.ID]
 			s.withManagedPostgresHold(&view, database, in, holdOK)
 			managedpg.ApplySuspendTimeout(&view, timeouts)
+			managedpg.ApplyWakeWithApp(&view, wakeWithApp)
 			items = append(items, view)
 		}
 	}
@@ -397,6 +399,7 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
+	view.Databases = s.managedPostgresDatabaseUsageOrLog(r.Context(), acct, view.PeriodStart)
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -545,6 +548,7 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	s.withManagedPostgresHold(&view, database, in, holdOK)
 	managedpg.ApplySuspendTimeout(&view, s.managedPostgresSuspendTimeoutsOrLog(r.Context(), []managedpostgres.Database{database}))
+	managedpg.ApplyWakeWithApp(&view, s.managedPostgresWakeWithAppOrLog(r.Context(), []managedpostgres.Database{database}))
 	writeJSON(w, http.StatusOK, view)
 }
 

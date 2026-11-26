@@ -62,13 +62,8 @@ func unsetDataAPISetting(ctx context.Context, client *api.Client, app, key, scop
 	return err
 }
 
-// dataAPIPublicReadCacheRule names the one edge cache rule configure owns.
-const dataAPIPublicReadCacheRule = "data-api-public-read-cache"
-
-// syncDataAPIPublicReadCache keeps exactly one named GET /rest/v1/* cache rule.
-// The runtime marks only canonical anonymous responses cacheable; requests with
-// Authorization bypass the edge cache, so the broad path is safe. maxAge 0
-// removes the rule, which also invalidates its entries.
+// syncDataAPIPublicReadCache manages the GET /rest/v1/* rule for public JSON.
+// A zero max-age removes the rule and invalidates its entries.
 func syncDataAPIPublicReadCache(ctx context.Context, client *api.Client, app string, maxAge int) error {
 	rules, err := client.ListEdgeRulesForApp(ctx, app)
 	if err != nil {
@@ -76,7 +71,7 @@ func syncDataAPIPublicReadCache(ctx context.Context, client *api.Client, app str
 	}
 	var owned []api.EdgeRuleResponse
 	for _, rule := range rules {
-		if rule.Name == dataAPIPublicReadCacheRule && rule.Kind == "cache" {
+		if rule.Name == api.DataAPIPublicReadCacheRule && rule.Kind == "cache" {
 			owned = append(owned, rule)
 		}
 	}
@@ -99,7 +94,7 @@ func syncDataAPIPublicReadCache(ctx context.Context, client *api.Client, app str
 		if len(owned) > 0 {
 			_, err = client.UpdateEdgeRule(ctx, owned[0].ID, api.UpdateEdgeRuleRequest{MatchHost: &host, MatchPath: &path, MatchMethods: &methods, Enabled: &enabled, Action: &raw})
 		} else {
-			_, err = client.CreateEdgeRule(ctx, app, api.CreateEdgeRuleRequest{Name: dataAPIPublicReadCacheRule, MatchHost: host, MatchPath: path, MatchMethods: methods, Enabled: &enabled, Kind: "cache", Action: raw})
+			_, err = client.CreateEdgeRule(ctx, app, api.CreateEdgeRuleRequest{Name: api.DataAPIPublicReadCacheRule, MatchHost: host, MatchPath: path, MatchMethods: methods, Enabled: &enabled, Kind: "cache", Action: raw})
 		}
 		if err != nil {
 			return err

@@ -1,0 +1,144 @@
+name: free-plan-journeys
+
+# Plan-limited journeys against production, on the internal Free fixture
+# account (gregalectl journey-fixture, tests/journeys/README.md).
+#
+# TestJSFrameworkSourceDeploys checks that Next.js and Bun still fit Free's
+# 256 MB app layer (ADR-20261124160000): on Free, Next.js must serve from its
+# standalone tree. An operator's own login is a paid account, where the same
+# app ships whole, so only a Free account catches a builder, guest-init or
+# imaged change that pushes these apps back over the cap.
+#
+# The fixture key is minted on the control plane, which only the fleet's
+# self-hosted runner reaches, so the whole job runs there. The key lives two
+# hours at most and is revoked when the job ends. The journey itself only
+# talks to the public API, with the CLI customers install from npm.
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: free-plan-journeys
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  free:
+    name: Next.js and Bun fit the Free plan
+    runs-on: ["self-hosted", "linux", "faas-fleet-us"]
+    environment: production-us
+    timeout-minutes: 45
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+      JOURNEYS: TestJSFrameworkSourceDeploys
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+
+      - name: Install the CLI customers get
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/gregale-cli"
+          npm install --global --prefix "$prefix" --no-audit --no-fund gregale@latest
+          echo "GREGALE_CLI=$prefix/bin/gregale" >> "$GITHUB_ENV"
+          "$prefix/bin/gregale" version
+
+      - name: Set up control-plane SSH
+        run: |
+          set -euo pipefail
+          [[ -n "$CP_HOST" && -n "$CP_SSH_KEY" && -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
+            echo "::error::CP_HOST, CP_SSH_KEY and COMPUTE_KNOWN_HOSTS are required" >&2
+            exit 1
+          }
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/journey_key
+          chmod 0600 ~/.ssh/journey_key
+          # Trust CP_HOST only when it presents a host key listed in
+          # COMPUTE_KNOWN_HOSTS, as cd-platform does.
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          known="$RUNNER_TEMP/journey_known_hosts"
+          : > "$known"
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> "$known"
+            fi
+          done <<<"$scanned"
+          [[ -s "$known" ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          echo "CP_SSH=ssh -i $HOME/.ssh/journey_key -o UserKnownHostsFile=$known -o StrictHostKeyChecking=yes root@$CP_HOST" >> "$GITHUB_ENV"
+
+      - name: Mint a Free fixture key
+        id: mint
+        run: |
+          set -euo pipefail
+          umask 077
+          credential="$RUNNER_TEMP/journey-free.json"
+          $CP_SSH 'gregalectl journey-fixture mint-token --plan free --ttl 2h --yes --reason=journey_fixture' > "$credential"
+          token="$(jq -er '.token' "$credential")"
+          echo "::add-mask::$token"
+          printf '%s\n' "$token" > "$RUNNER_TEMP/journey-free.token"
+          echo "key_id=$(jq -er '.key_id' "$credential")" >> "$GITHUB_OUTPUT"
+          jq -c '{account_id, plan, key_id, expires_at}' "$credential"
+          rm -f "$credential"
+
+      - name: Run the journeys on Free
+        run: |
+          set -euo pipefail
+          scripts/e2e-journeys.sh --tier full --run "$JOURNEYS" \
+            --cli "$GREGALE_CLI" \
+            --token-file "$RUNNER_TEMP/journey-free.token" \
+            --out "$RUNNER_TEMP/journeys"
+
+      - name: Next.js served from its standalone tree
+        run: |
+          set -euo pipefail
+          # The journey accepts either tree, so a Free run that shipped the
+          # whole app would pass it; here only the standalone tree fits.
+          grep -q 'metric nextjs_standalone=true' "$RUNNER_TEMP/journeys/go-test.json" || {
+            echo "::error::Next.js on Free did not serve from its standalone tree" >&2
+            exit 1
+          }
+
+      - name: Revoke the fixture key
+        if: always() && steps.mint.outputs.key_id != ''
+        env:
+          KEY_ID: ${{ steps.mint.outputs.key_id }}
+        run: |
+          set -euo pipefail
+          [[ "$KEY_ID" =~ ^[0-9a-f-]{36}$ ]]
+          $CP_SSH "gregalectl journey-fixture revoke-token --plan free --key-id $KEY_ID --yes --reason=journey_fixture"
+
+      - name: Remove local credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/journey-free.token" "$RUNNER_TEMP/journey-free.json" ~/.ssh/journey_key
+
+      - name: Upload the journey report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: free-plan-journeys
+          path: |
+            ${{ runner.temp }}/journeys/report.md
+            ${{ runner.temp }}/journeys/go-test.json
+          if-no-files-found: ignore
+          retention-days: 14

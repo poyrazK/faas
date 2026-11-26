@@ -43,12 +43,83 @@ export FAAS_DATA_API_EVIDENCE=/var/tmp/data-api-canary/evidence.json
 make data-api-staging-canary
 ```
 
-The wrapper first checks configuration without provider calls, builds the CLI
-from the clean checkout, and builds/packs the restricted client SDK locally.
+Use `make data-api-staging-smoke` for the shorter release check. It verifies
+candidate readiness, runs one schema sync, matches the generated contract to
+the serving fingerprint and checks that a second user cannot read or insert
+rows for the first. The sync compiles the client with generated exact numeric
+types.
+The SDK writes a PostgreSQL `bigint` above JavaScript's safe integer limit and
+reads it back in a separate request. Smoke mode then cleans up the fixtures.
+
+To exercise hosted write-readiness inspection on the disposable `api.notes`
+fixture, add `"write_inspection": true` to the staging manifest. This option
+runs in both modes and requires compatible control-plane, scheduler, vmmd and
+guest versions, plus the operator-configured PostgreSQL inspection trust bundle.
+It may wake compute and requires permission to run app tasks and read managed
+PostgreSQL. The canary checks the selected app, database, binding, credential
+generation and deployment, and requires a verified target and trust verdict.
+Its evidence records identifiers and the verdict, not the inspection output.
+The check does not execute a mutation or prove row authorization, independently
+prove credential delivery, or attest host hardware. It is evidence only after a
+successful run on the intended staging fleet.
+It also creates disposable tables, downloads a generated contract larger than
+1 MiB through the CLI, checks its fingerprint and compiles the result.
+The smoke enables caching for one public fixture, observes a JSON cache hit and
+checks that the same URL returns CSV when requested with `Accept: text/csv`.
+The report records both request IDs and marks gateway attribution unavailable.
+The requests can reach different gateways, so this evidence cannot establish
+which gateway build handled both requests.
+Use the full canary for parking, schema evolution, credential rotation, rollout
+and load recovery checks. Evidence identifies the run as `smoke` or `full` in
+the `mode` field.
+
+To exercise the read-only connection and resume workflow as well, add
+`"connect": true` to the staging manifest. This opt-in adds one app workload
+and creates a disposable public-schema RLS fixture in the isolated database. The canary
+prepares a reviewed two-subject visibility matrix, previews the database,
+creates a separate read-only API, and checks positive and cross-user denied
+reads. It deploys a new runtime, confirms the old receipt is rejected, then
+requalifies the new deployment into a separate receipt and checks its status.
+A deliberately wrong read assertion must fail without creating a receipt.
+Finally, it installs the source-bound SDK into a disposable TypeScript app,
+type-checks the generated hosted client and verifies its authenticated read.
+The extra deployment and contract tasks add build time and may wake compute.
+Cleanup adopts only an app ID acknowledged in the original receipt; unknown
+creation outcomes remain for operator reconciliation. The option is available
+in both smoke and full mode, and is not evidence until the canary is actually
+run on the qualified staging target.
+
+The `connected_journey` evidence records the original and new deployment IDs,
+candidate schema fingerprint and completed check flags. It does not include
+JWTs, row values, assertion contents, npm output or child process output.
+The recorded checks cover only these test identities and fixtures.
+
+The preview can create or refresh a persistent provider-managed read-only login
+and wake database compute. It creates no app or database binding. Native managed
+Postgres requires a control plane with the catalog preview endpoint; older
+control planes can use the existing query endpoint where its backend supports it.
+
+The wrapper first checks configuration without provider calls. It verifies the
+clean checkout's runtime version against the digest of its shipped files, then
+builds the CLI and SDK bundle from that committed source snapshot. Bundle
+creation requires the pinned Go toolchain, Node.js 22+, npm, GNU tar and gzip.
+The canary checks that the bundle's source commit and SDK bytes match the
+candidate SDK before making provider calls. Hosted-client setup uses the local
+TypeScript installation and npm's offline cache, with the management token and
+test JWTs removed from the installation subprocess environment.
 It sends customer source to Gregale for image builds; it never runs a local
 customer Docker build. No npm publication occurs.
 
 ## Evidence and resource ownership
+
+After verifying the account, the canary creates the disposable Data API app
+and checks that staging's control plane advertises the candidate runtime
+version. This check runs before database provisioning. After deployment,
+the app must report the same version and readiness on public
+`/__gregale/ready` with the default edge health configuration. Missing or
+mismatched versions fail the gate.
+The evidence records the candidate, control-plane and serving versions in
+`runtime`.
 
 The gate creates a uniquely named database, a public-key-only JWT issuer app,
 a migration app, and the Data API app. The JWT signing key stays in controller
@@ -79,11 +150,13 @@ different resource by matching its display name.
 
 ## GitHub Actions
 
-`Data API staging canary` is manual and main-only, runs on the dedicated
-`gregale-data-api-staging` self-hosted runner, and uses the `data-api-staging`
+`Data API staging canary` offers `smoke` and `full` modes on manual dispatch
+from main. It runs on the dedicated `gregale-data-api-staging` self-hosted
+runner and uses the `data-api-staging`
 environment. Configure `GREGALE_DATA_API_STAGING_CONFIG_JSON` as an environment
-variable and `GREGALE_DATA_API_STAGING_TOKEN` as its secret. Run it only after
-reviewing the target manifest and the existing qualification evidence.
+variable and `GREGALE_DATA_API_STAGING_TOKEN` as its secret. Run it after staging
+has received the candidate runtime and the target manifest and qualification
+evidence have been reviewed.
 
 `make data-api-staging-check` exercises the harness refusal, credential handling,
 restart completion, ownership and cleanup contracts without staging access.
@@ -99,7 +172,7 @@ The shared catalog/signature parser is copied from the runtime, not maintained
 as a second implementation. An unannotated `private_note` function remains
 ungranted and absent from RPC routes, generated types and OpenAPI.
 
-The gate runs `data-api sync` three times: initial RPC permission setup, the
+Full mode runs `data-api sync` three times: initial RPC permission setup, the
 priority-column migration, and permission setup for the replacement serving
 role after `rotate --wait` completes. Every sync must return a completed wake,
 type task/deployment identifiers, a fingerprint matching the generated file and

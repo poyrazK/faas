@@ -854,6 +854,46 @@ is best with 95% probability at an expected loss under 0.1 points. The rule
 must be the flag's only weighted rule, and the metric a conversion, funnel or
 retention.
 
+## Get notified about experiments and stale flags
+
+Gregale can tell your team when an experiment needs a decision and when flags
+need cleaning up, on the notification channels you already use for alerts
+(Slack, PagerDuty, email; find their IDs with `gregale alert channel list`).
+Set the channels per environment (ADR-20261125085913):
+
+```sh
+gregale flag notify set --channel CHANNEL_ID --project shop --environment production
+gregale flag notify get --project shop
+gregale flag notify clear --project shop
+```
+
+An experiment can send to its own channels instead:
+
+```sh
+gregale flag experiment create checkout --flag checkout-flow --rule weighted --control legacy \
+  --metric order_completed --notify CHANNEL_ID --start --project shop
+```
+
+What is sent:
+
+- **Experiment decisions:** when results recommend shipping a variant or
+  keeping control. The message carries the summary and the command to run
+  (`gregale flag experiment promote ...` or `stop ...`).
+- **Experiment problems:** when a guardrail rolls the experiment back, or
+  customers are not split as configured (sample ratio mismatch). These are
+  sent as alerts.
+- **Weekly flag digest:** once a week, the flags that are expired, expire
+  within 7 days, are stale, are never evaluated or have no owner, each with
+  the command that resolves it.
+- **Flag expiry:** one message when a flag's `--expires` date passes.
+
+Each notification is sent once: a recommendation that comes back after
+changing does not repeat. Gregale only notifies; it never ships, stops or
+deletes anything for you. Up to 5 channels per environment or experiment.
+Failed deliveries are retried with backoff for up to 6 attempts. Flag
+notifications are released account by account; until then the commands
+answer 403.
+
 ## Analyze product events
 
 The same `track()` events also feed product analytics: event series, funnels

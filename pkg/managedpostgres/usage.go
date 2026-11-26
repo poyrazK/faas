@@ -91,6 +91,9 @@ type UsageCollector struct {
 	idleTailObserver func(IdleTailObservation)
 	// pendingIdleTails is the last Collect's work for readIdleTails.
 	pendingIdleTails []pendingIdleTail
+	// activityPrunedAt is when the last prune of recorded compute starts
+	// ran.
+	activityPrunedAt time.Time
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {

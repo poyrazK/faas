@@ -201,6 +201,7 @@ func (m *streamBridgeManager) startUnitBridge(ctx context.Context, entry *stream
 	if err := m.connectEntry(entry); err != nil {
 		return err
 	}
+	m.connectControl(ctx, entry)
 	m.recordUnit(entry)
 	return nil
 }
@@ -251,6 +252,7 @@ func (m *streamBridgeManager) startEntryUnit(ctx context.Context, entry *streamB
 	}
 	startCtx, cancel := context.WithTimeout(ctx, instanceBridgeStartTimeout)
 	defer cancel()
+	env = append(env[:len(env):len(env)], bridgeControlEnv(entry)...)
 	u, err := units.StartService(startCtx, name, bridgeService(entry, bridgePath, systemdNetnsPath(netnsPath), guestIP, port, deadline, env))
 	if err == nil {
 		var proc unitProcess

@@ -1,3 +1,4 @@
+// adr: 120 — API keys are scoped to one app and its consumer.
 package gateway
 
 import (

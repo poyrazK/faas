@@ -277,6 +277,12 @@ type App struct {
 	// apps.node_id was added by migration 00090. Tests that
 	// don't exercise the per-schedd routing path leave it zero.
 	NodeID string
+	// HasLiveDeployment: the app has a live public-routing deployment.
+	// With no NodeID it separates an app that has nothing to serve (409
+	// no_live_deployment, ErrAppNotPlaced) from a deployed app schedd could
+	// not place (fleet at capacity, no schedd claiming), which stays a
+	// platform 503 the availability SLO counts.
+	HasLiveDeployment bool
 	// Sidecars (issue #463 / ADR-069 / ADR-071 / PR-C §5) is
 	// the per-deployment sidecar roster mirrored on the app
 	// for the public listener's routing-key split
@@ -1065,8 +1071,26 @@ type Handler struct {
 	// WithTenantRequestBudgetStore arms the gate; nil then fails closed.
 	tenantRequestBudgetStore TenantRequestBudgetStore
 	// consumerPlanStore and its policy cache enforce consumer plans (ADR-953).
-	consumerPlanStore          ConsumerPlanStore
-	consumerPlanPolicies       *consumerPlanPolicyCache
+	consumerPlanStore    ConsumerPlanStore
+	consumerPlanPolicies *consumerPlanPolicyCache
+	// oauthConsumers enrolls MCP OAuth callers as API consumers through
+	// apid (ADR-20261124094745); nil leaves them unattributed.
+	oauthConsumers     OAuthConsumerEnroller
+	oauthConsumerCache *oauthConsumerCache
+	// oauthLinks links signed-in MCP callers to consumer keys they hold
+	// (ADR-20261124094745); nil answers the link path 404.
+	oauthLinks OAuthConsumerLinker
+	// upgradeLinks adds upgrade_url to plan-limit refusals
+	// (ADR-20261124094745); nil leaves it out.
+	upgradeLinks     ConsumerUpgradeLinker
+	upgradeLinkCache *upgradeLinkCache
+	// mcpSessions remembers MCP sessions whose client declared URL
+	// elicitation (ADR-20261125230541).
+	mcpSessions mcpSessionCapabilities
+	// mcpAccountTools answers the MCP account tools of OAuth consumers
+	// (ADR-20261125194510); nil leaves tool lists and calls to the app.
+	mcpAccountTools            MCPAccountToolAnswerer
+	mcpAccountToolLimiter      *mcpAccountToolLimiter
 	tenantRequestBudgetEnabled bool
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210); nil keeps monetization off.
@@ -3259,6 +3283,15 @@ func corsResponseOps(rule *EdgeRuleCORSResolved, allowedOrigin string) []EdgeRul
 // A missing matcher means the feature is disabled. Once a JWT rule matches,
 // a missing verifier is a 503 rather than an authentication bypass.
 func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app App) bool {
+	if h.applyEdgeRuleJWTGates(w, r, app) {
+		return true
+	}
+	// ADR-20261125194510: an MCP account tool call admitted by every
+	// matching rule is answered here, never by the app.
+	return h.answerMCPAccountTool(w, r, app)
+}
+
+func (h *Handler) applyEdgeRuleJWTGates(w http.ResponseWriter, r *http.Request, app App) bool {
 	if h.edgeRules == nil {
 		return false
 	}
@@ -8380,6 +8413,17 @@ haveApp:
 	//     wrap below.
 	decision, isStreaming := decideStreaming(h, r, app)
 
+	// ADR-20261125194510: an opted-in OAuth consumer's tools/list answer
+	// gets the MCP account tools. The wrapper sits under the streaming and
+	// cap writers, so it sees the app's bytes as they reach the client.
+	// finishAccountTools runs once the app answered; the defer covers the
+	// early returns and is a no-op after it.
+	w, finishAccountTools := wrapMCPAccountToolsList(w, r)
+	defer finishAccountTools()
+	// ADR-20261125230541: remember a session whose client takes URL
+	// elicitation, for plan refusals later in it.
+	w = h.wrapMCPInitialize(w, r)
+
 	// Streaming-Status header stamp (ADR-102 D2). UNCONDITIONAL —
 	// the header must land on EVERY response (streaming AND
 	// buffered) so customers can self-diagnose. Precedent:
@@ -8622,6 +8666,9 @@ haveApp:
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	// The held-back tools/list answer reaches the client before the
+	// request's bytes and latency are recorded.
+	finishAccountTools()
 	if completionTarget.DeploymentID != "" && r.Context().Err() == nil {
 		h.recordSandboxPartnerSuccess(app.ID, rec)
 	}
@@ -10420,6 +10467,10 @@ func writeWakeError(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"App instance starting", "this app's instances are starting or stopping and none can take the request yet; retry shortly"))
+	case errors.Is(err, ErrAppNotPlaced):
+		w.Header().Set("Cache-Control", "no-store")
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeNoLiveDeployment,
+			"App has no live deployment", "this app has nothing deployed to serve yet; its owner deploys it with `gregale deploy`"))
 	case errors.Is(err, ErrBootstrapAborted):
 		// ADR-098 C7: the leader aborted under the bootstrap cap
 		// (queue empty AND no live instance). The customer should
@@ -10502,7 +10553,7 @@ func (h *Handler) logWakeFailure(appID string, err error) {
 func unclassifiedWakeError(err error) bool {
 	for _, known := range []error{ErrConcurrencyQueueFull, ErrConcurrencyQueueWaitTimeout,
 		ErrConcurrencyQueueAdmissionUnavailable, ErrWakeQueueWaitTimeout, ErrQueueFull,
-		ErrWakeAdmissionQueueFull, ErrBootstrapAborted} {
+		ErrWakeAdmissionQueueFull, ErrBootstrapAborted, ErrAppNotPlaced} {
 		if errors.Is(err, known) {
 			return false
 		}

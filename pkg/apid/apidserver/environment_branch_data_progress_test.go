@@ -61,3 +61,38 @@ func TestEnvironmentBranchDataWake(t *testing.T) {
 	default:
 	}
 }
+
+// A restore that hands back this very copy, still provisioning, with its
+// reconcile's conflict is a copy in progress. Any other row, state or error
+// stays a failed attempt.
+func TestEnvironmentBranchDataCopyRestoreConflict(t *testing.T) {
+	point := time.Date(2026, 11, 25, 19, 39, 41, 0, time.UTC)
+	source := managedpostgres.Database{ID: "src", ProviderResourceID: "br-src", DataResourceID: "br-src", BackendID: "neon", BackendFingerprint: "fp", State: managedpostgres.StateReady}
+	source.Spec.RestoreWindowSeconds = 604800
+	copy := managedpostgres.Database{ID: "copy", RestoreSourceDatabaseID: "src", RestoreSourceResourceID: "br-src", RestorePointInTime: point,
+		Spec: source.Spec, BackendID: "neon", BackendFingerprint: "fp", State: managedpostgres.StateProvisioning}
+	conflict := fmt.Errorf("reconcile: %w", managedpostgres.ErrConflict)
+	if err := apidserver.DatabaseCopyRestoreError(copy, source, point, conflict); !apidserver.EnvironmentBranchDataInProgress(err) || !errors.Is(err, managedpostgres.ErrConflict) {
+		t.Fatalf("provisioning copy with a conflict = %v; want in progress", err)
+	}
+	failed := copy
+	failed.State = managedpostgres.StateFailed
+	otherPoint := copy
+	otherPoint.RestorePointInTime = point.Add(time.Second)
+	for name, c := range map[string]struct {
+		cloned managedpostgres.Database
+		err    error
+	}{
+		"no row":         {managedpostgres.Database{}, conflict},
+		"failed copy":    {failed, conflict},
+		"other point":    {otherPoint, conflict},
+		"the source":     {source, conflict},
+		"invalid":        {copy, managedpostgres.ErrInvalid},
+		"unavailable":    {copy, managedpostgres.ErrUnavailable},
+		"quota exceeded": {copy, managedpostgres.ErrQuotaExceeded},
+	} {
+		if err := apidserver.DatabaseCopyRestoreError(c.cloned, source, point, c.err); apidserver.EnvironmentBranchDataInProgress(err) || !errors.Is(err, c.err) {
+			t.Errorf("%s: %v counted as in progress or lost its class", name, err)
+		}
+	}
+}

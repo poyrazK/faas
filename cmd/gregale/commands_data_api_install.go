@@ -22,11 +22,12 @@ func cmdDataAPIInstall(args []string) int {
 	restore := fs.Bool("restore", false, "restore the committed artifact pin")
 	from := fs.String("from", "", "local artifact directory for restoration")
 	base := fs.String("base-url", "", "immutable HTTPS artifact directory for future restoration")
+	workspace := fs.String("workspace-root", "", "npm workspace root relative to the project")
 	if parseInterspersed(fs, args) != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *directory == "" || *client == "" || (*restore == (*bundle != "")) || (*restore && *base != "") || (!*restore && *from != "") {
-		PrintUsage(os.Stderr, "usage: gregale data-api install --bundle MANIFEST [--directory DIR] [--client-directory DIR] [--base-url HTTPS_URL] | --restore [--from DIR]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api install --bundle MANIFEST [--directory DIR] [--client-directory DIR] [--workspace-root DIR] [--base-url HTTPS_URL] | --restore [--from DIR]", "data-api")
 		return 1
 	}
 	root, err := filepath.Abs(*directory)
@@ -35,6 +36,9 @@ func cmdDataAPIInstall(args []string) int {
 	}
 	if filepath.IsAbs(*client) || !filepath.IsLocal(*client) {
 		return printErr("Invalid client directory", errors.New("use a project-relative directory"))
+	}
+	if *workspace != "" && !filepath.IsLocal(*workspace) {
+		return printErr("Invalid workspace root", errors.New("use a project-relative directory"))
 	}
 	if info, err := os.Stat(filepath.Join(root, *client, "package.json")); err != nil || !info.Mode().IsRegular() {
 		return printErr("Invalid client directory", errors.New("package.json must exist"))
@@ -56,10 +60,17 @@ func cmdDataAPIInstall(args []string) int {
 		}
 		mode = append(mode, "--from", path)
 	}
+	if *workspace != "" {
+		mode = append(mode, "--workspace-root", *workspace)
+	}
 	return installDataAPIBundle(root, *client, mode)
 }
 
 func installDataAPIBundle(root, client string, args []string) int {
+	return installDataAPIBundleEnv(root, client, args, nil)
+}
+
+func installDataAPIBundleEnv(root, client string, args []string, extra map[string]string) int {
 	runtime, err := os.MkdirTemp("", "gregale-data-api-install-")
 	if err != nil {
 		return printErr("Could not prepare artifact installer", err)
@@ -88,7 +99,7 @@ func installDataAPIBundle(root, client string, args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := runDataAPISyncCommand(ctx, dataAPISyncCommand{Command: []string{"node", filepath.Join(runtime, "install.mjs")}, Directory: root}); err != nil {
+	if err := runDataAPISyncCommandEnv(ctx, dataAPISyncCommand{Command: []string{"node", filepath.Join(runtime, "install.mjs")}, Directory: root}, extra); err != nil {
 		return printErr("Could not install Data API SDK", err)
 	}
 	PrintOK(osStdout, "Data API SDK verified and installed; commit the artifact pin and client lockfile")

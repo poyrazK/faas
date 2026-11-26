@@ -541,6 +541,11 @@ type Engine struct {
 	// as GREGALE_API_URL (WithPublicAPIURL). Empty leaves the SDK default.
 	publicAPIURL string
 
+	// workloadS3Endpoint and workloadS3Region are the public S3 API that
+	// apps with a workload bucket grant reach (WithWorkloadS3).
+	workloadS3Endpoint string
+	workloadS3Region   string
+
 	// tracer is the OTel Tracer that emits sched.wake + vmmd.create_*
 	// spans (issue #555 PR-3). nil = no spans emitted (the OTel
 	// SDK's noop fallback is a no-op cost). Wired via WithTracer
@@ -1548,6 +1553,53 @@ func (e *Engine) WithPublicAPIURL(url string) *Engine {
 		e.publicAPIURL = strings.TrimRight(strings.TrimSpace(url), "/")
 	}
 	return e
+}
+
+// WithWorkloadS3 sets the public S3 endpoint and region that apps holding a
+// workload bucket grant receive as AWS_ENDPOINT_URL_S3 and AWS_REGION
+// (ADR-20261122191423). Empty values fall back to the platform defaults.
+func (e *Engine) WithWorkloadS3(endpoint, region string) *Engine {
+	if e != nil {
+		e.workloadS3Endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+		e.workloadS3Region = strings.TrimSpace(region)
+	}
+	return e
+}
+
+// withWorkloadS3Env completes an app's workload S3 credential setup: when
+// the platform pointed AWS_CONTAINER_CREDENTIALS_FULL_URI at the guest's
+// credential endpoint, an AWS SDK also needs the region and the S3 endpoint
+// to work without code, so they are added unless the app sets either itself
+// (api_env outranks manifest env in the guest, so the manifest is checked).
+func (e *Engine) withWorkloadS3Env(app state.App, env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	if e == nil || app.Manifest.Env[api.WorkloadCredentialsEnv] != api.WorkloadObjectCredentialsEndpoint {
+		return env
+	}
+	endpoint, region := e.workloadS3Endpoint, e.workloadS3Region
+	if endpoint == "" {
+		endpoint = api.DefaultObjectStoragePublicEndpoint
+	}
+	if region == "" {
+		region = api.DefaultObjectStoragePublicRegion
+	}
+	set := func(key string) bool {
+		if _, ok := app.Manifest.Env[key]; ok {
+			return true
+		}
+		for _, entry := range env {
+			if entry.Key == key {
+				return true
+			}
+		}
+		return false
+	}
+	if !set(api.WorkloadS3EndpointEnv) {
+		env = append(env, fcvm.APIEnvEntry{Key: api.WorkloadS3EndpointEnv, Value: endpoint})
+	}
+	if !set("AWS_REGION") && !set("AWS_DEFAULT_REGION") {
+		env = append(env, fcvm.APIEnvEntry{Key: "AWS_REGION", Value: region})
+	}
+	return env
 }
 
 // withPublicAPIURL adds GREGALE_API_URL to a workload's platform env unless
@@ -4151,10 +4203,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
+		APIEnv: e.withWorkloadS3Env(app, e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		)),
+		))),
 		// ADR-031: surface the per-app egress allowlist on the
 		// wake wire. vmmd translates the CIDRs into the per-netns
 		// forward chain. Empty slice = no allowlist rule (current
@@ -5689,14 +5741,15 @@ func (e *Engine) warnRestorePressureFallback(operation string, err error) {
 // both observe app.NodeID != "" and return nil. Returns the
 // underlying store / chooser error wrapped with %w+op when
 // placement cannot proceed (capacity exhausted, FK rejection,
-// etc.); the subscriber logs and continues — the next notify
-// (e.g. a later admin update) is a fresh opportunity.
+// etc.); the caller logs and continues. Only kind=created triggers a
+// claim, so a later update is not a retry: the next unplaced sweep
+// (about a minute later) is.
 //
 // Caller contract:
 //   - ctx must be cancellable; the subscriber drops on cancel.
-//   - The cold-start sweep calls this once per ListUnplacedApps
-//     row at schedd startup (closes the pg_notify missed-event
-//     window).
+//   - The unplaced sweep (Engine.SweepUnplaced) calls this for each
+//     ListUnplacedApps row at boot and then about once a minute
+//     (closes the pg_notify missed-event window).
 func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	if appID == "" {
 		return fmt.Errorf("sched: claim unplaced: empty app id")

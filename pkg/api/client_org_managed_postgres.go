@@ -135,3 +135,23 @@ func (c *Client) GetOrgManagedPostgresComputePolicyChange(ctx context.Context, o
 	err := c.do(ctx, http.MethodGet, orgPostgresPath(organization)+"/databases/"+url.PathEscape(databaseID)+"/compute-policy-changes/"+url.PathEscape(changeID), nil, &out)
 	return out, err
 }
+
+// SetOrgManagedPostgresWakeWithApp is SetManagedPostgresWakeWithApp for an
+// organization's database.
+func (c *Client) SetOrgManagedPostgresWakeWithApp(ctx context.Context, organization string, id string, request SetManagedPostgresWakeWithAppRequest) (ManagedPostgresWakeWithApp, error) {
+	var out ManagedPostgresWakeWithApp
+	err := c.do(ctx, http.MethodPut, orgPostgresPath(organization)+"/databases/"+url.PathEscape(id)+"/wake-with-app", request, &out)
+	return out, err
+}
+
+// GetOrgManagedPostgresActivity is GetManagedPostgresActivity for an
+// organization's database.
+func (c *Client) GetOrgManagedPostgresActivity(ctx context.Context, organization, id, since string) (ManagedPostgresActivity, error) {
+	var out ManagedPostgresActivity
+	path := orgPostgresPath(organization) + "/databases/" + url.PathEscape(id) + "/activity"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,7 +22,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|suspend-timeout|app-wake|activity|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -52,16 +53,15 @@ func cmdPostgres(args []string) int {
 	case "previews":
 		return cmdPostgresPreviews(args[1:])
 	case "roles":
-		// ADR-20261116213000: dark until released (postgres_custom_roles_cli.go).
-		if !postgresCustomRolesCLI() {
-			printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
-			return unknownSubcommandChoices(os.Stderr, "postgres", nestedCliCommand("postgres"), args[0])
-		}
 		return cmdPostgresRoles(args[1:])
 	case "compute-policy":
 		return cmdPostgresComputePolicy(args[1:])
 	case "compute-policy-status":
 		return cmdPostgresComputePolicyStatus(args[1:])
+	case "app-wake":
+		return cmdPostgresWakeWithApp(args[1:])
+	case "activity":
+		return cmdPostgresActivity(args[1:])
 	case "suspend-timeout":
 		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
@@ -307,7 +307,30 @@ func cmdPostgresUsage(args []string) int {
 	if note := postgresHoldNote(result.Hold); note != "" {
 		_, _ = fmt.Fprintf(osStdout, "  hold:                         %s (every database is %s)\n", result.Hold, note)
 	}
+	_, _ = fmt.Fprint(osStdout, renderPostgresDatabaseUsage(result.Databases))
 	return 0
+}
+
+// renderPostgresDatabaseUsage is the month's compute by database
+// (ADR-20261125231222); a deleted database keeps its compute.
+func renderPostgresDatabaseUsage(databases []api.ManagedPostgresDatabaseUsage) string {
+	if len(databases) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nby database (this month)\n")
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "  DATABASE\tCOMPUTE\tSTARTS\tAWAKE")
+	for _, d := range databases {
+		name := d.Name
+		if name == "" {
+			name = "(deleted) " + d.DatabaseID
+		}
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\n", name, formatComputeUnitHours(d.ComputeUnitSeconds), d.Starts, formatAwake(d.AwakeSeconds))
+	}
+	_ = tw.Flush()
+	b.WriteString("Run `gregale postgres activity DATABASE` to see what kept one awake.\n")
+	return b.String()
 }
 
 // postgresBillingMonthSeconds matches the 31-day month apid uses to turn the
@@ -396,10 +419,14 @@ func cmdPostgresList(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "No managed PostgreSQL databases.")
 		return 0
 	}
-	_, _ = fmt.Fprintln(osStdout, "ID                                      NAME                 REGION           CLASS        STATE         STORAGE")
+	// A tabwriter keeps names longer than 20 characters
+	// (python-getting-started-db) from shifting their row (prod hunt r52).
+	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ID\tNAME\tREGION\tCLASS\tSTATE\tSTORAGE")
 	for _, database := range resp.Items {
-		_, _ = fmt.Fprintf(osStdout, "%-39s %-20s %-16s %-12s %-13s %s\n", database.ID, database.Name, database.Region, database.ServiceClass, database.State, formatPostgresStorage(database.StorageLimitBytes))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", database.ID, database.Name, database.Region, database.ServiceClass, database.State, formatPostgresStorage(database.StorageLimitBytes))
 	}
+	_ = tw.Flush()
 	for _, database := range resp.Items {
 		if database.RestorableUntil != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
@@ -898,6 +925,7 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 			source = "set with suspend-timeout"
 		}
 		_, _ = fmt.Fprintf(w, "  suspend_timeout:  %s (%s)\n", time.Duration(database.SuspendTimeoutSeconds)*time.Second, source)
+		_, _ = fmt.Fprintf(w, "  wake_with_app:    %t\n", database.WakeWithApp)
 	}
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))

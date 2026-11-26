@@ -848,6 +848,9 @@ type APIConsumer struct {
 	// PlatformTenantManaged marks rows created by the account owner's
 	// platform-tenant bundle apply. A tenant link alone does not imply ownership.
 	PlatformTenantManaged bool
+	// EnvironmentID is the project environment the consumer belongs to;
+	// empty is production (ADR-20261104120000 amendment 2026-11-22).
+	EnvironmentID string
 }
 
 // Active reports whether the consumer can authenticate requests.
@@ -888,6 +891,9 @@ type ConsumerKey struct {
 	ExpiresAt  *time.Time
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
+	// EnvironmentID is the key's consumer's environment; empty is
+	// production (ADR-20261104120000 amendment 2026-11-22).
+	EnvironmentID string
 }
 
 // APIConsumerUsageEvent is the durable, billing-oriented usage increment

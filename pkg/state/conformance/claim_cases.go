@@ -466,8 +466,8 @@ func testCliAuthCodeClaimBindsOneAccount(t *testing.T, fx *Fixture) {
 	if boundAccount != claimed[0] {
 		t.Fatalf("code bound to %s, but %s won the claim", boundAccount, claimed[0])
 	}
-	if status == "" {
-		t.Fatal("claimed code has an empty status; the polling CLI cannot tell it was claimed")
+	if status != api.CliAuthStatusConsumed {
+		t.Fatalf("claimed code peeks as %q, want %q; the approval page would offer it again", status, api.CliAuthStatusConsumed)
 	}
 
 	// An unknown code is not claimable — a login code must not be forgeable.

@@ -24,6 +24,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// Inspection admissions and execution evidence stay with the source task.
+		"data_api_inspection_admissions": state.CloneSchemaOperational,
+		"data_api_inspection_executions": state.CloneSchemaOperational,
 		// Tool authority and durable execution history stay with their source.
 		"tool_grants":               state.CloneSchemaIdentity,
 		"tool_oauth_connections":    state.CloneSchemaIdentity,

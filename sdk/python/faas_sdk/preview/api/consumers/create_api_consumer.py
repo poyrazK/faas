@@ -9,21 +9,29 @@ from ...client import AuthenticatedClient, Client
 from ...models.api_consumer_response import APIConsumerResponse
 from ...models.create_api_consumer_request import CreateAPIConsumerRequest
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     *,
     body: CreateAPIConsumerRequest,
+    environment: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
         "url": "/v1/apps/{slug}/consumers".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -74,11 +82,21 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAPIConsumerRequest,
+    environment: str | Unset = UNSET,
 ) -> Response[APIConsumerResponse | Problem]:
     """Register a stable API consumer identity.
 
+     With `environment` set to a stage, the consumer and its keys belong
+    to that stage: the stage's hosts accept only its own consumers once it
+    has any, and production's until then. Plan assignments follow the
+    consumer; trials and billing apply to production consumers only. Until
+    the release after this one, a stage consumer's `external_ref` and key
+    names must differ from production's. Creating a stage's consumer
+    answers 501 `not_implemented` until the platform enables it.
+
     Args:
         slug (str):
+        environment (str | Unset):
         body (CreateAPIConsumerRequest): Stable customer identity to which consumer credentials
             can be attached.
 
@@ -93,6 +111,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        environment=environment,
     )
 
     response = client.get_httpx_client().request(
@@ -107,11 +126,21 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAPIConsumerRequest,
+    environment: str | Unset = UNSET,
 ) -> APIConsumerResponse | Problem | None:
     """Register a stable API consumer identity.
 
+     With `environment` set to a stage, the consumer and its keys belong
+    to that stage: the stage's hosts accept only its own consumers once it
+    has any, and production's until then. Plan assignments follow the
+    consumer; trials and billing apply to production consumers only. Until
+    the release after this one, a stage consumer's `external_ref` and key
+    names must differ from production's. Creating a stage's consumer
+    answers 501 `not_implemented` until the platform enables it.
+
     Args:
         slug (str):
+        environment (str | Unset):
         body (CreateAPIConsumerRequest): Stable customer identity to which consumer credentials
             can be attached.
 
@@ -127,6 +156,7 @@ def sync(
         slug=slug,
         client=client,
         body=body,
+        environment=environment,
     ).parsed
 
 
@@ -135,11 +165,21 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAPIConsumerRequest,
+    environment: str | Unset = UNSET,
 ) -> Response[APIConsumerResponse | Problem]:
     """Register a stable API consumer identity.
 
+     With `environment` set to a stage, the consumer and its keys belong
+    to that stage: the stage's hosts accept only its own consumers once it
+    has any, and production's until then. Plan assignments follow the
+    consumer; trials and billing apply to production consumers only. Until
+    the release after this one, a stage consumer's `external_ref` and key
+    names must differ from production's. Creating a stage's consumer
+    answers 501 `not_implemented` until the platform enables it.
+
     Args:
         slug (str):
+        environment (str | Unset):
         body (CreateAPIConsumerRequest): Stable customer identity to which consumer credentials
             can be attached.
 
@@ -154,6 +194,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
+        environment=environment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -166,11 +207,21 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CreateAPIConsumerRequest,
+    environment: str | Unset = UNSET,
 ) -> APIConsumerResponse | Problem | None:
     """Register a stable API consumer identity.
 
+     With `environment` set to a stage, the consumer and its keys belong
+    to that stage: the stage's hosts accept only its own consumers once it
+    has any, and production's until then. Plan assignments follow the
+    consumer; trials and billing apply to production consumers only. Until
+    the release after this one, a stage consumer's `external_ref` and key
+    names must differ from production's. Creating a stage's consumer
+    answers 501 `not_implemented` until the platform enables it.
+
     Args:
         slug (str):
+        environment (str | Unset):
         body (CreateAPIConsumerRequest): Stable customer identity to which consumer credentials
             can be attached.
 
@@ -187,5 +238,6 @@ async def asyncio(
             slug=slug,
             client=client,
             body=body,
+            environment=environment,
         )
     ).parsed

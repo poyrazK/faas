@@ -7,7 +7,7 @@ import type { PipelineCheckpoint } from './job-pipeline-client.js';
 import { pipelineToolSQL as SQL } from './pipeline-tool-protocol.js';
 export { pipelineToolSchema } from './pipeline-tool-protocol.js';
 export type PipelineToolAction = 'start' | 'inspect' | 'result' | 'cancel' | 'reconcile';
-export type PipelineToolCode = 'invalid_input' | 'unauthorized' | 'receipt_conflict' | 'store_failed' | 'request_failed' | 'start_unknown' | 'not_terminal' | 'deadline' | 'cancelled' | 'limit';
+export type PipelineToolCode = 'invalid_input' | 'unauthorized' | 'receipt_conflict' | 'store_failed' | 'request_failed' | 'start_unknown' | 'revision_unavailable' | 'preview_required' | 'preview_stale' | 'not_terminal' | 'deadline' | 'cancelled' | 'limit';
 export class PipelineToolError extends Error {
     constructor(readonly code: PipelineToolCode) { super('Pipeline tool: ' + code); this.name = 'PipelineToolError'; }
 }
@@ -25,6 +25,7 @@ export interface PipelineToolIntent {
     readonly owner_id: string;
     readonly contract_sha256: string;
     readonly input_sha256: string;
+    readonly request_sha256?: string;
     readonly idempotency_key: string;
 }
 export interface PipelineToolReceipt {
@@ -56,10 +57,18 @@ export function matchPipelineToolCheckpoint(i: PipelineToolIntent, raw: unknown)
         throw new PipelineToolError('receipt_conflict');
     return jobSnapshot(c);
 }
+function requestBinding(intent: PipelineToolIntent) {
+    const { request_sha256, ...value } = intent;
+    return { ...value, input_sha256: request_sha256 ?? value.input_sha256 };
+}
+/** The request binding remains stable when confirmation adds a native source pin. */
+export function samePipelineToolRequest(a: PipelineToolIntent, b: PipelineToolIntent): boolean {
+    return jobValueHash(requestBinding(a)) === jobValueHash(requestBinding(b));
+}
 export function parsePipelineToolReceipt(raw: unknown): PipelineToolReceipt {
     try {
         const r = raw as PipelineToolReceipt, i = r.intent;
-        if (Object.keys(r).sort().join() !== 'checkpoint,intent' || !i || Object.keys(i).sort().join() !== 'contract_sha256,idempotency_key,identity,input_sha256,name,owner_id,request_id,scope,subject_id,version' || i.version !== 1 || !pipelineName(i.owner_id) || !fileEventHash(i.input_sha256) || !fileEventHash(i.contract_sha256) || jobValueHash(i.scope) !== jobValueHash(eventPipelineScope(i.scope)) || i.identity !== pipelineToolIdentity(i.scope, i.name, i.subject_id, i.request_id) || i.idempotency_key !== 'pipeline-tool:' + i.identity)
+        if (Object.keys(r).sort().join() !== 'checkpoint,intent' || !i || Object.keys(i).sort().join() !== ('contract_sha256,idempotency_key,identity,input_sha256,name,owner_id,request_id,' + (Object.hasOwn(i, 'request_sha256') ? 'request_sha256,' : '') + 'scope,subject_id,version') || (Object.hasOwn(i, 'request_sha256') && !fileEventHash(i.request_sha256)) || i.version !== 1 || !pipelineName(i.owner_id) || !fileEventHash(i.input_sha256) || !fileEventHash(i.contract_sha256) || jobValueHash(i.scope) !== jobValueHash(eventPipelineScope(i.scope)) || i.identity !== pipelineToolIdentity(i.scope, i.name, i.subject_id, i.request_id) || i.idempotency_key !== 'pipeline-tool:' + i.identity)
             throw Error();
         if (r.checkpoint !== null)
             matchPipelineToolCheckpoint(i, r.checkpoint);
@@ -86,7 +95,9 @@ export function postgresPipelineToolStore(query: PipelineQuery): PipelineToolSto
             const r = await query(SQL.reserve, [intent.identity, JSON.stringify({ intent, checkpoint: null })], signal);
             signal.throwIfAborted();
             const receipt = r.rows.length === 1 ? parsePipelineToolReceipt(r.rows[0]!.receipt) : await load(intent.identity, signal);
-            if (r.rows.length > 1 || !receipt || jobValueHash(receipt.intent) !== jobValueHash(intent))
+            if (r.rows.length > 1 || !receipt || (r.rows.length === 1
+                ? jobValueHash(receipt.intent) !== jobValueHash(intent)
+                : !samePipelineToolRequest(receipt.intent, intent)))
                 throw new PipelineToolError('receipt_conflict');
             return { created: r.rows.length === 1, receipt };
         },

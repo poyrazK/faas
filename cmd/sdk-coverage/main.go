@@ -43,6 +43,26 @@ const (
 	sdkPackageName = "api"
 )
 
+// The paid pilot uses these contracts in the console. An operation requires
+// SDK coverage when its x-internal marker is removed.
+var monetizationConsoleRoutes = map[string]bool{
+	"DELETE /v1/account/billing-run-schedule/draft":                                              true,
+	"GET /v1/account/billing-runs/{id}/collections":                                              true,
+	"GET /v1/account/billing-runs/{id}/draft-exports":                                            true,
+	"GET /v1/account/billing-runs/{id}/usage-holds/{consumer_id}":                                true,
+	"GET /v1/account/statement-invoices/{statement_id}/send":                                     true,
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/billing-progress":                               true,
+	"GET /v1/apps/{slug}/monetization-funnel":                                                    true,
+	"POST /v1/account/billing-runs/{id}/draft-exports":                                           true,
+	"POST /v1/account/billing-runs/{id}/usage-holds/{consumer_id}":                               true,
+	"POST /v1/account/statement-invoices/{statement_id}/refresh":                                 true,
+	"POST /v1/account/statement-invoices/{statement_id}/send":                                    true,
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft": true,
+	"PUT /v1/account/billing-connections/stripe/setup":                                           true,
+	"PUT /v1/account/billing-run-schedule/draft":                                                 true,
+	"PUT /v1/account/billing-runs/{id}/draft-exports/{consumer_id}/stripe-customer":              true,
+}
+
 // routeExclude lists spec routes that have no SDK method by design.
 // Authentication/transport exceptions apply only to this SDK gate. Routes
 // intentionally absent from OpenAPI also belong in
@@ -267,11 +287,6 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases, behind the preview-databases
 	// capability until launch.
 	"PUT /v1/postgres/databases/{id}/previews": true,
-	// ADR-20261116213000 custom Postgres roles, behind the
-	// postgres_custom_roles flag until launch.
-	"GET /v1/postgres/databases/{id}/roles":           true,
-	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
-	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -830,6 +845,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/resize":                                                      "ResizeOrgManagedPostgresDatabase",
 	"POST /v1/orgs/{organization}/postgres/databases/{id}/compute-policy":                                              "ChangeOrgManagedPostgresComputePolicy",
 	"PUT /v1/orgs/{organization}/postgres/databases/{id}/suspend-timeout":                                              "SetOrgManagedPostgresSuspendTimeout",
+	"PUT /v1/orgs/{organization}/postgres/databases/{id}/wake-with-app":                                                "SetOrgManagedPostgresWakeWithApp",
+	"GET /v1/orgs/{organization}/postgres/databases/{id}/activity":                                                     "GetOrgManagedPostgresActivity",
 	"POST /v1/orgs/{organization}/postgres/bindings/{id}/rotate":                                                       "RotateOrgManagedPostgresBinding",
 	"GET /v1/orgs/{organization}/postgres/usage":                                                                       "GetOrgManagedPostgresUsage",
 
@@ -1183,6 +1200,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}":              "GetProjectInsightCohort",
 	"DELETE /v1/projects/{slug}/environments/{environment}/cohorts/{key}":           "DeleteProjectInsightCohort",
 	"POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh":     "RefreshProjectInsightCohort",
+	// Flag notifications (ADR-20261125085913).
+	"GET /v1/projects/{slug}/environments/{environment}/flags/notifications": "ProjectFlagNotifications",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags/notifications": "SetProjectFlagNotifications",
 	// Saved insights (ADR-20261122190000); PUT is SaveProjectInsight with replace.
 	"GET /v1/projects/{slug}/environments/{environment}/insights/saved":               "ListProjectSavedInsights",
 	"POST /v1/projects/{slug}/environments/{environment}/insights/saved":              "SaveProjectInsight",
@@ -1789,6 +1809,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/usage":                                                           "AccountUsage",
 	"POST /v1/postgres/databases/{id}/compute-policy":                                 "ChangeManagedPostgresComputePolicy",
 	"PUT /v1/postgres/databases/{id}/suspend-timeout":                                 "SetManagedPostgresSuspendTimeout",
+	"PUT /v1/postgres/databases/{id}/wake-with-app":                                   "SetManagedPostgresWakeWithApp",
+	"GET /v1/postgres/databases/{id}/activity":                                        "GetManagedPostgresActivity",
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}":              "GetManagedPostgresComputePolicyChange",
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
@@ -1820,11 +1842,17 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
-	"POST /v1/postgres/databases/{id}/query":                                          "QueryManagedPostgresDatabase",     // ADR-20261117215858
+	"POST /v1/postgres/databases/{id}/data-api-catalog-preview":                       "PreviewDataAPICatalog",
+	"POST /v1/apps/{slug}/data-api-inspections":                                       "CreateDataAPIInspection",
+	"GET /v1/apps/{slug}/data-api-inspections/{id}":                                   "GetDataAPIInspection",
+	"POST /v1/postgres/databases/{id}/query":                                          "QueryManagedPostgresDatabase", // ADR-20261117215858
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/bindings":                                        "ListManagedPostgresBindings",
+	"GET /v1/postgres/databases/{id}/roles":                                           "ListManagedPostgresCustomRoles",  // ADR-20261116213000
+	"PUT /v1/postgres/databases/{id}/roles/{name}":                                    "PutManagedPostgresCustomRole",    // ADR-20261116213000
+	"DELETE /v1/postgres/databases/{id}/roles/{name}":                                 "DeleteManagedPostgresCustomRole", // ADR-20261116213000
 	"POST /v1/postgres/databases/{id}/bindings":                                       "CreateManagedPostgresBinding",
 	"GET /v1/postgres/bindings/{id}":                                                  "GetManagedPostgresBinding",
 	"DELETE /v1/postgres/bindings/{id}":                                               "DeleteManagedPostgresBinding",
@@ -2009,6 +2037,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/compare/{baseline_id}":          "CompareStoredWorkflowLiveSuites",
 
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                                     "RunWorkflow",
+	"GET /v1/apps/{slug}/workflows/run-starts/{name}":                                "LookupWorkflowRunStart",
 	"GET /v1/apps/{slug}/workflows/runs":                                             "ListWorkflowRuns",
 	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                             "PreviewUnstartedWorkflowRunCancellations",
 	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                              "CancelUnstartedWorkflowRuns",
@@ -2304,6 +2333,12 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/consumer-signup":                                                 "PutConsumerSignup",
 	"DELETE /v1/apps/{slug}/consumer-signup":                                              "DeleteConsumerSignup",
 	"GET /v1/apps/{slug}/consumer-signups":                                                "ListConsumerSignups",
+	"GET /v1/apps/{slug}/mcp-stats":                                                       "GetMCPSellerStats",
+	"GET /v1/apps/{slug}/consumer-identities":                                             "ListConsumerIdentities",
+	"DELETE /v1/apps/{slug}/consumer-identities/{id}":                                     "DeleteConsumerIdentity",
+	"GET /v1/consumer-signup/{slug}/upgrade/plans":                                        "GetConsumerUpgrade",
+	"POST /v1/consumer-signup/{slug}/upgrade":                                             "StartConsumerUpgrade",
+	"POST /v1/consumer-signup/{slug}/upgrade/complete":                                    "CompleteConsumerUpgrade",
 	"GET /v1/consumer-signup/{slug}":                                                      "GetConsumerSignupForm",
 	"POST /v1/consumer-signup/{slug}":                                                     "CreateConsumerSignup",
 	"POST /v1/consumer-signup/{slug}/signups/{signup}/complete":                           "CompleteConsumerSignup",
@@ -2859,6 +2894,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/analytics/timeseries":      "GetAppRequestAnalyticsTimeseries",
 	"GET /v1/apps/{slug}/analytics/route-customers": "GetAppRouteCustomerUsage",
 	"GET /v1/apps/{slug}/analytics/route-resources": "GetAppRouteResources",
+	"POST /v1/apps/{slug}/route-splits":             "CreateAppRouteSplit",
+	"GET /v1/apps/{slug}/route-splits":              "ListAppRouteSplits",
+	"GET /v1/apps/{slug}/route-splits/{id}":         "GetAppRouteSplit",
+	"DELETE /v1/apps/{slug}/route-splits/{id}":      "UndoAppRouteSplit",
 	"GET /v1/apps/{slug}/mcp-tool-insights":         "GetMCPToolInsights",
 
 	// ADR-127 / PR-A — production debugger data plane. The
@@ -3362,6 +3401,14 @@ func loadSpec(path string) (map[string]map[string]any, error) {
 			m := on.Content[j].Value
 			switch m {
 			case "get", "post", "put", "patch", "delete":
+				if monetizationConsoleRoutes[strings.ToUpper(m)+" "+pn.Value] {
+					var operation struct {
+						Internal bool `yaml:"x-internal"`
+					}
+					if err := on.Content[j+1].Decode(&operation); err == nil && operation.Internal {
+						continue
+					}
+				}
 				methods[m] = true
 			}
 		}

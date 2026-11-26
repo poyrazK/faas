@@ -75,13 +75,13 @@ func TestWildcardProbeHostFitsLongClaims(t *testing.T) {
 }
 
 func TestValidateCustomDomainName(t *testing.T) {
-	valid := []string{"example.com", "api.example.com", "*.example.com", "*.co.uk"}
+	valid := []string{"example.com", "api.example.com", "*.example.com", "*.co.uk", "1.example.com", "10.0.0.example.io"}
 	for _, domain := range valid {
 		if err := state.ValidateCustomDomainName(domain); err != nil {
 			t.Errorf("ValidateCustomDomainName(%q): %v", domain, err)
 		}
 	}
-	invalid := []string{"", "localhost", "*.com", "foo.*.example.com", "*.*.example.com", "api.example.com.", "bad label.example.com"}
+	invalid := []string{"", "localhost", "*.com", "foo.*.example.com", "*.*.example.com", "api.example.com.", "bad label.example.com", "10.0.0.1", "1.2.3.4", "*.0.0.1", "example.123"}
 	for _, domain := range invalid {
 		if err := state.ValidateCustomDomainName(domain); err == nil {
 			t.Errorf("ValidateCustomDomainName(%q) = nil, want error", domain)

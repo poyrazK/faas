@@ -142,6 +142,11 @@ func newDataAPISyncTestServer(t *testing.T, root, failure string) *dataAPISyncTe
 	t.Helper()
 	fixture := &dataAPISyncTestServer{}
 	health := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.Header().Set("X-Faas-Health-Source", "edge")
+			writeJSONTest(w, map[string]string{"status": "ok", "source": "edge"})
+			return
+		}
 		if r.URL.Path == "/__gregale/schema" {
 			if r.Header.Get("Authorization") != "Bearer application.test.token" || fixture.tasks.Load() != 1 {
 				t.Error("contract check must use application auth after type export")
@@ -158,6 +163,9 @@ func newDataAPISyncTestServer(t *testing.T, root, failure string) *dataAPISyncTe
 			return
 		}
 		fixture.health.Add(1)
+		if r.URL.Path != api.DataAPIReadinessPath {
+			t.Errorf("unexpected readiness path %s", r.URL.Path)
+		}
 		if fixture.restarts.Load() != 1 || r.Header.Get("Authorization") != "" {
 			t.Error("health preceded the refresh or leaked account credentials")
 		}

@@ -219,7 +219,7 @@ RULES = [
     (r"commit-relay|commit-source|^commit|gregale-commit|/commit", "Gregale Commit"),
     (r"exclusive-operation|exclusive_operation|managed-exclusive|^exclusive", "Managed exclusive operations"),
     # --- account, billing, identity
-    (r"api-monetization|consumer-billing|consumer-plan|consumer-signup|rate-card|billing-run|consumer-overdue|consumer-credit|consumer-meter|consumer-route-usage|api-consumer-(billing|credit|meter|plan|rate|route|signup|overdue)|lagoinvoice|automatic-tax|billing-connection", "API monetization"),
+    (r"api-monetization|monetization-funnel|consumer-billing|consumer-plan|consumer-signup|rate-card|billing-run|consumer-overdue|consumer-credit|consumer-meter|consumer-route-usage|api-consumer-(billing|credit|meter|plan|rate|route|signup|overdue)|lagoinvoice|automatic-tax|billing-connection", "API monetization"),
     (r"consumers?|consumer-keys|api-consumer|end-user", "API consumers"),
     (r"platform-tenant", "Platform tenants"),
     (r"tenant-surface|tenant-hostname|wildcard", "Tenant surfaces"),
@@ -232,7 +232,7 @@ RULES = [
     (r"keys?$|api-key|^/v1/keys|scopes|service-caller-key|key-pool", "API keys"),
     (r"^mail$|mail|email|notification-email|magic-link|postmark|resend", "Customer notification emails"),
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink|^claim$", "Signup, login"),
-    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag[-_](kills|request[-_]attributes|cohorts)$|^analytics-(events|property-keys)$|^insights$|/insights|^analytics-cohort|/cohorts|insight-cohort|saved-insights|savedinsightnotify|^edge[-_]flags$|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
+    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag[-_](kills|request[-_]attributes|cohorts)$|^analytics-(events|property-keys)$|^insights$|/insights|^analytics-cohort|/cohorts|insight-cohort|saved-insights|savedinsightnotify|^edge[-_]flags$|^flag[-_]notifications?$|flag-notifications|flagnotify|^flag[-_]notification[-_]settings$|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
     # --- developer tools
     (r"mcp-management|mcpmanagement|docsindex|mcp[-_]?openapi|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),

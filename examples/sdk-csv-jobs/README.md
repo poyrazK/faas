@@ -648,3 +648,328 @@ fixtures. It does not qualify deployed publication or external-service rollback.
 See [the compensation guide](../../docs/sdk-pipeline-compensations.md) for source
 stage declarations, SQL-only callback rules, retained review stops, revisions
 and explicit new-attempt recovery.
+
+## Approved refunds after paid import failure
+
+[refund.mjs](refund.mjs) and [refund_backend.py](refund_backend.py) define the same
+typed Stripe refund action. The backend creates a private refund request only
+after checking the correct owned cleanup's completed result and retaining its
+checkpoint. Each operation rechecks the request, payment owner/current access,
+exact amount/currency and verified native cleanup completion.
+
+Install [outbound-actions.sql](../../sdk/request-contracts/outbound-actions.sql),
+the existing gate/tool schemas, and [refund-schema.sql](refund-schema.sql) after
+the paid CSV schema. Keep refund requests private and bind each business UUID to
+one immutable application decision. The SDK stores the action intent separately
+from its workflow attempts and external observation.
+
+Configure a Stripe outbound integration bound to the app. Allow `GET /v1/account`,
+`GET /v1/refunds` and `POST /v1/refunds`; its credential stays in Gregale's sealed
+integration configuration. Set `GREGALE_STRIPE_INTEGRATION`,
+`GREGALE_STRIPE_ACCOUNT`, `GREGALE_STRIPE_API_VERSION` and the authenticated human
+review base URL `GREGALE_REFUND_REVIEW_URL`. The examples have fixture defaults for
+these identifiers/version; supply your application's actual configuration when
+deploying. Gregale provides `GREGALE_OUTBOUND_URL` inside the bound app.
+
+[refund-api.mjs](refund-api.mjs) serves the gateway-checked native workflow entry
+at `/action-csv-refund`; publish the action definition as the corresponding code
+workflow. Register `createOutboundActionMCP(action)` / `OutboundActionMCP(action)`
+with the application's authenticated MCP host. Configure the human gate service
+with the returned root/review contracts and current reviewer authorization.
+Application authentication/review routes belong in that backend; the private
+fixture drivers are not production MCP or authentication transports.
+
+After the Node build and Python dependency setup used by the earlier journeys,
+run from the repository root:
+
+```sh
+GREGALE_CSV_REFUND=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The journey verifies a signed payment event and imports the paid CSV. Its report
+fails; a human approves SQL cleanup and both unchanged rows are removed. A second
+human gate then displays the exact payment, amount, currency and refund binding.
+Concurrent Node/Python preparation shares one PostgreSQL intent. Another user
+and revoked access are rejected, and a lost workflow start reply is reconciled
+to the exact native run.
+
+The simulated Stripe provider accepts one refund and drops the response. The
+workflow retains an unknown result; Python reconciles the provider record by
+GET and Node reads the same confirmed action observation. The POST count stays
+one. The original edited-row compensation journey remains available separately.
+This uses actual PostgreSQL and Chrome with native and Stripe protocol fixtures;
+it does not issue a live refund or qualify a deployed integration. See
+[the action guide](../../docs/sdk-outbound-actions.md) for retention, cancellation,
+provider limits, verified webhook wakeups and unknown-outcome handling.
+
+## Query context before recovery
+
+The paid refund journey now lets applications and agents inspect the data needed
+to choose recovery: search owned imported rows, inspect the failed report stage,
+read its failure-summary resource, and read current payment amount/currency/state.
+The existing cleanup and refund still require their separate human approvals.
+
+[query-contracts.json](query-contracts.json) supplies shared input/row contracts;
+[query.mjs](query.mjs) and [query_backend.py](query_backend.py) implement fixed
+read-only SQL handlers. Every query enforces the current owner in SQL, with
+authorization before/after the read. Each statement runs in a read-only
+transaction with a five-second statement timeout. The report loader maps a
+private import ID to a backend-materialized failure summary and verifies SHA-256.
+It does not retrieve arbitrary paths or URLs.
+
+Apply [query-schema.sql](query-schema.sql) with the application migration role.
+The backend creates context records only after verifying the original failed
+pipeline (the acceptance does this after compensation planning). Use a restricted
+read-only serving role in your application. Set `GREGALE_QUERY_CURSOR_KEY` to a
+secure backend-only 32–128 character printable ASCII secret shared by Node/Python.
+The local acceptance generates a fresh fixture key before starting its workers.
+
+```js
+const {tools, report, adapters} = await csvQueries({sdk, pool, scope, cursorKey});
+const page = await tools.rows.page({import_id: importId, search: '@example.test'},
+  authenticatedPrincipal, {timeoutMs: 5000, pageSize: 20});
+const payment = await tools.payment.page({import_id: importId},
+  authenticatedPrincipal, {timeoutMs: 5000});
+```
+
+Register the adapters with your existing authenticated MCP host. The failure
+query returns a resource link and template; reading the link reauthorizes the
+current principal. Generated tool arguments cannot supply ownership claims or SQL.
+The private Python fixture pipe is only a test transport, not a public auth route.
+
+Run the full flow with the existing paid refund acceptance command above
+(`GREGALE_CSV_REFUND=1`). It verifies identical Node/Python descriptors, pages and
+resource bodies, a Node cursor continued by Python, concurrent authorized users,
+Bob's denial for Alice's data, revocation, digest tampering, and Chrome reads
+before cleanup/refund approval. See [SDK query tools](../../docs/sdk-query-tools.md)
+for cursor retention, limits and host registration.
+
+## Deploy the CSV MCP toolkit
+
+The Node and Python definitions mount the CSV query and report adapters together
+with the cleanup and refund workflows. The shared
+[scope configuration](application-toolkit.json) defines exactly which operations
+an agent can discover and call. OAuth permissions and current ownership are
+checked for each request. The existing browser reviews authorize each effect.
+
+Use [application-toolkit.mjs](application-toolkit.mjs) or
+[application_toolkit.py](application_toolkit.py) to construct the registration.
+Set up the paid CSV schemas, provider integration, review endpoints, and query
+cursor key described above. Apply the same definitions and policy on each
+serving replica. See the [application toolkit guide](../../docs/sdk-application-toolkits.md).
+
+To run both authenticated HTTP starters in the paid CSV acceptance, build the
+Node SDK and install the local starter dependencies first. Install the
+Python starter requirements into the same environment as the SDK, or point
+`GREGALE_MCP_STARTER_PYTHONPATH` to a directory containing those dependencies.
+
+```sh
+npm ci --prefix cmd/gregale/templates/mcp-node-tasks
+GREGALE_CSV_APP_TOOLKIT=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The test signs short-lived tokens with a fixture key, reads owned rows and
+reports, rejects direct operations outside the caller's scopes, then starts
+cleanup on Node and reconciles and reads the same receipt on Python. It also
+prepares the same refund through both hosts, passes the separate human review,
+and confirms the provider result after a lost response.
+
+## Resume from the work inbox
+
+The CSV toolkit mounts `work_inbox` alongside the existing cleanup and refund
+operations. Install the [inbox indexes](../../sdk/request-contracts/work-inbox.sql)
+with the receipt and application schemas. The inbox maps retained attempts to
+the import using the application's owned records. Read permission requires both
+import and payment read scopes for this combined inbox.
+
+A new session can list work by `business_ref` (the import ID). A cleanup entry
+waiting for approval returns the existing request and review link. An unknown
+refund entry returns the existing action ID for provider reconciliation.
+The same `GREGALE_CSV_APP_TOOLKIT=1` acceptance above verifies discovery from
+both hosts, another user's denial, revoked access, and one simulated provider
+effect. See the [work inbox guide](../../docs/sdk-work-inbox.md).
+
+## Watch a CSV import's live work inbox
+
+Use the same local dependencies as the application toolkit acceptance.
+
+```sh
+GREGALE_CSV_LIVE_INBOX=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The application serves ticket and snapshot routes for an owned import. Each
+request verifies the authenticated user and current import access. The ticket
+binds that viewer to one private channel. Both the Node and Python clients watch
+their own import, with the human approval still handled in a separate browser
+session.
+
+Alice sees the cleanup gate once after duplicate notifications and can follow
+the review link. She then sees the uncertain refund; after explicit reconciliation,
+the example drops the notification and reconnects both clients to recover the
+succeeded action from current state. Disabling Alice's import access ends both
+Alice watches while Bob can reconnect to his own import. The fixture verifies
+a single provider effect. See the [live work inbox guide](../../docs/sdk-live-work-inbox.md).
+
+## Resolve the next step from the inbox
+
+The application toolkit also publishes `work_inbox_follow_up`. Send an inbox
+entry's `kind`, `name`, `request_id`, and `business_ref`. The resolver reads the
+current receipt and checks the scopes of the operation it would return. The
+cleanup entry yields an authenticated human review link. An uncertain refund
+yields the exact reconciliation call. After reconciliation, the original
+entry yields an observation call, which a read-only user can invoke.
+
+Both `GREGALE_CSV_APP_TOOLKIT=1` and `GREGALE_CSV_LIVE_INBOX=1` exercise the
+feature through the Node and Python MCP hosts. The example checks revoked
+access, a second user, operation scopes, and one simulated refund submission.
+See the [follow-up guide](../../docs/sdk-work-inbox-follow-ups.md).
+
+The CSV run also drops the native cleanup start response after acceptance.
+Two fresh MCP clients start from the import ID, resolve the original accepted
+run, and reconcile concurrently. The fixture verifies one accepted cleanup run
+and rejects a run with identical business input from a different invocation.
+
+## Resume CSV cleanup from an MCP Task
+
+Run the same local dependencies as the application toolkit example.
+
+```sh
+GREGALE_CSV_PIPELINE_TASKS=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The Node host returns a Task handle when the client opts in. The Python host
+uses the same PostgreSQL binding to read the Task with a fresh authenticated
+request. It sees the uncertain start and a verified reconciliation plan. Both
+hosts expose the pending human review and then the same typed cleanup result
+after approval. The test checks another user, missing scopes, revoked
+application access, and one accepted native start across repeated calls.
+See the [pipeline Task guide](../../docs/sdk-pipeline-tasks.md).
+
+## Clarify a CSV column from an MCP Task
+
+```sh
+GREGALE_CSV_CLARIFICATION=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The clarification pipeline pauses when both `contact` and `alternate_contact`
+are candidate email columns. Its typed form lets the operator choose one.
+The Node and Python MCP starters share the Task receipt, gate decision, and
+typed reply contract. The test starts the Task in Node, reconnects through
+Python, submits the same answer concurrently, and verifies that a single
+durable wake event resumes the run. It also checks a conflicting answer,
+an expired question, scope and access revocation, and a second user's
+attempt to read or answer the form. A client without form support can open
+the same question through the authenticated review endpoint.
+
+The same command exercises `subscriptions/listen`. A client watches the Task
+start in Node and receives the form over SSE. It disconnects, submits the
+answer, and reconnects through Python to see the typed result. The test also
+checks that unchanged snapshots stay quiet, revocation closes an active
+Task-only stream, and another user receives no Task snapshots.
+
+## Read the CSV mapping report over MCP
+
+Run the clarification acceptance command above. The resolved email-column
+choice starts a typed report Job that writes a CSV to managed storage. The
+completed Task and the direct `clarify_csv_columns_result` tool both return a
+`mapping_report` resource link. The report names the selected column.
+
+The test reads that link through Node and Python, repeats the reads, and
+checks that a caller with revoked access or another user's token receives no
+file bytes. It also replaces the stored bytes with different content of the
+same length, replaces the file with an oversized body, and checks that an
+oversized declared file is rejected before download.
+
+The same run reads the scoped manifest from both hosts and generates standalone
+Node and Python client modules in a temporary consumer directory. The test
+checks scope filtering and detects a changed input schema with `--check`.
+The generated Node client saves a JSON checkpoint and closes its watch after
+seeing the column question. A separate Python process uses its generated
+module to resume the checkpoint, send one answer, and retrieve the verified
+mapping report after completion. See the
+[Task binding guide](../../docs/sdk-pipeline-tasks.md#discover-contracts-and-generate-bindings).
+
+## Release a new CSV mapping contract with a Task in progress
+
+The same clarification acceptance publishes a new host view after the first
+Task asks its question. It marks `clarify_csv_columns` as retained and makes
+`clarify_csv_columns_v2` the default for `family:csv_column_mapping`. The
+second revision requires a typed `source_system` input and offers one email
+column. Fresh generated
+bindings start a v2 workflow while a Python process answers the original
+v1 question and reads its original `mapping_report`.
+
+The acceptance also retries the saved v1 request against the upgraded host
+and gets the original Task ID. It checks that a fresh start on the retained
+revision, an incorrect digest, a changed retry input, and a different user
+cannot dispatch work. PostgreSQL records one native run for each revision.
+See [publishing a new contract revision](../../docs/sdk-pipeline-tasks.md#publish-a-new-contract-revision).
+
+## Preview the CSV mapping before starting
+
+The v2 CSV mapping tool publishes a typed preview with the current source
+digest, email columns, expected report, and clarification requirement. The
+same clarification acceptance reads the preview, replaces the source CSV,
+and checks that confirmation returns `preview_stale`. It refreshes the
+preview and confirms a Node-issued token through the Python MCP host. A
+separate Python consumer retries after a simulated lost response and receives
+the original Task. The test verifies one native v2 run and denies previews
+from a second user. See the [preview guide](../../docs/sdk-pipeline-tasks.md#preview-a-pipeline-start).
+
+## Keep the reviewed CSV version through clarification
+
+The v2 preview records the version from a managed multipart upload. The test
+starts the Task, waits for the column question, and uploads a new version at
+the same key. Answering the question produces a report with the email from the
+reviewed version. Retrying the start after replacement returns the same Task.
+Two further runs remove the pinned version or revoke the source grant while
+the Task is paused. Both SDK clients receive a typed source failure, and
+neither run writes a report.
+
+## Recover a failed mapping Task from a replacement file
+
+The clarification acceptance removes a pinned CSV version and verifies that
+the original report was never written. It previews a replacement with the
+failed Task's source digest and the new source summary. It exercises revoked
+access, a stale replacement preview, and a second OAuth user. After an explicit
+confirmation on Node, the fixture drops the response and retries from a
+generated Python client. Both clients resolve the same replacement Task.
+The replacement links to the failed Task and writes one report using the
+file reviewed at recovery.
+
+## Hand off a CSV clarification
+
+The clarification acceptance assigns a pending question to a named reviewer.
+The reviewer reconnects through the other SDK under a second OAuth client and
+submits the answer. The original agent sees the same Task complete with its
+mapping report. The test checks an unassigned user, expired and revoked grants,
+revoked reviewer membership, a racing revocation, and duplicate replies.
+The durable gate decision records the reviewer's identity.
+
+## Watch a reviewer's assigned CSV clarifications
+
+The [reviewer inbox](../../docs/sdk-pipeline-tasks.md#list-and-watch-assigned-clarifications)
+shows assignments across two CSV imports. The acceptance test lists one item
+per page and resumes a Node page cursor through the Python MCP host. A watch
+drops work when the reviewer role is revoked, ignores duplicate notifications,
+and reloads current assignments after reconnect. A second reviewer sees only
+their own handoff. The first reviewer opens the remaining form and answers it
+from Python, clearing it from the inbox and continuing the original Task.
+
+## Approve a staged CSV import from the reviewer inbox
+
+The [assigned approval flow](../../docs/sdk-pipeline-tasks.md#assign-an-approval-to-a-reviewer)
+takes the reviewed import through the Node and Python MCP hosts. The reviewer
+finds the approval in their inbox and opens the exact stored CSV version and
+validated rows before deciding. A rejection completes the Task with zero
+writes. An approval releases the rows and produces the verified report.
+
+```sh
+npm --prefix sdk/node run build
+GREGALE_CSV_ASSIGNED_APPROVAL=1 node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+The acceptance test uses local PostgreSQL and the Node and Python MCP starter
+dependencies. It checks an expired grant, revoked reviewer membership, a key
+from an earlier preview, competing decisions, and a cross-host retry that
+returns the same receipt and records one workflow wake.

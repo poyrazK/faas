@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -261,6 +262,48 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Idempotent-Replayed", "true")
 	}
 	writeJSON(w, http.StatusCreated, workflowRunResponse(result.Run))
+}
+
+// lookupWorkflowRunStart reads an accepted pipeline-tool run by its original start key.
+func (s *server) lookupWorkflowRunStart(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	keys := r.Header.Values("Idempotency-Key")
+	if len(keys) != 1 {
+		api.WriteProblem(w, api.ErrValidation("a single pipeline tool Idempotency-Key is required"))
+		return
+	}
+	digest, prefixed := strings.CutPrefix(keys[0], "pipeline-tool:")
+	if _, err := hex.DecodeString(digest); !prefixed || len(digest) != 64 || digest != strings.ToLower(digest) || err != nil {
+		api.WriteProblem(w, api.ErrValidation("expected a pipeline tool Idempotency-Key"))
+		return
+	}
+	name := r.PathValue("name")
+	if len(name) == 0 || len(name) > 128 {
+		api.WriteProblem(w, api.ErrValidation("invalid workflow name"))
+		return
+	}
+	if app.PlatformTenantRequired {
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+		return
+	}
+	store, ok := s.store.(state.WorkflowRunStartLookup)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow start lookup unavailable"))
+		return
+	}
+	id, err := store.LookupWorkflowRunIDByStartKey(r.Context(), app.ID, name, keys[0])
+	switch {
+	case errors.Is(err, state.ErrWorkflowRunNotFound):
+		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
+	case err != nil:
+		api.WriteProblem(w, api.ErrCapacity("failed to look up workflow start"))
+	default:
+		writeJSON(w, http.StatusOK, api.WorkflowRunStartLookupResponse{RunID: id})
+	}
 }
 
 // listWorkflowRuns handles GET /v1/apps/{slug}/workflows/runs

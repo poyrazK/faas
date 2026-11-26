@@ -25,6 +25,18 @@ type SetManagedPostgresSuspendTimeoutRequest struct {
 	Seconds *int64 `json:"seconds"`
 }
 
+// ManagedPostgresWakeWithApp is whether a database starts when an app bound
+// to it wakes (ADR-20261125105038).
+type ManagedPostgresWakeWithApp struct {
+	DatabaseID string `json:"database_id"`
+	Enabled    bool   `json:"enabled"`
+}
+
+// SetManagedPostgresWakeWithAppRequest turns starting with the app on or off.
+type SetManagedPostgresWakeWithAppRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 // ManagedPostgresSuspendTimeout is a database's suspend timeout.
 type ManagedPostgresSuspendTimeout struct {
 	DatabaseID string `json:"database_id"`

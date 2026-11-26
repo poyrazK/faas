@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { fork, spawnSync } from 'node:child_process'
 import { validateBundle, validateBaseURL, readPin, verifyFile, verifyLock, hostArchive, run, download } from '../../cmd/gregale/templates/data-api-starter/tools/artifact-lib.mjs'
+import { main as installArtifacts } from '../../cmd/gregale/templates/data-api-starter/tools/artifacts.mjs'
 
 const sdkBytes = Buffer.from('fixture SDK archive')
 const bundle = {
@@ -107,6 +108,51 @@ test('artifact checksums and the committed npm lockfile must agree', async t => 
   entry.integrity = 'sha512-other'
   await writeFile(join(dir, 'package-lock.json'), JSON.stringify(lock))
   await assert.rejects(verifyLock(dir, bundle.sdk), /lockfile differs/)
+})
+
+test('workspace lock verification binds the member and its SDK archive', async t => {
+  const root = await fixture(t)
+  const client = join(root, 'apps/web')
+  await mkdir(client, { recursive: true })
+  const pkg = { dependencies: { '@gregale/data': 'file:vendor/gregale-data.tgz' } }
+  const entry = { version: bundle.sdk.version, resolved: 'file:apps/web/vendor/gregale-data.tgz', integrity: bundle.sdk.integrity }
+  const lock = { packages: { 'apps/web': pkg, 'node_modules/@gregale/data': entry } }
+  await writeFile(join(client, 'package.json'), JSON.stringify(pkg))
+  await writeFile(join(root, 'package-lock.json'), JSON.stringify(lock))
+  await verifyLock(client, bundle.sdk, root, 'apps/web')
+  entry.integrity = 'sha512-other'
+  await writeFile(join(root, 'package-lock.json'), JSON.stringify(lock))
+  await assert.rejects(verifyLock(client, bundle.sdk, root, 'apps/web'), /lockfile differs/)
+})
+
+test('bundled SDK installs and restores through an npm workspace lockfile', async t => {
+  const root = await fixture(t)
+  const source = join(root, 'sdk')
+  const client = join(root, 'apps/web')
+  const cache = join(root, 'npm-cache')
+  await mkdir(source, { recursive: true })
+  await mkdir(client, { recursive: true })
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'fixture', private: true, workspaces: ['apps/*'] }))
+  await writeFile(join(client, 'package.json'), JSON.stringify({ name: 'web', private: true, version: '1.0.0' }))
+  await writeFile(join(source, 'package.json'), JSON.stringify({ name: '@gregale/data', version: '0.1.0' }))
+  const originalCache = process.env.npm_config_cache
+  process.env.npm_config_cache = cache
+  t.after(() => {
+    if (originalCache === undefined) delete process.env.npm_config_cache
+    else process.env.npm_config_cache = originalCache
+  })
+  const packed = spawnSync('npm', ['pack', source, '--pack-destination', root, '--json', '--ignore-scripts'], { encoding: 'utf8' })
+  assert.equal(packed.status, 0, packed.stderr)
+  const archive = await readFile(join(root, bundle.sdk.file))
+  const candidate = structuredClone(bundle)
+  candidate.sdk.bytes = archive.length
+  candidate.sdk.sha256 = createHash('sha256').update(archive).digest('hex')
+  candidate.sdk.integrity = `sha512-${createHash('sha512').update(archive).digest('base64')}`
+  const manifest = join(root, 'bundle.json')
+  await writeFile(manifest, JSON.stringify(candidate))
+  await installArtifacts(['pin', manifest, '--sdk-only', '--workspace-root', '.'], root, 'apps/web')
+  await verifyLock(client, candidate.sdk, root, 'apps/web')
+  await installArtifacts(['restore', '--sdk-only', '--workspace-root', '.'], root, 'apps/web')
 })
 
 test('restore rejects a mismatched lock and corrupt vendor before npm or network', async t => {

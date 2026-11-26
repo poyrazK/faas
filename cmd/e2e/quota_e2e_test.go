@@ -115,6 +115,11 @@ func postOK(t *testing.T, h *e2etest.Harness, key, path string, body any) int {
 // auth by passing `Authorization: ""` via extraHeaders.
 func doReq(t *testing.T, h *e2etest.Harness, key, method, path string, body any, extraHeaders ...map[string]string) ([]byte, int) {
 	t.Helper()
+	return doReqContext(t, context.Background(), h, key, method, path, body, extraHeaders...)
+}
+
+func doReqContext(t *testing.T, ctx context.Context, h *e2etest.Harness, key, method, path string, body any, extraHeaders ...map[string]string) ([]byte, int) {
+	t.Helper()
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -123,7 +128,9 @@ func doReq(t *testing.T, h *e2etest.Harness, key, method, path string, body any,
 		}
 		r = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(context.Background(), method, h.APIDURL+path, r)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, h.APIDURL+path, r)
 	if err != nil {
 		t.Fatalf("new req: %v", err)
 	}
@@ -134,9 +141,6 @@ func doReq(t *testing.T, h *e2etest.Harness, key, method, path string, body any,
 			req.Header.Set(k, v)
 		}
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
-	defer cancel()
-	req = req.WithContext(ctx)
 	resp, err := h.HTTPClient().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)

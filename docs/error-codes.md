@@ -1344,6 +1344,12 @@ See [Application companions](companions.md), [Networking](networking.md).
 
 HTTP 500 Internal Server Error or 503 Service Unavailable · Many operations send this code; the response's `title` and `detail` name the failure.
 
+### `invalid_activity_since`
+
+HTTP 422 Unprocessable Entity · Invalid activity period
+
+See [Managed PostgreSQL](postgres.md#why-is-my-database-awake).
+
 ### `invalid_autoscale_target_cpu_pct`
 
 HTTP 422 Unprocessable Entity · Invalid autoscale target CPU%
@@ -1501,6 +1507,12 @@ See [Managed PostgreSQL](postgres.md#plans).
 HTTP 422 Unprocessable Entity · Invalid traffic_percent
 
 See [Progressive rollouts](rollouts.md).
+
+### `invalid_wake_with_app`
+
+HTTP 422 Unprocessable Entity · Invalid wake-with-app setting
+
+See [Managed PostgreSQL](postgres.md#plans).
 
 ### `invalid_warm_pool_size`
 
@@ -2770,6 +2782,28 @@ HTTP 503 Service Unavailable · Releases are paused
 
 See [Release approvals, freezes and schedules](release-controls.md).
 
+### `postgres_bypass_rls_conflict`
+
+HTTP 409 Conflict · BYPASSRLS conflicts with Data API or Auth
+
+Use a separate database for the tool that needs BYPASSRLS, or declare the role without --bypass-rls.
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_bypass_rls_unavailable`
+
+HTTP 422 Unprocessable Entity · BYPASSRLS unavailable
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
+### `postgres_custom_role_default_taken`
+
+HTTP 409 Conflict · Default role already set
+
+Remove it there first (gregale postgres roles create &lt;database> &lt;role> --default-for '' on that role).
+
+See [Custom Postgres roles](postgres-custom-roles.md).
+
 ### `postgres_custom_roles_limit`
 
 HTTP 409 Conflict · Custom role limit reached
@@ -3176,6 +3210,10 @@ HTTP 403 Forbidden · Sign in again
 
 See [Authentication](auth.md), [Account and organization management](account.md).
 
+### `redis_cache_bound`
+
+HTTP 409 Conflict · Cache is still bound
+
 ### `registry_credential_not_found`
 
 HTTP 400 Bad Request · Registry credential not set
@@ -3445,6 +3483,18 @@ See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 ### `route_health_blocked`
 
 HTTP 409 Conflict · Route health gate blocked
+
+### `route_split_changed`
+
+HTTP 409 Conflict · Suggestion changed
+
+### `route_split_in_flight`
+
+HTTP 409 Conflict · Split in flight; Undo in progress
+
+### `route_split_unsupported`
+
+HTTP 409 Conflict or 422 Unprocessable Entity · No live build; Split not supported for this app
 
 ### `run_artifact_destination_limit`
 
@@ -4012,6 +4062,12 @@ The response's `title` and `detail` describe the failure.
 
 The response's `title` and `detail` describe the failure.
 
+### `wake_with_app_unsupported`
+
+HTTP 409 Conflict · Database cannot start with its app
+
+See [Managed PostgreSQL](postgres.md#plans).
+
 ### `webhook_outbox_full`
 
 HTTP 429 Too Many Requests · Webhook outbox full
@@ -4137,6 +4193,10 @@ See [CLI guide](cli-setup.md).
 ### `workload_bucket_not_found`
 
 HTTP 404 Not Found · Granted bucket not found
+
+### `workload_bucket_required`
+
+HTTP 400 Bad Request · Bucket required
 
 ### `workload_credential_limit`
 

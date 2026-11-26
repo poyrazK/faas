@@ -1,0 +1,152 @@
+{
+  "rows": {
+    "name": "csv_import_rows",
+    "description": "Search rows from an owned import.",
+    "contract": {
+      "version": 1,
+      "name": "csv-query-rows",
+      "input": {
+        "type": "object",
+        "properties": {
+          "import_id": {
+            "type": "string",
+            "maxLength": 36
+          },
+          "search": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "import_id",
+          "search"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "input_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "row_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "email": {
+            "type": "string",
+            "maxLength": 320
+          }
+        },
+        "required": [
+          "input_id",
+          "row_number",
+          "email"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "failure": {
+    "name": "csv_import_failure",
+    "description": "Inspect the failed report stage.",
+    "contract": {
+      "version": 1,
+      "name": "csv-query-failure",
+      "input": {
+        "type": "object",
+        "properties": {
+          "import_id": {
+            "type": "string",
+            "maxLength": 36
+          }
+        },
+        "required": [
+          "import_id"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "import_id": {
+            "type": "string",
+            "maxLength": 36
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "report"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "import_id",
+          "stage",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "payment": {
+    "name": "csv_import_payment",
+    "description": "Read current payment context for an owned import.",
+    "contract": {
+      "version": 1,
+      "name": "csv-query-payment",
+      "input": {
+        "type": "object",
+        "properties": {
+          "import_id": {
+            "type": "string",
+            "maxLength": 36
+          }
+        },
+        "required": [
+          "import_id"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "amount_minor": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "currency": {
+            "type": "string",
+            "maxLength": 3
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "unpaid",
+              "paid",
+              "cancelled"
+            ]
+          }
+        },
+        "required": [
+          "payment_id",
+          "amount_minor",
+          "currency",
+          "state"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

@@ -54,7 +54,7 @@ The change is therefore expand/contract:
 1. **Accept** (this ADR's first change). Every neond reads both 1–4 and
    0.5–4 CU as `production` (`acceptedProfiles`); production is still
    provisioned at 1–4 CU and the agent budget still prices it at 1 CU.
-2. **Provision**, in a later release, once every neond runs step 1:
+2. **Provision** (shipped after v0.1.18-rc.381, which carries step 1), once every neond runs step 1:
    production is provisioned at 0.5–4 CU, 1–4 CU moves to the accepted
    ranges, and `api.ManagedPostgresMinimumQuarterComputeUnits["production"]`
    becomes 2.

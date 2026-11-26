@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -996,6 +997,9 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	if err := validateCompleteAppTask(params, task.MaxOutputBytes); err != nil {
 		return AppTask{}, err
 	}
+	if err := validateDataAPIInspectionExecution(task, params); err != nil {
+		return AppTask{}, err
+	}
 	if err := m.validateRehearsalTaskCompletionLocked(task, params); err != nil {
 		return AppTask{}, err
 	}
@@ -1044,6 +1048,12 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	task.LeaseOwner = nil
 	task.LeaseExpiresAt = nil
 	m.appTasks[task.ID] = task
+	if params.DataAPIInspectionProtocol != 0 {
+		if m.dataAPIInspectionExecutions == nil {
+			m.dataAPIInspectionExecutions = make(map[string]DataAPIInspectionExecution)
+		}
+		m.dataAPIInspectionExecutions[task.ID] = DataAPIInspectionExecution{TaskID: task.ID, AppID: task.AppID, DeploymentID: task.DeploymentID, ProtocolVersion: params.DataAPIInspectionProtocol, StdoutSHA256: sha256.Sum256([]byte(params.StdoutTail)), FinishedAt: finishedAt}
+	}
 	m.syncAppTaskOccurrenceLocked(task, finishedAt)
 	return cloneAppTask(task), nil
 }

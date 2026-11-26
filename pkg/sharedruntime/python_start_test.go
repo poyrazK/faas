@@ -61,7 +61,7 @@ func TestResolvePythonStart(t *testing.T) {
 			got, reason := ResolvePythonStart(tc.command, tc.layer)
 			var want []string
 			if tc.wantReason == "" {
-				want = []string{"/bin/sh", "-c", tc.want}
+				want = ShellStart(tc.want)
 			}
 			if reason != tc.wantReason || !slices.Equal(got, want) {
 				t.Fatalf("ResolvePythonStart(%q) = %q (%q), want %q (%q)", tc.command, got, reason, want, tc.wantReason)

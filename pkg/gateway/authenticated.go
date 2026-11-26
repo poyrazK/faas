@@ -69,6 +69,12 @@ type Authenticated struct {
 	// consumer key was accepted for the request.
 	ConsumerID string
 
+	// StageConsumer marks a consumer that belongs to a stage. A stage's
+	// consumers are not billed or metered against consumer plans: their
+	// usage carries no consumer and plan admission skips them
+	// (ADR-20261104120000 amendment 2026-11-22).
+	StageConsumer bool
+
 	// ConsumerKeyID is the specific credential used for this request. It is
 	// useful for revocation/last-used diagnostics, while ConsumerID remains
 	// the stable attribution dimension.

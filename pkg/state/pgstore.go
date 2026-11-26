@@ -34140,6 +34140,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 		&expiresAt,
 		&lastUsedAt,
 		&revokedAt,
+		&k.EnvironmentID,
 	); err != nil {
 		return ConsumerKey{}, err
 	}
@@ -34156,7 +34157,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 // consumerKeySelectCols is the column list every read uses. Keeping
 // the order stable means scanConsumerKeyRow above is the single scan
 // helper, not five copies.
-const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at`
+const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at, coalesce(environment_id::text, '')`
 
 func (s *PgStore) CreateConsumerKey(ctx context.Context, accountID, appID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
 	if accountID == "" || appID == "" {
@@ -34216,7 +34217,7 @@ func (s *PgStore) ListConsumerKeysForApp(ctx context.Context, accountID, appID s
 	rows, err := s.pool.Query(ctx,
 		`select `+consumerKeySelectCols+`
 		   from consumer_keys
-		  where account_id = $1::uuid and app_id = $2::uuid
+		  where account_id = $1::uuid and app_id = $2::uuid and environment_id is null
 		  order by created_at desc`,
 		accountID, appID)
 	if err != nil {
@@ -34299,6 +34300,7 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 		  where app_id = $1::uuid
 		    and account_id = $2::uuid
 		    and prefix = $3
+		    and environment_id is null
 		    and not exists (
 		        select 1 from api_consumers c
 		        join platform_tenants t on t.id = c.platform_tenant_id

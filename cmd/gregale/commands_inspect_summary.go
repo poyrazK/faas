@@ -724,7 +724,7 @@ func containsString(values []string, want string) bool {
 func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
 	renderInspectAttention(w, summary)
 	renderInspectApp(w, summary.App)
-	renderInspectRuntime(w, summary.Runtime)
+	renderInspectRuntime(w, summary.Runtime, inspectServesNoRequests(summary.App))
 	renderInspectResources(w, summary.Resources)
 	renderInspectSignals(w, summary)
 	renderInspectRelease(w, summary.Release, containsString(summary.Unavailable, "deployment"))
@@ -748,13 +748,28 @@ func renderInspectApp(w io.Writer, app inspectAppSummary) {
 		_, _ = fmt.Fprint(w, " · NO LIVE DEPLOYMENT")
 	}
 	_, _ = fmt.Fprintln(w)
+	// A worker or job serves no HTTP: its gregale.app URL, port, deploy
+	// check and API lines read as an unverified web app (prod hunt r57).
+	if inspectServesNoRequests(app) {
+		if app.ExecutionMode == api.ExecutionModeWorker {
+			_, _ = fmt.Fprintf(w, "  serves:    no HTTP; see gregale worker status %s\n", app.Slug)
+		} else {
+			_, _ = fmt.Fprintln(w, "  serves:    no HTTP")
+		}
+		return
+	}
 	_, _ = fmt.Fprintf(w, "  url:       %s\n", fallback(app.URL))
 }
 
-func renderInspectRuntime(w io.Writer, runtime inspectRuntimeSummary) {
+func renderInspectRuntime(w io.Writer, runtime inspectRuntimeSummary, servesNoRequests bool) {
 	framework := fallback(runtime.Framework)
 	if runtime.FrameworkVersion != "" {
 		framework += " " + runtime.FrameworkVersion
+	}
+	if servesNoRequests {
+		_, _ = fmt.Fprintf(w, "  runtime:   %s · %s\n", framework, fallback(runtime.Source))
+		_, _ = fmt.Fprintf(w, "  start:     %s\n", fallback(runtime.Entrypoint))
+		return
 	}
 	_, _ = fmt.Fprintf(w, "  runtime:   %s · port %s · %s\n", framework, intOrDash(runtime.Port), fallback(runtime.Source))
 	_, _ = fmt.Fprintf(w, "  start:     %s\n", fallback(runtime.Entrypoint))
@@ -813,13 +828,16 @@ func inspectScalingTargetLabel(resources inspectResourceSummary) string {
 }
 
 func renderInspectSignals(w io.Writer, summary inspectSummary) {
-	if summary.API.Available {
+	switch {
+	case inspectServesNoRequests(summary.App):
+		// A worker or job has no HTTP API to describe.
+	case summary.API.Available:
 		discovered := ""
 		if summary.API.Source == "auto" {
 			discovered = " · discovered from traffic"
 		}
 		_, _ = fmt.Fprintf(w, "  api:       OpenAPI %s · %d paths · %d endpoints%s\n", fallback(summary.API.OpenAPIVersion), summary.API.Paths, summary.API.Endpoints, discovered)
-	} else {
+	default:
 		_, _ = fmt.Fprintln(w, "  api:       unavailable")
 	}
 	if summary.Data.Available {

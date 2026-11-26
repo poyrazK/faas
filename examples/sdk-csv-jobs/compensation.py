@@ -29,7 +29,15 @@ def csv_compensation(
     )
     worker = compensation_contracts(business, "csv_cleanup")["worker"]
     original = JobContract(
-        json.loads(Path(__file__).with_name("pipeline-contract.json").read_text())
+        json.loads(
+            Path(__file__)
+            .with_name(
+                "reviewed-pipeline-contract.json"
+                if os.environ.get("GREGALE_REVIEWED_PIPELINE") == "1"
+                else "pipeline-contract.json"
+            )
+            .read_text()
+        )
     )
     stages = {}
     for step, file in (

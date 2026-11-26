@@ -69,5 +69,9 @@ export type FlagExperimentCreateRequest = {
    * A percentile metric's percentile.
    */
   percentile?: number;
+  /**
+   * Notification channels for the experiment's decisions and problems; omitted uses the environment's. Needs the flag_notifications release.
+   */
+  notify_channel_ids?: Array<string>;
 };
 

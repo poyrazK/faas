@@ -194,6 +194,7 @@ func TestRuntimeCommandCronTimingEvidence(t *testing.T) {
 	}
 }
 func TestRuntimeCommandCronTimingProfilesAndBounds(t *testing.T) {
+	lengthenRuntimeCollectionBudget(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, role := range RuntimeBuildRoles() {
 		f, s, r := runtimeFixture(role, now, 1)

@@ -5,6 +5,7 @@ import { bounds, check, options, LoadFailure } from '../load/contracts.mjs'
 import { parallel, verifyLoad } from '../load/runner.mjs'
 import { hostedBounds, hostedProfile } from './load-contracts.mjs'
 import { requireValue } from './checks.mjs'
+import { readinessPath } from '../../../cmd/gregale/templates/data-api/config.mjs'
 
 async function sourceHash(directories) {
   const hash = createHash('sha256')
@@ -148,7 +149,7 @@ export class HostedFixture {
       return true
     }
     if (action === 'healthy') {
-      const response = await p.publicFetch(this.url + '/healthz', { signal })
+      const response = await p.publicFetch(this.url + readinessPath, { signal })
       const bounded = await boundedResponse(response, 8192), value = await bounded.json()
       check(response.status === 200 && value.ready === true, 'engine_restart_failed'); return true
     }

@@ -119,6 +119,7 @@ type ManagedPostgresDatabase struct {
 	ScaleToZero             bool                   `json:"scale_to_zero"`
 	SuspendTimeoutSeconds   int64                  `json:"suspend_timeout_seconds,omitempty"` // scale-to-zero only: idle seconds before suspend
 	SuspendTimeoutCustom    bool                   `json:"suspend_timeout_custom,omitempty"`  // the database's own value, not the default
+	WakeWithApp             bool                   `json:"wake_with_app,omitempty"`           // starts when a bound app wakes (ADR-20261125105038)
 	StorageLimitBytes       int64                  `json:"storage_limit_bytes"`
 	RestoreWindowSeconds    int64                  `json:"restore_window_seconds"`
 	RestoreSourceDatabaseID string                 `json:"restore_source_database_id,omitempty"`
@@ -270,6 +271,10 @@ type ManagedPostgresUsageResponse struct {
 	// compute_ceiling or inactive, as on each database. Egress holds one
 	// database at a time and is reported on that database only.
 	Hold string `json:"hold,omitempty"`
+	// Databases splits the month's compute by database, most first, with
+	// each one's recorded starts and awake time (ADR-20261125231222);
+	// omitted when it could not be read.
+	Databases []ManagedPostgresDatabaseUsage `json:"databases,omitempty"`
 }
 
 // Why the platform holds a managed database (ManagedPostgresDatabase.Hold).

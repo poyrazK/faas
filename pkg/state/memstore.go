@@ -653,8 +653,10 @@ type MemStore struct {
 	// apiConsumers is keyed by APIConsumer.ID. A separate map keeps the
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
+	apiConsumerStripeLinks               map[string]map[stripeConsumerScope]string
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
 	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
+	apiConsumerIdentities                map[string]APIConsumerIdentity            // ADR-20261124094745, by identity ID
 	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
 	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
 	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
@@ -664,8 +666,12 @@ type MemStore struct {
 	apiConsumerBillingPolicies           map[string]APIConsumerBillingPolicy       // ADR-1315, by app
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
-	flagEvents                           *memFlagEvents                 // ADR 20261115163113, lazily made
-	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
+	flagEvents                           *memFlagEvents                      // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow      // ADR-20261122190000, by ID, lazily made
+	flagNotificationSettings             map[string]FlagNotificationSettings // ADR-20261125085913, by environment ID, lazily made
+	flagNotifications                    []FlagNotification                  // ADR-20261125085913
+	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
+	routeSplits                          map[string]RouteSplit               // ADR-20261121170000 amendment 2, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -1174,7 +1180,8 @@ type MemStore struct {
 	nextExecutionEventID        int64
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
-	appTasks map[string]AppTask
+	appTasks                    map[string]AppTask
+	dataAPIInspectionExecutions map[string]DataAPIInspectionExecution
 	// appTaskNetworks mirrors app_task_networks (ADR-20261118070000), keyed
 	// by task id; created on first use.
 	appTaskNetworks map[string]appTaskNetwork
@@ -1388,10 +1395,11 @@ type MemStore struct {
 	statementInvoiceExports map[string]StatementInvoiceExport
 	// billingRuns, billingRunItems (run ID → item key) and
 	// billingRunSchedules (account ID) back billing runs (ADR-1503).
-	billingRuns            map[string]BillingRun
-	billingRunItems        map[string]map[string]BillingRunItem
-	billingRunSchedules    map[string]BillingRunSchedule
-	apiConsumerUsageEvents map[string]usageEventIdentity
+	billingRuns             map[string]BillingRun
+	billingRunItems         map[string]map[string]BillingRunItem
+	billingRunUsageRechecks map[string]bool
+	billingRunSchedules     map[string]BillingRunSchedule
+	apiConsumerUsageEvents  map[string]usageEventIdentity
 	// apiConsumerRateCards is keyed by card ID. The production table is
 	// append-only and unique on (app_id, effective_from); MemStore mirrors
 	// both invariants for handler tests.
@@ -1980,6 +1988,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		workflowEvents:                  map[string][]WorkflowEvent{},
 		workflowEventApps:               map[string]string{},
 		appTasks:                        map[string]AppTask{},
+		dataAPIInspectionExecutions:     map[string]DataAPIInspectionExecution{},
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
 		runtimeConfigs:                  map[string]RuntimeConfig{},
@@ -8262,6 +8271,7 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	for key, task := range m.appTasks {
 		if task.AppID == id {
 			delete(m.appTasks, key)
+			delete(m.dataAPIInspectionExecutions, key)
 		}
 	}
 	for key, fork := range m.appForks {
@@ -21849,8 +21859,8 @@ func (m *MemStore) SetOverageCapCentsForTest(accountID string, cents int64) {
 	m.overageCapCents[accountID] = cents
 }
 
-// SetClockForTest replaces the wall-clock source
-// CurrentMonthOverageCents uses to compute the UTC month-start
+// SetClockForTest replaces the clock used by time-sensitive MemStore paths.
+// CurrentMonthOverageCents uses it to compute the UTC month-start
 // cutoff. Tests that pin a fixture time for AppendUsage (so the
 // derived overage is computable at a deterministic monthly bucket)
 // MUST also pin the same fixture here, otherwise real wall-clock
@@ -23246,7 +23256,9 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	if row.ConsumedAt != nil {
+	// PgStore's claim sets status = 'consumed' before the CLI exchanges the
+	// code, so a claimed row is consumed here too.
+	if row.ConsumedAt != nil || row.AccountID != "" {
 		return api.CliAuthStatusConsumed, row.AccountID, nil
 	}
 	return api.CliAuthStatusPending, row.AccountID, nil
@@ -25226,6 +25238,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for taskID, task := range m.appTasks {
 		if task.AccountID == id && personalApps[task.AppID] {
 			delete(m.appTasks, taskID)
+			delete(m.dataAPIInspectionExecutions, taskID)
 		}
 	}
 	// Snapshots + builds are keyed by deployment_id; resolve the
@@ -25249,6 +25262,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for cid, c := range m.apiConsumers {
 		if c.AccountID == id {
 			delete(m.apiConsumers, cid)
+			delete(m.apiConsumerStripeLinks, cid)
 			delete(m.platformTenantByConsumer, cid)
 		}
 	}
@@ -29383,7 +29397,7 @@ func (m *MemStore) ListConsumerKeysForApp(ctx context.Context, accountID, appID 
 	defer m.mu.Unlock()
 	var out []ConsumerKey
 	for _, k := range m.consumerKeys {
-		if k.AccountID == accountID && k.AppID == appID {
+		if k.AccountID == accountID && k.AppID == appID && k.EnvironmentID == "" {
 			out = append(out, k)
 		}
 	}
@@ -29450,7 +29464,7 @@ func (m *MemStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, app
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, k := range m.consumerKeys {
-		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix {
+		if k.AccountID == accountID && k.AppID == appID && k.Prefix == prefix && k.EnvironmentID == "" {
 			if tenantID := m.platformTenantByConsumer[k.ConsumerID]; tenantID != "" {
 				if tenant, ok := m.platformTenants[tenantID]; ok && tenant.Status == PlatformTenantSuspended {
 					return ConsumerKey{}, ErrNotFound

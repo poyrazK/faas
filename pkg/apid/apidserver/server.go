@@ -1848,6 +1848,13 @@ func newServerWithDeps(
 	s.consumerCredits.Host = consumerCreditsHost{s}
 	s.consumerControls.Host = consumerControlsHost{s}
 	s.consumerSignup.Host = consumerSignupHost{s}
+	// Upgrade links are signed with a key derived from the session binding
+	// key (ADR-20261124094745); without it no link is minted.
+	if s.sessions != nil {
+		if key, err := consumersignup.UpgradeKey(s.sessions.BindingKey()); err == nil {
+			s.consumerSignup.UpgradeKey = key
+		}
+	}
 	s.claim.Host = claimHost{s}
 	s.tenantPlans.Host = tenantPlansHost{s}
 	s.serviceMap.Host = serviceMapHost{s}
@@ -2101,6 +2108,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresComputePolicyChange))))
 	// A database's own scale-to-zero suspend timeout; idempotent by value.
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/suspend-timeout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresSuspendTimeout)))))
+	// Whether a database starts when a bound app wakes (ADR-20261125105038).
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/wake-with-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresWakeWithApp)))))
+	// Why a database was awake (ADR-20261125231222).
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresActivity))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresResize(managedpg.Resizes.Post))))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresResize(managedpg.Resizes.Get)))))
 	// ADR-1027 in-place major upgrades, served by pkg/apid/managedpg: hidden
@@ -2112,6 +2123,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getDatabaseStatus))))
 	// ADR-20261117215858 §2: read-only SQL as the database's agent query login.
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/query", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDataReadSurface...)(s.queryManagedPostgresDatabase))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/data-api-catalog-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDataReadSurface...)(s.previewManagedPostgresDataAPICatalog))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
@@ -2228,6 +2240,8 @@ func (s *server) handler() http.Handler {
 	// before app lookup so a disabled host reveals no app existence. Public
 	// admission is manual-only; release tasks remain an internal consumer.
 	mux.HandleFunc("GET /v1/apps/{slug}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTasks))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-api-inspections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDataAPIInspection)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-api-inspections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDataAPIInspection))))
 	mux.HandleFunc("POST /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireVerifiedEmail(s.requireScope(api.ScopesDeployWriteSurface...)(s.createMigrationCutover)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listMigrationCutovers))))
 	mux.HandleFunc("GET /v1/apps/{slug}/migration-cutovers/{plan}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMigrationCutover))))
@@ -2526,6 +2540,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/versions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagVersions)))
 	// ADR 20261114150000 §4: owner, expiry, staleness and evaluation per flag.
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFeatureFlagLifecycle)))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagNotifications)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/flags/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setFlagNotifications))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFlagExperiments)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperiment)))
@@ -2639,8 +2655,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.statementInvoices.ExportPlatformTenantStatement)))))))
 	mux.HandleFunc("GET /v1/account/billing-connections/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.statementInvoices.GetBillingConnection))))
 	mux.HandleFunc("PUT /v1/account/billing-connections/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.statementInvoices.PutBillingConnection))))
+	mux.HandleFunc("PUT /v1/account/billing-connections/stripe/setup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.statementInvoices.PutStripeSetup))))
 	mux.HandleFunc("DELETE /v1/account/billing-connections/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.statementInvoices.DeleteBillingConnection))))
 	mux.HandleFunc("GET /v1/account/statement-invoices", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.statementInvoices.ListInvoices)))) // ADR-1504
+	mux.HandleFunc("POST /v1/account/statement-invoices/{statement_id}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.statementInvoices.RefreshStripePayment))))
+	mux.HandleFunc("GET /v1/account/statement-invoices/{statement_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.statementInvoices.ReviewStripeInvoiceSend))))
+	mux.HandleFunc("POST /v1/account/statement-invoices/{statement_id}/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.statementInvoices.SendReviewedStripeInvoice))))))
 	// Month-end billing runs (ADR-1503).
 	// Billing runs, their schedule and statement invoice exports can invoice
 	// or charge the customer's own end customers through the connected
@@ -2651,9 +2671,17 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/billing-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.ListRuns))))
 	mux.HandleFunc("GET /v1/account/billing-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.GetRun))))
 	mux.HandleFunc("GET /v1/account/billing-runs/{id}/items", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.ListRunItems))))
+	mux.HandleFunc("GET /v1/account/billing-runs/{id}/usage-holds/{consumer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.GetUsageHold))))
+	mux.HandleFunc("POST /v1/account/billing-runs/{id}/usage-holds/{consumer_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.billingRuns.RecheckUsageHold))))))
+	mux.HandleFunc("GET /v1/account/billing-runs/{id}/draft-exports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.ReviewDraftExports))))
+	mux.HandleFunc("GET /v1/account/billing-runs/{id}/collections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.Collections))))
+	mux.HandleFunc("POST /v1/account/billing-runs/{id}/draft-exports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.billingRuns.ApproveDraftExport))))))
+	mux.HandleFunc("PUT /v1/account/billing-runs/{id}/draft-exports/{consumer_id}/stripe-customer", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.billingRuns.LinkStripeCustomer))))))
 	mux.HandleFunc("GET /v1/account/billing-run-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.billingRuns.GetSchedule))))
 	mux.HandleFunc("PUT /v1/account/billing-run-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.billingRuns.PutSchedule))))))
 	mux.HandleFunc("DELETE /v1/account/billing-run-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.billingRuns.DeleteSchedule))))
+	mux.HandleFunc("PUT /v1/account/billing-run-schedule/draft", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.billingRuns.PutDraftSchedule))))))
+	mux.HandleFunc("DELETE /v1/account/billing-run-schedule/draft", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.billingRuns.DeleteDraftSchedule))))
 	// Downstream tenants get a separate route namespace and an explicit
 	// special-scope gate; account keys cannot use these routes.
 	// ADR-521: customer Operations uses a distinct tenant-owned namespace.
@@ -2848,9 +2876,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.PutSettings))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-signup", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteSettings))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-signups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.List))))
+	// ADR-20261126082046: a sold MCP server's seller stats.
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMCPSellerStats))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumer-identities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.ListIdentities))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-identities/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteIdentity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPIConsumerUsageAlerts))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage/quote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageQuote))))
+	mux.HandleFunc("GET /v1/apps/{slug}/monetization-funnel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIMonetizationFunnel))))
+	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/billing-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerBillingProgress))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-completeness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPIConsumerUsageCompleteness))))
 	// Durable API consumer usage statements snapshot the quote for an explicit
 	// period. Creation is naturally idempotent on (consumer, period); finalize
@@ -2866,6 +2900,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.claimAPIConsumerUsageStatement)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.statementInvoices.GetAppConsumerStatementExport))))
 	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.statementInvoices.ExportAppConsumerStatement)))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.idempotent(s.statementInvoices.ExportAppConsumerStatementDraft)))))))
 	// Issue #273 / ADR-042 — per-app metrics endpoint. Read-only,
 	// no MFA required (the primary caller is an API key with
 	// ScopesReadSurface). Mirrors getApp's IDOR-safe loadApp so a
@@ -3931,6 +3966,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/platform-tenant-self/workflows/runs/{id}/callbacks", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsRead)(s.listPlatformTenantSelfWorkflowCallbacks)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.completePlatformTenantSelfWorkflowCallback)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflows/runs/{id}/events", s.authLimited(s.requireScope(api.ScopePlatformTenantInvocationsManage)(s.idempotent(s.injectPlatformTenantSelfWorkflowEvent))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflows/run-starts/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.lookupWorkflowRunStart))))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflows/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkflowRuns))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewUnstartedWorkflowRunCancellations))))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflows/runs:cancel-queued", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelUnstartedWorkflowRuns))))
@@ -4725,6 +4761,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-customers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteCustomerUsage)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-resources", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteResources)))
+	// ADR-20261121170000 amendment 2: apply, read and undo a route split.
+	mux.HandleFunc("POST /v1/apps/{slug}/route-splits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createRouteSplit)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-splits", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listRouteSplits)))
+	mux.HandleFunc("GET /v1/apps/{slug}/route-splits/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getRouteSplit)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/route-splits/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.undoRouteSplit))))
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-tool-insights", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getMCPToolInsights)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
@@ -5007,6 +5048,9 @@ func (s *server) handler() http.Handler {
 	// Gateway traffic: status codes, platform errors, wake queues (ADR-20261124093000).
 	mux.HandleFunc("GET /v1/admin/obs/gateway-traffic",
 		s.authLimited(s.requireOperatorSessionRead(s.obsGatewayTraffic)))
+	// Disk pressure: host filesystems, jail tmpfs, journals, guest disks (ADR-20261124150000).
+	mux.HandleFunc("GET /v1/admin/obs/disk-pressure",
+		s.authLimited(s.requireOperatorSessionRead(s.obsDiskPressure)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
@@ -6248,6 +6292,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/page", s.consumerSignup.Page)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.js", s.consumerSignup.Script)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.css", s.consumerSignup.Style)
+	// Upgrade links (ADR-20261124094745): the link's signed token is the
+	// only credential, and opens only the consumer's plan change.
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade", s.consumerSignup.UpgradePage)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade.js", s.consumerSignup.UpgradeScript)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade/plans", s.consumerSignup.Upgrade)
+	mux.HandleFunc("POST /v1/consumer-signup/{slug}/upgrade", s.consumerSignup.StartUpgrade)
+	mux.HandleFunc("POST /v1/consumer-signup/{slug}/upgrade/complete", s.consumerSignup.CompleteUpgrade)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))

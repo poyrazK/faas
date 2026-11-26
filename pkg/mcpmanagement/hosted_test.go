@@ -135,3 +135,88 @@ func TestHostedBridgeCountsOnlyUsableGrantsPerAccount(t *testing.T) {
 		t.Fatal("capacity does not follow hosted mode")
 	}
 }
+
+func TestHostedBridgeDiscoveryMetadataCORS(t *testing.T) {
+	backend := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(backend.Close)
+	var handler http.Handler
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, r) }))
+	t.Cleanup(server.Close)
+	resource := server.URL + "/mcp"
+	opts := HTTPOptions{APIBase: backend.URL, ResourceURL: resource, RedirectURIs: []string{testRedirect}, Hosted: true}
+	var err error
+	if handler, err = NewHTTPHandler(opts); err != nil {
+		t.Fatal(err)
+	}
+	client := server.Client()
+	const foreignOrigin = "https://inspector.example"
+
+	for _, path := range []string{
+		"/.well-known/oauth-protected-resource/mcp",
+		"/.well-known/oauth-authorization-server/mcp",
+		"/.well-known/openid-configuration/mcp",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
+			req, err := http.NewRequest(method, server.URL+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Origin", foreignOrigin)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			wantStatus := http.StatusOK
+			if method == http.MethodOptions {
+				wantStatus = http.StatusNoContent
+			}
+			if resp.StatusCode != wantStatus {
+				t.Fatalf("%s %s status=%d want=%d", method, path, resp.StatusCode, wantStatus)
+			}
+			if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
+				t.Fatalf("%s %s missing ACAO=*: %v", method, path, resp.Header)
+			}
+			if resp.Header.Get("Access-Control-Allow-Methods") != "GET, HEAD, OPTIONS" {
+				t.Fatalf("%s %s missing ACAM: %v", method, path, resp.Header)
+			}
+			if resp.Header.Get("Access-Control-Allow-Credentials") != "" {
+				t.Fatalf("%s %s must not set ACAC", method, path)
+			}
+		}
+	}
+
+	// Non-discovery endpoints still enforce exact same-origin / no-Origin policy.
+	for _, target := range []string{resource, resource + "/oauth/register"} {
+		req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", foreignOrigin)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("POST %s cross-origin=%d want=403", target, resp.StatusCode)
+		}
+	}
+
+	// DNS rebinding Host check still applies to metadata routes.
+	badHostReq, err := http.NewRequest(http.MethodGet, server.URL+"/.well-known/oauth-protected-resource/mcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badHostReq.Host = "attacker.example"
+	badHostReq.Header.Set("Origin", foreignOrigin)
+	badHostResp, err := client.Do(badHostReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = badHostResp.Body.Close()
+	if badHostResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unrecognized Host status=%d want=403", badHostResp.StatusCode)
+	}
+}

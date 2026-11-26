@@ -11,12 +11,14 @@ import (
 )
 
 const apiConsumerSignupSettingsCols = `app_id::text, account_id::text, enabled, provider, plan_ids::text[], key_scopes,
-	display_name, terms_url, return_url, trial_days, daily_limit, customer_plan_changes, customer_closing, created_at, updated_at`
+	display_name, terms_url, return_url, trial_days, daily_limit, customer_plan_changes, customer_closing,
+	coalesce(free_plan_id::text, ''), oauth_consumers, account_tools, created_at, updated_at`
 
 func scanAPIConsumerSignupSettings(row pgx.Row) (APIConsumerSignupSettings, error) {
 	var s APIConsumerSignupSettings
 	err := row.Scan(&s.AppID, &s.AccountID, &s.Enabled, &s.Provider, &s.PlanIDs, &s.KeyScopes, &s.DisplayName, &s.TermsURL,
-		&s.ReturnURL, &s.TrialDays, &s.DailyLimit, &s.CustomerPlanChanges, &s.CustomerClosing, &s.CreatedAt, &s.UpdatedAt)
+		&s.ReturnURL, &s.TrialDays, &s.DailyLimit, &s.CustomerPlanChanges, &s.CustomerClosing, &s.FreePlanID, &s.OAuthConsumers,
+		&s.AccountTools, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return APIConsumerSignupSettings{}, ErrNotFound
 	}
@@ -53,16 +55,19 @@ func (s *PgStore) PutAPIConsumerSignupSettings(ctx context.Context, in APIConsum
 	in = cloneAPIConsumerSignupSettings(in)
 	out, err := scanAPIConsumerSignupSettings(s.pool.QueryRow(ctx, `insert into api_consumer_signup_settings
 			(app_id, account_id, enabled, provider, plan_ids, key_scopes, display_name, terms_url, return_url, trial_days, daily_limit,
-			 customer_plan_changes, customer_closing)
-		select a.id, a.account_id, $3, $4, $5::uuid[], $6, $7, $8, $9, $10, $11, $12, $13 from apps a
+			 customer_plan_changes, customer_closing, free_plan_id, oauth_consumers, account_tools)
+		select a.id, a.account_id, $3, $4, $5::uuid[], $6, $7, $8, $9, $10, $11, $12, $13, nullif($14::text, '')::uuid, $15, $16 from apps a
 		 where a.id = $1::uuid and a.account_id = $2::uuid
 		on conflict (app_id) do update
 		   set enabled = excluded.enabled, provider = excluded.provider, plan_ids = excluded.plan_ids, key_scopes = excluded.key_scopes,
 		       display_name = excluded.display_name, terms_url = excluded.terms_url, return_url = excluded.return_url,
 		       trial_days = excluded.trial_days, daily_limit = excluded.daily_limit,
-		       customer_plan_changes = excluded.customer_plan_changes, customer_closing = excluded.customer_closing, updated_at = now()
+		       customer_plan_changes = excluded.customer_plan_changes, customer_closing = excluded.customer_closing,
+		       free_plan_id = excluded.free_plan_id, oauth_consumers = excluded.oauth_consumers,
+		       account_tools = excluded.account_tools, updated_at = now()
 		returning `+apiConsumerSignupSettingsCols, in.AppID, in.AccountID, in.Enabled, in.Provider, in.PlanIDs, in.KeyScopes,
-		in.DisplayName, in.TermsURL, in.ReturnURL, in.TrialDays, in.DailyLimit, in.CustomerPlanChanges, in.CustomerClosing))
+		in.DisplayName, in.TermsURL, in.ReturnURL, in.TrialDays, in.DailyLimit, in.CustomerPlanChanges, in.CustomerClosing,
+		in.FreePlanID, in.OAuthConsumers, in.AccountTools))
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return APIConsumerSignupSettings{}, fmt.Errorf("put consumer sign-up settings: %w", err)
 	}
@@ -197,11 +202,20 @@ func (s *PgStore) CompleteAPIConsumerSignup(ctx context.Context, in APIConsumerS
 		}
 		return c, false, err
 	}
-	if signup.ProviderCustomerID == "" {
-		return APIConsumer{}, false, ErrConflict
+	ref := signup.ProviderCustomerID
+	if ref == "" {
+		var freePlanID string
+		err := tx.QueryRow(ctx, `select coalesce(free_plan_id::text, '') from api_consumer_signup_settings where app_id = $1::uuid`, signup.AppID).Scan(&freePlanID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return APIConsumer{}, false, fmt.Errorf("get consumer sign-up free plan: %w", err)
+		}
+		if !in.Free || signup.PlanID == "" || freePlanID != signup.PlanID {
+			return APIConsumer{}, false, ErrConflict
+		}
+		ref = apiConsumerFreeSignupRef(signup.ID)
 	}
 	c, err := scanAPIConsumerRow(tx.QueryRow(ctx, `insert into api_consumers (account_id, app_id, external_ref, name)
-		values ($1::uuid, $2::uuid, $3, $4) returning `+apiConsumerSelectCols, signup.AccountID, signup.AppID, signup.ProviderCustomerID, signup.Name))
+		values ($1::uuid, $2::uuid, $3, $4) returning `+apiConsumerSelectCols, signup.AccountID, signup.AppID, ref, signup.Name))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return APIConsumer{}, false, ErrConflict

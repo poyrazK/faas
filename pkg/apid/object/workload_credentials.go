@@ -148,19 +148,28 @@ func (s *Service) IssueWorkloadCredential(ctx context.Context, acct state.Accoun
 	if err := store.CreateObjectWorkloadCredential(ctx, credential); err != nil {
 		return api.ObjectWorkloadCredentialResponse{}, err
 	}
+	// The audit names the caller instance and the scope it received, never
+	// the secret: a key seen in a bucket's access log traces back to here.
+	s.Host.EmitAudit(ctx, "object_storage.workload_credential_issued", &acct.ID, map[string]any{
+		"actor_id": caller.ID, "caller_app_id": caller.ID, "instance_id": instanceID, "bucket_id": bucket.ID,
+		"credential_id": credential.ID, "access_key_id": accessKeyID, "permission": permission, "key_prefix": keyPrefix, "expires_at": expires,
+	})
 	return api.ObjectWorkloadCredentialResponse{
 		AccessKeyID: accessKeyID, SecretAccessKey: secretAccessKey, Token: credential.ID, Expiration: expires,
 		Bucket: bucket.Name, KeyPrefix: keyPrefix, Endpoint: s.Host.ObjectStorage().PublicEndpoint, Region: s.Host.ObjectStorage().PublicRegion,
 	}, nil
 }
 
-// RevokeUngrantedWorkloadCredentials deletes caller's live workload
-// credentials that its current `uses:` no longer grants: a bucket it dropped,
-// or a grant whose access or prefix changed. Credentials the grants still
-// cover keep working, so a guest's cached credential survives an unrelated
-// manifest change. Resolution stops honouring a deleted app or a stopped
-// instance by itself; this covers the grant edits resolution cannot see.
-func (s *Service) RevokeUngrantedWorkloadCredentials(ctx context.Context, acct state.Account, caller state.App) error {
+// ReconcileWorkloadCredentials brings caller's live workload credentials in
+// line with its current `uses:`. A credential for a bucket the grants no
+// longer name is deleted. One whose grant's access or prefix changed is moved
+// to the new scope rather than revoked: the guest's endpoint and the app's
+// AWS SDK each cache a credential until shortly before it expires, so a
+// revoked key would fail every call for up to an hour, while a rescoped one
+// keeps serving what the grant still allows and is refused the rest within
+// the gateway's resolution cache. Resolution stops honouring a deleted app or
+// a stopped instance by itself; this covers the grant edits it cannot see.
+func (s *Service) ReconcileWorkloadCredentials(ctx context.Context, acct state.Account, caller state.App) error {
 	store, ok := s.Host.Store().(state.ObjectWorkloadCredentialStore)
 	if !ok {
 		return nil
@@ -169,8 +178,8 @@ func (s *Service) RevokeUngrantedWorkloadCredentials(ctx context.Context, acct s
 	if err != nil || len(live) == 0 {
 		return err
 	}
-	type covered struct{ bucketID, access, prefix string }
-	keep := map[covered]bool{}
+	type scope struct{ access, prefix string }
+	granted := map[string]scope{} // bucket ID -> current grant
 	if caller.Status != state.AppDeleted && caller.Manifest.Uses != nil {
 		for _, grant := range caller.Manifest.Uses.Normalized().Buckets {
 			_, bucket, err := s.ResolveWorkloadGrant(ctx, acct, caller, grant.Bucket)
@@ -178,21 +187,42 @@ func (s *Service) RevokeUngrantedWorkloadCredentials(ctx context.Context, acct s
 				continue
 			}
 			if err != nil {
-				// Keep everything rather than revoke on a transient failure;
+				// Change nothing rather than revoke on a transient failure;
 				// the next apply (or expiry) catches up.
 				return err
 			}
-			keep[covered{bucket.ID, grant.Access, grant.Prefix}] = true
+			if _, seen := granted[bucket.ID]; !seen {
+				granted[bucket.ID] = scope{grant.Access, grant.Prefix}
+			}
 		}
 	}
 	var revoke []string
+	rescope := map[scope][]string{}
 	for _, c := range live {
-		if !keep[covered{c.BucketID, c.Permission, c.KeyPrefix}] {
+		want, ok := granted[c.BucketID]
+		switch {
+		case !ok:
 			revoke = append(revoke, c.ID)
+		case want != scope{c.Permission, c.KeyPrefix}:
+			rescope[want] = append(rescope[want], c.ID)
 		}
 	}
-	_, err = store.DeleteObjectWorkloadCredentials(ctx, caller.ID, revoke)
-	return err
+	rescoped := 0
+	for to, ids := range rescope {
+		if _, err := store.RegrantObjectWorkloadCredentials(ctx, caller.ID, ids, to.access, to.prefix); err != nil {
+			return err
+		}
+		rescoped += len(ids)
+	}
+	if _, err := store.DeleteObjectWorkloadCredentials(ctx, caller.ID, revoke); err != nil {
+		return err
+	}
+	if rescoped > 0 || len(revoke) > 0 {
+		s.Host.EmitAudit(ctx, "object_storage.workload_credentials_reconciled", &acct.ID, map[string]any{
+			"actor_id": caller.ID, "caller_app_id": caller.ID, "rescoped": rescoped, "revoked": len(revoke),
+		})
+	}
+	return nil
 }
 
 // WorkloadCredentialSweepInterval is how often apid deletes expired workload

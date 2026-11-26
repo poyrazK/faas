@@ -1,3 +1,5 @@
+// adr: 20261105090226 — Ordinary previews inherit production consumer auth.
+// adr: 120 — Sandbox credentials belong to their own app.
 package gateway
 
 import (

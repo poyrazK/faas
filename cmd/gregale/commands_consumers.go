@@ -62,14 +62,17 @@ var consumerVerbPositionals = map[string][]string{
 	"signup-set":            {"slug"},
 	"signup-delete":         {"slug"},
 	"signups":               {"slug"},
+	"identities":            {"slug"},
+	"identity-delete":       {"slug", "identity-id"},
 }
 
-const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups|identities|identity-delete> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
 type consumerFlags struct {
 	externalRef, name, scopes, expires   string
+	environment                          string
 	since, until                         string
 	currency, effectiveFrom              string
 	priceMillicents, includedUnits       int64
@@ -98,10 +101,18 @@ type consumerFlags struct {
 	dailyLimit                           int
 	disabled                             bool
 	customerPlanChanges, customerClosing bool
+	freePlan                             string
+	oauthConsumers                       bool
+	accountTools                         bool
 }
 
 var consumerVerbFlags = map[string][]string{
-	"create":             {"external-ref", "name", "trial-days"},
+	// Revokes do not prompt; --yes, which scripts pass to every removal,
+	// failed as an unknown flag (prod hunt r54).
+	"revoke":             {"yes"},
+	"key-revoke":         {"yes"},
+	"list":               {"environment"},
+	"create":             {"external-ref", "name", "trial-days", "environment"},
 	"trial-set":          {"days", "ends-at"},
 	"billing-policy-set": {"block-overdue-after-days"},
 	"key-create":         {"name", "scopes", "expires"},
@@ -117,7 +128,7 @@ var consumerVerbFlags = map[string][]string{
 	"statement-export":   {"customer", "provider"},
 	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
 	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
-	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing"},
+	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled", "customer-plan-changes", "customer-closing", "free-plan", "oauth-consumers", "account-tools"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -136,11 +147,13 @@ func cmdConsumers(args []string) int {
 	fs := newFlagSet("consumers "+verb, flag.ContinueOnError)
 	var f consumerFlags
 	fs.StringVar(&f.externalRef, "external-ref", "", "stable consumer reference (create)")
+	fs.StringVar(&f.environment, "environment", "", "project environment whose consumers to list or create; omitted is production (list, create)")
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
 	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin, billing, mcp:<scope> (key-create)")
 	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
+	_ = fs.Bool("yes", false, "accepted for scripts; revoke does not prompt (revoke, key-revoke)")
 	if monetizationCLI() {
 		registerConsumerMonetizationFlags(fs, &f)
 	}
@@ -203,6 +216,9 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.BoolVar(&f.disabled, "disabled", false, "keep the settings but stop taking sign-ups (signup-set)")
 	fs.BoolVar(&f.customerPlanChanges, "customer-plan-changes", false, "let customers switch between the offered plans with their own key (signup-set)")
 	fs.BoolVar(&f.customerClosing, "customer-closing", false, "let customers close their account with their own key (signup-set)")
+	fs.StringVar(&f.freePlan, "free-plan", "", "offered plan that charges nothing; joining it needs no card (signup-set)")
+	fs.BoolVar(&f.oauthConsumers, "oauth-consumers", false, "people signed in through the app's MCP oauth-proxy issuer become consumers on --free-plan (signup-set)")
+	fs.BoolVar(&f.accountTools, "account-tools", false, "add account_usage and account_plans tools to the MCP server for --oauth-consumers callers (signup-set)")
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {
@@ -519,9 +535,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	}
 	switch verb {
 	case "list":
-		return client.ListAPIConsumers(ctx, slug)
+		return client.ListAPIConsumersInEnvironment(ctx, slug, f.environment)
 	case "create":
-		return client.CreateAPIConsumer(ctx, slug, request.(api.CreateAPIConsumerRequest))
+		return client.CreateAPIConsumerInEnvironment(ctx, slug, f.environment, request.(api.CreateAPIConsumerRequest))
 	case "info":
 		return client.GetAPIConsumer(ctx, slug, args[1])
 	case "revoke":

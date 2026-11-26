@@ -32,6 +32,9 @@ type Dialer func(ctx context.Context, network, address string) (net.Conn, error)
 type Sessions struct {
 	GuestIP string
 	Dial    Dialer
+	// Counters, when set, counts each session from its hello to its end
+	// (P1d). Nil counts nothing.
+	Counters *Counters
 }
 
 // Serve handles one session whose hello is next on r, then closes conn.
@@ -42,6 +45,7 @@ func (s *Sessions) Serve(ctx context.Context, conn net.Conn, r *bufio.Reader) {
 	if err != nil {
 		return
 	}
+	defer s.Counters.BeginSession()()
 	_ = conn.SetReadDeadline(time.Time{})
 	network := "tcp"
 	if kind == KindUDP {

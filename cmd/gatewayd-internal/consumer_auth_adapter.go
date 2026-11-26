@@ -26,7 +26,17 @@ func newConsumerAuthStore(store *state.PgStore) *consumerAuthStore {
 }
 
 func (s *consumerAuthStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appID, prefix string) (gateway.ConsumerAuthKey, error) {
-	key, err := s.store.ConsumerKeyByAppAndPrefix(ctx, accountID, appID, prefix)
+	return consumerAuthKeyOf(s.store.ConsumerKeyByAppAndPrefix(ctx, accountID, appID, prefix))
+}
+
+// ConsumerKeyForEnvironment answers a stage host with the stage's own keys,
+// or production's when the stage has no consumers (ADR-20261104120000
+// amendment 2026-11-22).
+func (s *consumerAuthStore) ConsumerKeyForEnvironment(ctx context.Context, accountID, appID, environmentID, prefix string) (gateway.ConsumerAuthKey, error) {
+	return consumerAuthKeyOf(s.store.ConsumerKeyForEnvironment(ctx, accountID, appID, environmentID, prefix))
+}
+
+func consumerAuthKeyOf(key state.ConsumerKey, err error) (gateway.ConsumerAuthKey, error) {
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return gateway.ConsumerAuthKey{}, gateway.ErrConsumerAuthNotFound
@@ -43,6 +53,8 @@ func (s *consumerAuthStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accou
 		Scopes:     append([]string(nil), key.Scopes...),
 		ExpiresAt:  key.ExpiresAt,
 		RevokedAt:  key.RevokedAt,
+		// A stage key's consumer is not billed (ADR-20261104120000).
+		EnvironmentID: key.EnvironmentID,
 	}, nil
 }
 
@@ -69,7 +81,10 @@ func (s *consumerAuthStore) TouchConsumerKeyLastUsed(ctx context.Context, keyID 
 	return s.store.TouchConsumerKeyLastUsed(ctx, keyID)
 }
 
-var _ gateway.ConsumerAuthStore = (*consumerAuthStore)(nil)
+var (
+	_ gateway.ConsumerAuthStore            = (*consumerAuthStore)(nil)
+	_ gateway.ConsumerAuthEnvironmentStore = (*consumerAuthStore)(nil)
+)
 
 func (s *consumerAuthStore) APISandboxPartnerKeyActive(ctx context.Context, appID, keyID string) (bool, error) {
 	return s.store.APISandboxPartnerKeyActive(ctx, appID, keyID)

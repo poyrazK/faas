@@ -76,6 +76,7 @@
       "livemode",
       "provider",
       "sealed_secret",
+      "stripe_account_id",
       "updated_at"
     ],
     "kind": "account_identity"
@@ -1048,6 +1049,21 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_identities",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "email",
+      "id",
+      "issuer",
+      "subject",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_meter_usage_minutes",
     "columns": [
       "account_id",
@@ -1193,6 +1209,17 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_stripe_links",
+    "columns": [
+      "consumer_id",
+      "created_at",
+      "livemode",
+      "stripe_account_id",
+      "stripe_customer_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "api_consumer_trials",
     "columns": [
       "account_id",
@@ -1209,6 +1236,7 @@
     "table": "api_consumer_signup_settings",
     "columns": [
       "account_id",
+      "account_tools",
       "app_id",
       "created_at",
       "customer_closing",
@@ -1216,7 +1244,9 @@
       "daily_limit",
       "display_name",
       "enabled",
+      "free_plan_id",
       "key_scopes",
+      "oauth_consumers",
       "plan_ids",
       "provider",
       "return_url",
@@ -1351,6 +1381,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "environment_id",
       "external_ref",
       "id",
       "name",
@@ -2171,7 +2202,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "derived"
     }
   },
   {
@@ -2610,6 +2642,36 @@
       "timeout_seconds",
       "updated_at",
       "work_decision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_inspection_admissions",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_id",
+      "binding_revision",
+      "credential_generation",
+      "database_id",
+      "database_revision",
+      "deployment_id",
+      "nonce",
+      "runtime_generation",
+      "table_name",
+      "target_digest",
+      "task_id",
+      "trust_digest"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_inspection_executions",
+    "columns": [
+      "finished_at",
+      "protocol_version",
+      "stdout_sha256",
+      "task_id"
     ],
     "kind": "operational"
   },
@@ -3473,7 +3535,10 @@
       "source_id",
       "source_kind",
       "statement_id",
-      "updated_at"
+      "updated_at",
+      "usage_gap_hours",
+      "usage_held_at",
+      "usage_recovered_at"
     ],
     "kind": "operational"
   },
@@ -4165,6 +4230,23 @@
     "kind": "operational"
   },
   {
+    "table": "commit_receipt_usage",
+    "columns": [
+      "initialized",
+      "payload_json_bytes",
+      "receipt_count",
+      "reconcile_token",
+      "reconciled_at",
+      "retry_at",
+      "scan_count",
+      "scan_cursor",
+      "scan_in_progress",
+      "scan_payload_json_bytes",
+      "shard"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "commit_receipts",
     "columns": [
       "accepted_at",
@@ -4192,6 +4274,7 @@
       "account_id",
       "event_id",
       "generation",
+      "next_attempt_at",
       "requested_at",
       "source_id",
       "state"
@@ -4206,6 +4289,8 @@
       "app_id",
       "blocked_events",
       "changes_feeds",
+      "cleanup_eligible_events",
+      "cleanup_observed_at",
       "contract_version",
       "created_at",
       "credential_revision",
@@ -4220,6 +4305,12 @@
       "pending_events",
       "poll_interval_ms",
       "queue_name",
+      "relay_connect_ms",
+      "relay_connect_observed_at",
+      "relay_next_poll_at",
+      "relay_poll_backoff_ms",
+      "relay_poll_token",
+      "relay_reserved_deferred_check_at",
       "relay_status",
       "sealed_connection"
     ],
@@ -4337,6 +4428,7 @@
       "app_id",
       "consumer_id",
       "created_at",
+      "environment_id",
       "expires_at",
       "hashed_secret",
       "id",
@@ -10793,6 +10885,7 @@
       "credential_generation",
       "credential_ref",
       "cutover_id",
+      "data_api_inspection_revision",
       "database_account_id",
       "database_id",
       "deleted_at",
@@ -11104,6 +11197,7 @@
       "clone_resource_role",
       "created_at",
       "cutover_id",
+      "data_api_inspection_revision",
       "data_resource_id",
       "deleted_at",
       "desired_generation",
@@ -11310,6 +11404,55 @@
       "database_id",
       "seconds",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_wake_with_app",
+    "columns": [
+      "database_id",
+      "enabled_at",
+      "last_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_app_wake_starts",
+    "columns": [
+      "claimed_at",
+      "database_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_compute_starts",
+    "columns": [
+      "account_id",
+      "cause",
+      "cause_app_id",
+      "cause_detail",
+      "database_id",
+      "provider_operation_id",
+      "recorded_at",
+      "started_at",
+      "suspended_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_awake_notices",
+    "columns": [
+      "account_id",
+      "awake_seconds",
+      "cause",
+      "cause_app_id",
+      "cause_detail",
+      "cause_starts",
+      "database_id",
+      "mailed_at",
+      "recorded_at",
+      "starts",
+      "week_start"
     ],
     "kind": "operational"
   },
@@ -20661,7 +20804,8 @@
       "source_kind",
       "statement_id",
       "status",
-      "status_synced_at"
+      "status_synced_at",
+      "stripe_issue"
     ],
     "kind": "operational"
   },
@@ -22654,6 +22798,7 @@
       "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
+      "notify_channel_ids",
       "percentile",
       "project_id",
       "rule_id",
@@ -22740,6 +22885,48 @@
     "columns": [
       "cohort_id",
       "customer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notification_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key",
+      "kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notification_settings",
+    "columns": [
+      "account_id",
+      "channel_ids",
+      "environment_id",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_notifications",
+    "columns": [
+      "account_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "environment_id",
+      "id",
+      "key",
+      "kind",
+      "last_error",
+      "next_attempt_at",
+      "org_id",
+      "settled_at",
+      "status",
+      "subject",
+      "summary"
     ],
     "kind": "operational"
   },
@@ -23000,6 +23187,33 @@
       "kid",
       "permission",
       "secret_sealed"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "route_splits",
+    "columns": [
+      "account_id",
+      "created_at",
+      "edge_rule_ids",
+      "error",
+      "id",
+      "kind",
+      "lease_until",
+      "main_ram_mb",
+      "main_resized",
+      "method",
+      "path_glob",
+      "phase",
+      "previous_ram_mb",
+      "route",
+      "route_ram_mb",
+      "source_app_id",
+      "target_app_id",
+      "target_deployment_id",
+      "target_slug",
+      "updated_at",
+      "warning"
     ],
     "kind": "operational"
   }

@@ -91,10 +91,42 @@ A PR whose project switches back to `app` mode keeps its branch until it expires
   and the orphan reconcilers remove their data copies. Branches made by hand keep their
   expiry.
 
+### Amendment 2026-11-26: a pull request's data follows the previews setting
+
+Owner decision: a branch preview gets what each production database's `previews` setting
+(ADR-20261102123523) gives an app preview, not always a copy. A copy of production data
+reaches code under review only where someone who may restore the database chose it, the
+rule ADR-20261102123523 set for app previews. Branches made by hand are unchanged: they copy
+every database.
+
+For each production database the PR branch's parent binds:
+
+| `previews` | The `pr-{N}` branch gets |
+|---|---|
+| `copy` | A point-in-time copy as of the branch point, as before: every copy at the same instant. |
+| `empty` | The PR environment's empty preview database (owner: the project and the PR number), set up with `EnsurePreviewDatabase` and bound into `pr-{N}` with the production binding's environment key and access. An app preview of the same PR, after a fallback, binds the same database. It needs the `preview-databases` capability, as app previews do; without it `empty` reads as `off`. |
+| `off` (default) | No database. The workload starts without the binding's environment key, as an app preview does. |
+
+- **Waits and failures.** An empty database or binding still provisioning is in progress (no
+  failed attempt). On a plan that gives no preview databases, `empty` reads as `off`. Past
+  the plan's preview database allowance the branch's data waits and retries with that
+  limit's message: closing a pull request frees a database.
+- **Reset.** `--reset` removes the branch's bindings to its empty databases before it deletes
+  the branch, and only once the branch row is gone purges each one nothing live binds (a
+  binding neither ready nor provisioning is a leftover), so the new branch starts from an
+  empty database again. A reset refused for child branches keeps the database and its data;
+  a purge that conflicts leaves the database to the new branch and the sweep.
+- **Delete and expiry.** The preview database sweep keeps a PR environment's databases while
+  its project has a branch for that pull request (`pull_request_number`), and purges them
+  once neither the branch nor an app preview is left.
+- The restore lag (2 s after the branch point) applies only when the branch copies a
+  database.
+
 ## Consequences
 
-- A branch preview serves production's configuration and a copy of its data. Data written
-  in the preview stays there across pushes and is gone when the branch is.
+- A branch preview serves production's configuration and, per database, a copy of its data,
+  an empty database or none (amendment 2026-11-26). Data written in the preview stays there
+  across pushes and is gone when the branch is.
 - A branch with database copies lives at most 7 days. A PR open longer gets a new branch on
   its next push once the old one has expired.
 - Forked pull requests stay refused (ADR-095 D3): a branch holds production's secrets.
@@ -107,3 +139,5 @@ A PR whose project switches back to `app` mode keeps its branch until it expires
 |---|---|
 | 1 | Policy field and flag, bridge RPCs, branch-scoped PR builds, close and reopen, PR comment and check with the branch URL, fallback. |
 | 2 | Skip rebuilding workloads whose files did not change (as ADR-20261108150000 does for app previews); retire branches when previews are turned off or the repository is unbound. Built 2026-11-14 (above). |
+| 3 | Data follows each database's previews setting (amendment 2026-11-26). |
+| 4 | Production trial with a test repository (flag on for one account, then the PR journey); then branch mode becomes the default for projects and app previews are retired, each in its own PR. |

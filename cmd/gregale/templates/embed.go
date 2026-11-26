@@ -324,6 +324,7 @@ var sharedTemplateCopies = map[string]map[string]string{
 	},
 	"mcp-python": {
 		"auth.py":                       "mcp-python-tasks/auth.py",
+		"application_toolkit_host.py":   "mcp-python-tasks/application_toolkit_host.py",
 		"bounded_jwks.py":               "mcp-python-tasks/bounded_jwks.py",
 		"catalog.py":                    "mcp-python-tasks/catalog.py",
 		"http_body.py":                  "mcp-python-tasks/http_body.py",
@@ -345,6 +346,7 @@ var sharedTemplateCopies = map[string]map[string]string{
 	// durable Tasks module: one copy of the shared code lives in mcp-node-tasks.
 	"mcp-node": {
 		"app.js":                           "mcp-node-tasks/app-core.js",
+		"application-toolkit.js":           "mcp-node-tasks/application-toolkit.js",
 		"auth.js":                          "mcp-node-tasks/auth.js",
 		"catalog.js":                       "mcp-node-tasks/catalog.js",
 		"protocol-telemetry.js":            "mcp-node-tasks/protocol-telemetry.js",

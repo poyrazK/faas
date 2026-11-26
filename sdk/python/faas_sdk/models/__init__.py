@@ -418,6 +418,8 @@ from .connection_budget_inventory import ConnectionBudgetInventory
 from .connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
 from .connection_budget_runtime_observations_source import ConnectionBudgetRuntimeObservationsSource
 from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
+from .consumer_identity import ConsumerIdentity
+from .consumer_identity_list_response import ConsumerIdentityListResponse
 from .control_project_release_action import ControlProjectReleaseAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
@@ -458,6 +460,7 @@ from .create_binding_verification_run_request_service_targets import CreateBindi
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_api_inspection_request import CreateDataAPIInspectionRequest
 from .create_database_switch_request import CreateDatabaseSwitchRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
@@ -552,6 +555,11 @@ from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
+from .data_api_inspection_response import DataAPIInspectionResponse
+from .data_api_inspection_response_binding_identity import DataAPIInspectionResponseBindingIdentity
+from .data_api_inspection_response_binding_identity_status import DataAPIInspectionResponseBindingIdentityStatus
+from .data_api_inspection_response_observation import DataAPIInspectionResponseObservation
+from .data_api_inspection_response_task_status import DataAPIInspectionResponseTaskStatus
 from .database_switch import DatabaseSwitch
 from .database_switch_drain import DatabaseSwitchDrain
 from .database_switch_list import DatabaseSwitchList
@@ -1210,6 +1218,13 @@ from .managed_execution_workflow_response_status import ManagedExecutionWorkflow
 from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
+from .managed_postgres_activity import ManagedPostgresActivity
+from .managed_postgres_activity_cause import ManagedPostgresActivityCause
+from .managed_postgres_activity_cause_cause import ManagedPostgresActivityCauseCause
+from .managed_postgres_activity_compute_start import ManagedPostgresActivityComputeStart
+from .managed_postgres_activity_compute_start_cause import ManagedPostgresActivityComputeStartCause
+from .managed_postgres_activity_hint import ManagedPostgresActivityHint
+from .managed_postgres_activity_hint_code import ManagedPostgresActivityHintCode
 from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
@@ -1224,6 +1239,11 @@ from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
 from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
 from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
 from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
+from .managed_postgres_custom_role import ManagedPostgresCustomRole
+from .managed_postgres_custom_role_default_for_item import ManagedPostgresCustomRoleDefaultForItem
+from .managed_postgres_custom_role_granted_to_item import ManagedPostgresCustomRoleGrantedToItem
+from .managed_postgres_custom_role_list import ManagedPostgresCustomRoleList
+from .managed_postgres_custom_role_state import ManagedPostgresCustomRoleState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_hold import ManagedPostgresDatabaseHold
@@ -1231,6 +1251,7 @@ from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_database_usage import ManagedPostgresDatabaseUsage
 from .managed_postgres_health import ManagedPostgresHealth
 from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
@@ -1253,6 +1274,7 @@ from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageRe
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_postgres_usage_response_history_state import ManagedPostgresUsageResponseHistoryState
 from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
+from .managed_postgres_wake_with_app import ManagedPostgresWakeWithApp
 from .managed_realtime_close_request import ManagedRealtimeCloseRequest
 from .managed_realtime_connection_list_response import ManagedRealtimeConnectionListResponse
 from .managed_realtime_connection_response import ManagedRealtimeConnectionResponse
@@ -2395,6 +2417,9 @@ from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_managed_postgres_custom_role_request import PutManagedPostgresCustomRoleRequest
+from .put_managed_postgres_custom_role_request_default_for_item import PutManagedPostgresCustomRoleRequestDefaultForItem
+from .put_managed_postgres_custom_role_request_granted_to_item import PutManagedPostgresCustomRoleRequestGrantedToItem
 from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
 from .put_outbound_credential_request import PutOutboundCredentialRequest
@@ -2694,6 +2719,7 @@ from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_managed_postgres_suspend_timeout_request import SetManagedPostgresSuspendTimeoutRequest
+from .set_managed_postgres_wake_with_app_request import SetManagedPostgresWakeWithAppRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
 from .set_mcp_readiness_fallback_request_region import SetMCPReadinessFallbackRequestRegion
@@ -3170,6 +3196,7 @@ from .workflow_run_recovery_plan import WorkflowRunRecoveryPlan
 from .workflow_run_recovery_target import WorkflowRunRecoveryTarget
 from .workflow_run_response import WorkflowRunResponse
 from .workflow_run_response_status import WorkflowRunResponseStatus
+from .workflow_run_start_lookup_response import WorkflowRunStartLookupResponse
 from .workflow_schedule_catch_up_preview import WorkflowScheduleCatchUpPreview
 from .workflow_schedule_catch_up_preview_outcome import WorkflowScheduleCatchUpPreviewOutcome
 from .workflow_schedule_catch_up_preview_policy import WorkflowScheduleCatchUpPreviewPolicy
@@ -3209,6 +3236,11 @@ from .workload_dependency import WorkloadDependency
 from .workload_dependency_condition import WorkloadDependencyCondition
 from .workload_port import WorkloadPort
 from .workload_port_protocol import WorkloadPortProtocol
+from .workload_uses import WorkloadUses
+from .workload_uses_buckets_item import WorkloadUsesBucketsItem
+from .workload_uses_buckets_item_access import WorkloadUsesBucketsItemAccess
+from .workload_uses_queues_item import WorkloadUsesQueuesItem
+from .workload_uses_realtime_item import WorkloadUsesRealtimeItem
 
 __all__ = (
     "AccountAbuseHold",
@@ -3625,6 +3657,8 @@ __all__ = (
     "ConnectionBudgetRuntimeObservations",
     "ConnectionBudgetRuntimeObservationsSource",
     "ConnectionBudgetRuntimeObservationsState",
+    "ConsumerIdentity",
+    "ConsumerIdentityListResponse",
     "ControlProjectReleaseAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
@@ -3665,6 +3699,7 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataAPIInspectionRequest",
     "CreateDatabaseSwitchRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
@@ -3753,6 +3788,11 @@ __all__ = (
     "DailyUsageListResponse",
     "DailyUsagePoint",
     "DailyUsageResponse",
+    "DataAPIInspectionResponse",
+    "DataAPIInspectionResponseBindingIdentity",
+    "DataAPIInspectionResponseBindingIdentityStatus",
+    "DataAPIInspectionResponseObservation",
+    "DataAPIInspectionResponseTaskStatus",
     "DatabaseSwitch",
     "DatabaseSwitchDrain",
     "DatabaseSwitchList",
@@ -4389,6 +4429,13 @@ __all__ = (
     "ManagedOperationEffect",
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
+    "ManagedPostgresActivity",
+    "ManagedPostgresActivityCause",
+    "ManagedPostgresActivityCauseCause",
+    "ManagedPostgresActivityComputeStart",
+    "ManagedPostgresActivityComputeStartCause",
+    "ManagedPostgresActivityHint",
+    "ManagedPostgresActivityHintCode",
     "ManagedPostgresBinding",
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
@@ -4403,6 +4450,11 @@ __all__ = (
     "ManagedPostgresConnectionBudgetModel",
     "ManagedPostgresConnectionBudgetState",
     "ManagedPostgresConnectionBudgetVersion",
+    "ManagedPostgresCustomRole",
+    "ManagedPostgresCustomRoleDefaultForItem",
+    "ManagedPostgresCustomRoleGrantedToItem",
+    "ManagedPostgresCustomRoleList",
+    "ManagedPostgresCustomRoleState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseHold",
@@ -4410,6 +4462,7 @@ __all__ = (
     "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresDatabaseUsage",
     "ManagedPostgresHealth",
     "ManagedPostgresHealthComputeState",
     "ManagedPostgresHealthLastErrorCode",
@@ -4432,6 +4485,7 @@ __all__ = (
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedPostgresUsageResponseHistoryState",
     "ManagedPostgresUsageResponseHold",
+    "ManagedPostgresWakeWithApp",
     "ManagedRealtimeCloseRequest",
     "ManagedRealtimeConnectionListResponse",
     "ManagedRealtimeConnectionResponse",
@@ -5440,6 +5494,9 @@ __all__ = (
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
     "PutJobRegistryCredentialRequest",
+    "PutManagedPostgresCustomRoleRequest",
+    "PutManagedPostgresCustomRoleRequestDefaultForItem",
+    "PutManagedPostgresCustomRoleRequestGrantedToItem",
     "PutOutboundBindingAIBudgetRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",
     "PutOutboundCredentialRequest",
@@ -5733,6 +5790,7 @@ __all__ = (
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetManagedPostgresSuspendTimeoutRequest",
+    "SetManagedPostgresWakeWithAppRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",
     "SetMCPReadinessFallbackRequestRegion",
@@ -6181,6 +6239,7 @@ __all__ = (
     "WorkflowRunRecoveryTarget",
     "WorkflowRunResponse",
     "WorkflowRunResponseStatus",
+    "WorkflowRunStartLookupResponse",
     "WorkflowScheduleCatchUpPreview",
     "WorkflowScheduleCatchUpPreviewOutcome",
     "WorkflowScheduleCatchUpPreviewPolicy",
@@ -6220,4 +6279,9 @@ __all__ = (
     "WorkloadDependencyCondition",
     "WorkloadPort",
     "WorkloadPortProtocol",
+    "WorkloadUses",
+    "WorkloadUsesBucketsItem",
+    "WorkloadUsesBucketsItemAccess",
+    "WorkloadUsesQueuesItem",
+    "WorkloadUsesRealtimeItem",
 )

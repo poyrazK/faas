@@ -41,6 +41,22 @@ Operators: see the [operator guide](managed-postgres.md).
   A suspended database takes the new time at once; a running one takes it
   the next time it suspends, without dropping connections. `gregale postgres
   get` shows the current value. Always-on compute is not part of these plans.
+- **Start with your app.** A suspended
+  database normally starts on your app's first query after idle, so that
+  request waits for the app's wake and then the database's (a few hundred
+  milliseconds). Turn on `app-wake` and the database starts as soon as
+  an app bound to it starts waking, so the two overlap:
+
+  ```sh
+  gregale postgres app-wake set orders-db on
+  gregale postgres app-wake set orders-db off
+  ```
+
+  It is off by default. Every app wake starts the database, including wakes
+  that never query it (a health check, a static page, a cron job), and each
+  start bills at least one suspend timeout of compute. A database is started
+  at most once a minute this way. `gregale postgres get` shows
+  `wake_with_app`.
 - Restore history (what point-in-time restore keeps) and snapshots are
   included up to the size of the storage pool, averaged over the month.
 - Without overage, storage is a limit and nothing past the plan is billed.
@@ -521,6 +537,41 @@ the API say why in `hold`: `compute_ceiling`, `egress`, `inactive` (the
 account is suspended), `plan_excess` or `preview` (a PR preview database once
 the account used 80% of its compute). `usage` shows `hold` when every database
 of the account is held. A held database keeps its data.
+
+`usage` also splits the month's compute by database, with each one's starts
+and awake time over the last 30 days, so you can see which database used it.
+
+### Why is my database awake
+
+A scale-to-zero database bills compute while it is up. If it is up more than
+your traffic explains, ask what started it:
+
+```sh
+gregale postgres activity orders-db
+gregale postgres activity orders-db --since 7d
+```
+
+`activity` lists the database's compute starts with a likely cause for each,
+the time it stayed awake per cause, and what to do about the largest ones.
+The cause is the first of these that matches the start's timing:
+
+| Cause | Meaning |
+|---|---|
+| `app_wake` | `app-wake` is on and an app bound to the database woke. |
+| `cron` | A cron of a bound app fired just before. The cron's path is shown. |
+| `request` | A request woke a bound app. |
+| `app_start` | A bound app started without a request and connected at once. |
+| `running_app` | A bound app was already running, for example holding pool connections. |
+| `external` | None of these: a local client, a BI tool, a monitor, or a copied connection string. |
+
+Causes are best guesses from timing, not billing. A cron every 15 minutes
+keeps a database with a 2-minute suspend timeout up about 13% of the time
+even when the job does nothing; run it less often, or let it skip the
+database when there is nothing to do. Starts are recorded from the usage
+sweep, so the latest can lag by up to an hour, and kept 30 days. Reading
+`activity` never wakes the database. It is also in the API
+(`GET /v1/postgres/databases/{id}/activity`) and the MCP tool
+`gregale_get_postgres_activity`.
 
 ## Delete, recover and purge
 
