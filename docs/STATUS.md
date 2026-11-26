@@ -1177,9 +1177,12 @@ and 944. The review calls only catalogued rules
 likely false positives, leaving groups spread across clients for review
 (ADR-831 amendment 21). Open before turning
 `edge_waf_strict_inspection` on for an account: check its `observe`
-detections for long URIs and other methods, and measure criterion W1 again
-with `TestEdgeWAFInlineLoad_E2E` on the reference node, since the wider set
-costs more per check.
+detections for long URIs and other methods. Criterion W1 holds with the
+wider set: in-path p95 1.02–1.34 ms at 100–500 req/s on a 4-vCPU host
+(baseline 0.96–0.98 ms), nothing skipped (ADR-831 amendment 21). Separately,
+the load test saw about 19% of requests at 500 req/s refused with 404 at
+the host-ownership step (`ownership_response`) whichever set ran; this is not
+the WAF and is still open.
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

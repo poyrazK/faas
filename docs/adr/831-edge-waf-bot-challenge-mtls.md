@@ -1455,9 +1455,16 @@ its docs said.
    attacks), and Go's HTTP server already refuses most of the malformed
    requests it scores. The widened set costs roughly 20–30% more CPU per
    check on a loaded workstation (`TestInlineRuleSetCost`, noisy);
-   criterion W1 (p95 at most 2 ms on the reference node) must be measured
-   again with `TestEdgeWAFInlineLoad_E2E` before `edge_waf_blocking` is
-   turned on for more accounts.
+   criterion W1 (p95 at most 2 ms) was measured again on 2026-11-26 with
+   `TestEdgeWAFInlineLoad_E2E` (`FAAS_E2E_WAF_LOAD_GATE=1`, 4 apps, 20 s per
+   rate, two passes each) on the 4-vCPU EC2 test host (m7i-flex.xlarge,
+   comparable to the n2-standard-4 reference): in-path p95 0.96–0.98 ms with
+   the baseline set and 1.02–1.34 ms with the wider set
+   (`FAAS_E2E_WAF_LOAD_STRICT=1`) at 100–500 req/s, no check skipped, and
+   gatewayd-internal CPU per request up about 10–13%. The gate passes for
+   both sets. Every run also had about 19% of requests at 500 req/s refused
+   with 404 at the host-ownership step (`ownership_response`), with either
+   set and before any edge rule ran: a separate gateway issue, not the WAF.
 3. **The review could be steered.** Amendment 13 called a group a likely
    false positive when three or more clients were flagged on one path and
    none sent most of the detections, and the dashboard offered Exclude.
