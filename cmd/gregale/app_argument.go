@@ -243,6 +243,13 @@ func linkedAppAsArgument(args []string) []string {
 	if required == 0 || strings.HasPrefix(leaf.Positionals[0], "[") {
 		return args
 	}
+	// With nothing named at all, a destructive verb would act on the linked
+	// app unasked (`app protection off` deleted its SLOs and gates; code
+	// review of r51): it keeps printing usage. A UUID the user typed names
+	// the target, so the app is only its context there.
+	if required == 1 && destructiveLeafVerbs[leaf.Name] {
+		return args
+	}
 	given, ok := leafPositionalArguments(args[at:], leaf.Flags)
 	if !ok || len(given) != required-1 {
 		return args
@@ -366,4 +373,13 @@ func targetFlagValue(rest []string, i int, target string) (string, bool) {
 func isUUIDArgument(arg string) bool {
 	_, err := uuid.Parse(arg)
 	return err == nil && len(arg) == 36
+}
+
+// destructiveLeafVerbs are leaf names that remove or reset what the app has;
+// linkedAppAsArgument never fills the app into one that names nothing.
+var destructiveLeafVerbs = map[string]bool{
+	"delete": true, "rm": true, "remove": true, "destroy": true, "purge": true,
+	"off": true, "disable": true, "reset": true, "revoke": true, "unbind": true,
+	"detach": true, "clear": true, "drop": true, "prune": true, "wipe": true,
+	"rollback": true, "restore": true, "replay-retryable": true,
 }

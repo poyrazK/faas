@@ -519,6 +519,9 @@ func TestPackDirToTarGz_Excludes(t *testing.T) {
 	writeFile(t, dir, "package.json", "{}")
 	writeFile(t, dir, ".env", "SECRET=1") // dotfile kept on purpose
 	writeFile(t, dir, ".dockerignore", "node_modules")
+	// The server reads these from an upload (code review of prod hunt r50).
+	writeFile(t, dir, ".gregale/required-secrets.json", `["STRIPE_KEY"]`)
+	writeFile(t, dir, ".gregale/project.yaml", "service_policy: declared\n")
 	// Dropped:
 	writeFile(t, dir, ".git/HEAD", "ref: refs/heads/main")
 	writeFile(t, dir, "node_modules/left-pad/index.js", "module.exports=1")
@@ -528,6 +531,7 @@ func TestPackDirToTarGz_Excludes(t *testing.T) {
 	writeFile(t, dir, ".DS_Store", "junk")
 	writeFile(t, dir, ".gregale/project.json", `{"version":2,"app":"web"}`)
 	writeFile(t, dir, ".gregale/accepted-runs/r1.json", "{}")
+	writeFile(t, dir, ".gregale/jobs.json", "{}")
 
 	dest := filepath.Join(t.TempDir(), "out.tar.gz")
 	n, err := packDirToTarGz(dir, dest, defaultZeroConfigSourceCapMB, nil)
@@ -536,18 +540,19 @@ func TestPackDirToTarGz_Excludes(t *testing.T) {
 	}
 	got := tarEntries(t, dest)
 
-	mustHave := []string{base + "/package.json", base + "/.env", base + "/.dockerignore"}
+	mustHave := []string{base + "/package.json", base + "/.env", base + "/.dockerignore", base + "/.gregale/required-secrets.json", base + "/.gregale/project.yaml"}
 	for _, w := range mustHave {
 		if !got[w] {
 			t.Errorf("archive should contain %q; entries: %v", w, got)
 		}
 	}
-	// n counts regular files: package.json, .env, .dockerignore = 3.
-	if n != 3 {
-		t.Errorf("fileCount = %d, want 3 (only kept files); entries: %v", n, got)
+	// n counts regular files: package.json, .env, .dockerignore and the two
+	// .gregale declarations = 5.
+	if n != 5 {
+		t.Errorf("fileCount = %d, want 5 (only kept files); entries: %v", n, got)
 	}
 	for name := range got {
-		for _, bad := range []string{"/.git/", "/node_modules/", "/vendor/", "/__pycache__/", ".pyc", ".DS_Store", "/.gregale/"} {
+		for _, bad := range []string{"/.git/", "/node_modules/", "/vendor/", "/__pycache__/", ".pyc", ".DS_Store", "/.gregale/project.json", "/.gregale/accepted-runs", "/.gregale/jobs.json"} {
 			if strings.Contains(name, bad) {
 				t.Errorf("archive should not contain %q (matched %q)", name, bad)
 			}

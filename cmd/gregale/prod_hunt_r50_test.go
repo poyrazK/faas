@@ -39,6 +39,10 @@ func TestLinkedAppAsArgument(t *testing.T) {
 		// An optional app (realtime list) is left to the command.
 		{[]string{"realtime", "list"}, []string{"realtime", "list"}},
 		{[]string{"realtime", "usage"}, []string{"realtime", "usage"}},
+		// A destructive verb that names nothing never picks up the linked
+		// app (code review): it prints usage as before.
+		{[]string{"app", "protection", "off"}, []string{"app", "protection", "off"}},
+		{[]string{"app", "purge", "--yes"}, []string{"app", "purge", "--yes"}},
 	} {
 		if got := main.LinkedAppAsArgument(tc.in); !slices.Equal(got, tc.want) {
 			t.Errorf("LinkedAppAsArgument(%q) = %q, want %q", tc.in, got, tc.want)

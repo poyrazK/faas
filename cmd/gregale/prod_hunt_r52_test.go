@@ -50,8 +50,8 @@ func TestPostgresSuspendTimeoutSaysWhyAValueIsRefused(t *testing.T) {
 
 // Prod hunt r52 (rc.381): `app restart --fresh --wait` on an app whose new
 // config crashes it at startup printed running/retrying until its 10 min
-// timeout. A startup crash repeats on every retry, so the wait stops at the
-// first one and says what to do.
+// timeout. A startup crash repeats on every retry, so the wait stops once it
+// repeats and says what to do; a single crash may be transient (code review).
 func TestRestartWaitStopsOnStartupCrash(t *testing.T) {
 	const wakeID = "5f1c7a52-3d0e-4c4b-9a43-2b7f0f6f1a11"
 	statusReads := 0
@@ -63,7 +63,7 @@ func TestRestartWaitStopsOnStartupCrash(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/web/runtime-config-restarts/"+wakeID:
 			statusReads++
 			_ = json.NewEncoder(w).Encode(api.RuntimeConfigRestartStatusResponse{
-				WakeID: wakeID, Status: "retrying", Attempts: 1, FailureReason: api.CodeAppStartupCrash,
+				WakeID: wakeID, Status: "retrying", Attempts: statusReads, FailureReason: api.CodeAppStartupCrash,
 				RequestedAt: time.Now().UTC().Add(-time.Minute),
 			})
 		default:
@@ -79,8 +79,8 @@ func TestRestartWaitStopsOnStartupCrash(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("restart wait on a startup crash exited 0:\n%s", stderr)
 	}
-	if statusReads != 1 {
-		t.Fatalf("status read %d times, want the wait to stop at the first startup crash", statusReads)
+	if statusReads != 2 {
+		t.Fatalf("status read %d times, want the wait to stop when the startup crash repeats", statusReads)
 	}
 	for _, want := range []string{"Restart is not taking effect", "crashed during startup", "gregale logs", "gregale env rollback", "gregale env unset"} {
 		if !strings.Contains(stderr, want) {

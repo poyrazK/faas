@@ -342,11 +342,11 @@ func cmdInvocationsGet(args []string) int {
 	replay := fs.Bool("replay", false, "re-issue a failed invocation (returns the new async invocation)")
 	replayKeyed := fs.Bool("replay-keyed", false, "recover failed keyed work in its captured policy lane")
 	// Flags may follow the ID (prod hunt r55: `invocation get ID --replay`
-	// printed usage).
-	flags, positional := splitArgsForFlags(args, "replay", "replay-keyed")
-	if err := fs.Parse(flags); err != nil {
+	// printed usage), in either dash spelling.
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	positional := fs.Args()
 	if rejectArgumentCount(fs.Name(), invocationGetCmdUsage, invocationCmdDocsTopic, len(positional), 1, 1, "ID") {
 		return 1
 	}

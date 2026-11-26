@@ -917,10 +917,6 @@ func parseSecretsPair(s string) (secretsPair, error) {
 	return secretsPair{Key: key, Value: value}, nil
 }
 
-// readSecretsFile loads the KEY=VALUE input used by deploy's
-// --secrets-file flag. The file is deliberately parsed before any network
-// mutation so a typo cannot create an app and leave the first deploy without
-// its configuration. Values never appear in returned errors or diagnostics.
 // joinDotenvQuotedLines reads the rest of a quoted value that spans lines, as
 // dotenv allows: a PEM key pasted as KEY="-----BEGIN ...\n...\n-----END ..."
 // was refused at its second line, so RSA keys had to be set one by one (boa
@@ -949,6 +945,10 @@ func joinDotenvQuotedLines(scanner *bufio.Scanner, line string, lineNo *int) (st
 	return "", fmt.Errorf("line %d: quoted value has no closing %c", startLine, quote)
 }
 
+// readSecretsFile loads the KEY=VALUE input used by deploy's
+// --secrets-file flag. The file is deliberately parsed before any network
+// mutation so a typo cannot create an app and leave the first deploy without
+// its configuration. Values never appear in returned errors or diagnostics.
 func readSecretsFile(path string) ([]secretsPair, error) {
 	f, err := openCustomerFile(path)
 	if err != nil {

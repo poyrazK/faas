@@ -89,6 +89,22 @@ func TestAppHealth_BootFailuresBeforeALaterGoodBootAreHistory(t *testing.T) {
 	if !bootFailureReported(e, "3 instance(s)") {
 		t.Fatalf("liveness-killed boot hid the earlier failures: %+v", Evaluate(e).Checks)
 	}
+
+	// During a split, a good boot of one release does not hide the other
+	// release's crash loop (code review of r52).
+	split := healthEvidence()
+	canary := split.Live[0]
+	canary.ID, canary.TrafficPercent = "canary", 10
+	split.Live[0].TrafficPercent = 90
+	split.Live = append(split.Live, canary)
+	split.RecentInstances = []state.Instance{
+		{ID: "canary-up", DeploymentID: "canary", State: string(state.StateRunning), StartedAt: at(time.Minute)},
+		{ID: "crash-1", DeploymentID: "serving", State: string(state.StateFailed), StartedAt: at(5 * time.Minute)},
+		{ID: "crash-2", DeploymentID: "serving", State: string(state.StateFailed), StartedAt: at(4 * time.Minute)},
+	}
+	if !bootFailureReported(split, "2 instance(s)") {
+		t.Fatalf("the canary's good boot hid the other release's failures: %+v", Evaluate(split).Checks)
+	}
 }
 
 func bootFailureReported(e Evidence, count string) bool {

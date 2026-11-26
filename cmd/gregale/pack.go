@@ -126,11 +126,25 @@ var defaultExcludeDirs = map[string]bool{
 	".pytest_cache": true,
 	".mypy_cache":   true,
 	".ruff_cache":   true,
-	// The CLI's local context: the link deploy writes, accepted-run
-	// receipts, env declarations. MCP uploads drop it too (pkg/mcpmanagement
-	// localContextPath). Packed, every `workflow run` changed the source
-	// hash, so the next deploy rebuilt unchanged code (prod hunt r50).
-	".gregale": true,
+}
+
+// cliLocalContext reports a file or directory under a .gregale/ directory
+// that only this checkout's CLI uses: the link deploy writes, local job
+// defaults and accepted-run receipts. Packed, every `workflow run` changed
+// the source hash, so the next deploy rebuilt unchanged code (prod hunt
+// r50). The rest of .gregale/ ships: the server reads required-secrets.json
+// and the legacy project.yaml from an upload.
+func cliLocalContext(rel string, isDir bool) bool {
+	parts := strings.Split(rel, "/")
+	if len(parts) < 2 || parts[len(parts)-2] != projectContextDirName {
+		return false
+	}
+	switch base := parts[len(parts)-1]; {
+	case isDir:
+		return base == "accepted-runs"
+	default:
+		return base == projectContextFileName || base == "jobs.json"
+	}
 }
 
 // defaultExcludeFiles are basenames dropped anywhere in the tree (OS/VCS

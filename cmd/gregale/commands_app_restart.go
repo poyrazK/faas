@@ -220,7 +220,10 @@ func pollAppRestartStatus(ctx context.Context, client restartStatusClient, slug,
 		if row.Status == "completed" || !wait {
 			return last, nil
 		}
-		if row.Status == "retrying" && row.FailureReason == api.CodeAppStartupCrash {
+		// One crash can be transient (a dependency not up yet) and the
+		// server's retry may succeed; a second one under the same config is
+		// the crash loop.
+		if row.Status == "retrying" && row.FailureReason == api.CodeAppStartupCrash && row.Attempts >= 2 {
 			return last, fmt.Errorf("%w. %s", errRestartStartupCrash, row.ProgressNextStep())
 		}
 		timer := time.NewTimer(interval)

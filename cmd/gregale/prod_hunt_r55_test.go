@@ -95,11 +95,15 @@ func TestInvocationGetReplayAfterTheID(t *testing.T) {
 		}
 		return false
 	})
-	if code, _, stderr := runCLI(t, "invocation", "get", inv, "--replay"); code != 0 {
-		t.Fatalf("invocation get ID --replay = %d:\n%s\nrequests: %q", code, stderr, *paths)
-	}
-	if !slices.Contains(*paths, "POST /v1/invocations/"+inv+"/replay") {
-		t.Fatalf("no replay request: %q", *paths)
+	// The single-dash spelling before the ID worked before r55 and still does.
+	for _, args := range [][]string{{inv, "--replay"}, {"-replay", inv}} {
+		*paths = nil
+		if code, _, stderr := runCLI(t, append([]string{"invocation", "get"}, args...)...); code != 0 {
+			t.Fatalf("invocation get %q = %d:\n%s\nrequests: %q", args, code, stderr, *paths)
+		}
+		if !slices.Contains(*paths, "POST /v1/invocations/"+inv+"/replay") {
+			t.Fatalf("invocation get %q sent no replay request: %q", args, *paths)
+		}
 	}
 }
 

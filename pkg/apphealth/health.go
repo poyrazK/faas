@@ -291,16 +291,18 @@ func assessBootFailures(out *api.AppHealthResponse, e Evidence, live []state.Dep
 	// them: once a fix is applied, health said "unhealthy" for the rest of the
 	// window and `app restart --wait` waited out its timeout on a replica that
 	// was serving (prod hunt r52, rc.381). An older replica that kept serving
-	// does not: that is the crash loop #43 reports.
-	var lastGoodBoot time.Time
+	// does not: that is the crash loop #43 reports. A good boot covers only
+	// its own deployment: during a split, one release's healthy scale-out
+	// must not hide the other's crash loop.
+	lastGoodBoot := make(map[string]time.Time, len(live))
 	for _, i := range e.RecentInstances {
-		if serving[i.DeploymentID] && i.Kind == "" && bootedState(state.State(i.State)) && !e.LivenessFailed[i.ID] && i.StartedAt.After(lastGoodBoot) {
-			lastGoodBoot = i.StartedAt
+		if serving[i.DeploymentID] && i.Kind == "" && bootedState(state.State(i.State)) && !e.LivenessFailed[i.ID] && i.StartedAt.After(lastGoodBoot[i.DeploymentID]) {
+			lastGoodBoot[i.DeploymentID] = i.StartedAt
 		}
 	}
 	failed, deploymentID := 0, ""
 	for _, i := range e.RecentInstances {
-		if !serving[i.DeploymentID] || i.Kind != "" || i.StartedAt.Before(lastGoodBoot) {
+		if !serving[i.DeploymentID] || i.Kind != "" || i.StartedAt.Before(lastGoodBoot[i.DeploymentID]) {
 			continue
 		}
 		bootFailed := state.State(i.State) == state.StateFailed && !i.StartedAt.Before(e.Now.Add(-BootFailureWindow))
