@@ -166,7 +166,12 @@ func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, re
 		problem = problem.WithLimit(decision.Limit, decision.Observed).WithDocs("https://gregale.dev/docs/api-monetization#route-limits")
 	}
 	problem.UpgradeURL = h.consumerUpgradeURL(r.Context(), app, consumerID)
-	api.WriteProblem(w, problem)
+	// ADR-20261125230541: an MCP client reads a JSON-RPC answer, not the 429.
+	if !h.writeMCPPlanRefusal(w, r, mcpPlanRefusal{code: problem.Code, message: mcpPlanRefusalMessage(decision, route),
+		upgradeURL: problem.UpgradeURL, retryAfter: max(1, decision.RetryAfterSeconds),
+		limit: problem.Limit, observed: problem.Observed, docsURL: problem.DocsURL}) {
+		api.WriteProblem(w, problem)
+	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return false
 }

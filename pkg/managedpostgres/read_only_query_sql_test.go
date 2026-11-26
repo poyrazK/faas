@@ -10,8 +10,47 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
+
+func TestDataAPICatalogPreviewAgainstPostgres(t *testing.T) {
+	pool := pgtest.OpenDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := pool.Exec(ctx, `CREATE TABLE public.catalog_preview_test (secret text); INSERT INTO public.catalog_preview_test VALUES ('customer-row-must-not-appear'); ALTER TABLE public.catalog_preview_test ENABLE ROW LEVEL SECURITY; CREATE POLICY catalog_preview_policy ON public.catalog_preview_test FOR SELECT USING (true)`); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig.Copy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	result, err := RunReadOnlyStatement(ctx, conn, ReadOnlyQueryRequest{SQL: api.DataAPICatalogPreviewSQL, MaxRows: QueryMaxRows, MaxBytes: QueryMaxValueBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Columns) != 12 || result.Truncated {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	var found bool
+	for _, row := range result.Rows {
+		for _, value := range row {
+			if value != nil && strings.Contains(*value, "customer-row-must-not-appear") {
+				t.Fatal("customer row returned")
+			}
+		}
+		if row[3] != nil && *row[3] == "catalog_preview_test" {
+			found = true
+			if *row[4] != "r" || *row[5] != "t" || *row[10] != "1" {
+				t.Fatalf("unexpected table metadata: %+v", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("table metadata missing")
+	}
+}
 
 func TestRunReadOnlyStatementAgainstPostgres(t *testing.T) {
 	pool := pgtest.OpenDatabase(t)

@@ -24,7 +24,7 @@ func noProductionDeploymentErr(ctx context.Context, store state.Store, appID str
 		// schedd -> gatewayd gRPC hop (pkg/grpcerr).
 		detail := fmt.Sprintf("no deployment receives production traffic; deployment %s is live at 0%% traffic", dark.ID)
 		if app, err := store.AppByID(ctx, appID); err == nil && app.Slug != "" {
-			detail += fmt.Sprintf(". Promote it with `gregale traffic promote --app %s --deployment %s`", app.Slug, dark.ID)
+			detail += fmt.Sprintf(". Promote it with `gregale release traffic promote --app %s --release %s`", app.Slug, dark.ID)
 		}
 		problem = api.NewProblem(http.StatusNotFound, api.CodeNotFound, "No live deployment", detail)
 	}

@@ -36,7 +36,7 @@ func dataAPIHealthPoolFixture(capacity int) string {
 }
 
 func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T) {
-	for _, scenario := range []string{"healthy", "saturated", "paused", "unready", "engine-exit", "legacy", "redirect", "partial-logs", "logs-unavailable", "deadline", "pool-waiting", "pool-timeouts", "pool-missing", "pool-invalid", "pool-unknown", "budget-unknown", "budget-exceeded", "database-timings"} {
+	for _, scenario := range []string{"healthy", "saturated", "paused", "unready", "engine-exit", "legacy", "edge-health", "redirect", "partial-logs", "logs-unavailable", "deadline", "pool-waiting", "pool-timeouts", "pool-missing", "pool-invalid", "pool-unknown", "budget-unknown", "budget-exceeded", "database-timings"} {
 		t.Run(scenario, func(t *testing.T) {
 			var redirected, reads atomic.Int32
 			target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirected.Add(1) }))
@@ -58,7 +58,17 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 					_, _ = fmt.Fprint(w, `{"version":1,"live":true,"private":"private-response-secret"}`)
 					return
 				}
-				if r.URL.Path != "/healthz" {
+				legacy := scenario == "legacy" || scenario == "edge-health"
+				if r.URL.Path == api.DataAPIReadinessPath && legacy {
+					http.NotFound(w, r)
+					return
+				}
+				if r.URL.Path == "/healthz" && scenario == "edge-health" {
+					w.Header().Set("X-Faas-Health-Source", "edge")
+					_, _ = fmt.Fprint(w, `{"status":"ok","source":"edge"}`)
+					return
+				}
+				if r.URL.Path != api.DataAPIReadinessPath && !(legacy && r.URL.Path == "/healthz") {
 					t.Errorf("unexpected endpoint %s", r.URL.Path)
 				}
 				ready, refresh, active := true, "disabled", 0
@@ -195,8 +205,15 @@ func TestDataAPIHealthReportSeparatesCurrentChecksAndRecentFailures(t *testing.T
 			if err := json.Unmarshal([]byte(stdout.String()), &report); err != nil {
 				t.Fatalf("report: %v, stdout=%s stderr=%s", err, stdout.String(), stderr())
 			}
-			if (code == 0) != (scenario == "healthy" || scenario == "pool-timeouts" || scenario == "database-timings") || reads.Load() != 2 || redirected.Load() != 0 {
+			wantReads := int32(2)
+			if scenario == "legacy" || scenario == "edge-health" {
+				wantReads++
+			}
+			if (code == 0) != (scenario == "healthy" || scenario == "pool-timeouts" || scenario == "database-timings") || reads.Load() != wantReads || redirected.Load() != 0 {
 				t.Fatalf("exit=%d reads=%d redirects=%d report=%+v", code, reads.Load(), redirected.Load(), report)
+			}
+			if scenario == "edge-health" && (report.Status != "unknown" || !slices.Contains(report.PartialReasons, "readiness_edge_answered")) {
+				t.Fatalf("synthetic response qualified as readiness: %+v", report)
 			}
 			if scenario == "database-timings" {
 				timings := report.Diagnostics.DataRequests.DatabaseTimings

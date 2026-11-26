@@ -46,8 +46,11 @@ func cmdAddDatadog(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	// In the app's checkout --app defaults to the linked app, like the
+	// other app-scoped commands; add printed usage there (prod hunt r51).
+	fillLinkedApp(app)
 	if *app == "" {
-		return printErr("Missing --app", errors.New("usage: gregale add datadog --app <slug> [--site us1] [--api-key-env DD_API_KEY|--api-key-stdin] [--dry-run] [--remove]"))
+		return printErr("Missing --app", errors.New("usage: gregale add datadog [--app <slug>] [--site us1] [--api-key-env DD_API_KEY|--api-key-stdin] [--dry-run] [--remove]"))
 	}
 	logsURL, ok := api.DatadogLogsIntakeURL(*site)
 	if !ok {

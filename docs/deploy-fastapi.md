@@ -86,6 +86,21 @@ gregale app health my-api --errors
 gregale logs my-api
 ```
 
+## Deploy on every push from GitHub
+
+Bind the app to its GitHub repository and every push to the repository's
+default branch builds and deploys it; each pull request into that branch gets
+its own preview:
+
+```bash
+gregale github connect                          # once per account: install the Gregale GitHub App
+gregale github link my-api --repo acme/my-api   # production branch: the repository's default
+git push                                        # builds and deploys my-api
+```
+
+See [Deploy from GitHub](deploys.md#deploy-from-github) for other branches,
+previews and deploying from GitHub Actions instead.
+
 ## Configuration and secrets
 
 ```bash

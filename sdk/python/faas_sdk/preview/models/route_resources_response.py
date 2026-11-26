@@ -53,8 +53,9 @@ class RouteResourcesResponse:
     """Routes past the 50 reported."""
     split: RouteResourceSplit | Unset = UNSET
     """Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of
-    minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down.
-   """
+    minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down
+    (kind memory). When no memory split qualifies, the same rule over CPU peaks suggests moving the route for
+    isolation; both apps keep the current size (kind cpu)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

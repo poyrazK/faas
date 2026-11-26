@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -78,7 +79,8 @@ func (s *PgStore) CreatePlatformTenantSelfConsumer(ctx context.Context, in Creat
 
 	var active int
 	if err := tx.QueryRow(ctx, `select count(*) from api_consumers
-		where account_id = $1::uuid and platform_tenant_id = $2::uuid and status = 'active' and revoked_at is null`,
+		where account_id = $1::uuid and platform_tenant_id = $2::uuid and status = 'active' and revoked_at is null
+		  and environment_id is null`,
 		in.AccountID, in.TenantID).Scan(&active); err != nil {
 		return APIConsumer{}, false, err
 	}
@@ -89,7 +91,7 @@ func (s *PgStore) CreatePlatformTenantSelfConsumer(ctx context.Context, in Creat
 	created, err := scanAPIConsumerRow(tx.QueryRow(ctx, `insert into api_consumers
 		(account_id, app_id, external_ref, name, platform_tenant_id)
 		values ($1::uuid, $2::uuid, $3, $4, $5::uuid)
-		on conflict (app_id, external_ref) do nothing
+		on conflict (app_id, (coalesce(environment_id, '00000000-0000-0000-0000-000000000000'::uuid)), external_ref) do nothing
 		returning `+apiConsumerSelectCols, in.AccountID, appID, in.ExternalRef, in.Name, in.TenantID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		// An owner-side create can race this transaction without taking the
@@ -98,8 +100,12 @@ func (s *PgStore) CreatePlatformTenantSelfConsumer(ctx context.Context, in Creat
 		existing, readErr := scanAPIConsumerRow(tx.QueryRow(ctx, `select `+apiConsumerSelectCols+`
 			from api_consumers where account_id = $1::uuid and app_id = $2::uuid and external_ref = $3 and environment_id is null for update`,
 			in.AccountID, appID, in.ExternalRef))
+		if errors.Is(readErr, pgx.ErrNoRows) {
+			// The conflicting row is not this account's production consumer.
+			return APIConsumer{}, false, ErrConflict
+		}
 		if readErr != nil {
-			return APIConsumer{}, false, readErr
+			return APIConsumer{}, false, fmt.Errorf("state: read conflicting tenant consumer: %w", readErr)
 		}
 		if !samePlatformTenantSelfConsumer(existing, in.TenantID, in.Name) {
 			return APIConsumer{}, false, ErrConflict

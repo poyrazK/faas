@@ -275,10 +275,6 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases: behind the preview-databases
 	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
 	"PUT /v1/postgres/databases/{id}/previews": true,
-	// ADR-20261116213000 custom Postgres roles (postgres_custom_roles flag).
-	"GET /v1/postgres/databases/{id}/roles":           true,
-	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
-	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -875,6 +871,7 @@ var dtoExclude = map[string]bool{
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
+	"DataAPIInspectionIdentity":      true, // Nested inline in DataAPIInspectionResponse.
 	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
 	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
@@ -1262,6 +1259,7 @@ var schemaSpecOnly = map[string]bool{
 	"DevBridgeRequestRecord":                true,
 	"DevBridgeCredentials":                  true,
 	"DevBridgeWebhookReplay":                true,
+	"WorkloadUses":                          true, // ADR-20261122191423 wire type is capgrant.Uses in pkg/capgrant
 	"EdgeRuleMatchExpr":                     true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"ObjectStorageReleaseRequirements":      true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
 	"BulkIssueLifecycleAction":              true, // restricted SDK shape of IssueActionRequest for the four supported bulk lifecycle operations
@@ -1824,6 +1822,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "data_api_change_events.go"),       // ADR-20261022121642 runtime change hook publications.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
+		filepath.Join(root, "pkg", "api", "data_api_inspection.go"),          // Data API inspection request and response.
 		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "data_api_runtime.go"),             // ADR-20261031095954 runtime served by apid.
 		filepath.Join(root, "pkg", "api", "data_api_status.go"),              // ADR-20261022121642 amd 1: Data API status and change hook reports.
@@ -2137,6 +2136,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "managed_postgres_compute_policy.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_accounting_reconciliation.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_activity.go"), // ADR-20261125231222: why a database is awake
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
@@ -2233,8 +2233,13 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1502, ADR-1507 statement invoice exports
 		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1503 month-end billing runs
-		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1506 consumer billing self-service
-		filepath.Join(root, "pkg", "api", "consumer_signup.go"),       // ADR-20261021143000 consumer self-service sign-up
+		filepath.Join(root, "pkg", "api", "billing_run_draft_exports.go"),
+		filepath.Join(root, "pkg", "api", "billing_run_collections.go"),
+		filepath.Join(root, "pkg", "api", "consumer_billing.go"), // ADR-1506 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "consumer_billing_progress.go"),
+		filepath.Join(root, "pkg", "apid", "apidserver", "handlers_api_monetization_funnel.go"),
+		filepath.Join(root, "pkg", "api", "consumer_signup.go"),  // ADR-20261021143000 consumer self-service sign-up
+		filepath.Join(root, "pkg", "api", "mcp_seller_stats.go"), // ADR-20261126082046 seller stats
 		filepath.Join(root, "pkg", "api", "consumer_credit_packs.go"),
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans
@@ -2365,6 +2370,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	dtos["RouteResourcesResponse"] = routePeaksResponse
 	dtos["RouteResourceAttribution"] = routePeakDTOs["RouteReport"]
 	dtos["RouteResourceSplit"] = routePeakDTOs["Split"]
+
+	// ADR-20261121170000 amendment 2: applied route splits.
+	routeSplitDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "route_splits.go")})
+	if err != nil {
+		t.Fatalf("scan route split DTOs: %v", err)
+	}
+	dtos["CreateRouteSplitRequest"] = routeSplitDTOs["CreateRouteSplitRequest"]
+	dtos["RouteSplit"] = routeSplitDTOs["RouteSplitResponse"]
+	dtos["RouteSplitsResponse"] = routeSplitDTOs["RouteSplitsResponse"]
 
 	// ADR-20261123110137: per-tool MCP insights.
 	mcpInsightDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "mcp_tool_insights.go")})

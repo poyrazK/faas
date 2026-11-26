@@ -21,6 +21,11 @@ func observedStatus(r *http.Request, status int) int {
 	if r == nil {
 		return status
 	}
+	if status == http.StatusOK && r.Context().Value(mcpPlanRefusedKey{}) == true {
+		// A plan refusal answered in JSON-RPC is the 429 it replaces
+		// (ADR-20261125230541): metrics, telemetry and diagnostics agree.
+		return http.StatusTooManyRequests
+	}
 	rec, _ := r.Context().Value(responseRecorderKey{}).(*statusRecorder)
 	if rec != nil && rec.responseTruncated {
 		// The body was cut at the cap after the status went out

@@ -21,17 +21,18 @@ const (
 	ManagedValkeyCapability = "managed-redis"
 
 	// ManagedValkeyImage is the image apid deploys for a new cache, resize or
-	// upgrade. It is digest-pinned (valkey/valkey:8.1.4-alpine); a new Valkey
+	// upgrade. It is digest-pinned (valkey/valkey:8.1.12-alpine); a new Valkey
 	// release is a reviewed change here. Deploy references carry a digest and
 	// no tag. A cache may run any image in managedValkeyImages: one becomes
 	// ManagedValkeyImage only a release after it joined that list.
-	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
+	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"
 
-	// managedValkeyImage8112 is valkey/valkey:8.1.12-alpine. imaged and
-	// schedd accept it one release before apid deploys it: a schedd that did
-	// not know it would give the cache the plan-default HTTP liveness probe,
-	// which kills a cache about 50 s after it starts (docs/release-compatibility.md).
-	managedValkeyImage8112 = "docker.io/valkey/valkey@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"
+	// managedValkeyImage814 is valkey/valkey:8.1.4-alpine, which caches
+	// created before 8.1.12 keep until their next handoff (`gregale redis
+	// update`, resize or eviction-policy change) moves them. It
+	// stays accepted until no cache deployment runs it (the query is in
+	// ADR-20261116192126).
+	managedValkeyImage814 = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
 
 	// ManagedValkeyPort is the port a cache listens on at its service address.
 	ManagedValkeyPort = 6379
@@ -65,10 +66,12 @@ const (
 )
 
 // managedValkeyImages are the images a cache deployment may run: the one
-// apid deploys and the others still running in existing caches, which keep
-// their image until `gregale redis update` moves them. Remove an image only
-// once no cache deployment runs it (the query is in ADR-20261116192126).
-var managedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage8112}
+// apid deploys and the others still running in existing caches. A cache
+// keeps its image until its next handoff: `gregale redis update`, a resize
+// and an eviction-policy change all deploy ManagedValkeyImage. Remove an
+// image only once no cache deployment runs it (the query is in
+// ADR-20261116192126).
+var managedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage814}
 
 // ManagedValkeyImages returns a copy of the images a cache may run.
 func ManagedValkeyImages() []string {

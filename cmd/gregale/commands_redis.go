@@ -130,7 +130,7 @@ func cmdRedisGet(args []string) int {
 }
 
 func cmdRedisBind(args []string) int {
-	const usage = "usage: gregale redis bind NAME --app APP [--env KEY]"
+	const usage = "usage: gregale redis bind NAME [--app APP] [--env KEY]"
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("redis bind", flag.ContinueOnError)
 	app := fs.String("app", "", "app that receives the connection URL")
@@ -138,6 +138,9 @@ func cmdRedisBind(args []string) int {
 	if err := fs.Parse(append(flags, positional...)); err != nil {
 		return 1
 	}
+	// In a linked checkout --app defaults to the linked app, like the other
+	// app-scoped commands; bind printed usage there (prod hunt r50).
+	fillLinkedApp(app)
 	if fs.NArg() != 1 || *app == "" {
 		PrintUsage(os.Stderr, usage, "redis")
 		return 1
@@ -159,13 +162,16 @@ func cmdRedisBind(args []string) int {
 }
 
 func cmdRedisUnbind(args []string) int {
-	const usage = "usage: gregale redis unbind NAME --app APP"
+	const usage = "usage: gregale redis unbind NAME [--app APP]"
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("redis unbind", flag.ContinueOnError)
 	app := fs.String("app", "", "app that loses access to the cache")
 	if err := fs.Parse(append(flags, positional...)); err != nil {
 		return 1
 	}
+	// In a linked checkout --app defaults to the linked app, like the other
+	// app-scoped commands; bind printed usage there (prod hunt r50).
+	fillLinkedApp(app)
 	if fs.NArg() != 1 || *app == "" {
 		PrintUsage(os.Stderr, usage, "redis")
 		return 1
@@ -253,7 +259,7 @@ func printRedisChange(out api.RedisCacheChange, verb string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	_, _ = fmt.Fprintf(osStdout, "%s Redis cache %s (%d MB, %s). The new VM copies the data before it serves; writes pause for a moment at the switch. Deployment %s.\n",
+	_, _ = fmt.Fprintf(osStdout, "%s Redis cache %s (%d MB, %s). The new VM copies the data before it serves; open connections are closed at the switch, so clients reconnect. Deployment %s.\n",
 		verb, out.Cache.Name, out.Cache.MemoryMB, out.Cache.EvictionPolicy, out.DeploymentID)
 	return 0
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/dataapiinspectioncommand"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -59,6 +60,10 @@ const (
 	// by guest-init. It runs a bounded, read-only PostgreSQL connectivity canary
 	// using an environment key injected into the customer's deployment.
 	AppTaskPostgresBindingProbeCommand = "__gregale_postgres_binding_probe_v1__"
+	// AppTaskDataAPIWriteInspectionCommand is handled by guest-init. Until a
+	// dispatcher fences the guest version and binding, its output is not proof
+	// of identity: older images can contain an executable with the same name.
+	AppTaskDataAPIWriteInspectionCommand = dataapiinspectioncommand.Command
 	// AppTaskObjectStorageBindingProbeCommand runs a bounded, read-only S3
 	// canary using the selected binding's six injected environment variables.
 	AppTaskObjectStorageBindingProbeCommand = "__gregale_object_storage_binding_probe_v1__"
@@ -156,6 +161,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	if len(r.Command) > 0 && r.Command[0] == AppTaskServiceBindingTargetProbeCommand && (r.VerificationDeploymentID == "" || !IsServiceBindingTargetProbeCommand(r.Command, r.CommandShell)) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("target service probe requires an exact caller deployment and a canonical target UUID")
 	}
+	if len(r.Command) > 0 && r.Command[0] == AppTaskDataAPIWriteInspectionCommand && (!IsDataAPIWriteInspectionCommand(r.Command, r.CommandShell) || r.Interactive) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid Data API write inspection command")
+	}
 	if r.Interactive && (IsServiceBindingSmokeCommand(r.Command, r.CommandShell) || IsBindingVerificationCommand(r.Command, r.CommandShell) ||
 		IsObjectStorageWriteProbeCommand(r.Command, r.CommandShell)) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("platform probe commands cannot run interactively")
@@ -228,6 +236,12 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 		Interactive:              r.Interactive,
 		TTY:                      r.TTY,
 	}, nil
+}
+
+// IsDataAPIWriteInspectionCommand validates the fixed table and fresh nonce.
+// It does not establish the origin or trustworthiness of a task result.
+func IsDataAPIWriteInspectionCommand(command []string, shell bool) bool {
+	return dataapiinspectioncommand.Valid(command, shell)
 }
 
 // IsBindingVerificationCommand excludes generic commands and service smoke

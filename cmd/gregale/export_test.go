@@ -521,6 +521,8 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 var TerminalSafe = terminalSafe
 var ParsePostgresSuspendTimeout = parsePostgresSuspendTimeout
 var RenderPostgresSuspendTimeout = renderPostgresSuspendTimeout
+var RenderPostgresActivity = renderPostgresActivity
+var RenderPostgresDatabaseUsage = renderPostgresDatabaseUsage
 var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
@@ -3091,25 +3093,30 @@ func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 
 // Built-in Task release gate (commands_mcp_native_gate.go).
 type (
-	MCPGateWorker     = mcpGateWorker
-	MCPTaskHandlerRef = mcpTaskHandlerRef
-	MCPGateStore      = mcpGateStore
-	MCPGateReport     = mcpGateReport
+	MCPGateReport      = mcpGateReport
+	MCPGateDeployments = mcpGateDeployments
 )
 
 var (
 	MCPNativeWorkerRuntime     = mcpNativeWorkerRuntime
 	RequireMCPNativeNodeWorker = requireMCPNativeNodeWorker
-	MCPReplacementsReady       = mcpReplacementsReady
+	RequireMCPWebTaskMigration = requireMCPWebTaskMigration
+	MCPReportReplacementsReady = mcpReportReplacementsReady
+	MCPReportPreviousGone      = mcpReportPreviousGone
+	ErrMCPGateOutsideWorkers   = errMCPGateOutsideWorkers
 )
 
-// RunMCPGate runs the built-in gate against a test store and hooks.
-func RunMCPGate(ctx context.Context, store MCPGateStore, namespace, releaseID, checkpointPath string, timeout time.Duration,
+// RunMCPGate runs the built-in gate against a test compatibility report and
+// hooks.
+func RunMCPGate(ctx context.Context, report func(context.Context) (api.MCPTaskCompatibilityReportResponse, error), deployments func() (MCPGateDeployments, error),
+	namespace, releaseID, checkpointPath string, timeout time.Duration,
 	migrate func(context.Context) error, start func(context.Context, map[string]any) ([]string, error), drain func(context.Context, map[string]any) error) MCPGateReport {
-	g := &mcpGate{store: store, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
+	g := &mcpGate{view: reportMCPGateView{report: report, deployments: deployments}, namespace: namespace, releaseID: releaseID, timeout: timeout, poll: time.Millisecond,
 		checkpointPath: checkpointPath, migrate: migrate, start: start, drain: drain}
 	return g.run(ctx)
 }
+
+var MCPNativeDeployOrder = mcpNativeDeployOrder
 
 // LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
 var LeadingDeploymentID = leadingDeploymentID
@@ -3204,3 +3211,9 @@ var ErrDeployStreamIdle = errDeployStreamIdle
 func StreamDeployLogsWait(ctx context.Context, c *Client, dep api.DeploymentResponse, slug string, wait, idle time.Duration) int {
 	return streamDeployLogsContextWithOptions(ctx, c, dep, slug, streamDeployOptions{waitTimeout: wait, streamIdleTimeout: idle})
 }
+
+// LinkedAppAsArgument exposes linkedAppAsArgument.
+var LinkedAppAsArgument = linkedAppAsArgument
+
+// JobReplayCommandNote exposes jobReplayCommandNote.
+var JobReplayCommandNote = jobReplayCommandNote

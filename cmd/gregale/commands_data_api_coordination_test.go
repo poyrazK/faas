@@ -111,7 +111,7 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 				if r.Header.Get("Authorization") == "Bearer owner-test-token" {
 					t.Error("owner key sent to app")
 				}
-				if r.URL.Path == "/healthz" {
+				if r.URL.Path == api.DataAPIReadinessPath {
 					writeJSONTest(w, map[string]bool{"ready": true})
 					return
 				}

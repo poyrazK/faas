@@ -1203,7 +1203,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	limits := api.MustLimitsFor(acct.Plan)
 	ram, mc := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
-		if *req.RAMMB <= 0 {
+		if *req.RAMMB < api.AppMinRAMMB {
 			api.WriteProblem(w, api.ErrInvalidAppRAM(*req.RAMMB))
 			return
 		}
@@ -2798,7 +2798,7 @@ func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
-		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale release traffic rollback %s --to %s", appSlug, split.earlier)).
 		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 

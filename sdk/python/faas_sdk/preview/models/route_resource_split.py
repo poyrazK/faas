@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.route_resource_split_kind import RouteResourceSplitKind, check_route_resource_split_kind
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="RouteResourceSplit")
@@ -14,10 +15,15 @@ T = TypeVar("T", bound="RouteResourceSplit")
 @_attrs_define
 class RouteResourceSplit:
     """Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and
-    the rest of the app would fit in less memory: move that route to its own app and size the app down.
+    the rest of the app would fit in less memory: move that route to its own app and size the app down (kind memory).
+    When no memory split qualifies, the same rule over CPU peaks suggests moving the route for isolation; both apps keep
+    the current size (kind cpu).
 
     """
 
+    kind: RouteResourceSplitKind
+    """memory sizes both apps for what they need; cpu isolates a route whose CPU bursts slow the app's other
+    routes."""
     route: str
     path_glob: str
     """Edge-rule path match for the route; path parameters become one-segment wildcards."""
@@ -34,9 +40,15 @@ class RouteResourceSplit:
     method: str | Unset = UNSET
     route_ram_over_plan: bool | Unset = UNSET
     """The route needs more memory than the plan's largest app."""
+    high_cpu_share: float | Unset = UNSET
+    """Share of attributed CPU peaks the route was in flight for; set on cpu splits."""
+    high_cpu_minutes: int | Unset = UNSET
+    """CPU peaks the route was in flight for; set on cpu splits."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        kind: str = self.kind
+
         route = self.route
 
         path_glob = self.path_glob
@@ -59,10 +71,15 @@ class RouteResourceSplit:
 
         route_ram_over_plan = self.route_ram_over_plan
 
+        high_cpu_share = self.high_cpu_share
+
+        high_cpu_minutes = self.high_cpu_minutes
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "kind": kind,
                 "route": route,
                 "path_glob": path_glob,
                 "route_ram_mb": route_ram_mb,
@@ -78,12 +95,18 @@ class RouteResourceSplit:
             field_dict["method"] = method
         if route_ram_over_plan is not UNSET:
             field_dict["route_ram_over_plan"] = route_ram_over_plan
+        if high_cpu_share is not UNSET:
+            field_dict["high_cpu_share"] = high_cpu_share
+        if high_cpu_minutes is not UNSET:
+            field_dict["high_cpu_minutes"] = high_cpu_minutes
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
+        kind = check_route_resource_split_kind(d.pop("kind"))
+
         route = d.pop("route")
 
         path_glob = d.pop("path_glob")
@@ -106,7 +129,12 @@ class RouteResourceSplit:
 
         route_ram_over_plan = d.pop("route_ram_over_plan", UNSET)
 
+        high_cpu_share = d.pop("high_cpu_share", UNSET)
+
+        high_cpu_minutes = d.pop("high_cpu_minutes", UNSET)
+
         route_resource_split = cls(
+            kind=kind,
             route=route,
             path_glob=path_glob,
             route_ram_mb=route_ram_mb,
@@ -118,6 +146,8 @@ class RouteResourceSplit:
             reason=reason,
             method=method,
             route_ram_over_plan=route_ram_over_plan,
+            high_cpu_share=high_cpu_share,
+            high_cpu_minutes=high_cpu_minutes,
         )
 
         route_resource_split.additional_properties = d

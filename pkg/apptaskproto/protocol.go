@@ -18,13 +18,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/dataapiinspectioncommand"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 )
 
 const (
-	Version   uint16 = 1
-	VsockPort uint32 = 1031
+	Version uint16 = 1
+	// DataAPIInspectionVersion requires the platform guest to include the
+	// host-supplied CA set fingerprint. Older guests reject this version; a
+	// version 5 result is not sufficient evidence of inspection trust.
+	DataAPIInspectionVersion uint16 = 6
+	VsockPort                uint32 = 1031
 	// ForkExecVsockPort is the guest port app VMs listen on for ADR-732 fork
 	// exec. vmmd dials it only for a quarantined fork instance.
 	ForkExecVsockPort uint32 = 1034
@@ -91,6 +96,9 @@ type Request struct {
 	TTY            bool     `json:"tty,omitempty"`
 	Rows           uint16   `json:"rows,omitempty"`
 	Cols           uint16   `json:"cols,omitempty"`
+	// DataAPIInspectionCA is filled by the VM host, not by the API caller.
+	// The guest rejects the inspection when no host trust bundle is present.
+	DataAPIInspectionCA []byte `json:"data_api_inspection_ca,omitempty"`
 }
 
 func (r Request) Validate() error {
@@ -110,11 +118,21 @@ func (r Request) Validate() error {
 		if _, err := rehearsalcommand.Decode(r.Command); err != nil {
 			return fmt.Errorf("%w: invalid contained command envelope", ErrInvalidRequest)
 		}
+	case DataAPIInspectionVersion:
+		if r.Interactive || r.TTY || r.Rows != 0 || r.Cols != 0 || len(r.DataAPIInspectionCA) > dataapiinspectioncommand.MaxTrustBundleBytes || !dataapiinspectioncommand.Valid(r.Command, r.CommandShell) {
+			return fmt.Errorf("%w: invalid Data API inspection request", ErrInvalidRequest)
+		}
 	default:
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidRequest, r.Version)
 	}
+	if r.Version != DataAPIInspectionVersion && len(r.DataAPIInspectionCA) != 0 {
+		return fmt.Errorf("%w: unexpected Data API inspection trust bundle", ErrInvalidRequest)
+	}
 	if rehearsalcommand.IsCommand(r.Command) && r.Version != RehearsalVersion {
 		return fmt.Errorf("%w: contained commands require version %d", ErrInvalidRequest, RehearsalVersion)
+	}
+	if dataapiinspectioncommand.IsCommand(r.Command) && r.Version != DataAPIInspectionVersion {
+		return fmt.Errorf("%w: Data API inspection requires version %d", ErrInvalidRequest, DataAPIInspectionVersion)
 	}
 	if strings.TrimSpace(r.TaskID) == "" || len(r.TaskID) > MaxTaskIDBytes || strings.ContainsRune(r.TaskID, '\x00') {
 		return fmt.Errorf("%w: task_id is empty or too long", ErrInvalidRequest)

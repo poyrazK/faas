@@ -77,6 +77,11 @@ type WAFSample struct {
 	Header           http.Header
 	Body             []byte
 	BodyTruncated    bool
+	// Strict applies ADR-831 amendment 21 (platform flag
+	// edge_waf_strict_inspection): the wider in-path rule set, and a URI
+	// past the inspection bound reported as uninspected. Without it an
+	// in-path check scores the earlier rule set on the URI's first 8 KiB.
+	Strict bool
 	// country resolves the client's country on demand for a detection
 	// event (ResolveCountry); nil when the request had no match context.
 	country func() string
@@ -110,9 +115,10 @@ type WAFInlineResult struct {
 	// another host of a shared apps domain can plant such a cookie in a
 	// visitor's browser (ADR-831 amendment 18).
 	CookiesOnly bool
-	// Oversized marks a detection for headers past what a check scores
-	// (api.EdgeWAFHeadersExceedInspection, ADR-831 amendment 20). It blocks
-	// but never boxes the client: large cookies and tokens are not attacks.
+	// Oversized marks a detection for headers or a URI past what a check
+	// scores (api.EdgeWAFHeadersExceedInspection, ADR-831 amendment 20;
+	// api.EdgeWAFURIExceedsInspection, amendment 21). It blocks but never
+	// boxes the client: large cookies, tokens and queries are not attacks.
 	Oversized bool
 }
 
@@ -186,6 +192,7 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 // applyEdgeRuleWAFRule applies one matched waf rule.
 func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, rule *EdgeRuleWAFResolved) (handled bool, submit func()) {
 	sample := newWAFSample(r, app, rule)
+	sample.Strict = h.edgeFeatureReleased(platformflags.EdgeWAFStrictInspection, app)
 	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
 		res := h.checkEdgeRuleWAFInline(rule, sample)
 		outcome := res.Outcome
@@ -201,7 +208,14 @@ func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, a
 			// The header names the edge rule, not the CRS rule, so the
 			// response does not teach a caller which signature fired.
 			rec.installHeaderOps([]EdgeRuleHeaderOp{{Action: "set", Name: "X-WAF-Warning", Value: rule.ID}})
-			return false, nil
+			if !res.Oversized || !requestHasBody(r) {
+				return false, nil
+			}
+			// An oversized detection scored nothing, and the request still
+			// reaches the app: sample its body, so padding the query or
+			// headers cannot hide a body payload from the report (amendment
+			// 21). Without a body there is nothing more to find.
+			return false, h.sampleEdgeRuleWAF(r, rule, sample)
 		}
 		// The in-path check has scored the headers and URI. Without a body,
 		// an off-path sample would only add the rule families the in-path
@@ -274,11 +288,17 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 		return WAFInlineResult{}
 	}
 	var res WAFInlineResult
-	if api.EdgeWAFHeadersExceedInspection(sample.Header) {
+	switch {
+	case sample.Strict && api.EdgeWAFURIExceedsInspection(sample.URI):
+		// Scoring the whole URI let a few long ones a second empty the
+		// app's check budget; scoring part of it would let a client hide
+		// a payload past the cut (ADR-831 amendment 21).
+		res = WAFInlineResult{Outcome: WAFInlineDetected, Categories: []string{api.EdgeWAFCategoryUninspectedURI}, Oversized: true}
+	case api.EdgeWAFHeadersExceedInspection(sample.Header):
 		// A check would leave part of the headers unscored, which a
 		// client can use to hide a payload (ADR-831 amendment 20).
 		res = WAFInlineResult{Outcome: WAFInlineDetected, Categories: []string{api.EdgeWAFCategoryUninspectedHeaders}, Oversized: true}
-	} else {
+	default:
 		res = h.wafInline.CheckInline(sample)
 	}
 	outcome := res.Outcome

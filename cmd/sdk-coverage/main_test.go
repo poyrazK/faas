@@ -64,6 +64,33 @@ func TestNodeProbeNotificationsRemainOperatorOnly(t *testing.T) {
 	}
 }
 
+func TestMonetizationConsoleRoutesRequireInternalMarker(t *testing.T) {
+	const funnel = "/v1/apps/{slug}/monetization-funnel"
+	const send = "/v1/account/statement-invoices/{statement_id}/send"
+	const other = "/v1/apps/{slug}/new-operation"
+	path := filepath.Join(t.TempDir(), "openapi.yaml")
+	if err := os.WriteFile(path, []byte(`paths:
+  `+funnel+`:
+    get: {x-internal: true}
+  `+send+`:
+    get: {x-internal: false}
+    post: {}
+  `+other+`:
+    get: {x-internal: true}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := loadSpec(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := strings.Join(analyze(spec, nil).missing, "\n")
+	if strings.Contains(missing, funnel) || !strings.Contains(missing, "GET "+send) ||
+		!strings.Contains(missing, "POST "+send) || !strings.Contains(missing, other) {
+		t.Fatalf("unexpected SDK coverage results: %s", missing)
+	}
+}
+
 func TestRecoveryRoutesHaveTypedClientCoverage(t *testing.T) {
 	root, err := findRepoRoot()
 	if err != nil {

@@ -7,11 +7,23 @@ import (
 	"strings"
 )
 
+// Split kinds (ADR-20261121170000 amendment 2).
+const (
+	// SplitMemory moves a route that sizes the app's memory; both apps get
+	// sized for what they need.
+	SplitMemory = "memory"
+	// SplitCPU moves a route whose CPU bursts slow the app's other routes.
+	// Billing is plan RAM, so both apps keep the current size.
+	SplitCPU = "cpu"
+)
+
 // Split suggests moving one heavy route to its own app (ADR-20261121170000
-// amendment 1): one route holds most of the app's memory peaks while it runs
-// in few minutes, so the whole app is sized for a path most requests never
-// take.
+// amendments 1 and 2): one route holds most of the app's memory or CPU peaks
+// while it runs in few minutes, so the whole app is shaped by a path most
+// requests never take.
 type Split struct {
+	// Kind is SplitMemory or SplitCPU.
+	Kind   string `json:"kind"`
 	Route  string `json:"route"`
 	Method string `json:"method,omitempty"`
 	// PathGlob is the edge-rule match for the route: path parameters become
@@ -29,7 +41,10 @@ type Split struct {
 	HighMemoryShare   float64 `json:"high_memory_share"`
 	PresenceShare     float64 `json:"presence_share"`
 	HighMemoryMinutes int     `json:"high_memory_minutes"`
-	Reason            string  `json:"reason"`
+	// CPU evidence, set on CPU splits.
+	HighCPUShare   float64 `json:"high_cpu_share,omitempty"`
+	HighCPUMinutes int     `json:"high_cpu_minutes,omitempty"`
+	Reason         string  `json:"reason"`
 }
 
 // SplitOptions tune the detector. Zero values take the defaults.
@@ -81,8 +96,17 @@ func (o SplitOptions) withDefaults() SplitOptions {
 // without the route, not the p95 peak without it: an app often keeps the
 // memory the route raised for minutes afterwards, and those minutes would
 // otherwise size the main app for the route it no longer serves.
+//
+// A memory split wins; a CPU split is suggested only when none qualifies.
 func SuggestSplit(rep Report, currentRAMMB, planMaxRAMMB int, opts SplitOptions) *Split {
 	opts = opts.withDefaults()
+	if s := suggestMemorySplit(rep, currentRAMMB, planMaxRAMMB, opts); s != nil {
+		return s
+	}
+	return suggestCPUSplit(rep, currentRAMMB, opts)
+}
+
+func suggestMemorySplit(rep Report, currentRAMMB, planMaxRAMMB int, opts SplitOptions) *Split {
 	for _, r := range rep.Routes {
 		if isFoldedRoute(r.Route) || r.HighMemoryMinutes < opts.MinPeaks ||
 			r.HighMemoryShare < opts.MinPeakShare || r.PresenceShare > opts.MaxPresence {
@@ -90,6 +114,7 @@ func SuggestSplit(rep Report, currentRAMMB, planMaxRAMMB int, opts SplitOptions)
 		}
 		mainNeed := rep.MemPeakP50MB + r.MemRiseP95WithoutMB
 		s := &Split{
+			Kind:  SplitMemory,
 			Route: r.Route, Method: r.Method, PathGlob: PathGlob(r.Route),
 			RouteRAMMB:      sizeFor(r.MemPeakP95WithMB, opts),
 			CurrentRAMMB:    currentRAMMB,
@@ -107,6 +132,29 @@ func SuggestSplit(rep Report, currentRAMMB, planMaxRAMMB int, opts SplitOptions)
 		s.Reason = fmt.Sprintf("%s was in flight for %d of the app's %d memory peaks (%.0f%%) but ran in only %.0f%% of minutes; "+
 			"without it the app peaks near %d MB", r.Route, r.HighMemoryMinutes, rep.HighMemoryMinutes, r.HighMemoryShare*100, r.PresenceShare*100, mainNeed)
 		return s
+	}
+	return nil
+}
+
+// suggestCPUSplit picks a route holding most CPU peaks while running in few
+// minutes. Both apps keep the current size: the split isolates the route
+// rather than saving memory.
+func suggestCPUSplit(rep Report, currentRAMMB int, opts SplitOptions) *Split {
+	for _, r := range rep.Routes {
+		if isFoldedRoute(r.Route) || r.HighCPUMinutes < opts.MinPeaks ||
+			r.HighCPUShare < opts.MinPeakShare || r.PresenceShare > opts.MaxPresence {
+			continue
+		}
+		return &Split{
+			Kind: SplitCPU, Route: r.Route, Method: r.Method, PathGlob: PathGlob(r.Route),
+			RouteRAMMB: currentRAMMB, CurrentRAMMB: currentRAMMB, MainRAMMB: currentRAMMB,
+			HighMemoryShare: r.HighMemoryShare, PresenceShare: r.PresenceShare,
+			HighMemoryMinutes: r.HighMemoryMinutes,
+			HighCPUShare:      r.HighCPUShare, HighCPUMinutes: r.HighCPUMinutes,
+			Reason: fmt.Sprintf("%s was in flight for %d of the app's %d CPU peaks (%.0f%%) but ran in only %.0f%% of minutes; "+
+				"on its own app its bursts stop slowing the app's other routes",
+				r.Route, r.HighCPUMinutes, rep.HighCPUMinutes, r.HighCPUShare*100, r.PresenceShare*100),
+		}
 	}
 	return nil
 }

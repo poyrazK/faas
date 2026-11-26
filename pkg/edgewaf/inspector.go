@@ -53,6 +53,9 @@ type Inspector struct {
 	inlineMu      sync.Mutex
 	inlineBudgets budgets
 	inlineEngine  lazyEngine
+	// baselineInlineEngine is the in-path set for accounts
+	// edge_waf_strict_inspection leaves out.
+	baselineInlineEngine lazyEngine
 
 	engines [api.MaxEdgeWAFParanoiaLevel + 1]lazyEngine
 }

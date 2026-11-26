@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -18,6 +19,27 @@ func TestOrgPostgresOwnershipMigration(t *testing.T) {
 	for _, mixed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "binding and restore roots", true: "mixed roots refused"}[mixed], func(t *testing.T) {
 			ctx, pool := t.Context(), pgtest.OpenMigrated(t)
+			if err := db.MigrateUp(ctx, pool); err != nil {
+				t.Fatal(err)
+			}
+			// Roll back dependent inspections first, as a real version-ordered
+			// rollback would, before exercising the older ownership migration.
+			inspectionMigrations := []string{
+				"20261126083905500_data_api_inspection_evidence_immutable.sql",
+				"20261126083905400_data_api_inspection_revision_validation.sql",
+				"20261126083905300_data_api_inspection_admissions.sql",
+				"20261126083905200_data_api_inspection_trust_version.sql",
+				"20261126083905100_data_api_inspection_execution.sql",
+			}
+			for _, name := range inspectionMigrations {
+				migration, err := migrations.FS.ReadFile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := pgtest.ExecMigration(ctx, t, pool, string(migration), false); err != nil {
+					t.Fatalf("rollback %s: %v", name, err)
+				}
+			}
 			raw, err := migrations.FS.ReadFile("20261019190114433_org_managed_postgres_ownership_online.sql")
 			if err != nil {
 				t.Fatal(err)
@@ -73,6 +95,17 @@ func TestOrgPostgresOwnershipMigration(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal("ownership expansion:", err)
+			}
+			// Restore later migrations before calling current store code.
+			for i := len(inspectionMigrations) - 1; i >= 0; i-- {
+				name := inspectionMigrations[i]
+				migration, err := migrations.FS.ReadFile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := pgtest.ExecMigration(ctx, t, pool, string(migration), true); err != nil {
+					t.Fatalf("restore %s: %v", name, err)
+				}
 			}
 			catalog, err := NewPostgresStore(pool)
 			if err != nil {

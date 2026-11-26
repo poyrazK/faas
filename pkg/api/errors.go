@@ -768,6 +768,13 @@ const (
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
 	CodeForbidden = "insufficient_scope"
+	// CodeWorkloadBucketRequired refuses a workload credential request that
+	// names no bucket from an app holding several bucket grants
+	// (ADR-20261122191423); the detail lists the buckets it may name.
+	CodeWorkloadBucketRequired = "workload_bucket_required"
+	// CodeWorkloadBucketNotFound refuses a workload credential for a granted
+	// bucket that does not exist, or is not ready, in its owner's production.
+	CodeWorkloadBucketNotFound = "workload_bucket_not_found"
 	// CodeChallengeRequired is returned by gatewayd for a request on a
 	// kind=challenge route that carries no valid pass and is not a browser
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
@@ -806,6 +813,15 @@ const (
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
+	// CodeRouteSplitChanged (409, ADR-20261121170000 amendment 2): the
+	// split suggestion is no longer the one the request repeats; read the
+	// route resources again.
+	CodeRouteSplitChanged = "route_split_changed"
+	// CodeRouteSplitInFlight (409): the app already has a split in flight.
+	CodeRouteSplitInFlight = "route_split_in_flight"
+	// CodeRouteSplitUnsupported (422): the app has something a split does
+	// not carry yet (managed bindings, service bindings, a project).
+	CodeRouteSplitUnsupported = "route_split_unsupported"
 	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
 	// project would detach services that still call each other by service
 	// name. Pass detach_services=true once they no longer do.
@@ -3024,7 +3040,8 @@ func ErrBillingContactMember() *Problem {
 // to select the plan default; an update pointer is always explicit.
 func ErrInvalidAppRAM(requestedMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
-		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
+		"Invalid RAM", fmt.Sprintf("ram_mb must be at least %d MB, the smallest guest that boots; requested %d MB.", AppMinRAMMB, requestedMB)).
+		WithLimit(int64(AppMinRAMMB), int64(requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its

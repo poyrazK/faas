@@ -141,7 +141,7 @@ func (m *MemStore) ApplyPlatformTenantSelfConsumers(_ context.Context, in ApplyP
 	}
 	active := 0
 	for _, consumer := range m.apiConsumers {
-		if consumer.AccountID == in.AccountID && consumer.PlatformTenantID == in.TenantID && consumer.Active() {
+		if consumer.AccountID == in.AccountID && consumer.PlatformTenantID == in.TenantID && consumer.EnvironmentID == "" && consumer.Active() {
 			active++
 		}
 	}
