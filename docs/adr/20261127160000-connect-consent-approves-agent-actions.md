@@ -40,9 +40,13 @@ opening an approval request, without a `428`, and without notifications.
 The grant must come from the person, never from the agent or the bridge
 alone, so it rides on the sign-in code the person approves:
 
-- A new sign-in code scope, `approvals:connect`, joins
-  `api.MCPGrantableScopes`. It is never a key scope: the `api_keys` scope
-  vocabulary does not include it, and key creation refuses it.
+- A new sign-in code scope, `approvals:connect`, takes bit 7 of the code's
+  scope field (`api.MCPCodeScopes`: the seven `MCPGrantableScopes`, then
+  this one; a later grantable scope takes bit 8). It is not in
+  `MCPGrantableScopes`, so organization agent policies neither list nor cap
+  it; an organization limits it with its approval floor (§4). It is never a
+  key scope: the `api_keys` scope vocabulary does not include it, and key
+  creation refuses it.
 - The bridge asks for it whenever the person chooses deploy access on the
   Connect screen. apid's sign-in approval page (`/cli-auth`, signed in, with
   the recent-sign-in check of every MCP approval) lists it: "deploy,
@@ -88,9 +92,10 @@ The grant waives a person's per-request approval and nothing else:
 - An organization's approval floor (ADR-20261104140058 §3) still applies:
   a covered request in a floor category asks as before. With `production`
   in the floor, undo asks too.
-- A connection whose categories a person chose later (`gregale agent
-  approvals`, key create `--approvals`) follows that choice; the grant only
-  replaces the default of "every category".
+- A key whose categories a person chose (`gregale key create
+  --approvals`) follows that choice; the grant only replaces the default of
+  "every category". Sign-in keys have no chosen categories today, so this
+  guards a later way to choose them.
 - Agent budgets and their `budget` approvals (ADR-20261111114059), spend
   caps, plan limits and quotas are unchanged.
 - Protected environments keep their own human-issued approval (ADR-1242).
