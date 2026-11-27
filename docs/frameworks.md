@@ -11,6 +11,7 @@ is what every framework has in common. The guides cover each one:
 - [Django](deploy-django.md) (Python)
 - [Flask](deploy-flask.md) (Python)
 - [Go](deploy-go.md) (`net/http`, Gin)
+- [Rust](deploy-rust.md) (Axum, Actix Web; from a `Dockerfile`)
 
 Moving an existing app? See [Migrate from Heroku](migrate-from-heroku.md),
 [Migrate from Render](migrate-from-render.md),
