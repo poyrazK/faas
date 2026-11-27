@@ -87,3 +87,47 @@ func TestDevSessionReviveRefusedKeepsTombstoneTornDownPG(t *testing.T) {
 		t.Fatalf("tombstone deleted_at=%v state=%q, want deleted and %q", tomb.DeletedAt, tomb.PreviewPrState, state.PreviewPrStateTornDown)
 	}
 }
+
+// adr: 1170 — a revived watch session gets at least the RAM a new one would
+// (api.DevWatchRAMMB). A tombstone made at 512 MB before that default came
+// back at 512 MB on every restart; a size someone raised is kept.
+func TestDevSessionReviveRaisesWatchRAMPG(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		before  int
+		watch   *api.DevWatch
+		wantRAM int
+	}{
+		{"watch raises the old default", 512, &api.DevWatch{Command: "npm run dev"}, api.DevWatchDefaultRAMMB},
+		{"watch keeps a larger size", 2048, &api.DevWatch{Command: "npm run dev"}, 2048},
+		{"production-shaped keeps its size", 512, nil, 512},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := apidserver.SetupPGHandler(t, api.PlanScale)
+			path := "/v1/dev/sessions/gregale-web"
+			created := e.Do(t, "PUT", path, api.UpsertDevSessionRequest{}, nil)
+			if created.Code != 201 {
+				t.Fatalf("create status = %d, want 201: %s", created.Code, created.Body.String())
+			}
+			var first api.DevSessionResponse
+			if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil {
+				t.Fatal(err)
+			}
+			before := tc.before
+			if _, err := (*e.Store()).UpdateApp(t.Context(), first.App.ID, state.UpdateAppParams{RAMMB: &before}); err != nil {
+				t.Fatal(err)
+			}
+			if stopped := e.Do(t, "DELETE", path, nil, nil); stopped.Code != 204 {
+				t.Fatalf("destroy status = %d, want 204: %s", stopped.Code, stopped.Body.String())
+			}
+			again := e.Do(t, "PUT", path, api.UpsertDevSessionRequest{Watch: tc.watch}, nil)
+			if again.Code != 200 {
+				t.Fatalf("restart status = %d, want 200 (revived): %s", again.Code, again.Body.String())
+			}
+			app, err := (*e.Store()).AppByID(t.Context(), first.App.ID)
+			if err != nil || app.DeletedAt != nil || app.RAMMB != tc.wantRAM {
+				t.Fatalf("revived app RAM = %d deleted=%v (err %v), want %d", app.RAMMB, app.DeletedAt, err, tc.wantRAM)
+			}
+		})
+	}
+}

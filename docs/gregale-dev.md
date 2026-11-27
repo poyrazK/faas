@@ -734,9 +734,9 @@ change the selected mode.
 
 A new watch-mode environment gets 1024 MB of RAM, or your plan's RAM when that
 is smaller: a development server compiles on demand and needs far more memory
-than the production server. Watch mode needs at least 512 MB. An environment
-that already exists keeps its size; run `gregale dev --stop` once to recreate
-it at the watch size.
+than the production server. Watch mode needs at least 512 MB. A running
+environment keeps its size; run `gregale dev --stop` once, and the next watch
+session raises it to the watch size. A size you raised above that is kept.
 
 Detection picks the following commands:
 

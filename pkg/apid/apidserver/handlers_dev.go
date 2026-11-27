@@ -188,7 +188,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				api.WriteProblem(w, api.ErrPlanLimitApps(limits, quotaErr.Observed))
 			}
 		case errors.Is(err, state.ErrConflict):
-			if revived, ok := s.reviveDevSession(r, acct, slug, project, app, limits); ok {
+			if revived, ok := s.reviveDevSession(r, acct, slug, project, app, limits, watch != nil); ok {
 				refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), revived.ID, expiresAt)
 				if refreshErr != nil {
 					s.writeDevSessionRefreshError(w, revived, refreshErr)
@@ -265,7 +265,12 @@ func (s *server) writeDevSessionStoreError(w http.ResponseWriter, operation, slu
 // #10, H10-87). Only a finished teardown is revived, never another account's
 // row, a different project or a changed shape; the caller then renews the
 // lease and syncs a fresh deployment as for a new session.
-func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, project string, app state.App, limits api.Limits) (state.App, bool) {
+//
+// A revived watch session gets at least the RAM a new one would
+// (api.DevWatchRAMMB): a tombstone made before that default, at 512 MB,
+// otherwise swaps through every first compile. A larger size someone chose
+// is kept.
+func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, project string, app state.App, limits api.Limits, watch bool) (state.App, bool) {
 	tomb, err := s.store.AppBySlugIncludingDeleted(r.Context(), slug)
 	if err != nil || tomb.DeletedAt == nil || tomb.AccountID != acct.ID ||
 		tomb.PreviewOfSlug != project || tomb.PreviewPrNumber != 0 ||
@@ -287,6 +292,13 @@ func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, pro
 			s.log.Warn("developer session tombstone not put back", "app", tomb.ID, "err", err)
 		}
 		return state.App{}, false
+	}
+	if want := api.DevWatchRAMMB(limits); watch && restored.RAMMB < want {
+		if raised, err := s.store.UpdateApp(r.Context(), restored.ID, state.UpdateAppParams{RAMMB: &want}); err != nil {
+			s.log.Warn("developer session RAM not raised to the watch default", "app", restored.ID, "ram_mb", restored.RAMMB, "want_mb", want, "err", err)
+		} else {
+			restored = raised
+		}
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
 		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
