@@ -137,6 +137,38 @@ func TestUnknownVerbsAreNamed(t *testing.T) {
 	}
 }
 
+// Prod hunt r76: these printed a bare usage line (or the usage twice) and
+// never named the word that could not be used or where to go instead.
+func TestAccountWideCommandsNameTheExtraWord(t *testing.T) {
+	r63Server(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		http.Error(w, "no", http.StatusTeapot)
+	})
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"postgres", "usage", "orders"}, []string{"postgres usage takes no database", "gregale postgres get orders"}},
+		{[]string{"bucket", "usage", "shop"}, []string{`bucket usage takes no argument (got "shop")`, "gregale bucket list"}},
+		{[]string{"usage", "shop"}, []string{`unknown usage subcommand "shop"`, "lists every app's usage"}},
+		{[]string{"workflow", "get", "nope"}, []string{`"nope" is not a workflow run ID`, "gregale workflow list"}},
+		{[]string{"app", "list", "--limit", "0"}, []string{"app list does not take --limit"}},
+	} {
+		code, out := r63Run(t, tc.args...)
+		if code != 1 {
+			t.Fatalf("%v: exit=%d out=%s", tc.args, code, out)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(out, want) {
+				t.Fatalf("%v: missing %q in:\n%s", tc.args, want, out)
+			}
+		}
+		if strings.Contains(out, "usage: gregale billing usage") {
+			t.Fatalf("%v: still prints the billing usage line: %s", tc.args, out)
+		}
+	}
+}
+
 // Prod hunt r68: `cron get nope` printed only its usage line, never that the
 // ID was malformed or where cron IDs come from.
 func TestCronGetNamesTheMalformedID(t *testing.T) {

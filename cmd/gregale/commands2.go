@@ -6774,8 +6774,10 @@ func cmdUsage(args []string) int {
 	case "object-storage":
 		return cmdUsageObjectStorage(args[1:])
 	}
-	PrintUsage(os.Stderr, "usage: gregale billing usage [--month YYYY-MM] | gregale billing usage summary [--month YYYY-MM] | gregale billing usage daily [--day YYYY-MM-DD] | gregale billing usage storage [--day YYYY-MM-DD]", "usage")
-	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	// `usage basic-hello` printed the usage line and then the unknown
+	// subcommand, the usage twice over (prod hunt r76). Name the word once,
+	// say the rows are per app already, and list the subcommands.
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q: `gregale usage` lists every app's usage for the month.\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "usage", parent, args[0])
 }
 

@@ -304,7 +304,12 @@ func downloadBucketFile(ctx context.Context, c bucketTransferClient, o bucketTra
 
 func cmdUsageObjectStorage(args []string) int {
 	if len(args) != 0 {
-		PrintUsage(osStderr, "usage: gregale bucket usage", "usage")
+		// `bucket usage photos` printed only the bare usage line (prod hunt r76).
+		if strings.HasPrefix(args[0], "-") {
+			PrintUsage(osStderr, "usage: gregale bucket usage", "usage")
+		} else {
+			printCommandValidation(osStderr, "bucket usage takes no argument (got %q): it reports object storage for the whole account. `gregale bucket list` lists an app's buckets.\n", args[0])
+		}
 		return 1
 	}
 	c, err := authedClient()

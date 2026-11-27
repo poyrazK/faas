@@ -289,8 +289,14 @@ func cmdPostgresOverage(args []string) int {
 
 func cmdPostgresUsage(args []string) int {
 	fs := newFlagSet("postgres usage", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+	if err := fs.Parse(args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale postgres usage", "postgres")
+		return 1
+	}
+	if fs.NArg() != 0 {
+		// `postgres usage orders` printed only the bare usage line, never
+		// that usage is per account (prod hunt r76).
+		printCommandValidation(os.Stderr, "postgres usage takes no database: it reports the whole account. For one database run `gregale postgres get %s`.\n", fs.Arg(0))
 		return 1
 	}
 	client, err := authedClient()
