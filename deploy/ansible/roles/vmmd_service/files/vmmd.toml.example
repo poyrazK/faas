@@ -78,6 +78,14 @@
 # Default: false
 # adopt_admitted_runtimes = true
 
+# adoption_drive_base: write each guest's drive layer key into its adoption
+# block, so a guest adopted after a vmmd restart parks a drive delta instead
+# of its whole drive (ADR-20261115213230 amendment 1). An older vmmd cannot
+# open a journal holding the field: turn it on only after every compute node,
+# and any rollback target, runs a vmmd that reads it.
+# Default: false
+# adoption_drive_base = true
+
 # socket_path: unix-domain socket path. Mode 0660, group 'faas' (ADR-015).
 # Default: /run/faas/vmmd.sock
 # socket_path = "/run/faas/vmmd.sock"
