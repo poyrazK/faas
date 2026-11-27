@@ -261,8 +261,18 @@ jobs:
             else
               behind="$(git rev-list --first-parent --count "$from..$target")"
               if (( behind > BLAST_CAP )); then
-                target="$(git rev-list --first-parent --reverse "$from..$target" | sed -n "${BLAST_CAP}p")"
+                # The capped commit and every later one, oldest first: a
+                # capped commit whose light tier failed would be refused by
+                # the preflight on every run, so the release moves to the
+                # first later commit whose light tier did not fail
+                # (cap_past_red_light.py; releases are cumulative).
+                mapfile -t window < <(git rev-list --first-parent --reverse "$from..$target" | sed -n "${BLAST_CAP},\$p")
+                target="$(python3 "$tools/cap_past_red_light.py" "${window[@]}")"
+                [[ -n "$target" ]] || target="${window[0]}"
                 capped="$behind commits beyond ${from:0:12}; releasing the first $BLAST_CAP, up to ${target:0:12}"
+                if [[ "$target" != "${window[0]}" ]]; then
+                  capped="$behind commits beyond ${from:0:12}; the capped commit ${window[0]:0:12} failed main's light tier, releasing up to ${target:0:12}"
+                fi
                 echo "::notice::blast cap: $capped" >&2
               fi
             fi

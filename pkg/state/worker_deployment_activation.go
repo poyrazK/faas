@@ -14,6 +14,9 @@ type workerDeploymentActivation struct {
 	attempt    snapshotPrimeAttempt
 	instanceID string
 	ephemeral  *Instance
+	// developer is the RUNNING prime of a `gregale dev` deployment that
+	// serves without a snapshot (ADR-20261122200000).
+	developer *Instance
 }
 
 // WithWorkerDeploymentActivation carries imaged's readiness recipient to the
@@ -43,11 +46,37 @@ func WithEphemeralDeploymentActivation(ctx context.Context, d Deployment, source
 	return context.WithValue(ctx, workerDeploymentActivationKey{}, workerDeploymentActivation{attempt: attempt, instanceID: source.ID, ephemeral: &source}), nil
 }
 
+// WithDeveloperPrimeActivation retains the exact RUNNING prime of a
+// developer deployment (ADR-20261122200000). Like the ephemeral proof it is
+// checked with current inputs inside the final activation write.
+func WithDeveloperPrimeActivation(ctx context.Context, d Deployment, source Instance) (context.Context, error) {
+	attempt, err := snapshotPrimeAttemptFor(d)
+	if err != nil {
+		return ctx, err
+	}
+	if source.ID == "" || source.AppID != d.AppID || source.DeploymentID != d.ID || source.State != string(StateRunning) ||
+		(source.Mode != string(InstanceModeNormal) && source.Mode != string(InstanceModeService)) {
+		return ctx, ErrInvalidArgument
+	}
+	return context.WithValue(ctx, workerDeploymentActivationKey{}, workerDeploymentActivation{attempt: attempt, instanceID: source.ID, developer: &source}), nil
+}
+
 func (g workerDeploymentActivation) kind() string {
-	if g.ephemeral != nil {
+	switch {
+	case g.ephemeral != nil:
 		return "ephemeral-secret"
+	case g.developer != nil:
+		return "developer-prime"
 	}
 	return "worker"
+}
+
+// pinned is the exact runtime a proof was taken from, if the proof names one.
+func (g workerDeploymentActivation) pinned() *Instance {
+	if g.ephemeral != nil {
+		return g.ephemeral
+	}
+	return g.developer
 }
 
 func checkWorkerActivationInstance(expected workerDeploymentActivation, d Deployment, i Instance) error {
@@ -55,10 +84,10 @@ func checkWorkerActivationInstance(expected workerDeploymentActivation, d Deploy
 		return err
 	}
 	mode, status := string(InstanceModeWorker), string(StateRunning)
-	if source := expected.ephemeral; source != nil {
-		mode, status = source.Mode, string(StateStopped)
+	if source := expected.pinned(); source != nil {
+		mode, status = source.Mode, source.State
 		if i.NodeID != source.NodeID || i.WakeID != source.WakeID || !i.StartedAt.Equal(source.StartedAt) {
-			return fmt.Errorf("%w: ephemeral-secret readiness runtime changed", ErrConflict)
+			return fmt.Errorf("%w: %s readiness runtime changed", ErrConflict, expected.kind())
 		}
 	}
 	if i.ID != expected.instanceID || i.AppID != d.AppID || i.DeploymentID != d.ID || i.Mode != mode || i.State != status ||
@@ -129,7 +158,7 @@ func checkWorkerDeploymentActivationTx(ctx context.Context, tx pgx.Tx, d Deploym
 
 func lockDeploymentReadinessInstance(ctx context.Context, tx pgx.Tx, guard workerDeploymentActivation) (Instance, string, error) {
 	q := sqlc.New()
-	if guard.ephemeral != nil {
+	if guard.pinned() != nil {
 		row, err := q.LockPrimeRecoveryWorker(ctx, tx, mustPgUUID(guard.instanceID))
 		if err != nil {
 			return Instance{}, "", mapErr(err)

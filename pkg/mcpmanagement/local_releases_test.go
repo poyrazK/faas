@@ -426,6 +426,57 @@ func TestFingerprintTreeTracksFilesAndSkipsGit(t *testing.T) {
 	}
 }
 
+// The deploy under review links a new app's directory; only what the CLI
+// writes for itself leaves the fingerprint unchanged.
+func TestFingerprintTreeIgnoresTheCLIsOwnLink(t *testing.T) {
+	write := func(t *testing.T, dir, rel, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, gitignore string
+		change          func(t *testing.T, dir string)
+		same            bool
+	}{
+		{name: "CLI creates the .gitignore", change: func(t *testing.T, dir string) { linkCreatedApp(t, dir, "alpha") }, same: true},
+		{name: "CLI appends to a .gitignore", gitignore: "venv/\n", change: func(t *testing.T, dir string) { linkCreatedApp(t, dir, "alpha") }, same: true},
+		{name: "CLI appends after a missing newline", gitignore: "venv/", change: func(t *testing.T, dir string) { linkCreatedApp(t, dir, "alpha") }, same: true},
+		{name: "CLI-local files in a subdirectory", change: func(t *testing.T, dir string) {
+			write(t, dir, "web/.gregale/project.json", `{"version":2,"app":"web"}`)
+			write(t, dir, ".gregale/jobs.json", "{}")
+			write(t, dir, ".gregale/accepted-runs/run.json", "{}")
+		}, same: true},
+		{name: "customer edits the .gitignore", gitignore: "venv/\n", change: func(t *testing.T, dir string) { write(t, dir, ".gitignore", "venv/\nbuild/\n") }},
+		{name: "customer adds a .gitignore", change: func(t *testing.T, dir string) { write(t, dir, ".gitignore", "build/\n") }},
+		{name: "shipped .gregale file", change: func(t *testing.T, dir string) { write(t, dir, ".gregale/required-secrets.json", "[]") }},
+		{name: "source file", change: func(t *testing.T, dir string) { write(t, dir, "added.py", "x") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := projectDir(t)
+			if tc.gitignore != "" {
+				write(t, dir, ".gitignore", tc.gitignore)
+			}
+			before, _, _, err := fingerprintTree(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.change(t, dir)
+			after, _, _, err := fingerprintTree(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (before == after) != tc.same {
+				t.Fatalf("fingerprint unchanged = %v, want %v", before == after, tc.same)
+			}
+		})
+	}
+}
+
 // `gregale deploy` links every directory it deploys to its app. Refusing any
 // link let an agent deploy a directory once: its fix could never ship.
 func TestLocalDeployAcceptsItsOwnAppLink(t *testing.T) {

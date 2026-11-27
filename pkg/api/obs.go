@@ -1955,3 +1955,97 @@ type ObsControlPlaneHost struct {
 	MemTotalBytes     *int64   `json:"mem_total_bytes,omitempty"`
 	MemAvailableBytes *int64   `json:"mem_available_bytes,omitempty"`
 }
+
+// ObsEgressReport is the operator egress denials and abuse report
+// (ADR-20261127100000) over WindowSeconds: tenant egress the platform
+// dropped, by class, node and app; new destinations; and the abuse signals
+// (egress recycles, account holds, CPU abuse, blocked DNS, build-time image
+// scan findings, host denylist drops).
+type ObsEgressReport struct {
+	AsOf          time.Time               `json:"as_of"`
+	WindowSeconds int                     `json:"window_seconds"`
+	Source        string                  `json:"source"`
+	FailedQueries []string                `json:"failed_queries"`
+	Totals        ObsEgressTotals         `json:"totals"`
+	Classes       []ObsEgressCount        `json:"classes"`
+	Nodes         []ObsEgressCount        `json:"nodes"`
+	Apps          []ObsEgressApp          `json:"apps"`
+	Recycles      []ObsEgressRecycle      `json:"recycles"`
+	Holds         []ObsEgressCount        `json:"holds"`
+	CPUSignals    []ObsEgressCPUSignal    `json:"cpu_signals"`
+	DNSBlocked    []ObsEgressCount        `json:"dns_blocked"`
+	ScanFindings  []ObsEgressScanFinding  `json:"scan_findings"`
+	Denylist      []ObsEgressDenylistDrop `json:"denylist"`
+}
+
+// ObsEgressTotals sums the window. DeniedLastHour is the last hour alone;
+// FlowLogRows is nil when not read (a flat zero on a busy fleet means the
+// flow log stopped recording).
+type ObsEgressTotals struct {
+	Denied          int64  `json:"denied"`
+	DeniedLastHour  int64  `json:"denied_last_hour"`
+	AppsDenied      int    `json:"apps_denied"`
+	NewDestinations int64  `json:"new_destinations"`
+	AbuseRecycles   int64  `json:"abuse_recycles"`
+	AbuseHolds      int64  `json:"abuse_holds"`
+	CPUAbuseSignals int64  `json:"cpu_abuse_signals"`
+	DNSBlocked      int64  `json:"dns_blocked"`
+	ScanBlocked     int64  `json:"scan_blocked"`
+	ScanFlagged     int64  `json:"scan_flagged"`
+	FlowLogRows     *int64 `json:"flow_log_rows,omitempty"`
+}
+
+// ObsEgressCount is a count for one key: a denial class (smtp, rfc1918,
+// metadata, allowlist, port_policy, rate_limit, flood, unresolved), a node,
+// an abuse hold reason or a DNS blocklist category.
+type ObsEgressCount struct {
+	Key   string `json:"key"`
+	Count int64  `json:"count"`
+}
+
+// ObsEgressApp is one app's egress in the window: drops by class, new
+// destinations it contacted, and instances recycled for egress abuse.
+type ObsEgressApp struct {
+	AppID           string           `json:"app_id"`
+	AppSlug         string           `json:"app_slug,omitempty"`
+	AccountID       string           `json:"account_id,omitempty"`
+	Denied          int64            `json:"denied"`
+	Classes         []ObsEgressCount `json:"classes"`
+	NewDestinations int64            `json:"new_destinations"`
+	AbuseRecycles   int64            `json:"abuse_recycles"`
+}
+
+// ObsEgressRecycle is instances of one app schedd destroyed for one egress
+// abuse reason (fanout or flood).
+type ObsEgressRecycle struct {
+	AppID     string `json:"app_id"`
+	AppSlug   string `json:"app_slug,omitempty"`
+	AccountID string `json:"account_id,omitempty"`
+	Reason    string `json:"reason"`
+	Count     int64  `json:"count"`
+}
+
+// ObsEgressCPUSignal is instances pinned at their CPU quota, by plan and
+// action (recycled, shadow or flagged).
+type ObsEgressCPUSignal struct {
+	Plan   string `json:"plan"`
+	Action string `json:"action"`
+	Count  int64  `json:"count"`
+}
+
+// ObsEgressScanFinding is build-time image abuse scan findings, by category
+// and action (block fails the deploy, flag is for review).
+type ObsEgressScanFinding struct {
+	Category string `json:"category"`
+	Action   string `json:"action"`
+	Count    int64  `json:"count"`
+}
+
+// ObsEgressDenylistDrop is host-level drops against one denylist CIDR.
+// Source is firewall (nftables on a compute host) or image_pull (imaged's
+// user-space dialer).
+type ObsEgressDenylistDrop struct {
+	Source string `json:"source"`
+	CIDR   string `json:"cidr"`
+	Count  int64  `json:"count"`
+}

@@ -193,3 +193,52 @@ func TestConsumerSignupFreePlanAndOAuthConsumers(t *testing.T) {
 		t.Fatalf("charging card on a plan with card-less consumers: %d %s", res.Code, res.Body)
 	}
 }
+
+// A seller can sell an MCP server on the free plan alone before connecting
+// Stripe: no sign-up reaches Checkout. Offering a paid plan still needs it.
+func TestConsumerSignupFreePlanOnlyNeedsNoStripe(t *testing.T) {
+	withBillingKeys(t)
+	e := apidserver.Setup(t, api.PlanHobby)
+	appID := apidserver.MustSeedApp(t, e, "search")
+	plan := func(name string, price int64) string {
+		var p api.APIConsumerPlanResponse
+		res := e.Do(t, http.MethodPost, "/v1/apps/search/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: name, MaxUnitsPerMonth: 1000}, nil)
+		if res.Code != http.StatusCreated || json.Unmarshal(res.Body.Bytes(), &p) != nil {
+			t.Fatalf("plan %s: %d %s", name, res.Code, res.Body)
+		}
+		if res := e.Do(t, http.MethodPost, "/v1/apps/search/rate-cards", api.CreateAPIConsumerRateCardRequest{Currency: "USD",
+			PriceMillicentsPerUnit: price, PlanID: p.ID}, nil); res.Code != http.StatusCreated {
+			t.Fatalf("rate card %s: %d %s", name, res.Code, res.Body)
+		}
+		return p.ID
+	}
+	free, pro := plan("free", 0), plan("pro", 50)
+	put := func(plans ...string) *httptest.ResponseRecorder {
+		return e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", api.PutConsumerSignupRequest{DisplayName: "Search tools",
+			PlanIDs: plans, FreePlanID: free, OAuthConsumers: true, AccountTools: true}, nil)
+	}
+	if res := put(free, pro); res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "Stripe is not connected") {
+		t.Fatalf("paid plan offered without Stripe: %d %s", res.Code, res.Body)
+	}
+	if res := put(free); res.Code != http.StatusOK {
+		t.Fatalf("free plan only without Stripe: %d %s", res.Code, res.Body)
+	}
+	// Without a connection nothing is a test: the page shows no test-mode
+	// notice, so sign-ups count as real customers.
+	var form api.ConsumerSignupFormResponse
+	res := e.Do(t, http.MethodGet, "/v1/consumer-signup/search", nil, map[string]string{"Authorization": ""})
+	if res.Code != http.StatusOK || json.Unmarshal(res.Body.Bytes(), &form) != nil {
+		t.Fatalf("sign-up form: %d %s", res.Code, res.Body)
+	}
+	if !form.Livemode {
+		t.Fatalf("free-only sign-up without Stripe is shown as test mode: %+v", form)
+	}
+	if _, created, err := (*e.S()).ConsumerSignup().EnrollOAuthConsumer(t.Context(), state.APIConsumerEnrollment{AccountID: e.Acct().ID, AppID: appID,
+		Issuer: "https://login.example", Subject: "u1", Email: "u1@example.com"}); err != nil || !created {
+		t.Fatalf("enroll without Stripe: created=%v err=%v", created, err)
+	}
+	// Adding a paid plan later still asks for Stripe.
+	if res := put(free, pro); res.Code != http.StatusConflict {
+		t.Fatalf("adding a paid plan without Stripe: %d %s", res.Code, res.Body)
+	}
+}

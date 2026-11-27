@@ -57,3 +57,50 @@ func TestRestoreRetryAdoptsReadyCopyAfterSourceChanges(t *testing.T) {
 		}
 	}
 }
+
+// A retry while another worker holds the copy's lease answers with the copy,
+// still provisioning, and the conflict, so an environment branch counts it as
+// in progress rather than a failed attempt (prod 2026-11-27). Any other
+// conflict (a copy backing off after a failure, or being deleted) keeps the
+// empty row, so it is never waited on as in progress.
+func TestRestoreRetryConflictNamesOnlyACopyInProgress(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		set        func(*Database)
+		inProgress bool
+	}{
+		{"leased", func(d *Database) {
+			d.State, d.LeaseToken, d.LeaseUntil = StateProvisioning, "other-worker", time.Now().Add(time.Hour)
+		}, true},
+		{"backing off", func(d *Database) {
+			d.State, d.RetryAt = StateProvisioning, time.Now().Add(time.Hour)
+		}, false},
+		{"leased while backing off", func(d *Database) {
+			d.State, d.LeaseToken, d.LeaseUntil, d.RetryAt = StateProvisioning, "other-worker", time.Now().Add(time.Hour), time.Now().Add(time.Hour)
+		}, false},
+		{"deleting", func(d *Database) { d.State = StateDeleting }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newSlotFixture(t)
+			source, copy := f.sourceAndCopy(t)
+			f.store.mu.Lock()
+			row := f.store.databases[copy.ID]
+			tc.set(&row)
+			f.store.databases[copy.ID] = row
+			f.store.mu.Unlock()
+			calls := f.provider.restoreCalls
+			again, created, err := f.service.RestoreWithResult(ctx, RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID,
+				Name: copy.Name, PointInTime: copy.RestorePointInTime})
+			if !errors.Is(err, ErrConflict) || created || f.provider.restoreCalls != calls {
+				t.Fatalf("retry = %+v created=%v calls=%d/%d err=%v; want a conflict", again, created, f.provider.restoreCalls, calls, err)
+			}
+			if tc.inProgress && (again.ID != copy.ID || again.State != StateProvisioning) {
+				t.Fatalf("leased retry = %+v; want the provisioning copy", again)
+			}
+			if !tc.inProgress && again.ID != "" {
+				t.Fatalf("%s retry named a copy in progress: %+v", tc.name, again)
+			}
+		})
+	}
+}

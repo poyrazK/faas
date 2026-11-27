@@ -8,6 +8,24 @@ printf '%s\n' "$REGISTRY_TOKEN" | gregale registry set --app APP_ID --registry r
 gregale registry delete --app APP_ID --registry registry-1.docker.io
 ```
 
+If you already ran `docker login`, reuse that credential instead of typing it
+again. `--docker-config` reads the Docker config (`config.json` or the directory
+holding it), including credential helpers such as `osxkeychain`, `desktop` or
+`ecr-login`:
+
+```bash
+gregale registry set --app APP_ID --registry ghcr.io --docker-config ~/.docker
+gregale deploy --image ghcr.io/acme/api@sha256:<digest> --docker-config ~/.docker
+gregale doctor --image ghcr.io/acme/api:1.2 --docker-config ~/.docker
+```
+
+`deploy --image --docker-config` saves the credential for the image's registry
+to the app before it submits the deployment, as `registry set` does, so later
+pulls of that registry for the app use it too. `doctor` and `deploy check` use it
+only to read the image's metadata from your machine and store nothing. A Docker
+config that holds only an identity token for the registry cannot be used; pass a
+username with a password or access token instead.
+
 The CLI prompts for the secret and sends it over the authenticated API; it never prints the value. The service stores write-only credential metadata, redacts credential fields from events and logs, and uses the credential only for the selected registry host. The credential is sent only to an HTTPS token endpoint; a registry whose authentication challenge names a plain-HTTP token endpoint fails the pull instead.
 
 Image runs (`gregale run`) take the credential per run instead:
