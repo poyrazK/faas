@@ -5136,6 +5136,9 @@ func (s *server) handler() http.Handler {
 	// Disk pressure: host filesystems, jail tmpfs, journals, guest disks (ADR-20261124150000).
 	mux.HandleFunc("GET /v1/admin/obs/disk-pressure",
 		s.authLimited(s.requireOperatorSessionRead(s.obsDiskPressure)))
+	// Control-plane health: Postgres, backups and WAL, outboxes, pools (ADR-20261126120000).
+	mux.HandleFunc("GET /v1/admin/obs/control-plane",
+		s.authLimited(s.requireOperatorSessionRead(s.obsControlPlane)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
