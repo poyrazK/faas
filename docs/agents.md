@@ -92,10 +92,10 @@ as a connector.
 When the agent first connects, your browser opens:
 1. Sign in to Gregale. No account yet? Sign up with GitHub or Google on the
    same page.
-2. Choose what the agent may do: "Deploy and manage apps" (preselected) or
-   "Inspect only". With deploy access you can also let it ask you for
-   secrets and add buckets and databases. You confirm write access again
-   after you see the account.
+2. Choose what the agent may do: "Deploy and manage apps" or "Inspect
+   only". With deploy access you can also let it ask you for secrets and add
+   buckets and databases. Every choice on the Connect screen starts ticked,
+   here and after you see the account; untick what you don't want.
 3. Choose which tools it gets. With deploy access the default is "Deploy and
    operate": releases, domains, data, crons, restarts and scaling. "Core
    tools" inspects, deploys and rolls back; "Diagnose and recover" adds

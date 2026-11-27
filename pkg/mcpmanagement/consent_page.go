@@ -10,7 +10,9 @@ import (
 )
 
 // consentCapabilityChoices are the optional scopes chosen before sign-in.
-const consentCapabilityChoices = `<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="env:write"> Changing non-secret configuration and restoring configuration revisions</label><br><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent cannot read their values through Gregale, but code it deploys can</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`
+// Every permission on the Connect screen starts ticked; the person unticks
+// what they do not want (ADR-20261127160000 §6).
+const consentCapabilityChoices = `<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="env:write" checked> Changing non-secret configuration and restoring configuration revisions</label><br><label><input type="checkbox" name="capability" value="secrets:request" checked> Asking you to enter secrets on a Gregale page; the agent cannot read their values through Gregale, but code it deploys can</label><br><label><input type="checkbox" name="capability" value="storage:manage" checked> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage" checked> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`
 
 // connectionLifetime states how long an approved connection lasts: a browser
 // sign-in's slides while used (ADR-20261028205920), a pasted key's does not.
@@ -55,7 +57,7 @@ func consentPage(v consentView) string {
 		}
 		w(`</select></label>`)
 		if v.Native {
-			w(`<label><input type="checkbox" name="capability" value="usage:read" form="gregale-connect"> Read usage and billing costs</label>`)
+			w(`<label><input type="checkbox" name="capability" value="usage:read" form="gregale-connect" checked> Read usage and billing costs</label>`)
 		}
 		w(`</details>`)
 	}
@@ -82,30 +84,35 @@ func consentPage(v consentView) string {
 		}
 		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden, "\n")
 		if v.Writes {
-			w(`<p><label><input type="checkbox" name="allow_writes" value="yes" required> Also allow reviewed deployments, production promotion, checked rollback, restarts, scaling, and domain/cron changes. These actions can change traffic and incur costs.</label></p>`)
+			w(`<p><label><input type="checkbox" name="allow_writes" value="yes" required checked> Also allow reviewed deployments, production promotion, checked rollback, restarts, scaling, and domain/cron changes. These actions can change traffic and incur costs.</label></p>`)
 		}
 		if v.Publishing {
-			w(`<p><label><input type="checkbox" name="allow_tool_publishing" value="yes" required> Allow reviewed source builds, behavioral tool fixtures and publication with production promotion. Fixtures can change external data and incur costs. Requires all apps and default-environment writes below; invocation remains separately granted.</label></p>`)
+			w(`<p><label><input type="checkbox" name="allow_tool_publishing" value="yes" required checked> Allow reviewed source builds, behavioral tool fixtures and publication with production promotion. Fixtures can change external data and incur costs. Requires all apps and default-environment writes below; invocation remains separately granted.</label></p>`)
 		}
 		if v.PrivateInvocations {
-			w(`<p><label><input type="checkbox" name="allow_private_tool_invocation" value="yes" required> Allow private tool calls using credentials the owner explicitly binds to this connection. Credentials stay with Gregale; calls can change external data and incur costs.</label></p>`)
+			w(`<p><label><input type="checkbox" name="allow_private_tool_invocation" value="yes" required checked> Allow private tool calls using credentials the owner explicitly binds to this connection. Credentials stay with Gregale; calls can change external data and incur costs.</label></p>`)
 		}
 		if v.Invocations {
-			w(`<p><label><input type="checkbox" name="allow_tool_invocation" value="yes" required> Allow calls to open published tools that the owner explicitly grants to this connection. Calls can change external data and incur compute costs.</label></p>`)
+			w(`<p><label><input type="checkbox" name="allow_tool_invocation" value="yes" required checked> Allow calls to open published tools that the owner explicitly grants to this connection. Calls can change external data and incur compute costs.</label></p>`)
 		}
-		w("\n", `<fieldset><legend>Apps this agent may access</legend><label><input type="radio" name="app_access" value="all" required> All apps in this account, including future apps</label><br><label><input type="radio" name="app_access" value="selected" required> Only selected apps</label>`)
+		w("\n", `<fieldset><legend>Apps this agent may access</legend><label><input type="radio" name="app_access" value="all" required checked> All apps in this account, including future apps</label><br><label><input type="radio" name="app_access" value="selected" required> Only selected apps</label>`)
 		for _, app := range v.Apps {
 			w(`<p><label><input type="checkbox" name="apps" value="`, e(app.Slug), `"> `, e(app.Slug), `</label></p>`)
 		}
 		w(`</fieldset>`, "\n", `<fieldset><legend>App diagnostics (optional)</legend><p>Allow retained request status, routes, timing, performance evidence, retained wake observations, trace-correlated invocation lifecycle metadata, sampled CPU profile function labels and collection/attribution summaries, and scheduler residency causes across all environments of each selected app. This may contain private application data. Future apps are excluded. Native plan and retention limits still apply. This does not grant environment, log or write access.</p>`)
+		// Ticked up to the number of selections one consent accepts.
+		ticked := ""
+		if len(v.Apps) <= maxOAuthEntries {
+			ticked = " checked"
+		}
 		for _, app := range v.Apps {
-			w(`<p><label><input type="checkbox" name="request_read_apps" value="`, e(app.Slug), `"> Read app diagnostics for `, e(app.Slug), `</label></p>`)
+			w(`<p><label><input type="checkbox" name="request_read_apps" value="`, e(app.Slug), `"`, ticked, `> Read app diagnostics for `, e(app.Slug), `</label></p>`)
 		}
 		w(`</fieldset>`, "\n")
 		if v.Writes {
 			w(`<fieldset><legend>Regression triage (optional)</legend><p>Allow reviewed acknowledge, dismiss, resolve and reopen actions for selected apps. Select diagnostic read access above and write access to each target environment below. These actions update triage metadata.</p>`)
 			for _, app := range v.Apps {
-				w(`<p><label><input type="checkbox" name="regression_write_apps" value="`, e(app.Slug), `"> Triage regressions for `, e(app.Slug), `</label></p>`)
+				w(`<p><label><input type="checkbox" name="regression_write_apps" value="`, e(app.Slug), `"`, ticked, `> Triage regressions for `, e(app.Slug), `</label></p>`)
 			}
 			w(`</fieldset>`)
 		}
@@ -118,9 +125,9 @@ func consentPage(v consentView) string {
 		for _, env := range v.Environments {
 			value := e(env.Project) + "/" + e(env.Environment)
 			name := e(env.Project) + " / " + e(env.Environment)
-			w(`<p><label><input type="checkbox" name="environments" value="`, value, `"> Read `, name, `</label>`)
+			w(`<p><label><input type="checkbox" name="environments" value="`, value, `" checked> Read `, name, `</label>`)
 			if v.Writes {
-				w(` <label><input type="checkbox" name="environment_writes" value="`, value, `"> Write `, name, `</label>`)
+				w(` <label><input type="checkbox" name="environment_writes" value="`, value, `" checked> Write `, name, `</label>`)
 			}
 			w(`</p>`)
 		}
