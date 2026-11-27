@@ -52,6 +52,34 @@ func TestPostgresKeptForRestoreCopiesIsExplained(t *testing.T) {
 	}
 }
 
+// Prod hunt r70: `gregale deployment <id>` printed only error and error_code
+// for a failed deployment; the hint, why and fix the API returns were lost.
+func TestDeploymentShowsTheFailureFix(t *testing.T) {
+	const id = "d544a19931c24b03b9a3d46b67b796fe"
+	r63Server(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/deployments/"+id {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+			ID: id, Status: "failed", Error: "snapshot prime failed", ErrorCode: "stage_snapshot_prepare_timeout",
+			ErrorHint: "the snapshot_prepare stage exceeded the deadline",
+			ErrorWhy:  "the deadline elapsed before the guest was ready",
+			ErrorFix:  "• raise `startup_deadline_s` in gregale.yaml\n",
+		})
+	})
+	code, out := r63Run(t, "deployment", id)
+	if code != 0 {
+		t.Fatalf("exit=%d out=%s", code, out)
+	}
+	for _, want := range []string{"the snapshot_prepare stage exceeded the deadline", "the deadline elapsed before the guest was ready", "raise `startup_deadline_s`"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 // Prod hunt r68: `cron get nope` printed only its usage line, never that the
 // ID was malformed or where cron IDs come from.
 func TestCronGetNamesTheMalformedID(t *testing.T) {
