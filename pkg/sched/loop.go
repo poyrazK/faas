@@ -2294,7 +2294,11 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 		attempts, valuesChanged := 0, 0
 		for attempt := 1; attempt <= maxSnapshotPrimeAttempts; attempt++ {
 			attempts++
-			err = l.engine.Prime(ctx, appID, deploymentID)
+			primeCtx := ctx
+			if attempt == maxSnapshotPrimeAttempts {
+				primeCtx = withFinalPrimeAttempt(ctx)
+			}
+			err = l.engine.Prime(primeCtx, appID, deploymentID)
 			if err == nil || errors.Is(err, state.ErrSnapshotPrimeStale) {
 				return
 			}

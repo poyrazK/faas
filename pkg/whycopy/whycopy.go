@@ -28,6 +28,7 @@ package whycopy
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -76,6 +77,13 @@ const (
 type ProjectServiceModeConflict struct {
 	Service  string
 	Conflict api.ExecutionModeConflict
+}
+
+// SnapshotCaptureTimeout is the observed value for a
+// CodeStageSnapshotPrepareTimeout whose app booted and passed its health
+// check, and whose first snapshot capture then ran out of its budget.
+type SnapshotCaptureTimeout struct {
+	Budget time.Duration
 }
 
 // catalog is the static explanation table. Order does not matter;
@@ -309,6 +317,14 @@ var catalog = map[string]Render{
 		Hint:  "the snapshot_prepare stage exceeded the scheduler's wall-clock ceiling",
 		Why:   "snapshot_prepare boots the generated guest, waits for its handler, and captures the first snapshot; the scheduler deadline elapsed before vmmd completed that sequence",
 		Fix:   "• check `gregale logs <slug>` for how far startup got\n• if your app needs longer to start, raise `startup_deadline_s` in gregale.yaml (or `--startup-deadline-s` on deploy)\n• otherwise retry once in case the node was saturated; include the deployment id in a support report if it repeats",
+		Observed: func(observed any) (why, fix string) {
+			capture, ok := observed.(SnapshotCaptureTimeout)
+			if !ok {
+				return "", ""
+			}
+			return fmt.Sprintf("your app started and passed its health check; saving its first snapshot (its memory and app layer) then took longer than the %s capture budget. This is a platform limit, not your app's startup time", capture.Budget),
+				"• retry the deployment once; include the deployment id in a support report if it repeats\n• a smaller image shortens the capture\n• raising `startup_deadline_s` does not help here: the app had already started"
+		},
 	},
 	api.CodeBeforeCheckpointFailed: {
 		Title: "Before checkpoint callback failed",
