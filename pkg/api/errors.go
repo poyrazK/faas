@@ -827,6 +827,10 @@ const (
 	// not carry (a project, a preview, a binding not ready, an app that admits
 	// it as a caller by name).
 	CodeRouteSplitUnsupported = "route_split_unsupported"
+	// CodeRouteSplitRuleConflict (409, ADR-20261121170000 amendment 5): an
+	// edge-rule change would undo a live route split (change one of its
+	// rules, add an @app rule to its source, or decide its moved path).
+	CodeRouteSplitRuleConflict = "route_split_rule_conflict"
 	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
 	// project would detach services that still call each other by service
 	// name. Pass detach_services=true once they no longer do.
