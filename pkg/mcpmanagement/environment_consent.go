@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
+	"slices"
 	"sort"
 )
 
@@ -87,9 +88,12 @@ func selectedEnvironments(req *http.Request, available []EnvironmentGrant, apps 
 		}
 	}
 	for _, key := range req.PostForm["environment_writes"] {
-		if _, ok := consent.Named[key]; !ok || !writes {
-			return nil, errors.New("environment write requires read consent and connection writes")
+		known := slices.ContainsFunc(available, func(g EnvironmentGrant) bool { return key == g.Project+"/"+g.Environment })
+		if !known || !writes {
+			return nil, errors.New("environment write requires a reviewed environment and connection writes")
 		}
+		// Writes start ticked (ADR-20261127160000 §6): one whose read the
+		// person unticked is simply not granted.
 	}
 	return consent, consent.validate()
 }

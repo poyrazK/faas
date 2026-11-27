@@ -314,6 +314,13 @@ func TestEnvironmentConsentRejectsUnreviewedWriteAndNarrowsApps(t *testing.T) {
 	if _, err := selectedEnvironments(req, available, nil, false); err == nil {
 		t.Fatal("read-only connection accepted writes")
 	}
+	// Writes start ticked (ADR-20261127160000 §6): unticking an
+	// environment's read leaves its ticked write ungranted, not an error.
+	req.PostForm["environments"] = []string{"shop/production"}
+	c, err = selectedEnvironments(req, available, nil, true)
+	if err != nil || len(c.Named) != 1 || c.Named["shop/production"].Write {
+		t.Fatalf("write without read = %+v, %v", c, err)
+	}
 }
 
 func TestEnvironmentPlansExpireAndRevocationRemovesJournal(t *testing.T) {

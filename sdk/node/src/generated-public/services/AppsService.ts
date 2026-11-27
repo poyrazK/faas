@@ -13,6 +13,7 @@ import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { ApplyAppScalingRequest } from '../models/ApplyAppScalingRequest.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationPreview } from '../models/AppOperationPreview.js';
+import type { AppReleaseReview } from '../models/AppReleaseReview.js';
 import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
@@ -1193,6 +1194,39 @@ export class AppsService {
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read an atomic app configuration and release review
+   * @returns AppReleaseReview Configuration and selected-scope release identities for reviewed staging
+   * @throws ApiError
+   */
+  public static getAppReleaseReview({
+    slug,
+    environment,
+  }: {
+    /**
+     * Application slug for release review.
+     */
+    slug: string,
+    /**
+     * Registered named environment in the app's project; omit for default.
+     */
+    environment?: string,
+  }): CancelablePromise<AppReleaseReview> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/release-review',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
       },
