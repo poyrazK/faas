@@ -2943,6 +2943,8 @@ var cliCommands = []cliCommand{
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
 			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},
 			{Name: "docker-config", Value: "PATH", Short: "with --image, use the credentials `docker login` stored for the image's registry, from this config.json or its directory, including credential helpers"},
+			{Name: "boot", Short: "with --image, also run the image with local Docker (linux/amd64, PORT set) and check it starts, answers GET / on 0.0.0.0:$PORT and stays up 10 s; the container is removed"},
+			{Name: "env-file", Value: "FILE", Short: "with --boot, pass KEY=VALUE lines from this file to the container (docker env-file format)"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
 		},
