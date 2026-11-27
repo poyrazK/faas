@@ -97,10 +97,12 @@ func cmdWakeTimeline(args []string) int {
 	} else {
 		var resolveErr error
 		slug, resolveErr = resolveRequiredAppSlug("")
-		if _, uuidErr := uuid.Parse(pos[0]); resolveErr != nil && uuidErr != nil && api.ValidAppSlug(pos[0]) {
-			// `app wake-timeline APP` where the checkout names no one app:
-			// the slug was read as a wake ID and the command failed on the
-			// project link (prod hunt r27). Show the app's most recent wake.
+		if _, uuidErr := uuid.Parse(pos[0]); uuidErr != nil && api.ValidAppSlug(pos[0]) {
+			// `app wake-timeline APP`: the slug was read as a wake ID and
+			// the command failed on the project link (prod hunt r27), or,
+			// in a linked checkout, asked the server for wake "APP" ("no
+			// events row with that wake_id", r59). Wake IDs are UUIDs, so
+			// show the app's most recent wake.
 			slug, wakeID, latestWake, resolveErr = pos[0], "", true, nil
 		}
 		if resolveErr != nil {

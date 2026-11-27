@@ -175,7 +175,7 @@ keep working.
 
 If you asked for this, sign in and set up two-factor authentication again.
 
-If you did not, contact security@gregale.dev at once: someone may be
+If you did not, contact gregale@gregale.dev at once: someone may be
 trying to take over your account.
 
 — Gregale
@@ -197,7 +197,7 @@ sign-in links sent meanwhile stopped working.
 Next: use "Forgot password" to set a new password, review Account → Sign-in
 methods and Account → API keys, and remove anything you do not recognise.
 
-If you did not ask for this, contact security@gregale.dev at once.
+If you did not ask for this, contact gregale@gregale.dev at once.
 
 — Gregale
 `, mailTime(at), safeRecipient(email), maskEmail(removedEmail))

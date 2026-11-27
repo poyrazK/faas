@@ -5,9 +5,9 @@
 
 ## Reporting a vulnerability
 
-Please report security issues via `security@gregale.dev` (PGP-encrypted
-reports are welcome — see [the disclosure policy](docs/compliance/responsible-disclosure.md#2-pgp-fingerprint)
-for the current fingerprint).
+Please report security issues to `gregale@gregale.dev`. To send exploit
+details privately, open a [GitHub Security Advisory](https://github.com/poyrazK/faas/security/advisories/new);
+we do not publish a PGP key yet (see [the disclosure policy](docs/compliance/responsible-disclosure.md#2-encryption)).
 
 Do not file a public GitHub issue for security vulnerabilities.
 
@@ -46,5 +46,5 @@ how to verify it.
 
 ## Contact
 
-- Email: `security@gregale.dev`
+- Email: `gregale@gregale.dev`
 - GitHub Security Advisories: <https://github.com/poyrazK/faas/security/advisories/new>

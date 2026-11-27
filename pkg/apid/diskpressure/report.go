@@ -59,7 +59,10 @@ const (
 const JailMount = "/srv/fc/jail"
 
 // fsSelector matches the filesystems the disk alerts watch, plus tmpfs so
-// the jail mount is visible; other tmpfs mounts are dropped in Go.
+// the jail mount is visible where node_exporter can read it; other tmpfs
+// mounts are dropped in Go. In production the jail is root-owned with mode
+// 1700 and node_exporter cannot statfs it, so vmmd's vmmd_jail_tmpfs_*
+// gauges are the jail's usual source.
 const fsSelector = `{job=~"node|node-compute|node-database",fstype!~"ramfs|devtmpfs|overlay|squashfs|iso9660|vfat|nsfs|autofs",device!~"/dev/loop.*"}`
 
 const (
@@ -72,6 +75,8 @@ const (
 	qGuestRatio    = "guest_top_ratio"
 	qGuestCapacity = "guest_top_capacity"
 	qJournal       = "journal_bytes"
+	qJailSize      = "jail_size"
+	qJailAvail     = "jail_avail"
 )
 
 // Queries returns the report's PromQL by name.
@@ -89,6 +94,8 @@ func Queries() map[string]string {
 		qGuestRatio:    ratio,
 		qGuestCapacity: "vmmd_guest_disk_capacity_bytes and " + ratio,
 		qJournal:       "max by (node, job) (vmmd_journal_disk_usage_bytes)",
+		qJailSize:      "max by (node, job) (vmmd_jail_tmpfs_size_bytes)",
+		qJailAvail:     "max by (node, job) (vmmd_jail_tmpfs_avail_bytes)",
 	}
 }
 
@@ -296,6 +303,7 @@ func filesystems(s map[string][]promql.VectorSample) []api.ObsDiskFilesystem {
 	for k := range rows {
 		raw[k] = &rawFS{}
 	}
+	addVMMDJails(s, rows, raw)
 	for _, r := range s[qAvail] {
 		if k, ok := keyOf(r); ok && rows[k] != nil && !math.IsNaN(r.Value) {
 			avail := int64(r.Value)
@@ -333,6 +341,7 @@ func filesystems(s map[string][]promql.VectorSample) []api.ObsDiskFilesystem {
 		f.State = grade(*f, *raw[k])
 		out = append(out, *f)
 	}
+	out = collapseBindMounts(out)
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
 		if ra, rb := stateRank(a.State), stateRank(b.State); ra != rb {
@@ -346,9 +355,63 @@ func filesystems(s map[string][]promql.VectorSample) []api.ObsDiskFilesystem {
 	return out
 }
 
+// addVMMDJails adds each node's jail tmpfs from vmmd's gauges where
+// node_exporter did not report it (it cannot statfs the mode-1700 jail).
+func addVMMDJails(s map[string][]promql.VectorSample, rows map[fsKey]*api.ObsDiskFilesystem, raw map[fsKey]*rawFS) {
+	keyOf := func(r promql.VectorSample) fsKey { return fsKey{r.Labels["node"], JailMount, "tmpfs"} }
+	for _, r := range s[qJailSize] {
+		k := keyOf(r)
+		if k.node == "" || r.Value <= 0 || math.IsNaN(r.Value) || rows[k] != nil {
+			continue
+		}
+		rows[k] = &api.ObsDiskFilesystem{Node: k.node, Role: vmmdRole(r.Labels["job"]), Mountpoint: JailMount, Device: "tmpfs",
+			FSType: "tmpfs", SizeBytes: int64(r.Value), JailTmpfs: true}
+		raw[k] = &rawFS{vmmdJail: true}
+	}
+	for _, r := range s[qJailAvail] {
+		k := keyOf(r)
+		if rows[k] == nil || !raw[k].vmmdJail || math.IsNaN(r.Value) {
+			continue
+		}
+		avail := int64(r.Value)
+		rows[k].AvailBytes = &avail
+		free := r.Value / float64(rows[k].SizeBytes)
+		raw[k].free = &free
+	}
+}
+
+// collapseBindMounts keeps one row per block device on a node. A device
+// bind-mounted at several paths (production mounts faas-fc-crypt at /srv/fc,
+// /var/lib/faas and, on the control plane, the Postgres directories) is one
+// filesystem with one free figure; listing every path would repeat it and
+// inflate the counts. The shortest mountpoint names it.
+func collapseBindMounts(in []api.ObsDiskFilesystem) []api.ObsDiskFilesystem {
+	keep := map[[2]string]int{}
+	out := make([]api.ObsDiskFilesystem, 0, len(in))
+	for _, f := range in {
+		if !strings.HasPrefix(f.Device, "/") {
+			out = append(out, f)
+			continue
+		}
+		key := [2]string{f.Node, f.Device}
+		i, seen := keep[key]
+		if !seen {
+			keep[key] = len(out)
+			out = append(out, f)
+			continue
+		}
+		if m := out[i].Mountpoint; len(f.Mountpoint) < len(m) || len(f.Mountpoint) == len(m) && f.Mountpoint < m {
+			out[i] = f
+		}
+	}
+	return out
+}
+
 // rawFS is a filesystem's unrounded free ratios and time to full.
 type rawFS struct {
 	free, inodesFree, hoursToFull *float64
+	// vmmdJail marks a jail row read from vmmd's gauges.
+	vmmdJail bool
 }
 
 func freeOrMax(f api.ObsDiskFilesystem) float64 {

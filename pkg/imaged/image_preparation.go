@@ -89,12 +89,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 		return imageRecoveryError(err)
 	}
 	h.handoffMetrics.commit("claimed")
-	defer func() {
-		if ctx.Err() == nil && !errors.Is(err, errImagePreparationRecovery) &&
-			!errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrInvalidStateTransition) {
-			h.markFailedOnUnhandledError(ctx, dep.ID, &err)
-		}
-	}()
+	defer h.settleImagePreparation(ctx, dep.ID, &err)
 	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return err
@@ -105,6 +100,26 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 	}
 	workCtx := context.WithValue(ctx, imagePreparationClaimKey{}, imagePreparationClaim{id: dep.ID, token: p.ClaimToken, store: images})
 	return h.resumeImagePreparation(workCtx, images, app, dep, p)
+}
+
+// settleImagePreparation ends a claimed preparation attempt. A runtime base
+// that another node changed is left for the recovery loop within its retry
+// window; any other error that is not recoverable fails the deployment.
+func (h *Handler) settleImagePreparation(ctx context.Context, depID string, errp *error) {
+	err := *errp
+	if errors.Is(err, errRuntimeBaseStale) && ctx.Err() == nil && h.runtimeBaseRetries.hold(depID) {
+		if h.log != nil {
+			h.log.Warn("imaged: runtime base changed on another node; preparation resumes later",
+				"deployment", depID, "retry_in", runtimeBaseRetryEvery, "err", err)
+		}
+		*errp = imageRecoveryError(err)
+		return
+	}
+	h.runtimeBaseRetries.forget(depID)
+	if ctx.Err() == nil && !errors.Is(err, errImagePreparationRecovery) &&
+		!errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrInvalidStateTransition) {
+		h.markFailedOnUnhandledError(ctx, depID, errp)
+	}
 }
 
 func (h *Handler) resumeImagePreparation(ctx context.Context, images state.DeploymentImagePreparationStore, app state.App, dep state.Deployment, p state.ImagePreparation) (err error) {

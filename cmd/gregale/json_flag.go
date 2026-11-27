@@ -228,10 +228,22 @@ func publicCommandPath(args []string) string {
 		return args[0]
 	}
 	path := command.Name
-	if command.SubcommandsAfterPositionals || len(args) < 2 {
+	if len(args) < 2 {
 		return path
 	}
 	sub, ok := findCliSubcommand(command.Subcommands, args[1])
+	if command.SubcommandsAfterPositionals {
+		// `app scale X --max 3` and `app X scale --max 3` both reach
+		// `app scale`; reporting just "app" sent an unknown flag to
+		// 'gregale app --help' (prod hunt r59).
+		if !ok && len(args) > 2 && !strings.HasPrefix(args[1], "-") {
+			sub, ok = findCliSubcommand(command.Subcommands, args[2])
+		}
+		if ok {
+			return path + " " + sub.Name
+		}
+		return path
+	}
 	if !ok {
 		return path
 	}

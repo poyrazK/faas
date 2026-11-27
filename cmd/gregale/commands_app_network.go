@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/netip"
@@ -70,14 +71,17 @@ type appNetworkPrivateNetwork struct {
 	Detail       string   `json:"detail"`
 	StatusDetail string   `json:"status_detail,omitempty"`
 	Error        string   `json:"error,omitempty"`
+	NotOffered   bool     `json:"not_offered,omitempty"`
+	PlanDenied   bool     `json:"plan_denied,omitempty"`
 }
 
 type appNetworkUpstreams struct {
-	Available bool                       `json:"available"`
-	Count     int                        `json:"count"`
-	Quota     int                        `json:"quota"`
-	Items     []api.DataUpstreamResponse `json:"items"`
-	Error     string                     `json:"error,omitempty"`
+	Available  bool                       `json:"available"`
+	Count      int                        `json:"count"`
+	Quota      int                        `json:"quota"`
+	Items      []api.DataUpstreamResponse `json:"items"`
+	Error      string                     `json:"error,omitempty"`
+	NotOffered bool                       `json:"not_offered,omitempty"`
 }
 
 type appNetworkCheck struct {
@@ -175,6 +179,8 @@ func loadAppNetworkSnapshot(ctx context.Context, client *Client, slug string) (a
 	if privateErr != nil {
 		snapshot.PrivateNetwork.Error = privateErr.Error()
 		snapshot.PrivateNetwork.Detail = "private network attachment status could not be read"
+		snapshot.PrivateNetwork.NotOffered = apiErrorCodeIs(privateErr, api.CodePrivateNetworkNotEnabled)
+		snapshot.PrivateNetwork.PlanDenied = apiErrorCodeIs(privateErr, api.CodePlanPrivateNetworkNotAllowed)
 	} else {
 		snapshot.PrivateNetwork.Available = true
 		snapshot.PrivateNetwork.Status = "not_configured"
@@ -194,6 +200,7 @@ func loadAppNetworkSnapshot(ctx context.Context, client *Client, slug string) (a
 	rows, count, quota, upstreamErr := client.ListAppDataUpstreamsWithQuota(ctx, slug, "")
 	if upstreamErr != nil {
 		snapshot.Upstreams.Error = upstreamErr.Error()
+		snapshot.Upstreams.NotOffered = apiErrorCodeIs(upstreamErr, api.CodeDataUpstreamsDisabled)
 	} else {
 		snapshot.Upstreams = appNetworkUpstreams{
 			Available: true,
@@ -211,7 +218,9 @@ func renderAppNetworkSnapshot(snapshot appNetworkSnapshot) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "App network: %s\n", snapshot.App.Slug)
 	_, _ = fmt.Fprintf(osStdout, "  status:              %s\n", snapshot.App.Status)
-	if !snapshot.PrivateNetwork.Available {
+	if snapshot.PrivateNetwork.NotOffered {
+		_, _ = fmt.Fprintln(osStdout, "  private network:     not offered on this installation")
+	} else if !snapshot.PrivateNetwork.Available {
 		_, _ = fmt.Fprintf(osStdout, "  private network:     unavailable (%s)\n", snapshot.PrivateNetwork.Error)
 	} else if !snapshot.PrivateNetwork.Attached {
 		_, _ = fmt.Fprintf(osStdout, "  private network:     not configured\n")
@@ -221,7 +230,9 @@ func renderAppNetworkSnapshot(snapshot appNetworkSnapshot) int {
 			_, _ = fmt.Fprintf(osStdout, "    detail: %s\n", snapshot.PrivateNetwork.StatusDetail)
 		}
 	}
-	_, _ = fmt.Fprintf(osStdout, "  service discovery:   %s (<app-slug>.%s:%d)\n", enabledLabel(snapshot.ServiceDiscovery.Enabled), appNetworkServiceDomain, appNetworkServiceProxyPort)
+	// The app's own address, not the form: `<app-slug>` read as a value
+	// the CLI failed to fill in (prod hunt r58).
+	_, _ = fmt.Fprintf(osStdout, "  service discovery:   %s (%s.%s:%d)\n", enabledLabel(snapshot.ServiceDiscovery.Enabled), snapshot.App.Slug, appNetworkServiceDomain, appNetworkServiceProxyPort)
 	if len(snapshot.EgressAllowlist) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "  egress policy:       unrestricted (no CIDR allowlist)")
 	} else {
@@ -237,7 +248,9 @@ func renderAppNetworkSnapshot(snapshot appNetworkSnapshot) int {
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "  static egress:       %s\n", snapshot.StaticEgress.IP.String())
 	}
-	if !snapshot.Upstreams.Available {
+	if snapshot.Upstreams.NotOffered {
+		_, _ = fmt.Fprintln(osStdout, "  upstream telemetry:  not offered on this installation")
+	} else if !snapshot.Upstreams.Available {
 		_, _ = fmt.Fprintf(osStdout, "  upstream telemetry:  unavailable (%s)\n", snapshot.Upstreams.Error)
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "  upstream telemetry:  %d/%d captured\n", snapshot.Upstreams.Count, snapshot.Upstreams.Quota)
@@ -297,7 +310,7 @@ func buildAppNetworkDoctorReport(snapshot appNetworkSnapshot, now time.Time) app
 		Name:        "service-discovery",
 		Status:      "ok",
 		Detail:      "same-account service discovery is enabled",
-		Observed:    fmt.Sprintf("<app-slug>.%s:%d", appNetworkServiceDomain, appNetworkServiceProxyPort),
+		Observed:    fmt.Sprintf("%s.%s:%d", snapshot.App.Slug, appNetworkServiceDomain, appNetworkServiceProxyPort),
 		Remediation: "",
 	})
 	if len(snapshot.EgressAllowlist) == 0 {
@@ -347,7 +360,15 @@ func buildAppNetworkDoctorReport(snapshot appNetworkSnapshot, now time.Time) app
 		})
 	}
 
-	if !snapshot.Upstreams.Available {
+	if !snapshot.Upstreams.Available && snapshot.Upstreams.NotOffered {
+		// Off on this installation: a warning with "retry later" sent
+		// every reader of a healthy app hunting a fault (prod hunt r58).
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:   "upstream-telemetry",
+			Status: "skipped",
+			Detail: "upstream telemetry is not offered on this installation",
+		})
+	} else if !snapshot.Upstreams.Available {
 		report.Checks = append(report.Checks, appNetworkCheck{
 			Name:        "upstream-telemetry",
 			Status:      "warn",
@@ -400,13 +421,28 @@ func buildAppNetworkDoctorReport(snapshot appNetworkSnapshot, now time.Time) app
 	}
 
 	switch {
+	case !snapshot.PrivateNetwork.Available && snapshot.PrivateNetwork.NotOffered:
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:   "private-network",
+			Status: "skipped",
+			Detail: "private network attachments are not offered on this installation",
+		})
+	case !snapshot.PrivateNetwork.Available && snapshot.PrivateNetwork.PlanDenied:
+		// Retrying never helps a plan denial (review of r58).
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:        "private-network",
+			Status:      "warn",
+			Detail:      snapshot.PrivateNetwork.Detail,
+			Observed:    snapshot.PrivateNetwork.Error,
+			Remediation: "Private networks need a higher plan; upgrade with `gregale billing plan pro`.",
+		})
 	case !snapshot.PrivateNetwork.Available:
 		report.Checks = append(report.Checks, appNetworkCheck{
 			Name:        "private-network",
 			Status:      "warn",
 			Detail:      snapshot.PrivateNetwork.Detail,
 			Observed:    snapshot.PrivateNetwork.Error,
-			Remediation: "Enable the private-network attachment surface or retry after the API is available.",
+			Remediation: "Retry after the private-network API is available.",
 		})
 	case !snapshot.PrivateNetwork.Attached:
 		report.Checks = append(report.Checks, appNetworkCheck{
@@ -529,4 +565,10 @@ func enabledLabel(enabled bool) string {
 		return "enabled"
 	}
 	return "disabled"
+}
+
+// apiErrorCodeIs reports whether err is an API problem with code.
+func apiErrorCodeIs(err error, code string) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Problem.Code == code
 }

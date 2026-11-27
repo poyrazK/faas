@@ -10,7 +10,7 @@ import (
 )
 
 type environmentRequestMetrics struct {
-	duration *prometheus.HistogramVec
+	duration  *prometheus.HistogramVec
 	refusals  *prometheus.CounterVec
 	coldBoots *prometheus.CounterVec
 	primed    sync.Map

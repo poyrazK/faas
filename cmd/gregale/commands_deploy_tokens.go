@@ -58,6 +58,12 @@ func parseDeployTokenFlags(name, usage string, args []string, minting bool, posi
 	if err := fs.Parse(flags); err != nil {
 		return "", "", "", nil, false
 	}
+	// `app deploy-token delete <slug> <token-id>` reads like list and create
+	// (`app deploy-token list <slug>`), but printed usage (prod hunt r59):
+	// with --app unset, one extra leading positional is the app.
+	if *app == "" && len(positional) == positionals+1 && positionals > 0 {
+		*app, positional = positional[0], positional[1:]
+	}
 	if rejectUnexpectedFlagArgs(fs) || len(positional) != positionals || *app == "" {
 		PrintUsage(os.Stderr, usage, "deploy-tokens")
 		return "", "", "", nil, false
@@ -169,7 +175,7 @@ func cmdDeployTokensRotate(args []string) int {
 }
 
 func cmdDeployTokensRm(args []string) int {
-	slug, _, _, positional, ok := parseDeployTokenFlags("deploy-tokens rm", "usage: gregale app deploy-token delete <token-id> --app SLUG", args, false, 1)
+	slug, _, _, positional, ok := parseDeployTokenFlags("deploy-tokens rm", "usage: gregale app deploy-token delete [<slug>] <token-id> [--app SLUG]", args, false, 1)
 	if !ok {
 		return 1
 	}
