@@ -5,6 +5,7 @@ package apidserver
 //	GET /v1/admin/obs/egress?window=24h
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -43,8 +44,20 @@ func parseEgressWindow(r *http.Request) (time.Duration, *api.Problem) {
 		return api.ObsEgressWindowDefault, nil
 	}
 	d, err := time.ParseDuration(raw)
-	if err != nil || d < api.ObsEgressWindowMin || d > api.ObsEgressWindowMax {
-		return 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad window", "window must be a duration from 5m to 168h, such as 24h")
+	if err == nil && d >= api.ObsEgressWindowMin && d <= api.ObsEgressWindowMax {
+		return d, nil
 	}
-	return d, nil
+	detail := fmt.Sprintf("window must be a duration from %dm to %dh, such as %dh; got %q",
+		int(api.ObsEgressWindowMin.Minutes()), int(api.ObsEgressWindowMax.Hours()), int(api.ObsEgressWindowDefault.Hours()), raw)
+	prob := api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad window", detail)
+	prob.DocsURL = api.ObsEgressDocsURL
+	if err == nil {
+		// Out of range: the bound crossed and the value, in seconds.
+		limit := api.ObsEgressWindowMax
+		if d < api.ObsEgressWindowMin {
+			limit = api.ObsEgressWindowMin
+		}
+		prob = prob.WithLimit(int64(limit.Seconds()), int64(d.Seconds()))
+	}
+	return 0, prob
 }

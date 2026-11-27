@@ -374,6 +374,9 @@ const (
 	ObsEgressLongWindowBudget = 10 * time.Second
 )
 
+// ObsEgressDocsURL documents the egress report and its window bounds.
+const ObsEgressDocsURL = "https://github.com/poyrazK/faas/blob/main/docs/adr/20261127100000-operator-egress-denials-report.md"
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (

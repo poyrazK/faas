@@ -36,7 +36,7 @@ func samples() map[string][]promql.VectorSample {
 		"denied_by_node":   {row(60, "node", "bhs-2.faas"), row(40, "node", "bhs-3.faas")},
 		"denied_last_hour": {row(7.6)},
 		"denied_apps":      {row(80, "app", appA), row(20, "app", appB), row(3, "app", "not-a-uuid")},
-		"denied_apps_by_class": {
+		"app_denials": {
 			row(78, "app", appA, "class", "unresolved"), row(2, "app", appA, "class", "rfc1918"),
 			row(13, "app", appB, "class", "rfc1918"), row(5, "app", appB, "class", "smtp"), row(9, "app", appC, "class", "smtp"),
 		},
@@ -75,16 +75,18 @@ func TestBuild(t *testing.T) {
 	if out.WindowSeconds != 86400 || out.FailedQueries == nil || len(out.FailedQueries) != 0 {
 		t.Fatalf("header = %+v", out)
 	}
-	// Recycled app first, then by denials; the bad app label is dropped and
-	// class rows for apps outside the top list are ignored.
-	if len(out.Apps) != 3 || out.Apps[0].AppID != appC || out.Apps[0].AbuseRecycles != 3 || out.Apps[0].NewDestinations != 12 || len(out.Apps[0].Classes) != 0 {
+	// Recycled app first, then by denials; the bad app label is dropped. appC
+	// is outside the top denied but the second-phase read still gives it its
+	// denials and classes.
+	c := out.Apps[0]
+	if len(out.Apps) != 3 || c.AppID != appC || c.AbuseRecycles != 3 || c.NewDestinations != 12 || c.Denied != 9 || len(c.Classes) != 1 || c.Classes[0].Key != "smtp" {
 		t.Fatalf("apps = %+v", out.Apps)
 	}
 	a := out.Apps[1]
 	if a.AppID != appA || a.AppSlug != "shop" || a.AccountID != "acct-1" || a.Denied != 80 || len(a.Classes) != 2 || a.Classes[0].Key != "unresolved" {
 		t.Fatalf("apps[1] = %+v", a)
 	}
-	if out.Apps[2].AppID != appB || out.Apps[2].NewDestinations != 30 || out.Apps[2].Classes[0].Key != "rfc1918" {
+	if out.Apps[2].AppID != appB || out.Apps[2].Denied != 18 || out.Apps[2].NewDestinations != 30 || out.Apps[2].Classes[0].Key != "rfc1918" {
 		t.Fatalf("apps[2] = %+v", out.Apps[2])
 	}
 	if len(out.Recycles) != 2 || out.Recycles[0].Reason != "fanout" {
@@ -95,6 +97,25 @@ func TestBuild(t *testing.T) {
 	}
 	if len(out.ScanFindings) != 2 || out.ScanFindings[0].Action != "block" || len(out.CPUSignals) != 1 {
 		t.Fatalf("scan/cpu = %+v %+v", out.ScanFindings, out.CPUSignals)
+	}
+}
+
+// When the second-phase read failed, the topk denials stand and the classes
+// are empty rather than invented.
+func TestBuildWithoutAppDenials(t *testing.T) {
+	s := samples()
+	delete(s, "app_denials")
+	out := egressdenials.Build(egressdenials.Input{Now: now, Window: time.Hour, Samples: egressdenials.Samples{ByQuery: s}})
+	if len(out.Apps) != 3 || out.Apps[0].AppID != appC || out.Apps[0].Denied != 0 || out.Apps[2].Denied != 20 || len(out.Apps[1].Classes) != 0 {
+		t.Fatalf("apps = %+v", out.Apps)
+	}
+}
+
+func TestSortTiesCompareFieldByField(t *testing.T) {
+	s := map[string][]promql.VectorSample{"cpu_abuse": {row(1, "plan", "prof", "action", "lagged"), row(1, "plan", "pro", "action", "flagged")}}
+	out := egressdenials.Build(egressdenials.Input{Now: now, Window: time.Hour, Samples: egressdenials.Samples{ByQuery: s}})
+	if out.CPUSignals[0].Plan != "pro" {
+		t.Fatalf("cpu = %+v", out.CPUSignals)
 	}
 }
 
@@ -121,6 +142,7 @@ type fakeQuerier struct {
 	mu   sync.Mutex
 	seen []string
 	fail string
+	rows map[string][]promql.VectorSample // by query substring
 }
 
 func (f *fakeQuerier) QueryVectorAt(_ context.Context, q string, at time.Time) ([]promql.VectorSample, error) {
@@ -133,7 +155,36 @@ func (f *fakeQuerier) QueryVectorAt(_ context.Context, q string, at time.Time) (
 	if f.fail == "*" || (f.fail != "" && strings.Contains(q, f.fail)) {
 		return nil, errors.New("boom")
 	}
+	for part, rows := range f.rows {
+		if strings.Contains(q, part) {
+			return rows, nil
+		}
+	}
 	return []promql.VectorSample{row(1)}, nil
+}
+
+// The listed apps' denials are read in a second phase, for exactly the
+// listed IDs; its failure is named and makes the report partial.
+func TestReadSecondPhase(t *testing.T) {
+	rows := map[string][]promql.VectorSample{
+		"topk(25, sum by (app) (increase(vmmd_egress_denied_total": {row(5, "app", appA)},
+		"schedd_egress_abuse_recycles_total":                       {row(1, "app", appC, "reason", "flood")},
+	}
+	f := &fakeQuerier{rows: rows}
+	got := egressdenials.ReadWith(context.Background(), f, time.Hour, now)
+	want := egressdenials.AppDenialsQuery(time.Hour, []string{appC, appA})
+	last := f.seen[len(f.seen)-1]
+	if got.Source != egressdenials.SourceObserved || len(f.seen) != len(egressdenials.Queries(time.Hour))+1 || last != want {
+		t.Fatalf("source=%s seen=%d last=%q want %q", got.Source, len(f.seen), last, want)
+	}
+	f = &fakeQuerier{fail: appC + "|" + appA, rows: rows}
+	got = egressdenials.ReadWith(context.Background(), f, time.Hour, now)
+	if got.Source != egressdenials.SourcePartial || len(got.Failed) != 1 || got.Failed[0] != "app_denials" {
+		t.Fatalf("source=%s failed=%v", got.Source, got.Failed)
+	}
+	if egressdenials.AppDenialsQuery(time.Hour, nil) != "" {
+		t.Fatal("empty list must not query")
+	}
 }
 
 func TestReadSources(t *testing.T) {
@@ -158,7 +209,8 @@ func TestReadSources(t *testing.T) {
 
 func TestQueriesUseWindowAndBudget(t *testing.T) {
 	q := egressdenials.Queries(6 * time.Hour)
-	if !strings.Contains(q["denied_by_class"], "[21600s]") || !strings.Contains(q["denied_last_hour"], "[1h]") ||
+	if !strings.Contains(q["denied_by_class"], "[21600s]") || !strings.Contains(q["denied_last_hour"], "[3600s]") ||
+		!strings.Contains(egressdenials.Queries(5 * time.Minute)["denied_last_hour"], "[300s]") || !strings.Contains(q["apps_denied"], `app=~"[0-9a-fA-F]{8}-`) ||
 		!strings.Contains(q["new_destinations_apps"], `app!=""`) {
 		t.Fatalf("queries = %v", q)
 	}

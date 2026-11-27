@@ -51,11 +51,17 @@ Each family has an alert (`FaasTenantEgressAbuse`, `FaasAccountAbuseHold`,
 It is operator-only (operator session read), sends `no-store` and is
 excluded from spec compliance. `window` is a Go duration from 5 minutes to
 7 days (`ObsEgressWindow*` in `pkg/api/limits.go`), default 24 hours; any
-other value is a 400. It needs no migration, store query or new metric.
+other value is a 400. The 400 gives the value received, the bounds and
+`ObsEgressDocsURL`, plus `limit` and `observed` in seconds when the value
+parsed but was out of range. It needs no migration, store query or new
+metric.
 
-`pkg/apid/egressdenials` (ADR-982) runs 16 queries concurrently at one
-pinned instant. The budget is `ObsEgressPrometheusBudget` (3 s) for windows
-up to 24 hours and `ObsEgressLongWindowBudget` (10 s) beyond. The source is
+`pkg/apid/egressdenials` (ADR-982) runs 15 queries concurrently at one
+pinned instant, then one more for the apps it will list. The budget is
+`ObsEgressPrometheusBudget` (3 s) for windows up to 24 hours and
+`ObsEgressLongWindowBudget` (10 s) beyond. It also raises the Prometheus
+client's own per-query timeout (3 s by default), which would otherwise cut
+long windows short. The source is
 `observed`, `partial` (the failed queries are named), `unavailable` or
 `not_configured`. Counts are `increase()` over the window rounded to whole
 numbers; increase extrapolates, so they are estimates, not ledger values.
@@ -65,8 +71,10 @@ prefix and drop empty `app` labels.
 ### Contents
 
 - **Totals:**
-  - denials in the window and in the last hour;
-  - apps with any denial;
+  - denials in the window, and in the last hour (the whole window when it
+    is shorter);
+  - apps with any denial, counting only app UUID labels, as the Apps list
+    does;
   - new destinations;
   - abuse recycles, abuse holds and CPU abuse signals;
   - blocked DNS lookups;
@@ -75,9 +83,12 @@ prefix and drop empty `app` labels.
 - **Denials** by class and by node.
 - **Apps:** the union of the top `ObsEgressAppsMax` (25) apps by denials,
   the top 25 by new destinations, and every recycled app. Recycled apps
-  come first, then by denials, capped at 25. Each row has its per-class
-  breakdown, and its slug and account from the store. Labels that are not
-  app UUIDs are dropped.
+  come first, then by denials, capped at 25. A second read then gets
+  denials by class for exactly the listed apps, so an app listed for new
+  destinations or recycles still shows its denials. If that read fails, it
+  is named and the rows keep the top-25 denial counts without classes. Each
+  row has its slug and account from the store. Labels that are not app
+  UUIDs are dropped.
 - **Abuse signals:**
   - recycles per app and reason;
   - holds by reason;
