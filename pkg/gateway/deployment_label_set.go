@@ -146,3 +146,24 @@ func (s *deploymentLabelSet) admitLocked(appID string, plan api.Plan, deployment
 	appMap[deploymentID] = struct{}{}
 	return deploymentID, true
 }
+
+// admitSeen admits deploymentID for an app this process has already admitted
+// a request for, whose plan cap is cached, and does nothing for an unseen app.
+// A route update calls it when it learns an app's targets (a new release's
+// first RUNNING instance), so the release's status-class series exist at zero
+// before its first request rather than being created by it: created by the
+// first request, a burst that lands before the next scrape is lost to
+// increase() (prod hunt r58 follow-up). An unseen app gets its series from
+// its first request, as before.
+func (s *deploymentLabelSet) admitSeen(appID, deploymentID string) {
+	if s == nil || appID == "" || deploymentID == "" {
+		return
+	}
+	s.mu.Lock()
+	_, seen := s.capByApp[appID]
+	s.mu.Unlock()
+	if seen {
+		// The plan is ignored: the app's cap is already cached.
+		s.admit(appID, "", deploymentID)
+	}
+}

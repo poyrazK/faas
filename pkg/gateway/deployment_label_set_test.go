@@ -174,3 +174,22 @@ func deploymentIDForIndex(i int) string {
 	lo := hex[i%16]
 	return "deploy-00000000-0000-0000-0000-00000000000" + string(hi) + string(lo)
 }
+
+// Prod hunt r58 follow-up: a route update admits a new release of an app this
+// gateway already serves, so the release's series exist before its first
+// request; an app it has not served is left to its first request.
+func TestDeploymentLabelSetAdmitSeen(t *testing.T) {
+	s := newDeploymentLabelSet()
+	var admitted []string
+	s.onAdmit = func(appID, deploymentID string) { admitted = append(admitted, appID+"/"+deploymentID) }
+	s.admitSeen("unseen", "d1")
+	if len(admitted) != 0 {
+		t.Fatalf("unseen app admitted: %v", admitted)
+	}
+	s.admit("app", api.PlanPro, "d1")
+	s.admitSeen("app", "d2")
+	s.admitSeen("app", "d2")
+	if len(admitted) != 2 || admitted[1] != "app/d2" {
+		t.Fatalf("admitted = %v, want app/d1 then app/d2 once", admitted)
+	}
+}
