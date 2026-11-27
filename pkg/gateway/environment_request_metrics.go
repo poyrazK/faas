@@ -10,9 +10,10 @@ import (
 )
 
 type environmentRequestMetrics struct {
-	duration *prometheus.HistogramVec
-	refusals *prometheus.CounterVec
-	primed   sync.Map
+	duration  *prometheus.HistogramVec
+	refusals  *prometheus.CounterVec
+	coldBoots *prometheus.CounterVec
+	primed    sync.Map
 }
 
 var requestDurationBuckets = []float64{
@@ -29,6 +30,10 @@ func newEnvironmentRequestMetrics() *environmentRequestMetrics {
 		refusals: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_environment_capacity_refusals_total",
 			Help: "Capacity refusals for resolved app environments.",
+		}, []string{"app", "scope"}),
+		coldBoots: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_environment_cold_boot_total",
+			Help: "Cold boots caused by requests to resolved app environments (see gateway_cold_boot_total).",
 		}, []string{"app", "scope"}),
 	}
 }
@@ -57,13 +62,12 @@ func withRequestEnvironment(ctx context.Context, app App) context.Context {
 	return context.WithValue(ctx, requestEnvironmentKey{}, requestEnvironment{appID: app.ID, scope: scope})
 }
 
-func (m *environmentRequestMetrics) observe(ctx context.Context, appID, class string, elapsed time.Duration, refused bool) {
-	if m == nil {
-		return
-	}
+// requestEnvironmentScope resolves the environment whose request ctx carries, or false when the
+// request is not environment traffic.
+func requestEnvironmentScope(ctx context.Context, appID string) (requestEnvironment, bool) {
 	env, ok := ctx.Value(requestEnvironmentKey{}).(requestEnvironment)
 	if !ok || env.appID != appID {
-		return
+		return requestEnvironment{}, false
 	}
 	// The verified routing decision tells us which roster won for an
 	// unpinned hostname. A pinned environment gets its scope from the host.
@@ -75,6 +79,29 @@ func (m *environmentRequestMetrics) observe(ctx context.Context, appID, class st
 		}
 	}
 	if env.scope != api.DefaultEnvScope && !api.ValidProjectEnvironmentSlug(env.scope) {
+		return requestEnvironment{}, false
+	}
+	return env, true
+}
+
+// observeColdBoot counts a cold boot a request in an environment caused, so
+// a stage's cold-start share reads the stage's own boots and production's
+// leaves them out (ADR-20261104120000).
+func (m *environmentRequestMetrics) observeColdBoot(ctx context.Context, appID string) {
+	if m == nil {
+		return
+	}
+	if env, ok := requestEnvironmentScope(ctx, appID); ok {
+		m.coldBoots.WithLabelValues(appID, env.scope).Inc()
+	}
+}
+
+func (m *environmentRequestMetrics) observe(ctx context.Context, appID, class string, elapsed time.Duration, refused bool) {
+	if m == nil {
+		return
+	}
+	env, ok := requestEnvironmentScope(ctx, appID)
+	if !ok {
 		return
 	}
 	if _, ok := m.primed.Load(env); !ok {

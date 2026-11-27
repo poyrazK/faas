@@ -8,18 +8,27 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.alert_rule_response import AlertRuleResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    environment: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/alerts".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -79,15 +88,18 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | list[AlertRuleResponse]]:
     r"""List alert rules visible at this app.
 
      Returns both app-scoped rules (app_id == <slug>) and
     account-wide rules (app_id == \"\"). Account-wide rules
-    apply to every app on the account.
+    apply to every app on the account. With `environment` set to a
+    stage, returns that stage's rules instead.
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,6 +111,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
     )
 
     response = client.get_httpx_client().request(
@@ -112,15 +125,18 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Problem | list[AlertRuleResponse] | None:
     r"""List alert rules visible at this app.
 
      Returns both app-scoped rules (app_id == <slug>) and
     account-wide rules (app_id == \"\"). Account-wide rules
-    apply to every app on the account.
+    apply to every app on the account. With `environment` set to a
+    stage, returns that stage's rules instead.
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,6 +149,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        environment=environment,
     ).parsed
 
 
@@ -140,15 +157,18 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | list[AlertRuleResponse]]:
     r"""List alert rules visible at this app.
 
      Returns both app-scoped rules (app_id == <slug>) and
     account-wide rules (app_id == \"\"). Account-wide rules
-    apply to every app on the account.
+    apply to every app on the account. With `environment` set to a
+    stage, returns that stage's rules instead.
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,6 +180,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -171,15 +192,18 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Problem | list[AlertRuleResponse] | None:
     r"""List alert rules visible at this app.
 
      Returns both app-scoped rules (app_id == <slug>) and
     account-wide rules (app_id == \"\"). Account-wide rules
-    apply to every app on the account.
+    apply to every app on the account. With `environment` set to a
+    stage, returns that stage's rules instead.
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,5 +217,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            environment=environment,
         )
     ).parsed
