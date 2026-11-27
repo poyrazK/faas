@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -187,6 +188,46 @@ func TestOrgListAllAsksForDeletedOrgs(t *testing.T) {
 	}
 	if len(queries) != 2 || queries[0] != "" || queries[1] != "include_deleted=true" {
 		t.Fatalf("queries = %q", queries)
+	}
+}
+
+// Prod hunt r71: `logs --deployment` of a deployment whose snapshot prime
+// failed showed only the build log; the boot output that explained the
+// failure was in its instance's archive.
+func TestFailedDeploymentLogsIncludeItsInstanceOutput(t *testing.T) {
+	const dep = "2426a324-2384-4550-a6a8-686034d8a669"
+	r63Server(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/deployments/"+dep:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: dep, Status: "failed", Error: "snapshot prime failed", CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+		case r.URL.Path == "/v1/deployments/"+dep+"/logs":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: log\ndata: {\"line\":\"build ok\"}\n\nevent: end\ndata: {}\n\n"))
+		case r.URL.Path == "/v1/apps/shop/instances":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]api.InstanceResponse{
+				{ID: "ins-prime", DeploymentID: dep, State: "failed"},
+				{ID: "ins-other", DeploymentID: "other", State: "parked"},
+			})
+		case r.URL.Path == "/v1/apps/shop/logs" && r.URL.Query().Get("archive") == "1":
+			if r.URL.Query().Get("instance") != "ins-prime" {
+				t.Errorf("read another deployment's instance: %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: log\ndata: Error: listen EADDRINUSE :8080\n\nevent: end\ndata: {}\n\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	code, out := r63Run(t, "logs", "shop", "--deployment", dep)
+	if code != 0 {
+		t.Fatalf("exit=%d out=%s", code, out)
+	}
+	for _, want := range []string{"build ok", "Retained output of instance ins-prime", "EADDRINUSE"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
 	}
 }
 

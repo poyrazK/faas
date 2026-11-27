@@ -7784,7 +7784,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		}
 		deploymentRef = resolved
 		if logSource != logsSourceHTTP && !archiveRequested {
-			if code, handled := buildLogsForUnrunDeployment(context.Background(), logsClient, deploymentRef, *follow); handled {
+			if code, handled := buildLogsForUnrunDeployment(context.Background(), logsClient, slug, deploymentRef, *follow); handled {
 				return code
 			}
 		}
