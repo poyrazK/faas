@@ -3876,6 +3876,21 @@ func (c *Client) ListAlertRules(ctx context.Context, slug string) ([]AlertRuleRe
 	return out, err
 }
 
+// ListAlertRulesInEnvironment lists the rules of one project environment;
+// "" lists production's (ADR-20261104120000).
+func (c *Client) ListAlertRulesInEnvironment(ctx context.Context, slug, environment string) ([]AlertRuleResponse, error) {
+	var out []AlertRuleResponse
+	err := c.do(ctx, "GET", "/v1/apps/"+slug+"/alerts"+consumerEnvironmentQuery(environment), nil, &out)
+	return out, err
+}
+
+// CreateAlertRuleInEnvironment creates a rule in one project environment;
+// "" creates a production rule.
+func (c *Client) CreateAlertRuleInEnvironment(ctx context.Context, slug, environment string, req CreateAlertRuleRequest) (AlertRuleResponse, error) {
+	var out AlertRuleResponse
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/alerts"+consumerEnvironmentQuery(environment), req, &out)
+}
+
 // CreateAlertRule pins a metric to a threshold + comparison + window
 // and seals the plaintext webhook_secret. The response carries the
 // masked constant ("***") in webhook_secret_sealed_masked; the

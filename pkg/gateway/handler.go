@@ -8798,6 +8798,7 @@ haveApp:
 		// behind a wake rather than by how long the wake took.
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
+			h.metrics.environmentRequests.observeColdBoot(r.Context(), app.ID)
 			if !platformWakeStart.IsZero() {
 				switch {
 				case startupOOM.Any():

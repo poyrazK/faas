@@ -14,6 +14,13 @@ import (
 
 func activationProofFixture(t *testing.T, s state.Store, mode string) (state.App, state.Deployment, state.Instance) {
 	t.Helper()
+	return activationProofFixtureIn(t, s, mode, "stopped")
+}
+
+// activationProofFixtureIn leaves the published prime in final ("stopped" for
+// the ephemeral-secret proof, "running" for the developer-prime proof).
+func activationProofFixtureIn(t *testing.T, s state.Store, mode, final string) (state.App, state.Deployment, state.Instance) {
+	t.Helper()
 	ctx := t.Context()
 	a, err := s.CreateAccount(ctx, uuid.NewString()+"@activation-proof.test", api.PlanPro)
 	if err != nil {
@@ -67,8 +74,10 @@ func activationProofFixture(t *testing.T, s state.Store, mode string) (state.App
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateInstanceState(ctx, i.ID, "stopped"); err != nil {
-		t.Fatal(err)
+	if final != "running" {
+		if err := s.UpdateInstanceState(ctx, i.ID, final); err != nil {
+			t.Fatal(err)
+		}
 	}
 	i, err = s.InstanceByID(ctx, i.ID)
 	if err != nil {
@@ -217,5 +226,102 @@ func TestGenericFailureChecksActivationAttempt(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// adr: 20261122200000 — a developer deployment goes live from its RUNNING
+// prime only while that exact runtime and its configuration still hold.
+func TestDeveloperPrimeActivationChecksFinalWrite(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		t.Run(backend, func(t *testing.T) {
+			s := scopedRollbackStore(t, backend)
+			for _, change := range []string{"current", "environment", "artifact", "wrong-wake", "wrong-node", "stopped"} {
+				t.Run(change, func(t *testing.T) {
+					ctx := t.Context()
+					app, d, i := activationProofFixtureIn(t, s, api.ExecutionModeRequest, "running")
+					if i.State != "running" {
+						t.Fatalf("fixture prime state = %s, want running", i.State)
+					}
+					source := i
+					switch change {
+					case "wrong-wake":
+						source.WakeID = uuid.NewString()
+					case "wrong-node":
+						source.NodeID = uuid.NewString()
+					}
+					guarded, err := state.WithDeveloperPrimeActivation(ctx, d, source)
+					if err != nil {
+						t.Fatal(err)
+					}
+					switch change {
+					case "environment":
+						err = s.UpsertAppEnv(ctx, app.AccountID, app.ID, "VERSION", "new")
+					case "artifact":
+						err = s.SetDeploymentRootfs(ctx, d.ID, "/new/rootfs", "new/rootfs", 4096)
+					case "stopped":
+						err = s.UpdateInstanceState(ctx, i.ID, "stopped")
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					err = s.MarkDeploymentLive(guarded, d.ID)
+					after, readErr := s.DeploymentByID(ctx, d.ID)
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+					if change == "current" {
+						if err != nil || after.Status != state.DeployLive {
+							t.Fatalf("current running prime rejected: %v status=%s", err, after.Status)
+						}
+						return
+					}
+					if err == nil || after.Status == state.DeployLive {
+						t.Fatalf("stale developer prime proof promoted the deployment: status=%s err=%v", after.Status, err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestDeveloperPrimeActivationRefusesWrongShape(t *testing.T) {
+	d := state.Deployment{ID: uuid.NewString(), AppID: uuid.NewString(), Status: state.DeploySnapshotting}
+	ok := state.Instance{ID: uuid.NewString(), AppID: d.AppID, DeploymentID: d.ID, State: "running", Mode: string(state.InstanceModeNormal)}
+	for name, mutate := range map[string]func(*state.Instance){
+		"stopped":        func(i *state.Instance) { i.State = "stopped" },
+		"worker":         func(i *state.Instance) { i.Mode = string(state.InstanceModeWorker) },
+		"other app":      func(i *state.Instance) { i.AppID = uuid.NewString() },
+		"other release":  func(i *state.Instance) { i.DeploymentID = uuid.NewString() },
+		"no instance id": func(i *state.Instance) { i.ID = "" },
+	} {
+		i := ok
+		mutate(&i)
+		if _, err := state.WithDeveloperPrimeActivation(t.Context(), d, i); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Errorf("%s: err = %v, want ErrInvalidArgument", name, err)
+		}
+	}
+	if _, err := state.WithDeveloperPrimeActivation(t.Context(), d, ok); err != nil {
+		t.Fatalf("running prime refused: %v", err)
+	}
+}
+
+func TestDeveloperPrimeEligible(t *testing.T) {
+	dev := state.App{ID: "a", PreviewOfSlug: "web"}
+	for _, tc := range []struct {
+		name string
+		app  state.App
+		dep  state.Deployment
+		want bool
+	}{
+		{"developer deployment", dev, state.Deployment{AppID: "a"}, true},
+		{"production app", state.App{ID: "a"}, state.Deployment{AppID: "a"}, false},
+		{"PR preview", state.App{ID: "a", PreviewOfSlug: "web", PreviewPrNumber: 7}, state.Deployment{AppID: "a"}, false},
+		{"branch seed", dev, state.Deployment{AppID: "a", Reason: state.EnvironmentBranchSeedReason}, false},
+		{"branch deployment", dev, state.Deployment{AppID: "a", Reason: state.EnvironmentBranchDeploymentReason}, false},
+		{"other app", dev, state.Deployment{AppID: "b"}, false},
+	} {
+		if got := state.DeveloperPrimeEligible(tc.app, tc.dep); got != tc.want {
+			t.Errorf("%s: eligible = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

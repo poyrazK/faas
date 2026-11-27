@@ -207,7 +207,9 @@ func (w *Worker) hasOwnErrorRateRule(ctx context.Context, app state.App) (bool, 
 		return false, err
 	}
 	for _, r := range rules {
-		if !r.Enabled || r.AppID != app.ID {
+		// A stage's rule watches the stage's traffic, not production's
+		// (ADR-20261104120000).
+		if !r.Enabled || r.AppID != app.ID || r.EnvironmentID != "" {
 			continue
 		}
 		if string(r.Metric) == "error_rate_pct" {
