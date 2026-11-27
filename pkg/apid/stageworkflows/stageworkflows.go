@@ -2,9 +2,9 @@
 // (ADR-20261104120000 amendment 2026-11-22). The app's stored workflow
 // routes take ?environment=<slug>; omitted or production is production. A
 // workflow is reached only through its own environment. A stage's workflow
-// can be listed, read, saved, published, disabled, deleted and its revisions
-// read; nothing runs it yet, so it stays disabled, and the routes that run or
-// test a workflow refuse it.
+// can be listed, read, saved, published, enabled, disabled, deleted and its
+// revisions read; a stage runs manual and schedule workflows on its own
+// deployment. The routes that test, verify or watch a workflow refuse it.
 package stageworkflows
 
 import (
@@ -48,7 +48,7 @@ func Check(req Request) *api.Problem {
 	}
 	if !req.StageReady {
 		return api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Not available in a stage",
-			"a stage's stored workflow does not run yet, so it cannot be tested, verified or watched; use production")
+			"a stage's stored workflow cannot be tested, verified, watched or restored yet; use production")
 	}
 	if req.Write && !req.Open {
 		return api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Stage stored workflows unavailable",
@@ -65,7 +65,7 @@ func Problem(err error) *api.Problem {
 			"another environment of this app has a stored workflow with this name; until a later release, names are unique per app")
 	case errors.Is(err, state.ErrStoredWorkflowStageDisabled):
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Stage workflow cannot be enabled",
-			"a stage's stored workflow does not run yet, so it stays disabled")
+			"a stage runs only manual and schedule workflows; this one stays disabled")
 	}
 	return nil
 }

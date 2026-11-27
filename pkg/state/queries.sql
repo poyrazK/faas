@@ -20916,6 +20916,67 @@ INSERT INTO workflow_event_receipts(outbox_id, recipient_id, run_id) VALUES($1, 
 -- (ADR-20261104120000).
 SELECT * FROM stored_workflows WHERE app_id=$1 AND environment_id IS NULL ORDER BY name;
 
+-- name: ListStageWorkflowScheduleCandidates :many
+-- A stage's enabled schedule workflows run on the stage's live deployment
+-- (ADR-20261104120000). One row per (app, stage), keyset by both.
+SELECT a.id AS app_id, e.id AS environment_id, d.id AS deployment_id
+FROM (SELECT DISTINCT w.app_id, w.environment_id FROM stored_workflows w
+      WHERE w.environment_id IS NOT NULL AND w.enabled AND w.published->'trigger'->>'type' = 'schedule') s
+JOIN apps a ON a.id = s.app_id
+JOIN project_environments e ON e.id = s.environment_id AND e.project_id = a.project_id AND e.account_id = a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
+JOIN LATERAL (
+    SELECT dep.id FROM deployments dep
+    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = e.slug
+    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+) d ON true
+WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id = sqlc.narg(owner_node_id)::uuid)
+  AND (sqlc.narg(after_app_id)::uuid IS NULL
+       OR (a.id, e.id) > (sqlc.narg(after_app_id)::uuid, COALESCE(sqlc.narg(after_environment_id)::uuid, '00000000-0000-0000-0000-000000000000'::uuid)))
+ORDER BY a.id, e.id LIMIT sqlc.arg(batch_limit);
+
+-- name: LockStageWorkflowScheduleTarget :one
+SELECT a.account_id, d.id AS deployment_id, ac.plan,
+  (SELECT coalesce(jsonb_agg(jsonb_set(w.published, '{trigger,enabled}', to_jsonb(w.enabled), true) ORDER BY w.name), '[]'::jsonb)
+   FROM stored_workflows w WHERE w.app_id = a.id AND w.environment_id = e.id AND w.published IS NOT NULL)::jsonb AS workflows
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
+JOIN project_environments e ON e.id = sqlc.arg(environment_id)::uuid AND e.project_id = a.project_id AND e.account_id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = e.slug
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a,d;
+
+-- name: GetStageWorkflowScheduleCursor :one
+SELECT * FROM stage_workflow_schedule_cursors WHERE environment_id = $1 AND workflow_name = $2;
+
+-- name: PruneStageWorkflowScheduleCursors :exec
+DELETE FROM stage_workflow_schedule_cursors c WHERE c.environment_id = sqlc.arg(environment_id)::uuid
+AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(sqlc.arg(workflows)::jsonb) definition
+    WHERE definition->>'name' = c.workflow_name AND definition->'trigger'->>'type' = 'schedule'
+      AND (definition->'trigger'->>'enabled')::boolean IS DISTINCT FROM false
+);
+
+-- name: UpsertStageWorkflowScheduleCursor :exec
+INSERT INTO stage_workflow_schedule_cursors (environment_id, workflow_name, app_id, deployment_id, trigger_snapshot,
+    last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at)
+VALUES (sqlc.arg(environment_id), sqlc.arg(workflow_name), sqlc.arg(app_id), sqlc.narg(deployment_id), sqlc.arg(trigger_snapshot),
+    sqlc.arg(last_evaluated_at), sqlc.narg(scheduled_for), sqlc.arg(status), sqlc.narg(last_run_id), sqlc.narg(last_admitted_at))
+ON CONFLICT (environment_id, workflow_name) DO UPDATE SET
+    app_id = EXCLUDED.app_id, deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
+    last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, last_admitted_at = EXCLUDED.last_admitted_at, updated_at = now();
+
+-- name: DeleteStageWorkflowScheduleCursor :exec
+DELETE FROM stage_workflow_schedule_cursors WHERE app_id = $1 AND workflow_name = $2;
+
 -- name: ListStageStoredWorkflows :many
 SELECT * FROM stored_workflows WHERE app_id=$1 AND environment_id=$2 ORDER BY name;
 

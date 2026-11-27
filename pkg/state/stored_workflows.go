@@ -23,8 +23,8 @@ type StoredWorkflow struct {
 	Enabled               bool
 	UpdatedAt             time.Time
 	// EnvironmentID is the stage that owns the workflow; "" is production
-	// (ADR-20261104120000). Nothing runs a stage's workflow yet, so it stays
-	// disabled.
+	// (ADR-20261104120000). A stage runs its manual and schedule workflows on
+	// its own deployment; any other stage workflow stays disabled.
 	EnvironmentID string
 }
 
@@ -94,9 +94,9 @@ var (
 	// environment of the app holds: names stay unique per app until the
 	// contract release (ADR-20261104120000).
 	ErrStoredWorkflowNameInOtherEnvironment = errors.New("stored workflow: another environment of the app uses this name")
-	// ErrStoredWorkflowStageDisabled refuses enabling a stage's workflow:
-	// nothing runs one yet.
-	ErrStoredWorkflowStageDisabled = errors.New("stored workflow: a stage's workflow cannot be enabled yet")
+	// ErrStoredWorkflowStageDisabled refuses enabling a stage's workflow
+	// whose trigger a stage does not run yet (only manual and schedule).
+	ErrStoredWorkflowStageDisabled = errors.New("stored workflow: a stage runs only manual and schedule workflows")
 )
 
 type StoredWorkflowQuotaError struct {
@@ -242,17 +242,17 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 		if current.PublishedVersion == 0 && fromManifest && !mutation.TakeOverManifest {
 			return StoredWorkflow{}, ErrStoredWorkflowOwnershipConflict
 		}
-		if current.PublishedVersion == 0 && !stage {
+		if current.PublishedVersion == 0 {
 			current.Enabled = definition.Trigger == nil || definition.Trigger.Enabled == nil || *definition.Trigger.Enabled
+		}
+		if stage && !StageWorkflowRunnable(definition) {
+			current.Enabled = false
 		}
 		current.Published = cloneWorkflowJSON(current.Draft)
 		current.PublishedVersion = current.Version + 1
 	case "enable":
 		if previous == nil || len(current.Published) == 0 {
 			return StoredWorkflow{}, ErrNotFound
-		}
-		if mutation.Enabled && stage {
-			return StoredWorkflow{}, ErrStoredWorkflowStageDisabled
 		}
 		if mutation.Enabled {
 			if !plan.WorkflowsAllowed() {
@@ -261,6 +261,9 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 			var definition api.WorkflowSpec
 			if err := json.Unmarshal(current.Published, &definition); err != nil {
 				return StoredWorkflow{}, ErrStoredWorkflowInvalid
+			}
+			if stage && !StageWorkflowRunnable(definition) {
+				return StoredWorkflow{}, ErrStoredWorkflowStageDisabled
 			}
 			if _, err := api.ValidateWorkflowDAG(definition, plan); err != nil {
 				return StoredWorkflow{}, fmt.Errorf("%w: %w", ErrStoredWorkflowInvalid, err)
@@ -280,4 +283,11 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 	current.Version++
 	current.UpdatedAt = time.Now().UTC()
 	return current, nil
+}
+
+// StageWorkflowRunnable reports whether a stage runs the definition: manual
+// starts and schedules, on the stage's own deployment (ADR-20261104120000,
+// stored_workflows_environment_enabled_chk).
+func StageWorkflowRunnable(definition api.WorkflowSpec) bool {
+	return definition.Trigger == nil || definition.Trigger.Type == "manual" || definition.Trigger.Type == "schedule"
 }

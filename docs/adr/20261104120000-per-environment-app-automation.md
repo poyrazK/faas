@@ -486,27 +486,42 @@ app-wide indexes and full clones copy consumers, keys and plan assignments.
 
 ### Stored workflows (detail, 2026-11-27)
 
-- **Storage first.** Nothing runs workflows per environment today: runs,
-  schedule cursors, event and webhook starts all use production's live
-  deployment (`scope = 'default'`). The owner chose to land storage first
-  and the runtime (manual and schedule triggers on the stage's own
-  deployment) as the next slice.
+- **Storage first, then the runtime.** Before this, runs, schedule
+  cursors, event and webhook starts all used production's live deployment
+  (`scope = 'default'`). The owner chose to land storage first and the
+  runtime (manual and schedule triggers on the stage's own deployment) as
+  the next slice; both now ship together on the same runtime key.
 - `stored_workflows.environment_id` (NULL is production) names one of the
   app's project environments; a trigger checks it and keeps it fixed, and
   the environment's deletion removes its workflows.
   `stored_workflow_revisions.environment_id` is copied from the workflow by a
   trigger, whichever release writes the revision.
-- **A stage's workflow stays disabled**
-  (`stored_workflows_environment_disabled_chk`). `app_workflow_definitions()`
-  (production's runnable definitions, read by schedules, events, webhooks
-  and manual starts on N and N-1) and `ListStoredWorkflows` take production's
-  workflows only.
+- **A stage runs its manual and schedule workflows** on its own live
+  deployment (`deployments.scope` = the stage's slug); the ADR's "HTTP and
+  cron" triggers are manual API starts and schedules. Event and webhook
+  workflows stay disabled in a stage
+  (`stored_workflows_environment_enabled_chk`): publish leaves them off and
+  enable refuses them. `app_workflow_definitions()` (production's runnable
+  definitions, read by schedules, events, webhooks and manual starts on N
+  and N-1) and `ListStoredWorkflows` take production's workflows only.
+- A manual start takes `?environment=` on `POST
+  /v1/apps/{slug}/workflows/{name}/runs` (`gregale workflow run
+  --environment`): it pins the run to the stage's live deployment and
+  overlays the stage's runnable stored workflows on that deployment's
+  code workflows. Steps already reach the run's deployment through the
+  revision header.
+- schedd runs a second schedule pass over stage candidates (an enabled
+  stage schedule workflow and a live stage deployment). Its cursors live
+  in `stage_workflow_schedule_cursors`, keyed by (environment, name), so
+  production's cursor pruning on N and N-1 never removes them; publishing,
+  disabling or deleting the workflow clears its cursor.
 - A workflow is reached only through its own environment. The routes take
   `environment`; a stage supports list, get, save, publish, disable, delete
   and its revisions, and refuses the routes that test, verify, watch or
   restore a workflow (501). Stage writes wait for the apid runtime key
   `stage_stored_workflows_enabled` (default off), turned on once every apid
-  runs this release, since N-1 apid lists every workflow of the app.
+  and schedd runs this release, since N-1 apid lists every workflow of the
+  app and N-1 schedd has no stage schedule pass.
 - Names become unique per app and environment
   (`stored_workflows_app_environment_name_uniq`). `stored_workflows_pkey`
   stays `(app_id, name)` until the contract release, so a stage's workflow

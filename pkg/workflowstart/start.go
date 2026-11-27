@@ -114,6 +114,9 @@ func Start(ctx context.Context, store Store, req Request) (Result, error) {
 		if dep.Workflows, err = stored.EffectiveWorkflowDefinitions(ctx, req.App.ID, dep.Workflows); err != nil {
 			return Result{}, err
 		}
+		if dep.Workflows, err = stageDefinitions(ctx, store, stored, req.App, scope, dep.Workflows); err != nil {
+			return Result{}, err
+		}
 	}
 	var definitions []api.WorkflowSpec
 	if err := json.Unmarshal(dep.Workflows, &definitions); err != nil {
@@ -157,4 +160,30 @@ func Start(ctx context.Context, store Store, req Request) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Run: run, Replayed: replayed}, nil
+}
+
+// environmentReader reads one of a project's environments by slug.
+type environmentReader interface {
+	ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (state.ProjectEnvironment, error)
+}
+
+// stageDefinitions overlays the stage's own stored workflows when the run
+// starts on a stage's deployment (ADR-20261104120000).
+func stageDefinitions(ctx context.Context, store Store, stored state.StoredWorkflowStore, app state.App, scope string, effective json.RawMessage) (json.RawMessage, error) {
+	envs, ok := store.(environmentReader)
+	if !ok || app.ProjectID == "" || scope == "default" || state.IsProductionScope(scope) {
+		return effective, nil
+	}
+	env, err := envs.ProjectEnvironmentBySlug(ctx, app.AccountID, app.ProjectID, scope)
+	if errors.Is(err, state.ErrNotFound) {
+		return effective, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	records, err := stored.ListStageStoredWorkflows(ctx, app.ID, env.ID)
+	if err != nil || len(records) == 0 {
+		return effective, err
+	}
+	return state.OverlayStageStoredWorkflows(effective, records)
 }

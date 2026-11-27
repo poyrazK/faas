@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/stagealerts"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workflowstart"
@@ -193,6 +194,16 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	// ?environment starts the run on that stage's live deployment, with the
+	// stage's own stored workflows (ADR-20261104120000).
+	scope := ""
+	if requested := strings.TrimSpace(r.URL.Query().Get("environment")); requested != "" && !state.IsProductionScope(requested) {
+		if _, prob := stagealerts.Environment(r.Context(), s.store, app, requested); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		scope = requested
+	}
 
 	keyHeader := r.Header.Get("Idempotency-Key")
 	idempotencyKey := strings.TrimSpace(keyHeader)
@@ -247,7 +258,7 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	// (ADR-20261113120824 §3).
 	result, err := workflowstart.Start(r.Context(), s.store, workflowstart.Request{
 		Plan: acct.Plan, App: app, Workflow: workflowName, Input: inputRaw,
-		IdempotencyKey: idempotencyKey, TenantID: tenantID, RuntimeDisabled: !s.workflowRuntimeEnabled,
+		IdempotencyKey: idempotencyKey, TenantID: tenantID, RuntimeDisabled: !s.workflowRuntimeEnabled, Scope: scope,
 	})
 	if err != nil {
 		s.log.Error("create workflow run failed", "app_id", app.ID, "err", err)

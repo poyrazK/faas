@@ -42198,6 +42198,12 @@ paths:
   /v1/apps/{slug}/workflows/{name}/runs:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug (ADR-20261104120000). Starts the run on that stage's live deployment with the stage's own stored workflows; omitted or production is production.
+        schema:
+          type: string
       - name: name
         in: path
         required: true

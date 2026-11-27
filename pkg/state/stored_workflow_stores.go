@@ -164,6 +164,7 @@ func (m *MemStore) MutateStoredWorkflow(_ context.Context, appID, name string, m
 	}
 	if mutation.Action != "save" && mutation.Action != "tests" {
 		delete(m.workflowSchedules, key)
+		m.deleteStageWorkflowScheduleLocked(mutation.EnvironmentID, name)
 		for key, cursor := range m.workflowTenantSchedules {
 			if cursor.AppID == appID && cursor.WorkflowName == name {
 				cursor.DeploymentID, cursor.Status, cursor.LastRunID = "", WorkflowScheduleArmed, ""
@@ -380,6 +381,9 @@ func mutateStoredWorkflowTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app
 		err = q.DeleteStoredWorkflowScheduleCursor(ctx, tx, sqlc.DeleteStoredWorkflowScheduleCursorParams{AppID: mustPgUUID(appID), WorkflowName: name})
 		if err == nil {
 			err = q.RearmTenantStoredWorkflowSchedules(ctx, tx, sqlc.RearmTenantStoredWorkflowSchedulesParams{AppID: mustPgUUID(appID), WorkflowName: name})
+		}
+		if err == nil {
+			err = q.DeleteStageWorkflowScheduleCursor(ctx, tx, sqlc.DeleteStageWorkflowScheduleCursorParams{AppID: mustPgUUID(appID), WorkflowName: name})
 		}
 	}
 	return next, err

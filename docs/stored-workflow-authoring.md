@@ -254,17 +254,24 @@ A project's stage keeps stored workflows of its own. Pass `--environment` to
 the authoring commands; without it they work on production:
 
 ```sh
-gregale workflow stored apply --app billing --env staging --file paid-invoice.yaml --expected-version 0
-gregale workflow stored publish --app billing --env staging --name paid-invoice --expected-version VERSION
+gregale workflow stored apply --app billing --env staging --file nightly-report.yaml --expected-version 0
+gregale workflow stored publish --app billing --env staging --name nightly-report --expected-version VERSION
 gregale workflow stored list --app billing --env staging
-gregale workflow stored revisions list --app billing --env staging --name paid-invoice
-gregale workflow stored delete --app billing --env staging --name paid-invoice --expected-version VERSION --yes
+gregale workflow run nightly-report --app billing --env staging
+gregale workflow stored revisions list --app billing --env staging --name nightly-report
+gregale workflow stored delete --app billing --env staging --name nightly-report --expected-version VERSION --yes
 ```
 
-- A stage's workflow does not run yet, so it stays disabled: `resume` refuses
-  it, and so do tests, live verification, health, failure policies and
-  restoring a revision. Production's schedules, events, webhooks and manual
-  starts never see it.
+- A stage runs its manual and schedule workflows on the stage's own live
+  deployment. Publishing one enables it, as in production; start a manual
+  run with `gregale workflow run --env`. Schedules tick only while
+  the stage has a live deployment.
+- Event and webhook workflows can be authored in a stage but stay disabled
+  there, and `resume` refuses them. Tests, live verification, health,
+  failure policies and restoring a revision are not available in a stage
+  yet.
+- Production's schedules, events, webhooks and manual starts never see a
+  stage's workflows, and a stage's runs never see production's.
 - A workflow is reached only through its own environment. Until a later
   release, a name is unique across the app: a stage cannot use a name
   production uses, or the other way round.

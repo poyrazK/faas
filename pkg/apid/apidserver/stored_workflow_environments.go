@@ -84,11 +84,12 @@ func (s *server) storedWorkflowInEnvironment(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
-// stageStoredWorkflowList lists one stage's workflows. They never run yet,
-// so the list reports them unavailable.
+// stageStoredWorkflowList lists one stage's workflows. A stage runs its
+// manual and schedule workflows on its own deployment.
 func (s *server) stageStoredWorkflowList(ctx context.Context, store state.StoredWorkflowStore, app state.App, account state.Account, envID string) (api.ListStoredWorkflowsResponse, error) {
-	response := api.ListStoredWorkflowsResponse{AppSlug: app.Slug, RuntimeEnabled: false, UnavailableReason: "stage_workflows_not_runnable",
-		MaxDefinitions: account.Plan.WorkflowMaxPerApp(), StoredWorkflows: []api.StoredWorkflowResponse{}}
+	response := api.ListStoredWorkflowsResponse{AppSlug: app.Slug, RuntimeEnabled: s.workflowRuntimeEnabled,
+		UnavailableReason: workflowScheduleUnavailableReason(s.workflowRuntimeEnabled, app, account),
+		MaxDefinitions:    account.Plan.WorkflowMaxPerApp(), StoredWorkflows: []api.StoredWorkflowResponse{}}
 	records, err := store.ListStageStoredWorkflows(ctx, app.ID, envID)
 	if err != nil {
 		return response, err

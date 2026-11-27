@@ -1303,6 +1303,7 @@ export class WorkflowsService {
   public static createWorkflowRun({
     slug,
     name,
+    environment,
     idempotencyKey,
     requestBody,
   }: {
@@ -1314,6 +1315,10 @@ export class WorkflowsService {
      * Workflow name from the app's effective published definitions.
      */
     name: string,
+    /**
+     * Project environment slug (ADR-20261104120000). Starts the run on that stage's live deployment with the stage's own stored workflows; omitted or production is production.
+     */
+    environment?: string,
     /**
      * Stable caller key for retrying this run creation. Reuse only with the same workflow input.
      */
@@ -1329,6 +1334,9 @@ export class WorkflowsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
