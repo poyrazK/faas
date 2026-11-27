@@ -85,6 +85,13 @@ The hourly lifecycle check, for an environment with channels:
 
 The `flags.lifecycle_attention` audit events are unchanged.
 
+The check runs two minutes after apid starts and then hourly, and each pass
+reads every environment, a page at a time. apid restarts more often than
+hourly when releases land: a check that first ran an hour after start, or a
+page cursor kept between passes, could go hours without reaching an
+environment. Every message and audit event is keyed, so extra passes record
+nothing twice.
+
 ### 4. Delivery
 
 apid writes `flag_notifications` rows (an outbox: account, the project's

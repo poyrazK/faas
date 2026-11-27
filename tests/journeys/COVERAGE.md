@@ -39,6 +39,15 @@ one-service project built from the repository's source: the SDK's variant
 matches `flag inspect`, `track()` accepts a verified customer's conversion
 and drops nothing, and a kill serves the fallback until it is unset.
 Experiment counting is server-side and stays with the Node journey.
+`TestFlagNotifications` (ADR-20261125085913) runs when neither
+`flag-notifications` nor `notification-channels` is hidden for the account
+(the `flag_notifications` platform flag). In a one-service flags project it
+sets a Slack channel no workspace owns as the environment's notification
+channel and reads it back, creates a flag that expired yesterday, waits up to
+70 minutes for the hourly lifecycle check to send the expiry (the channel
+records the refused send), and clears the setting. Experiment decisions,
+rollback alerts, the weekly digest's text and retries stay with the
+apidserver and `pkg/flagnotify` tests.
 
 Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.
 `TestApplicationAuth` runs when the account's `gregale feature list` does not
