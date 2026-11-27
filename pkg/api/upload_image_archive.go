@@ -11,9 +11,6 @@ import (
 // single-image OCI archive rather than a source tarball (ADR-20261127120000).
 const UploadSourceFormatOCIImageArchive = "oci_image_archive"
 
-// UploadImageNameMaxLen bounds UploadDeployOptions.ImageName.
-const UploadImageNameMaxLen = 256
-
 // IsImageArchive reports whether the upload carries a prebuilt image.
 func (o UploadDeployOptions) IsImageArchive() bool {
 	return o.SourceFormat == UploadSourceFormatOCIImageArchive
@@ -57,16 +54,12 @@ func invalidUploadOptions(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid deploy_options", detail)
 }
 
-// ImageArchiveMaxMB caps an uploaded prebuilt image archive. It is the
-// plan's app layer cap: the layers become that drive1 layer, and one number
-// keeps image and Dockerfile deploys comparable (ADR-20261127120000).
-func (l Limits) ImageArchiveMaxMB() int {
-	return l.AppLayerMaxMB
-}
-
-// ImageArchiveMaxBytes returns ImageArchiveMaxMB in bytes.
-func (l Limits) ImageArchiveMaxBytes() int64 {
-	return int64(l.ImageArchiveMaxMB()) << 20
+// ErrImageArchiveUnavailable refuses an image archive upload while the
+// local_image_deploys platform flag is off for the account.
+func ErrImageArchiveUnavailable() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Local image deploys unavailable",
+		"This account cannot upload image archives yet. Push the image to a registry and deploy it with --image REF@sha256:<digest>.").
+		WithDocs(docsBase + "/container-compatibility")
 }
 
 // ErrImageArchiveTooLarge refuses an image archive over ImageArchiveMaxMB.

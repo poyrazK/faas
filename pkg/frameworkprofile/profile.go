@@ -114,6 +114,21 @@ type UploadedImage struct {
 	Name string `json:"name,omitempty"`
 }
 
+// UploadedImageIn returns the uploaded image a persisted profile records, or
+// nil when the profile is absent, unreadable or describes a source build.
+func UploadedImageIn(raw []byte) *UploadedImage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var p struct {
+		UploadedImage *UploadedImage `json:"uploaded_image"`
+	}
+	if json.Unmarshal(raw, &p) != nil {
+		return nil
+	}
+	return p.UploadedImage
+}
+
 // ForUploadedImage is the profile of a prebuilt image: a Dockerfile build
 // with nothing left to build. Readiness is the port accepting connections,
 // as for a registry image, because the image never promised /healthz.

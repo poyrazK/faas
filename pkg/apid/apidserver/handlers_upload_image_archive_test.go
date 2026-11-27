@@ -11,10 +11,29 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/ociarchive/ociarchivetest"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 20261127120000
+
+// setupLocalImage is a test env with local image deploys released.
+func setupLocalImage(t *testing.T, plan api.Plan) apidserver.TestEnv {
+	t.Helper()
+	e := apidserver.Setup(t, plan)
+	(*e.S()).EnablePlatformFlagForAll(platformflags.LocalImageDeploys)
+	return e
+}
+
+func TestUploadImageArchive_RefusedWhileFlagOff(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	e := apidserver.Setup(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "img"}, nil)
+	rec := startImageUpload(t, e, "img", 1024, imageUploadOptions(""))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Local image deploys unavailable") {
+		t.Fatalf("flag off: %d %s", rec.Code, rec.Body.String())
+	}
+}
 
 func imageUploadOptions(name string) *api.UploadDeployOptions {
 	return &api.UploadDeployOptions{SourceFormat: api.UploadSourceFormatOCIImageArchive, ImageName: name, Reason: "local image"}
@@ -44,7 +63,7 @@ func uploadAndCommit(t *testing.T, e apidserver.TestEnv, slug string, body []byt
 
 func TestUploadImageArchive_CommitsPrebuiltDockerfileDeployment(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := apidserver.Setup(t, api.PlanFree)
+	e := setupLocalImage(t, api.PlanFree)
 	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "local-img"}, nil)
 	archive, digest := ociarchivetest.Canonical(t, 3000)
 
@@ -75,7 +94,7 @@ func TestUploadImageArchive_CommitsPrebuiltDockerfileDeployment(t *testing.T) {
 
 func TestUploadImageArchive_Refusals(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := apidserver.Setup(t, api.PlanFree)
+	e := setupLocalImage(t, api.PlanFree)
 	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "img"}, nil)
 	free := api.MustLimitsFor(api.PlanFree)
 	cases := map[string]struct {
@@ -108,7 +127,7 @@ func TestUploadImageArchive_Refusals(t *testing.T) {
 
 func TestUploadImageArchive_CommitRefusesBadArchiveAndSignedApps(t *testing.T) {
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	e := apidserver.Setup(t, api.PlanPro) // two apps
+	e := setupLocalImage(t, api.PlanPro) // two apps
 	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "bad-img"}, nil)
 	source := apidserver.BuildTestTarGz(t, nil, map[string][]byte{"index.js": []byte("1")})
 	if rec := uploadAndCommit(t, e, "bad-img", source); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Invalid image archive") {

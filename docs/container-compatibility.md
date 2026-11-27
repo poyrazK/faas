@@ -26,7 +26,9 @@ Scale); larger images fail with `source_too_large`. Nothing is built: the image
 deploys exactly as saved. Set `GREGALE_DOCKER=podman` to save with a
 Docker-compatible client other than `docker`. Apps that require signed images
 and function apps only accept registry images. Pushing to a registry is still
-faster for large images and is the better choice in CI.
+faster for large images and is the better choice in CI. Local image deploys are
+being released gradually; an account without them gets "Local image deploys
+unavailable" and can deploy through a registry instead.
 
 Gregale preserves the OCI/Docker process model. Image metadata supplies the
 entrypoint, command, environment, working directory, user, health check, stop

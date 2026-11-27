@@ -173,12 +173,26 @@ func selectDockerSaveImage(meta map[string][]byte, raw []byte, want string) (sou
 }
 
 func containsTag(tags []string, want string) bool {
+	want = WithDefaultTag(want)
 	for _, t := range tags {
 		if t == want || t == "docker.io/library/"+want || t == "docker.io/"+want {
 			return true
 		}
 	}
 	return false
+}
+
+// WithDefaultTag adds Docker's implied ":latest" to a reference that names
+// neither a tag nor a digest. `docker save repo` writes every tag of repo,
+// while `docker save repo:latest` writes the one image Docker would run.
+func WithDefaultTag(ref string) string {
+	if ref == "" || strings.Contains(ref, "@") {
+		return ref
+	}
+	if strings.Contains(ref[strings.LastIndex(ref, "/")+1:], ":") {
+		return ref
+	}
+	return ref + ":latest"
 }
 
 // selectOCIImage follows index.json, through one nested image index when
@@ -297,10 +311,23 @@ func stageLayers(inputPath string, layers []sourceLayer, diffIDs []string, tmpDi
 			staged[i] = layer
 		}
 	}
+	// Legacy `docker save` stores a repeated layer once and links the other
+	// paths to it; a layer with the same diff ID has the same content.
+	byDiffID := map[string]stagedLayer{}
 	for i, l := range staged {
-		if l.path == "" {
+		if l.path != "" {
+			byDiffID[diffIDs[i]] = l
+		}
+	}
+	for i, l := range staged {
+		if l.path != "" {
+			continue
+		}
+		dup, ok := byDiffID[diffIDs[i]]
+		if !ok {
 			return done, invalid("layer %d (%s) is missing from the archive", i, layers[i].path)
 		}
+		staged[i] = dup
 	}
 	return staged, nil
 }

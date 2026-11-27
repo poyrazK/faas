@@ -85,6 +85,7 @@ func Inspect(r io.Reader) (Summary, error) {
 	var indexBytes []byte
 	sawLayout := false
 	blobs := map[string]blobInfo{}
+	var kept int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -134,6 +135,9 @@ func Inspect(r io.Reader) (Summary, error) {
 		if err != nil {
 			return Summary{}, err
 		}
+		if kept += int64(len(info.small)); kept > maxKeptMetadataBytes {
+			return Summary{}, invalid("the archive holds more than %d MiB of JSON blobs", maxKeptMetadataBytes>>20)
+		}
 		blobs[digest] = info
 	}
 	if !sawLayout || indexBytes == nil {
@@ -142,15 +146,30 @@ func Inspect(r io.Reader) (Summary, error) {
 	return summarize(indexBytes, blobs)
 }
 
+// maxKeptMetadataBytes bounds the blob bytes Inspect holds in memory: a
+// manifest and a config, never layers.
+const maxKeptMetadataBytes = api.LocalOCIMaxManifestBytes + api.LocalOCIMaxConfigBytes
+
+// hashBlob verifies a blob's digest. It keeps the bytes only of a blob that
+// may be a manifest or config: small enough and starting with '{'. Layers are
+// gzip or zstd, whose magic bytes never start that way, so they stream through.
 func hashBlob(r io.Reader, wantHex string, size int64) (blobInfo, error) {
 	h := sha256.New()
-	keep := size <= api.LocalOCIMaxConfigBytes
+	var first [1]byte
+	n0, err := io.ReadFull(r, first[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		return blobInfo{}, invalid("read blob sha256:%s: %v", wantHex, err)
+	}
+	h.Write(first[:n0])
+	keep := n0 == 1 && first[0] == '{' && size <= api.LocalOCIMaxConfigBytes
 	var small strings.Builder
 	w := io.Writer(h)
 	if keep {
+		small.Write(first[:])
 		w = io.MultiWriter(h, &small)
 	}
 	n, err := io.Copy(w, r)
+	n += int64(n0)
 	if err != nil {
 		return blobInfo{}, invalid("read blob sha256:%s: %v", wantHex, err)
 	}
@@ -249,7 +268,7 @@ func smallBlob(blobs map[string]blobInfo, desc oci.Descriptor, maxBytes int64) (
 		return nil, invalid("blob %s is missing", desc.Digest)
 	}
 	if info.size != desc.Size || info.size > maxBytes || info.small == nil {
-		return nil, invalid("blob %s has the wrong size", desc.Digest)
+		return nil, invalid("blob %s is not a JSON document of the declared size", desc.Digest)
 	}
 	return info.small, nil
 }

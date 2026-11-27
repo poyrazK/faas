@@ -151,6 +151,72 @@ func TestConvertThenInspect(t *testing.T) {
 	}
 }
 
+// Legacy `docker save` stores a repeated layer once and links the second
+// path to the first; the link may come before the file it names.
+func TestConvertDuplicateLayerLink(t *testing.T) {
+	l := layerTar(t, "a")
+	config := imageConfig(t, "amd64", l, l)
+	manifest, _ := json.Marshal([]dockerSaveEntry{{Config: "cfg.json", RepoTags: []string{"dup:latest"}, Layers: []string{"l2/layer.tar", "l1/layer.tar"}}})
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Name: "l2/layer.tar", Typeflag: tar.TypeSymlink, Linkname: "../l1/layer.tar", Mode: 0o777}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []entry{{"l1/layer.tar", l}, {"cfg.json", config}, {"manifest.json", manifest}} {
+		if err := tw.WriteHeader(&tar.Header{Name: e.name, Mode: 0o644, Size: int64(len(e.body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = tw.Write(e.body)
+	}
+	_ = tw.Close()
+	res, archive, err := convert(t, buf.Bytes(), "")
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	sum, err := Inspect(bytes.NewReader(archive))
+	if err != nil || sum.Layers != 2 || sum.ManifestDigest != res.ManifestDigest {
+		t.Fatalf("summary %+v err %v", sum, err)
+	}
+}
+
+func TestWithDefaultTag(t *testing.T) {
+	for in, want := range map[string]string{
+		"acme/web": "acme/web:latest", "acme/web:dev": "acme/web:dev", "localhost:5000/web": "localhost:5000/web:latest",
+		"web@sha256:" + strings.Repeat("a", 64): "web@sha256:" + strings.Repeat("a", 64), "": "",
+	} {
+		if got := WithDefaultTag(in); got != want {
+			t.Errorf("WithDefaultTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// An untagged name picks the :latest image out of a multi-tag save.
+	l := layerTar(t, "a")
+	two, _ := json.Marshal([]dockerSaveEntry{
+		{Config: "cfg.json", RepoTags: []string{"acme/web:latest"}, Layers: []string{"l/layer.tar"}},
+		{Config: "cfg.json", RepoTags: []string{"acme/web:dev"}, Layers: []string{"l/layer.tar"}}})
+	input := tarBytes(t, entry{"cfg.json", imageConfig(t, "amd64", l)}, entry{"l/layer.tar", l}, entry{"manifest.json", two})
+	if _, _, err := convert(t, input, "acme/web"); err != nil {
+		t.Fatalf("untagged name: %v", err)
+	}
+}
+
+// Inspect keeps manifest and config bytes, never layers: a layer under the
+// metadata size cap streams through.
+func TestInspectKeepsOnlyJSONBlobs(t *testing.T) {
+	info, err := hashBlob(bytes.NewReader([]byte{0x1f, 0x8b, 1, 2}), hex.EncodeToString(sha256Sum([]byte{0x1f, 0x8b, 1, 2})), 4)
+	if err != nil || info.small != nil || info.size != 4 {
+		t.Fatalf("layer kept: %+v %v", info, err)
+	}
+	info, err = hashBlob(bytes.NewReader([]byte(`{}`)), hex.EncodeToString(sha256Sum([]byte(`{}`))), 2)
+	if err != nil || string(info.small) != "{}" {
+		t.Fatalf("config not kept: %+v %v", info, err)
+	}
+}
+
+func sha256Sum(b []byte) []byte {
+	s := sha256.Sum256(b)
+	return s[:]
+}
+
 func TestConvertRefusals(t *testing.T) {
 	l := layerTar(t, "a")
 	badDiff := imageConfig(t, "amd64", layerTar(t, "other"))

@@ -48,10 +48,6 @@ func (b *Builderd) completeUploadedImage(ctx context.Context, build state.Build,
 		b.markFailed(ctx, build, state.FailureInfra, "uploaded images are not configured on this builder", buildStart)
 		return BuildResult{}, errors.New("builderd: image export dir not configured")
 	}
-	if err := checkUploadedImage(dep.SourcePath, uploaded.ManifestDigest); err != nil {
-		b.markFailed(ctx, build, state.FailureUserError, err.Error(), buildStart)
-		return BuildResult{}, err
-	}
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
@@ -60,16 +56,23 @@ func (b *Builderd) completeUploadedImage(ctx context.Context, build state.Build,
 	b.emitBuildLog(ctx, build.ID, "build started (uploaded image)\n")
 	b.openImageBuildStage(ctx, dep.ID, build, buildStart)
 	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] uploaded image %s — skipping vm spawn\n", uploaded.ManifestDigest))
+	// Copy first, then inspect the copy: what imaged reads is exactly what
+	// was checked, in a file builderd owns.
 	layerPath, size, err := placeUploadedImage(b.cfg.ImageExportDir, build.ID, dep.SourcePath)
 	if err != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "stage uploaded image: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	if err := checkUploadedImage(layerPath, uploaded.ManifestDigest); err != nil {
+		_ = os.Remove(layerPath)
+		b.markFailed(ctx, build, state.FailureUserError, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
 	return b.completeBuild(ctx, build, dep, app, acct, srcHash, "", BuildResult{BuildID: build.ID, LayerPath: layerPath, LayerBytes: size}, buildStart)
 }
 
-// checkUploadedImage re-inspects the verified source spool and confirms it
-// is the image apid accepted.
+// checkUploadedImage re-inspects the placed export and confirms it is the
+// image apid accepted.
 func checkUploadedImage(path, wantDigest string) error {
 	f, err := os.Open(path) //nolint:forbidigo // source path validated against the spool root by the caller.
 	if err != nil {
@@ -87,19 +90,17 @@ func checkUploadedImage(path, wantDigest string) error {
 }
 
 // placeUploadedImage writes the archive to <root>/<build-id>/build/out/image.tar,
-// the canonical buildexport shape, by hard link when the spool shares the
-// volume and by copy otherwise. The export sweeper owns it from here.
+// the canonical buildexport shape. It copies rather than hard-linking the
+// apid-owned spool file, so the export has builderd's owner and a 0644 mode
+// like a VM build's. The export sweeper owns it from here.
 func placeUploadedImage(root, buildID, source string) (string, int64, error) {
 	dir := filepath.Join(root, buildID, "build", "out")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", 0, err
 	}
 	dest := filepath.Join(dir, "image.tar")
-	_ = os.Remove(dest) // a retried claim replaces its own earlier copy
-	if err := os.Link(source, dest); err != nil {
-		if err := copyFile(source, dest); err != nil {
-			return "", 0, err
-		}
+	if err := copyFile(source, dest); err != nil { // a retried claim replaces its earlier copy
+		return "", 0, err
 	}
 	info, err := os.Stat(dest)
 	if err != nil {

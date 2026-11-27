@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -28,6 +29,10 @@ type localImageDeploy struct {
 	displayName    string // what the --image path prints and checks
 	manifestDigest string
 }
+
+// localImageIDPattern matches a short or full image ID, which names exactly
+// one image and must not gain a ":latest" tag.
+var localImageIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 
 // localImageConflicts are deploy flags a local image cannot honour: other
 // sources, previews, and options the upload session does not carry.
@@ -68,6 +73,9 @@ func localImageFlagProblem(name, archive string, explicit map[string]bool) error
 // cleanup removes every temporary file and is safe to call on failure.
 func prepareLocalImageDeploy(ctx context.Context, name, archive string, explicit map[string]bool) (*localImageDeploy, func(), int) {
 	noop := func() {}
+	if !localImageIDPattern.MatchString(name) {
+		name = ociarchive.WithDefaultTag(name) // save one image, not every tag of the repository
+	}
 	if err := localImageFlagProblem(name, archive, explicit); err != nil {
 		return nil, noop, printErr("Invalid flags", err)
 	}

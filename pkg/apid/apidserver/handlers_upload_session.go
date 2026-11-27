@@ -207,7 +207,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	actor := actorAccount(r, acct)
 	acct = owner
 	limits := api.MustLimitsFor(acct.Plan)
-	maxBytes, prob := s.uploadSessionSizeCap(app, limits, req.DeployOptions, req.TotalSize)
+	maxBytes, prob := s.uploadSessionSizeCap(acct, app, limits, req.DeployOptions, req.TotalSize)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -245,7 +245,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	if openCount >= uploadSessionOpenCap {
 		api.WriteProblem(w, api.ErrUploadSessionTooMany(
 			fmt.Sprintf("Account has %d open upload sessions on app %q (cap %d). Cancel one before opening another.", openCount, req.AppSlug, uploadSessionOpenCap),
-			maxBytes*uploadSessionSpoolBudgetMultiplier, int64(openCount)*maxBytes))
+			uploadSpoolBudgetBytes(limits), int64(openCount)*maxBytes))
 		return
 	}
 
@@ -256,7 +256,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
-	budgetBytes := maxBytes * uploadSessionSpoolBudgetMultiplier
+	budgetBytes := uploadSpoolBudgetBytes(limits)
 	if openBytes+req.TotalSize > budgetBytes {
 		api.WriteProblem(w, api.ErrUploadSessionTooMany(
 			fmt.Sprintf("Account has %d bytes in open upload sessions (budget %d). Commit or cancel one before opening another.", openBytes, budgetBytes),
@@ -791,8 +791,13 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
+	// A prebuilt image carries no gregale.yaml: like a registry --image
+	// deploy it leaves access, triggers and crons as they are, rather than
+	// applying an empty manifest that would re-lock the app.
 	var manifestProblem *api.Problem
-	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
+	if !imageArchive {
+		stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
+	}
 	if stagedManifest.cronIntent != nil {
 		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
 	}

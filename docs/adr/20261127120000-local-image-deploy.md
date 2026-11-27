@@ -70,7 +70,27 @@ moves large customer bytes to apid, resumably and within a size cap.
    - image names the stateful-datastore denylist matches.
 
    builderd refuses signed apps too, in case the policy changes between commit
-   and build.
+   and build. builderd never records a build publication for an uploaded
+   image, so its signature never vouches for bytes it did not build. If an
+   app later turns on signed images, those deployments cannot satisfy the
+   policy.
+6. **Account spool budget.** The budget for bytes in open upload sessions
+   becomes the larger of 4× the source tarball cap (unchanged) and one image
+   archive at the app layer cap. It does not become 4× the image cap. On Scale
+   that is 2 GB instead of 1 GB: one full-size image at a time.
+7. **Rollout.** apid accepts image archives only for accounts the
+   `local_image_deploys` platform flag releases. Turn it on only after every
+   builderd runs this release. An older builderd would treat the archive as
+   a source tarball, and an older apid ignores `source_format` and refuses the
+   upload at commit because it is not gzip. Retries of an uploaded image are
+   capped by the image cap, not the source cap.
+8. **Converter details.** A name without a tag or digest gains Docker's
+   implied `:latest` before `docker save`, so the CLI saves one image and not
+   every tag of the repository; image IDs are left as they are. A layer repeated
+   in a legacy save, stored once with the duplicate path as a link, reuses the
+   staged layer with the same diff ID. Inspect keeps in memory only blobs that
+   start with `{` and fit the config cap, at most a manifest plus a config in
+   total; layers stream through.
 
 ## Consequences
 

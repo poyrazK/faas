@@ -80,6 +80,24 @@ func TestProcessOne_UploadedImageSkipsVM(t *testing.T) {
 	}
 }
 
+// builderd never signs bytes it did not build: an uploaded image completes
+// without a build publication even when a publisher is configured.
+func TestProcessOne_UploadedImageIsNeverSigned(t *testing.T) {
+	store := state.NewMemStore()
+	archive, digest := ociarchivetest.Canonical(t, 0)
+	buildID, depID := seedUploadedImage(t, store, "unsigned", digest, archive, false)
+	signer, _ := buildPublicationSigner(t)
+	b := New(store, &fakeNotifier{}, &fakeVM{}, NewCache(t.TempDir()), NewDetector(), nil, Config{ImageExportDir: t.TempDir(), BuilderNodeID: "builder-one"}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithBuildPublisher(signer)
+	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	app, _ := store.AppByID(context.Background(), dep.AppID)
+	if present, err := store.HasBuildExportPublication(context.Background(), app.AccountID, app.ID, depID); err != nil || present {
+		t.Fatalf("uploaded image publication present=%v err=%v", present, err)
+	}
+}
+
 func TestProcessOne_UploadedImageRefusals(t *testing.T) {
 	archive, digest := ociarchivetest.Canonical(t, 0)
 	cases := map[string]struct {

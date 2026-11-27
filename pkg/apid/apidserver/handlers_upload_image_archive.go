@@ -16,13 +16,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/ociarchive"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
 // uploadSessionSizeCap validates the upload's format and returns the plan
 // cap that applies to it, refusing a total size above it.
-func (s *server) uploadSessionSizeCap(app state.App, limits api.Limits, opts *api.UploadDeployOptions, total int64) (int64, *api.Problem) {
+func (s *server) uploadSessionSizeCap(acct state.Account, app state.App, limits api.Limits, opts *api.UploadDeployOptions, total int64) (int64, *api.Problem) {
+	if opts != nil && opts.IsImageArchive() && !s.platformFlagEnabled(platformflags.LocalImageDeploys, acct) {
+		return 0, api.ErrImageArchiveUnavailable()
+	}
 	if opts == nil || !opts.IsImageArchive() {
 		if opts != nil {
 			if prob := opts.ValidateSourceFormat(); prob != nil {
@@ -43,6 +47,14 @@ func (s *server) uploadSessionSizeCap(app state.App, limits api.Limits, opts *ap
 		return 0, api.ErrImageArchiveTooLarge(limits, total)
 	}
 	return maxBytes, nil
+}
+
+// uploadSpoolBudgetBytes is an account's budget for bytes in open upload
+// sessions: a few source tarballs, or one image archive at the app layer cap
+// when that is larger (ADR-20261127120000). It does not scale with the image
+// cap, so image uploads cannot multiply the control plane's spool use.
+func uploadSpoolBudgetBytes(limits api.Limits) int64 {
+	return max(int64(limits.SourceTarballMaxMB)<<20*uploadSessionSpoolBudgetMultiplier, limits.ImageArchiveMaxBytes())
 }
 
 // imageArchiveAppProblem refuses options and apps a prebuilt image cannot
