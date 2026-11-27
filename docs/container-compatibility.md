@@ -52,6 +52,15 @@ names the mistake, such as a server bound to `127.0.0.1` or to a port other
 than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
 app needs to start with `--env-file` (docker env-file format).
 
+Pass `--healthcheck-path /healthz` (the path you deploy with) to probe the
+app's readiness route instead of `/`. Gregale routes to an instance only once
+that path answers 200-399, so `--boot` keeps polling it through the startup
+window and fails with `boot_health_failed` if it never passes. Without a health
+path, any answer on `/` counts, as it does for readiness by connection. An image
+with a `HEALTHCHECK` also gets it run by Docker, checked every second with the
+image's start period and retries; `boot-healthcheck` reports healthy, unhealthy
+with the check's last output, or still starting after the startup window.
+
 The container gets the memory the app would get on Gregale, with no swap: the
 RAM of the app named with `--app`, otherwise your plan's default for a new app
 (512 MB when you are not signed in); `--ram MB` sets it directly. An app that

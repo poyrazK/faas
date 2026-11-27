@@ -39,6 +39,11 @@ type doctorBootOptions struct {
 	// app would get on Gregale; memorySource says where the number came from.
 	memoryMB     int
 	memorySource string
+	// healthPath is probed instead of / and must answer 200-399, as for
+	// Gregale's readiness; imageHealthcheck says the image declares an
+	// enabled HEALTHCHECK, which Docker runs (doctor_boot_health.go).
+	healthPath       string
+	imageHealthcheck bool
 }
 
 // doctorDocker runs the local Docker client. GREGALE_DOCKER selects a
@@ -123,6 +128,12 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 		limit := strconv.Itoa(opts.memoryMB) + "m"
 		args = append(args, "--memory", limit, "--memory-swap", limit)
 	}
+	if opts.imageHealthcheck {
+		// Docker runs the image HEALTHCHECK; check every second instead of
+		// its interval so a result arrives within the boot. Its start period
+		// and retries still apply.
+		args = append(args, "--health-interval", "1s")
+	}
 	if opts.envFile != "" {
 		args = append(args, "--env-file", opts.envFile)
 	}
@@ -165,21 +176,52 @@ func (b doctorBoot) check(ctx context.Context) []doctorCheck {
 	checks := []doctorCheck{
 		{Name: "boot-start", Status: "ok", Detail: fmt.Sprintf("answered in %s", bootSeconds(time.Since(b.started))) + b.memoryNote()},
 		{Name: "boot-listener", Status: "ok", Detail: fmt.Sprintf("listening on 0.0.0.0:%d ($PORT)", b.opts.port)},
+		b.httpCheck(status),
 	}
-	if status >= 500 {
-		checks = append(checks, doctorCheck{Name: "boot-http", Status: "warn", Detail: fmt.Sprintf("GET / → %d", status), Hint: fmt.Sprintf("GET / answered %d. The platform marks an instance ready once the port accepts connections (or its health check passes), but every request may fail the same way.", status), Fix: "Check the container logs (`docker logs`) for the error; set env vars the app needs with --env-file."})
-	} else {
-		checks = append(checks, doctorCheck{Name: "boot-http", Status: "ok", Detail: fmt.Sprintf("GET / → %d", status)})
+	if b.opts.imageHealthcheck {
+		checks = append(checks, b.imageHealth(ctx))
 	}
 	return append(checks, b.stayUp(ctx))
 }
 
-// waitForHTTP polls until GET / gets any HTTP response, the container exits or
-// the startup timeout passes (status 0).
+// probePath is the path the boot probes: the health path when one is set,
+// as Gregale's readiness does, otherwise /.
+func (b doctorBoot) probePath() string {
+	if b.opts.healthPath != "" {
+		return b.opts.healthPath
+	}
+	return "/"
+}
+
+// doctorBootHealthy is guest-init's HTTP probe rule: 2xx and 3xx pass.
+func doctorBootHealthy(status int) bool {
+	return status >= http.StatusOK && status < http.StatusBadRequest
+}
+
+func (b doctorBoot) httpCheck(status int) doctorCheck {
+	detail := fmt.Sprintf("GET %s → %d", b.probePath(), status)
+	if b.opts.healthPath != "" {
+		if doctorBootHealthy(status) {
+			return doctorCheck{Name: "boot-http", Status: "ok", Detail: detail}
+		}
+		return doctorCheck{Name: "boot-http", Status: "error", Code: "boot_health_failed", Detail: detail,
+			Hint: fmt.Sprintf("GET %s still answered %d after %s. Gregale marks an instance ready only once its health path answers 200-399, so the deploy would fail.", b.opts.healthPath, status, bootSeconds(doctorBootStartupTimeout)),
+			Fix:  "Make the health path answer 2xx once the app can serve, check that the path is right, and set env vars the app needs with --env-file."}
+	}
+	if status >= 500 {
+		return doctorCheck{Name: "boot-http", Status: "warn", Detail: detail, Hint: fmt.Sprintf("GET / answered %d. The platform marks an instance ready once the port accepts connections (or its health check passes), but every request may fail the same way.", status), Fix: "Check the container logs (`docker logs`) for the error; set env vars the app needs with --env-file, or pass --healthcheck-path to probe the app's health route."}
+	}
+	return doctorCheck{Name: "boot-http", Status: "ok", Detail: detail}
+}
+
+// waitForHTTP polls the probe path until it answers (with a health path: a
+// passing status), the container exits or the startup timeout passes. It
+// returns the last status, 0 when nothing answered.
 func (b doctorBoot) waitForHTTP(ctx context.Context) (int, *doctorBootState, error) {
 	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	deadline := time.Now().Add(doctorBootStartupTimeout)
 	hostPort := ""
+	last := 0
 	for {
 		st, err := b.docker.state(ctx, b.name)
 		if err != nil {
@@ -192,12 +234,15 @@ func (b doctorBoot) waitForHTTP(ctx context.Context) (int, *doctorBootState, err
 			hostPort = b.publishedAddr(ctx)
 		}
 		if hostPort != "" {
-			if status := doctorBootGet(ctx, client, hostPort); status != 0 {
-				return status, nil, nil
+			if status := doctorBootGet(ctx, client, hostPort, b.probePath()); status != 0 {
+				last = status
+				if b.opts.healthPath == "" || doctorBootHealthy(status) {
+					return status, nil, nil
+				}
 			}
 		}
 		if time.Now().After(deadline) {
-			return 0, nil, nil
+			return last, nil, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -221,8 +266,8 @@ func (b doctorBoot) publishedAddr(ctx context.Context) string {
 	return ""
 }
 
-func doctorBootGet(ctx context.Context, client *http.Client, hostPort string) int {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+hostPort+"/", nil)
+func doctorBootGet(ctx context.Context, client *http.Client, hostPort, path string) int {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+hostPort+path, nil)
 	if err != nil {
 		return 0
 	}
