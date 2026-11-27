@@ -285,9 +285,13 @@ func TestRequestDiagnosticConsentSelection(t *testing.T) {
 		selected []string
 		allowed  map[string]string
 		denied   bool
+		granted  int
 	}{
-		{"legacy", nil, nil, false}, {"explicit", []string{"alpha"}, nil, false}, {"selected", []string{"alpha"}, map[string]string{"alpha": "app-1"}, false},
-		{"future", []string{"future"}, nil, true}, {"excluded", []string{"beta"}, map[string]string{"alpha": "app-1"}, true}, {"replaced", []string{"alpha"}, map[string]string{"alpha": "old"}, true},
+		{"legacy", nil, nil, false, 0}, {"explicit", []string{"alpha"}, nil, false, 1}, {"selected", []string{"alpha"}, map[string]string{"alpha": "app-1"}, false, 1},
+		{"future", []string{"future"}, nil, true, 0},
+		// Diagnostics start ticked for every app (ADR-20261127160000 §6): an
+		// app outside the selection, or replaced since, is left out.
+		{"excluded", []string{"beta"}, map[string]string{"alpha": "app-1"}, false, 0}, {"replaced", []string{"alpha"}, map[string]string{"alpha": "old"}, false, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/", nil)
@@ -296,8 +300,8 @@ func TestRequestDiagnosticConsentSelection(t *testing.T) {
 			if (err != nil) != test.denied {
 				t.Fatalf("selection=%v err=%v", selected, err)
 			}
-			if !test.denied && len(selected) != len(test.selected) {
-				t.Fatal("consent widened")
+			if len(selected) != test.granted {
+				t.Fatalf("selection=%v, want %d apps", selected, test.granted)
 			}
 		})
 	}
@@ -325,8 +329,8 @@ func TestRequestDiagnosticOAuthReview(t *testing.T) {
 	if err != nil || response.StatusCode != 200 {
 		t.Fatalf("review=%d %v", response.StatusCode, err)
 	}
-	if !strings.Contains(string(page), `type="checkbox" name="request_read_apps" value="alpha">`) {
-		t.Fatal("diagnostic consent missing or automatically selected")
+	if !strings.Contains(string(page), `type="checkbox" name="request_read_apps" value="alpha" checked>`) {
+		t.Fatal("diagnostic consent missing or not ticked by default (ADR-20261127160000 §6)")
 	}
 	for _, category := range []string{"App diagnostics (optional)", "performance evidence", "retained wake observations", "sampled CPU profile function labels and collection/attribution summaries", "scheduler residency causes"} {
 		if !strings.Contains(string(page), category) {
