@@ -12,29 +12,19 @@ language that backs the policy.
 
 | Channel | Address |
 |---|---|
-| Email (preferred) | `security@gregale.dev` |
-| PGP-encrypted email | `security@gregale.dev` — see §2 for the current fingerprint |
+| Email (preferred) | `gregale@gregale.dev` |
 | GitHub Security Advisories | <https://github.com/poyrazK/faas/security/advisories/new> |
 
-Email is preferred for sensitive reports. GitHub Security Advisories
-are appropriate for non-sensitive coordination; the platform will
-acknowledge via the same channel.
+Email is the preferred first contact. A GitHub Security Advisory is
+private to the reporter and the maintainers, so it is the right place
+for exploit details; we acknowledge through whichever channel you use.
 
-## 2. PGP fingerprint
+## 2. Encryption
 
-The current fingerprint is rotated every 24 months; the latest
-fingerprint is published at <https://docs.gregale.dev/security/pgp.txt>
-and mirrored here:
-
-```
-F1A0 9B3E 2C77 8D4F  6E12 5C9A 7B8D 4F3E 1A2C 9D5B
-```
-
-The full public key block lives at
-<https://docs.gregale.dev/security/pgp.asc>. Reporters who wish to
-encrypt their initial submission should fetch the key directly from
-the docs site (not from this repo) — repo mirrors are public and
-key-rotation may lag by a day.
+We do not publish a PGP key yet. To send exploit details or other
+sensitive material privately, open a GitHub Security Advisory instead
+of attaching it to an email. When a key exists, its fingerprint will
+be published here and in `/.well-known/security.txt`.
 
 ## 3. SLAs (Service Level Agreements)
 
@@ -121,7 +111,7 @@ Reports are triaged faster when they include:
 ## 8. Our commitments
 
 - Every report is tracked in an encrypted internal tracker tied to the
-  `security@gregale.dev` mailbox, from receipt and acknowledgement through
+  `gregale@gregale.dev` mailbox, from receipt and acknowledgement through
   the fix and any public advisory.
 - Open reports older than 90 days are escalated at our quarterly access
   review.
