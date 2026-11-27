@@ -25800,7 +25800,11 @@ BEGIN
   IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve permanent Object Lock history until physical bucket deletion'; END IF;
   RETURN OLD;
  END IF;
- IF NOT FOUND OR b.state<>'ready' OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) THEN
+ -- A bucket created with Object Lock journals its accepted request while it
+ -- is provisioning (ADR-20261119065000). Only that first, waiting request
+ -- may be inserted before the bucket is ready.
+ IF NOT FOUND OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) OR (b.state<>'ready' AND NOT
+  (TG_OP='INSERT' AND b.state='provisioning' AND NEW.enabled_required AND NEW.state='waiting' AND NOT NEW.dispatched AND NEW.revision=1)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Object Lock configuration requires an owned ready bucket';
  END IF;
  IF TG_OP='INSERT' THEN

@@ -292,3 +292,34 @@ settings, so it is refused with 422 naming those apps; the owner adds the
 route's app to them or drops the list, then applies again.
 
 Queue bindings, work policies and other consumers are still never copied.
+
+## Amendment 5 (2026-11-27): rule changes after a split
+
+Amendments 2–3 check the source app's edge rules when a split is applied.
+Once it is, a later edit could undo what the split relies on without a
+word: deleting or disabling its route rule sends the moved path back to an
+app now sized for the rest, deleting the block exposes the route's app on
+its own hostnames, an `@app` rule on the source does not run on the moved
+path (the route's app serves it), and a route/rewrite/redirect/respond/async
+or throttle rule over the moved path shadows the split or counts its
+requests twice.
+
+So while a split is live (any phase but `rolled_back` and `undone`), apid
+refuses such a change with 409 `route_split_rule_conflict`, through every
+customer rule write: the edge-rule API (create, update, delete) and the
+manifest async routes. Refused:
+
+- changing, disabling or deleting a rule a split made (name
+  `route-split:<id>`); the problem names `--undo-split <id>`;
+- naming a rule `route-split:…` (422 validation);
+- an `@app` rule on the source app;
+- an enabled route, rewrite, redirect, respond, async or throttle rule on
+  the source whose path may overlap the moved path.
+
+The split's own steps (block, route rule, rollback, undo) pass the same
+handlers marked as the split, and skip the check. Attack mode's app-wide
+challenge is not refused: under attack partial protection beats none, and
+it ends on its own. A split made while the feature was on is guarded even
+after the account loses the flag. Two writes racing a split's apply are not
+serialized with it; the guard covers every change after the split row is
+recorded.

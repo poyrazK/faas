@@ -206,7 +206,23 @@ func sourceRefManifestEdgeRuleUpdate(desired state.CreateEdgeRuleParams) state.U
 	}
 }
 
+// manifestRuleCandidate is the rule a manifest route would write, for the
+// route split guard.
+func manifestRuleCandidate(app state.App, desired state.CreateEdgeRuleParams) *state.EdgeRule {
+	accountID := desired.AccountID
+	if accountID == "" {
+		accountID = app.AccountID
+	}
+	return &state.EdgeRule{
+		AccountID: accountID, AppID: app.ID, Name: desired.Name, Kind: desired.Kind,
+		MatchHost: desired.MatchHost, MatchPath: desired.MatchPath, Enabled: desired.Enabled,
+	}
+}
+
 func (s *server) createSourceRefManifestEdgeRule(ctx context.Context, label string, acct state.Account, app state.App, desired state.CreateEdgeRuleParams, staged *sourceRefManifestStaged) *api.Problem {
+	if prob := s.edgeRules.RouteSplitProblem(ctx, nil, manifestRuleCandidate(app, desired)); prob != nil {
+		return prob
+	}
 	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(ctx, app.ID, "", "created", desired.MatchHost)
 	if err != nil {
 		return api.ErrCapacity(label + " fleet convergence is unavailable; no route was created")
@@ -231,6 +247,11 @@ func (s *server) createSourceRefManifestEdgeRule(ctx context.Context, label stri
 }
 
 func (s *server) updateSourceRefManifestEdgeRule(ctx context.Context, label string, app state.App, previous state.EdgeRule, desired state.CreateEdgeRuleParams, staged *sourceRefManifestStaged) (state.EdgeRule, *api.Problem) {
+	candidate := manifestRuleCandidate(app, desired)
+	candidate.Name = previous.Name
+	if prob := s.edgeRules.RouteSplitProblem(ctx, &previous, candidate); prob != nil {
+		return state.EdgeRule{}, prob
+	}
 	convergence, err := s.edgeRules.PrepareEdgeRuleMutation(ctx, app.ID, previous.ID, "updated", previous.MatchHost, desired.MatchHost)
 	if err != nil {
 		return state.EdgeRule{}, api.ErrCapacity(label + " fleet convergence is unavailable; no route was updated")

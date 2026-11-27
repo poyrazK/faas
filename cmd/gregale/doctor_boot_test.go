@@ -45,6 +45,7 @@ esac
 	}
 	t.Setenv("GREGALE_DOCKER", bin)
 	main.SetDoctorBootTimings(t.Cleanup, 300*time.Millisecond, 200*time.Millisecond, 10*time.Millisecond)
+	main.SetDoctorBootMemorySources(t.Cleanup, signedOut, nil)
 	f := fakeBootDocker{dir: dir}
 	f.write(t, "state", "true 0 false")
 	return f
@@ -174,7 +175,7 @@ func TestDoctorBootFailures(t *testing.T) {
 		hint, out string
 	}{
 		{name: "crash", setup: func(t *testing.T, d fakeBootDocker) { d.write(t, "state", "false 1 false") }, check: "boot-start", code: "boot_exited", hint: "exited with code 1", out: "DATABASE_URL is not set"},
-		{name: "oom", setup: func(t *testing.T, d fakeBootDocker) { d.write(t, "state", "false 137 true") }, check: "boot-start", code: "boot_oom_killed", hint: "out of memory"},
+		{name: "oom", setup: func(t *testing.T, d fakeBootDocker) { d.write(t, "state", "false 137 true") }, check: "boot-start", code: "boot_oom_killed", hint: "MB of memory"},
 		{name: "loopback", setup: func(t *testing.T, d fakeBootDocker) {
 			d.write(t, "addr", closedAddr(t))
 			d.write(t, "procnet", "  sl  local_address rem_address   st\n   0: 0100007F:1F90 00000000:0000 0A 0\n")

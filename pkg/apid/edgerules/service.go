@@ -70,4 +70,17 @@ type Service struct {
 	// environment edge policy changes, for the backfill's convergence; nil
 	// leaves environment policies to their next write.
 	EnvironmentPolicyHost func(ctx context.Context, policy state.ProjectEnvironmentEdgePolicy) (string, error)
+
+	// RouteSplitGuard refuses a rule change that would undo a live route
+	// split (ADR-20261121170000 amendment 5). before is nil for a new rule,
+	// after nil for a deleted one; nil allows every change.
+	RouteSplitGuard func(ctx context.Context, before, after *state.EdgeRule) *api.Problem
+}
+
+// RouteSplitProblem is RouteSplitGuard's verdict, or nil without a guard.
+func (s *Service) RouteSplitProblem(ctx context.Context, before, after *state.EdgeRule) *api.Problem {
+	if s.RouteSplitGuard == nil {
+		return nil
+	}
+	return s.RouteSplitGuard(ctx, before, after)
 }

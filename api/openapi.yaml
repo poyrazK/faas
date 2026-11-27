@@ -12654,6 +12654,7 @@ paths:
                 region: { type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.' }
                 public: { type: boolean, default: false, description: 'Serve objects anonymously on the app hostname.' }
                 serve_at: { type: string, pattern: '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$', description: 'Immutable app path mounted when public is true.' }
+                object_lock: { type: boolean, default: false, description: 'Create the bucket with Object Lock. Permanent; the bucket keeps every object version. Some storage accepts Object Lock only when the bucket is created, so choose it here.' }
       responses:
         '201':
           description: Bucket created
@@ -77726,6 +77727,11 @@ paths:
                   type: string
                   pattern: ^/[A-Za-z0-9][A-Za-z0-9._~/-]*$
                   description: Create a bucket for an organization application. Immutable app path mounted when public is true.
+                object_lock:
+                  type: boolean
+                  default: false
+                  description: Create a bucket for an organization application. Create the bucket with Object Lock. Permanent;
+                    the bucket keeps every object version. Some storage accepts Object Lock only when the bucket is created, so choose it here.
       responses:
         '201':
           description: Create a bucket for an organization application. Bucket created

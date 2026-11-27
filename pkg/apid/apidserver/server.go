@@ -1853,6 +1853,7 @@ func newServerWithDeps(
 	s.edgeRules.AuthorizeApp = s.authorizeNamedApp
 	s.edgeRules.SealHeaderValue = sealEdgeRuleHeaderValue
 	s.edgeRules.EnvironmentPolicyHost = s.environmentPolicyHost
+	s.edgeRules.RouteSplitGuard = s.routeSplitRuleProblem
 	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.queueLeases.Waiters = &queueleases.WaiterSlots{}
