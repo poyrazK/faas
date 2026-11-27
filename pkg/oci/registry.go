@@ -1049,3 +1049,10 @@ func scrubAuthFromError(err error, auth *BasicAuth) error {
 }
 
 var authHeaderRe = regexp.MustCompile(`(?i)(authorization\s*:\s*)(basic|bearer)\s+[A-Za-z0-9+/=._-]+`)
+
+// ParseImageConfig reads an image config document (the JSON a registry
+// serves as the config blob, or the same shape rebuilt from a local Docker
+// image) with the single decoder registry pulls use.
+func ParseImageConfig(b []byte) (ImageConfig, error) {
+	return parseImageConfig(b)
+}

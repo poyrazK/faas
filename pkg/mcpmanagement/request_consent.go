@@ -25,10 +25,14 @@ func selectedRequestApps(req *http.Request, available []api.AppResponse, allowed
 				id = app.ID
 			}
 		}
-		if validateSegment(slug, "app") != nil || validateSegment(id, "app_id") != nil || (allowed != nil && allowed[slug] != id) {
-			return nil, errors.New("request diagnostic app was not reviewed or allowed")
+		if validateSegment(slug, "app") != nil || validateSegment(id, "app_id") != nil {
+			return nil, errors.New("request diagnostic app was not reviewed")
 		}
-		out[slug] = id
+		// Diagnostics start ticked for every app (ADR-20261127160000 §6): an
+		// app the person left out of the selection is simply not granted.
+		if allowed == nil || allowed[slug] == id {
+			out[slug] = id
+		}
 	}
 	return out, nil
 }

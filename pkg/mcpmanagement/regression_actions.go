@@ -44,10 +44,14 @@ func selectedRegressionWriteApps(req *http.Request, reads map[string]string, wri
 	}
 	out := map[string]string{}
 	for _, slug := range selected {
-		if !writes || reads[slug] == "" {
+		if !writes {
 			return nil, errors.New("triage requires write scope and diagnostic read consent")
 		}
-		out[slug] = reads[slug]
+		// Triage starts ticked (ADR-20261127160000 §6): an app without
+		// diagnostic read consent is simply not granted triage.
+		if reads[slug] != "" {
+			out[slug] = reads[slug]
+		}
 	}
 	return out, nil
 }

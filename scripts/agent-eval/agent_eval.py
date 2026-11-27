@@ -1100,6 +1100,14 @@ def _project_files_text(project: Path, glob: str, limit: int = 2_000_000) -> str
     return "\n".join(text)
 
 
+def _tools_called(entry: str, names: list[str]) -> bool:
+    """A feature's MCP tool entry: one tool, or `plan+apply` when the apply
+    tool is shared by many features, so a plan never applied does not count.
+    Names match on their suffix (`mcp__gregale__gregale_x` ends with
+    `gregale_x`)."""
+    return all(any(name.endswith(part) for name in names) for part in entry.split("+"))
+
+
 def grade_features(task: dict, commands: list[str], project: Path, created: dict, tools: list[str] | None = None,
                    first_live: bool = False) -> dict:
     """Which of the task's applicable Gregale features the run used. A command
@@ -1115,7 +1123,7 @@ def grade_features(task: dict, commands: list[str], project: Path, created: dict
             hit = True
         elif feature["kind"] == "command":
             hit = re.search(feature["pattern"], joined, re.MULTILINE) is not None or any(
-                name.endswith(tool) for name in tools or [] for tool in feature.get("tools", []))
+                _tools_called(entry, tools or []) for entry in feature.get("tools", []))
         elif feature["kind"] == "file":
             hit = re.search(feature["pattern"], _project_files_text(project, feature.get("glob", "**/*")), re.MULTILINE) is not None
         else:  # state
