@@ -7,8 +7,13 @@ system. Gregale does not collect payment from your customers.
 
 API monetization is not released (ADR-20261018090210). It stays off, with
 no customer-facing surface, until an operator sets the `api_monetization_enabled`
-runtime setting; `FAAS_API_MONETIZATION_ENABLED=1` is its bootstrap value for
-apid and gateways and shows its commands in the CLI. Once released it is
+runtime setting, or releases it to an account with the `api_monetization`
+platform flag; `FAAS_API_MONETIZATION_ENABLED=1` is the setting's bootstrap
+value for apid and gateways. The CLI shows the selling commands (consumer
+plans, rate cards, statements, `mcp stats`, `mcp listing`) to a logged-in
+account whose capability view (`GET /v1/capabilities`) does not hide
+`api-monetization`; the variable in your shell still shows them everywhere,
+including the generated reference. Once released it is
 available on Hobby, Pro, and Scale; see [Plans and pricing](plans.md) for
 consumer key limits.
 
@@ -894,6 +899,12 @@ gregale consumers signup-set my-api --display-name "Weather API" --plans free,pr
   scheduled, has no unit price, priced tier, base fee or minimum, and the
   plan has at least one. Gregale refuses `--free-plan` otherwise, and
   refuses a charging rate card on the free plan while it is the free plan.
+- **No Stripe needed yet.** When the free plan is the only plan you offer
+  (`--plans free --free-plan free`), sign-up works before you connect
+  Stripe, so you can open an MCP server to signed-in callers first.
+  Without a Stripe connection these sign-ups are live, not test: the pages
+  show no test-mode notice and the funnel counts them. Offering a paid plan
+  asks you to connect Stripe.
 - **Joining.** `POST /v1/consumer-signup/my-api` with the free plan's
   `plan_id` returns an empty `checkout_url`; complete the sign-up at once
   with the claim token. The hosted page does this for you. No Stripe

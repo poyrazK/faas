@@ -267,17 +267,20 @@ func TestRegressionTriageBrowserSelections(t *testing.T) {
 		reads  map[string]string
 		form   url.Values
 		ok     bool
+		want   int
 	}{
-		{"explicit", true, map[string]string{"alpha": "app-one"}, url.Values{"regression_write_apps": {"alpha"}}, true},
-		{"legacy", true, map[string]string{"alpha": "app-one"}, url.Values{}, true},
-		{"read only", false, map[string]string{"alpha": "app-one"}, url.Values{"regression_write_apps": {"alpha"}}, false},
-		{"no diagnostics", true, nil, url.Values{"regression_write_apps": {"alpha"}}, false},
-		{"unknown app", true, map[string]string{"alpha": "app-one"}, url.Values{"regression_write_apps": {"beta"}}, false},
+		{"explicit", true, map[string]string{"alpha": "app-one"}, url.Values{"regression_write_apps": {"alpha"}}, true, 1},
+		{"legacy", true, map[string]string{"alpha": "app-one"}, url.Values{}, true, 0},
+		{"read only", false, map[string]string{"alpha": "app-one"}, url.Values{"regression_write_apps": {"alpha"}}, false, 0},
+		// Triage starts ticked (ADR-20261127160000 §6): without diagnostic
+		// read consent the app is left out, never granted.
+		{"no diagnostics", true, nil, url.Values{"regression_write_apps": {"alpha"}}, true, 0},
+		{"unknown app", true, map[string]string{"alpha": "app-one"}, url.Values{"regression_write_apps": {"beta"}}, true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &http.Request{PostForm: tc.form}
 			got, err := selectedRegressionWriteApps(r, tc.reads, tc.writes)
-			if (err == nil) != tc.ok {
+			if (err == nil) != tc.ok || len(got) != tc.want {
 				t.Fatal(got, err)
 			}
 			if tc.name == "legacy" && len(got) != 0 {

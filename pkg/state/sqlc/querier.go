@@ -939,6 +939,12 @@ type Querier interface {
 	CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
+	// One stage's failed invocations of one app, for the stage's alert rules.
+	CountFailedInvocationsInEnvironmentSince(ctx context.Context, db DBTX, arg CountFailedInvocationsInEnvironmentSinceParams) (int64, error)
+	// CountFailedInvocationsSince over production's invocations only: a stage's
+	// failures are its own alert rules' (ADR-20261104120000 amendment
+	// 2026-11-22). A NULL app_id counts every app of the account.
+	CountFailedProductionInvocationsSince(ctx context.Context, db DBTX, arg CountFailedProductionInvocationsSinceParams) (int64, error)
 	// ADR-20261110120000: the plan's PostgresBindingsPerAppMax counts every
 	// binding of the app that is not deleted.
 	CountLiveManagedPostgresBindingsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
@@ -2568,6 +2574,7 @@ type Querier interface {
 	GetAPIConsumerCreditPackSettings(ctx context.Context, db DBTX, arg GetAPIConsumerCreditPackSettingsParams) (GetAPIConsumerCreditPackSettingsRow, error)
 	GetAPIConsumerCreditPurchase(ctx context.Context, db DBTX, arg GetAPIConsumerCreditPurchaseParams) (ApiConsumerCreditPurchase, error)
 	GetAPIKeyApprovalCategories(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]string, error)
+	GetAPIKeyConnectGrant(ctx context.Context, db DBTX, keyID pgtype.UUID) (GetAPIKeyConnectGrantRow, error)
 	GetAPIKeyProjectLimit(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]pgtype.UUID, error)
 	GetAPISandboxApprovalCheck(ctx context.Context, db DBTX, comparisonID pgtype.UUID) (GetAPISandboxApprovalCheckRow, error)
 	GetAPISandboxApprovalPinForApp(ctx context.Context, db DBTX, sandboxAppID pgtype.UUID) (GetAPISandboxApprovalPinForAppRow, error)
@@ -3073,6 +3080,9 @@ type Querier interface {
 	InsertAPIConsumerCreditPurchase(ctx context.Context, db DBTX, arg InsertAPIConsumerCreditPurchaseParams) (ApiConsumerCreditPurchase, error)
 	// ADR-20261104140058: the categories a key must have approved; set once, when it is minted.
 	InsertAPIKeyApprovalCategories(ctx context.Context, db DBTX, arg InsertAPIKeyApprovalCategoriesParams) error
+	// ADR-20261127160000: the Connect consent that approves a hosted MCP key's
+	// deploys; written once, when apid mints the key from the approved sign-in.
+	InsertAPIKeyConnectGrant(ctx context.Context, db DBTX, arg InsertAPIKeyConnectGrantParams) error
 	// ADR-20261104085712: limits a key to projects; set once, when it is minted.
 	InsertAPIKeyProjectLimit(ctx context.Context, db DBTX, arg InsertAPIKeyProjectLimitParams) error
 	InsertAccountEmailChange(ctx context.Context, db DBTX, arg InsertAccountEmailChangeParams) (int64, error)

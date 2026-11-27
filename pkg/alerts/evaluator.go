@@ -985,6 +985,7 @@ func (e *Evaluator) sendResolve(ctx context.Context, rule state.AlertRule, obser
 	if rule.EnvironmentScope != "" {
 		payload["environment_scope"] = rule.EnvironmentScope
 	}
+	addEnvironment(payload, rule)
 	evt := webhookout.Event{
 		ID:         eventID,
 		OccurredAt: sentAt,
@@ -1114,6 +1115,9 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if rule.EnvironmentID != "" {
+		return e.observeEnvironment(ctx, rule)
+	}
 	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
 		return e.observeMCPReadiness(ctx, rule)
 	}
@@ -1185,7 +1189,7 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			// stays bounded.
 			return e.summariseFailed(ctx, rule, since)
 		}
-		n, err := e.store.CountFailedInvocationsSince(ctx, rule.AccountID, rule.AppID, state.InvocationSource(source), since)
+		n, err := e.countProductionFailures(ctx, rule, state.InvocationSource(source), since)
 		if err != nil {
 			e.log.Warn("alerts: count failed invocations",
 				"rule", rule.ID, "err", err)
@@ -1479,7 +1483,7 @@ func (e *Evaluator) summariseFailed(ctx context.Context, rule state.AlertRule, s
 		state.InvocationCron,
 		state.InvocationInboundWebhook,
 	} {
-		n, err := e.store.CountFailedInvocationsSince(ctx, rule.AccountID, rule.AppID, src, since)
+		n, err := e.countProductionFailures(ctx, rule, src, since)
 		if err != nil {
 			e.log.Warn("alerts: count failed invocations (any)",
 				"rule", rule.ID, "source", src, "err", err)
@@ -1652,6 +1656,7 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		m["app_id"] = rule.AppID
 		m["mcp_protocol"] = map[string]any{"min_calls": rule.MCPMinCalls, "for_minutes": rule.MCPForMinutes, "source": "starter_reported", "sample_interval_seconds": 30}
 	}
+	addEnvironment(m, rule)
 	if rule.EventSubscriptionID != "" {
 		m["event_subscription_id"] = rule.EventSubscriptionID
 	}

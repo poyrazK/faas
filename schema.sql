@@ -15160,6 +15160,27 @@ END $$;
 
 
 --
+-- Name: guard_alert_rule_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_alert_rule_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.environment_id IS DISTINCT FROM OLD.environment_id THEN
+    RAISE EXCEPTION 'an alert rule keeps its environment' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+      WHERE a.id = NEW.app_id AND a.account_id = NEW.account_id AND e.id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'an alert rule environment belongs to its app''s project' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_api_consumer_environment(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -25779,7 +25800,11 @@ BEGIN
   IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve permanent Object Lock history until physical bucket deletion'; END IF;
   RETURN OLD;
  END IF;
- IF NOT FOUND OR b.state<>'ready' OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) THEN
+ -- A bucket created with Object Lock journals its accepted request while it
+ -- is provisioning (ADR-20261119065000). Only that first, waiting request
+ -- may be inserted before the bucket is ready.
+ IF NOT FOUND OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) OR (b.state<>'ready' AND NOT
+  (TG_OP='INSERT' AND b.state='provisioning' AND NEW.enabled_required AND NEW.state='waiting' AND NOT NEW.dispatched AND NEW.revision=1)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Object Lock configuration requires an owned ready bucket';
  END IF;
  IF TG_OP='INSERT' THEN
@@ -33168,6 +33193,7 @@ CREATE TABLE public.alert_rules (
     observed_incidents jsonb,
     environment_scope text DEFAULT ''::text NOT NULL,
     recovery_confirmation_checks integer DEFAULT 1 NOT NULL,
+    environment_id uuid,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_ai_budget_alerts_chk CHECK (((metric <> 'ai_budget_alerts'::text) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
@@ -34106,6 +34132,24 @@ CREATE TABLE public.api_key_approval_categories (
 --
 
 COMMENT ON TABLE public.api_key_approval_categories IS 'ADR-20261104140058 the action categories an agent key must have a person approve; apid is the only writer.';
+
+
+--
+-- Name: api_key_connect_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_connect_grants (
+    key_id uuid NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE api_key_connect_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_key_connect_grants IS 'ADR-20261127160000 the Connect consent that approves a hosted MCP key''s deploys; apid is the only writer.';
 
 
 --
@@ -67129,6 +67173,14 @@ ALTER TABLE ONLY public.alert_rule_channels
 
 
 --
+-- Name: alert_rules alert_rules_environment_enabled_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.alert_rules
+    ADD CONSTRAINT alert_rules_environment_enabled_chk CHECK (((environment_id IS NULL) OR (NOT enabled) OR ((metric = ANY (ARRAY['request_count'::text, 'error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'failed_invocations'::text])) AND (comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text])) AND (action = 'webhook'::text)))) NOT VALID;
+
+
+--
 -- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67502,6 +67554,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 ALTER TABLE ONLY public.api_key_approval_categories
     ADD CONSTRAINT api_key_approval_categories_pkey PRIMARY KEY (key_id);
+
+
+--
+-- Name: api_key_connect_grants api_key_connect_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_connect_grants
+    ADD CONSTRAINT api_key_connect_grants_pkey PRIMARY KEY (key_id);
 
 
 --
@@ -82616,6 +82676,13 @@ CREATE UNIQUE INDEX alert_rules_account_wide_name_uniq ON public.alert_rules USI
 
 
 --
+-- Name: alert_rules_app_environment_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_rules_app_environment_name_uniq ON public.alert_rules USING btree (app_id, name, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE (app_id IS NOT NULL);
+
+
+--
 -- Name: alert_rules_app_name_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -82634,6 +82701,13 @@ CREATE INDEX alert_rules_edge_rule_idx ON public.alert_rules USING btree (edge_r
 --
 
 CREATE INDEX alert_rules_enabled_idx ON public.alert_rules USING btree (account_id) WHERE (enabled = true);
+
+
+--
+-- Name: alert_rules_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rules_environment_idx ON public.alert_rules USING btree (environment_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -95042,6 +95116,13 @@ CREATE TRIGGER alert_presets_set_updated_at_trg BEFORE UPDATE ON public.alert_pr
 
 
 --
+-- Name: alert_rules alert_rule_environment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_rule_environment_guard BEFORE INSERT OR UPDATE OF environment_id, app_id, account_id ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.guard_alert_rule_environment();
+
+
+--
 -- Name: alert_rules alert_rules_channel_stand_downs; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -103180,6 +103261,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_rules alert_rules_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rules
+    ADD CONSTRAINT alert_rules_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
+
+
+--
 -- Name: alert_rules alert_rules_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103801,6 +103890,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 ALTER TABLE ONLY public.api_key_approval_categories
     ADD CONSTRAINT api_key_approval_categories_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_key_connect_grants api_key_connect_grants_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_connect_grants
+    ADD CONSTRAINT api_key_connect_grants_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

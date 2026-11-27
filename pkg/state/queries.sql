@@ -15746,7 +15746,8 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16);
 UPDATE object_bucket_object_lock SET state=$2,revision=$3,enabled_required=$4,native_enabled_observed=$5,observed_known=$6,observed_snapshot=$7,desired_snapshot=$8,lease_token=$9,lease_until=$10,retry_at=$11,dispatched=$12,last_error_code=$13,updated_at=$14 WHERE bucket_id=$1;
 
 -- name: ObjectBucketObjectLockDue :many
-SELECT bucket_id FROM object_bucket_object_lock WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1;
+SELECT l.bucket_id FROM object_bucket_object_lock l WHERE l.state<>'ready' AND l.retry_at<=now() AND (l.lease_until IS NULL OR l.lease_until<=now())
+AND NOT EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=l.bucket_id AND b.state='provisioning') ORDER BY l.retry_at,l.bucket_id LIMIT $1;
 
 -- name: ListAppSecretsWithBindingAccessInScope :many
 SELECT s.account_id::text AS account_id, s.app_id::text AS app_id, s.scope, s.key, s.ciphertext,
@@ -22346,10 +22347,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks,environment_id)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb,sqlc.arg(observe_only),sqlc.arg(observation_enabled),sqlc.arg(environment_scope),sqlc.arg(recovery_confirmation_checks))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb,sqlc.arg(observe_only),sqlc.arg(observation_enabled),sqlc.arg(environment_scope),sqlc.arg(recovery_confirmation_checks),sqlc.narg(environment_id)::uuid)
 RETURNING *;
 
 -- name: LockCustomerAlertRule :one
@@ -22680,7 +22681,7 @@ SELECT * FROM alert_rules r WHERE (r.enabled OR r.observation_enabled)
  ORDER BY r.account_id;
 
 -- name: ListCustomerAlertRulesByPreset :many
-SELECT r.* FROM alert_rules r WHERE r.account_id=sqlc.arg(account_id) AND r.app_id=sqlc.arg(app_id)
+SELECT r.* FROM alert_rules r WHERE r.account_id=sqlc.arg(account_id) AND r.app_id=sqlc.arg(app_id) AND r.environment_id IS NULL
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=sqlc.arg(preset_name))
  ORDER BY r.created_at DESC LIMIT 2;
 
@@ -31309,3 +31310,25 @@ WHERE caller_app_id = sqlc.arg(caller_app_id) AND id = ANY(sqlc.arg(ids)::uuid[]
 -- name: ObjectWorkloadCredentialCountLive :one
 SELECT count(*)::int FROM object_storage_workload_credentials
 WHERE instance_id = sqlc.arg(instance_id) AND bucket_id = sqlc.arg(bucket_id) AND expires_at > now();
+
+-- name: CountFailedProductionInvocationsSince :one
+-- CountFailedInvocationsSince over production's invocations only: a stage's
+-- failures are its own alert rules' (ADR-20261104120000 amendment
+-- 2026-11-22). A NULL app_id counts every app of the account.
+SELECT count(*)::bigint FROM invocations v
+ WHERE v.account_id = sqlc.arg(account_id)::uuid
+   AND v.state IN ('failed', 'dead_letter')
+   AND v.environment_id IS NULL
+   AND coalesce(v.completed_at, v.created_at) >= sqlc.arg(since)::timestamptz
+   AND (sqlc.narg(app_id)::uuid IS NULL OR v.app_id IS NOT DISTINCT FROM sqlc.narg(app_id)::uuid)
+   AND (sqlc.narg(app_id)::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = v.app_id))
+   AND (sqlc.narg(source)::text IS NULL OR v.source = sqlc.narg(source)::text);
+
+-- name: CountFailedInvocationsInEnvironmentSince :one
+-- One stage's failed invocations of one app, for the stage's alert rules.
+SELECT count(*)::bigint FROM invocations
+ WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+   AND environment_id = sqlc.arg(environment_id)::uuid
+   AND state IN ('failed', 'dead_letter')
+   AND coalesce(completed_at, created_at) >= sqlc.arg(since)::timestamptz
+   AND (sqlc.narg(source)::text IS NULL OR source = sqlc.narg(source)::text);

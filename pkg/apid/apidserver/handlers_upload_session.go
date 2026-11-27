@@ -62,9 +62,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/imageupload"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/ociarchive"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -206,9 +208,9 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	actor := actorAccount(r, acct)
 	acct = owner
 	limits := api.MustLimitsFor(acct.Plan)
-	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
-	if req.TotalSize > maxBytes {
-		api.WriteProblem(w, api.ErrSourceTooLarge(limits, req.TotalSize))
+	maxBytes, prob := s.uploadSessionSizeCap(acct, app, limits, req.DeployOptions, req.TotalSize)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	if req.DeployOptions != nil {
@@ -244,7 +246,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	if openCount >= uploadSessionOpenCap {
 		api.WriteProblem(w, api.ErrUploadSessionTooMany(
 			fmt.Sprintf("Account has %d open upload sessions on app %q (cap %d). Cancel one before opening another.", openCount, req.AppSlug, uploadSessionOpenCap),
-			maxBytes*uploadSessionSpoolBudgetMultiplier, int64(openCount)*maxBytes))
+			uploadSpoolBudgetBytes(limits, req.DeployOptions != nil && req.DeployOptions.IsImageArchive()), int64(openCount)*maxBytes))
 		return
 	}
 
@@ -255,7 +257,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
-	budgetBytes := maxBytes * uploadSessionSpoolBudgetMultiplier
+	budgetBytes := uploadSpoolBudgetBytes(limits, req.DeployOptions != nil && req.DeployOptions.IsImageArchive())
 	if openBytes+req.TotalSize > budgetBytes {
 		api.WriteProblem(w, api.ErrUploadSessionTooMany(
 			fmt.Sprintf("Account has %d bytes in open upload sessions (budget %d). Commit or cancel one before opening another.", openBytes, budgetBytes),
@@ -711,12 +713,27 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	explicitSourceRoot := strings.TrimSpace(opts.SourceRoot) != ""
-	root, rootErr := sourcecontext.DeploymentRoot(opts.SourceRoot, app.RootDir)
-	if rootErr != nil {
-		api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
-		return
+	imageArchive := opts.IsImageArchive()
+	if imageArchive {
+		// Rechecked at commit: the release flag or the app's signing policy
+		// may have changed while the bytes uploaded.
+		if prob := s.imageUploadReleaseProblem(acct, &opts); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		if prob := imageupload.AppProblem(app, opts); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		opts.SourceRoot = ""
+	} else {
+		root, rootErr := sourcecontext.DeploymentRoot(opts.SourceRoot, app.RootDir)
+		if rootErr != nil {
+			api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+rootErr.Error()))
+			return
+		}
+		opts.SourceRoot = root
 	}
-	opts.SourceRoot = root
 	if app.Type == state.AppTypeFunction {
 		if opts.Dockerfile && !api.FunctionRuntimeBuildsFromDockerfile(app.Runtime) {
 			api.WriteProblem(w, api.FunctionDockerfileProblem(app.Runtime, true))
@@ -742,72 +759,50 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
-	if prob := validateTarballShape(row.PartPath); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	// The source_root scan reads every entry body, three passes in all, so it
-	// runs only after the shape check has refused archives whose declared sizes
-	// exceed the budget. Before, a small compression bomb with source_root set
-	// was inflated in full on each commit retry; a failed commit leaves the
-	// session open.
-	if opts.SourceRoot != "" {
-		resolved, present, rootErr := resolveArchiveSourceRoot(row.PartPath, opts.SourceRoot, explicitSourceRoot)
-		if rootErr != nil || !present {
-			if rootErr != nil {
-				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error()))
-			} else {
-				api.WriteProblem(w, sourceRootMissingProblem(opts.SourceRoot, explicitSourceRoot))
-			}
+	var tree uploadedSourceTree
+	var imageSummary *ociarchive.Summary
+	if imageArchive {
+		summary, prob := imageupload.Inspect(row.PartPath)
+		if prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
-		opts.SourceRoot = resolved
-	}
-	if prob := s.scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if prob := scanForStatefulShapeAtRoot(row.PartPath, opts.Dockerfile, opts.SourceRoot); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-	if app.Type == state.AppTypeFunction {
-		hasDockerfile, err := archiveHasRootDockerfileAtRoot(row.PartPath, opts.SourceRoot)
-		if err != nil {
-			api.WriteProblem(w, api.ErrSourceInvalid(err.Error()))
-			return
-		}
-		if problem := api.FunctionDockerfileProblem(app.Runtime, opts.Dockerfile || hasDockerfile); problem != nil {
-			api.WriteProblem(w, problem)
+		imageSummary = &summary
+		tree.manifestApp = app
+		tree.manifestApp.RootDir = ""
+	} else {
+		var prob *api.Problem
+		if tree, prob = s.resolveUploadedSourceTree(row.PartPath, acct, app, &opts, explicitSourceRoot); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 	}
-	manifestApp := app
-	manifestApp.RootDir = opts.SourceRoot
-	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
-	if manifestProblem != nil {
-		api.WriteProblem(w, manifestProblem)
-		return
-	}
-	sourceBuild, hasSourceBuild, buildProblem := resolveSourceDockerfileBuild(row.PartPath, manifestApp.RootDir, app, manifest)
-	if buildProblem != nil {
-		api.WriteProblem(w, buildProblem)
-		return
-	}
+	manifest, manifestApp, sourceBuild, hasSourceBuild := tree.manifest, tree.manifestApp, tree.build, tree.hasBuild
 	rollout, sched, prob := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest, s.releasePhaseOff)
-	if releaseProblem != nil {
-		api.WriteProblem(w, releaseProblem)
-		return
+	// A prebuilt image has no source manifest to declare a release command.
+	var releaseCommand deploymentReleaseCommand
+	if !imageArchive {
+		var releaseProblem *api.Problem
+		releaseCommand, releaseProblem = resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest, s.releasePhaseOff)
+		if releaseProblem != nil {
+			api.WriteProblem(w, releaseProblem)
+			return
+		}
 	}
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
+	// A prebuilt image carries no gregale.yaml: like a registry --image
+	// deploy it leaves access, triggers and crons as they are, rather than
+	// applying an empty manifest that would re-lock the app.
+	var manifestProblem *api.Problem
+	if !imageArchive {
+		stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
+	}
 	if stagedManifest.cronIntent != nil {
 		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
 	}
@@ -826,7 +821,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// sweeps it 24h after the upload once the deployment is no longer in
 	// flight, so builderd and `deploys retry` can still read it.
 	kind := state.DeploymentKindTarball
-	if opts.Dockerfile || hasSourceBuild {
+	if opts.Dockerfile || hasSourceBuild || imageArchive {
+		// A prebuilt image owns its whole FROM chain, like a Dockerfile build.
 		kind = state.DeploymentKindDockerfile
 	}
 	if !s.admitAccountDeploy(w, r, acct) {
@@ -835,6 +831,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	sourceURL := opts.SourceURL
 	if sourceURL == "" {
 		sourceURL = "local-tar://upload-session/" + uploadID
+		if imageArchive {
+			sourceURL = "local-image://upload-session/" + uploadID
+		}
 	}
 	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
 	if !ok {
@@ -851,6 +850,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		SourceRoot:                opts.SourceRoot,
 		DockerfilePath:            sourceBuild.path,
 		DockerfileBuild:           sourceBuild.options,
+		UploadedImage:             imageupload.Params(imageSummary, opts.ImageName),
 		Handler:                   opts.Handler,
 		FunctionRuntime:           functionRuntimeForApp(app),
 		SourceURL:                 sourceURL,

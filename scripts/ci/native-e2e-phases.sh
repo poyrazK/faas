@@ -68,6 +68,7 @@ native_e2e_phase_files() {
       queue_push_parallel_metal_test.go \
       dev_loop_metal_test.go \
       dev_watch_metal_test.go \
+      dev_prime_serves_metal_test.go \
       environment_gitops_native_metal_test.go \
       environment_gitops_source_jobs_native_metal_test.go \
       deploy_override_port_metal_test.go \
@@ -332,7 +333,7 @@ native_e2e_lane_tests() {
       # `gregale dev` (ADR-740 live patches, ADR-1170 watch mode), for
       # changes to guest-init's developer paths without the whole deploy
       # phase.
-      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/dev_loop_metal_test.go" "${root}/cmd/e2e/dev_watch_metal_test.go" |
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/dev_loop_metal_test.go" "${root}/cmd/e2e/dev_watch_metal_test.go" "${root}/cmd/e2e/dev_prime_serves_metal_test.go" |
         sed -E 's/^func //; s/\($//' | sort -u
       ;;
     financial-system)

@@ -1214,7 +1214,9 @@ func (s *server) fetchDashboardAlerts(ctx context.Context, log *slog.Logger, acc
 	now := time.Now().UTC()
 	for i := range rules {
 		rule := rules[i]
-		if rule.AppID != "" && rule.AppID != app.ID {
+		// A stage's rules belong to the stage (ADR-20261104120000), not
+		// to the app's production page.
+		if (rule.AppID != "" && rule.AppID != app.ID) || rule.EnvironmentID != "" {
 			continue
 		}
 		item := dashboard.AlertItem{Rule: rule}
@@ -1326,6 +1328,9 @@ func (s *server) fetchDashboardPresets(ctx context.Context, log *slog.Logger, ac
 	// marginal but keeps the hot path tight.
 	rulesByApp := make(map[string][]state.AlertRule, 3)
 	for _, r := range allRules {
+		if r.EnvironmentID != "" {
+			continue // a stage's rule does not enable production's preset
+		}
 		rulesByApp[r.AppID] = append(rulesByApp[r.AppID], r)
 	}
 	out := make([]dashboard.AlertPresetItem, 0, len(rows))

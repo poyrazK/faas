@@ -58,6 +58,10 @@ const (
 	// refuses work.
 	KeyCPUAdmission = "cpu_admission"
 
+	// KeyDevPrimeServes lets schedd promote a `gregale dev` deployment's
+	// healthy prime instead of capturing and parking it first
+	// (ADR-20261122200000).
+	KeyDevPrimeServes = "dev_prime_serves_enabled"
 	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
 	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
 	// is how recently an app must have parked on a node to be refreshed

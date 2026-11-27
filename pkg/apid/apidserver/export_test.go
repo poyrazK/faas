@@ -1974,6 +1974,17 @@ func (s *server) EnableStageAPIConsumersForTest(t *testing.T) {
 	}
 }
 
+// EnableStageAlertRulesForTest turns stage_alert_rules_enabled on.
+func (s *server) EnableStageAlertRulesForTest(t *testing.T) {
+	t.Helper()
+	if s.runtimeConfig == nil {
+		s.runtimeConfig = newRuntimeConfigManager(nil)
+	}
+	if err := s.runtimeConfig.apply(runtimeConfigStageAlertRules, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
 

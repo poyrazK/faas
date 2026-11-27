@@ -208,7 +208,7 @@ func (s *Service) Upgrade(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInternal("could not read the plans"))
 		return
 	}
-	_, livemode, _ := s.Host.StripeKey(r.Context(), c.app.AccountID)
+	livemode := s.liveMode(r.Context(), c.app.AccountID)
 	w.Header().Set("Cache-Control", "no-store")
 	httpkit.WriteJSON(w, http.StatusOK, api.ConsumerUpgradeResponse{App: c.app.Slug, DisplayName: c.set.DisplayName, Livemode: livemode,
 		CurrentPlanID: s.currentPlanID(r.Context(), c), Plans: plans, HasCard: state.APIConsumerHasStripeCustomer(c.consumer.ExternalRef)})

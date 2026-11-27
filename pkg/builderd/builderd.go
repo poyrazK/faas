@@ -107,6 +107,12 @@ type Config struct {
 	// SourceSpoolDir mirrors apid's source and build-log spool. When set,
 	// persisted source/log paths must remain below this root.
 	SourceSpoolDir string `toml:"source_spool_dir"`
+	// ImageExportDir is the build export root (cmd/builderd's
+	// build_export_dir). An uploaded prebuilt image is placed there in the
+	// canonical <root>/<build-id>/build/out/image.tar shape, so the export
+	// sweeper and imaged's reader lease treat it like a VM build's output
+	// (ADR-20261127120000). Empty refuses uploaded images.
+	ImageExportDir string `toml:"-"`
 	// BuildLogMaxBytes bounds each persisted build log. Zero uses the safe
 	// default; values above the hard ceiling are clamped in New.
 	BuildLogMaxBytes int64 `toml:"build_log_max_bytes"`
@@ -822,7 +828,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, msg, time.Now())
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}
-	maxSourceBytes := int64(lim.SourceTarballMaxMB) * 1024 * 1024
+	maxSourceBytes := sourceCapBytes(lim, dep)
 	if sourceBytes > maxSourceBytes {
 		msg := fmt.Sprintf("source archive %d bytes exceeds %s plan cap of %d bytes", sourceBytes, acct.Plan, maxSourceBytes)
 		b.markFailed(ctx, build, state.FailureUserError, msg, time.Now())
@@ -926,6 +932,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "source integrity: "+err.Error(), buildStart)
 		return BuildResult{}, err
+	}
+	if uploaded := uploadedImage(dep); uploaded != nil {
+		return b.completeUploadedImage(ctx, build, dep, app, acct, srcHash, uploaded, buildStart)
 	}
 
 	if b.validatorBuild != nil {

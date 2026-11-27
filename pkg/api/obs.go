@@ -1826,3 +1826,226 @@ type ObsDiskGuest struct {
 	CapacityBytes int64   `json:"capacity_bytes"`
 	UsedPercent   float64 `json:"used_percent"`
 }
+
+// ObsControlPlaneReport is the operator control-plane health report
+// (ADR-20261126120000): the control plane's Postgres, its backups and WAL,
+// the delivery outboxes, every daemon's database pool and notify hub, the
+// control-plane scrape targets and the host. State is the worst check's;
+// WindowSeconds is the span of rates, statements and pool totals.
+type ObsControlPlaneReport struct {
+	AsOf          time.Time                  `json:"as_of"`
+	Source        string                     `json:"source"`
+	FailedQueries []string                   `json:"failed_queries"`
+	WindowSeconds int                        `json:"window_seconds"`
+	State         string                     `json:"state"`
+	Totals        ObsControlPlaneTotals      `json:"totals"`
+	Checks        []ObsControlPlaneCheck     `json:"checks"`
+	Postgres      ObsControlPlanePostgres    `json:"postgres"`
+	Backends      []ObsControlPlaneBackend   `json:"backends"`
+	Statements    []ObsControlPlaneStatement `json:"statements"`
+	Pools         []ObsControlPlanePool      `json:"pools"`
+	NotifyHubs    []ObsControlPlaneNotifyHub `json:"notify_hubs"`
+	Targets       []ObsControlPlaneTarget    `json:"targets"`
+	Host          ObsControlPlaneHost        `json:"host"`
+}
+
+// ObsControlPlaneTotals counts the checks by state.
+type ObsControlPlaneTotals struct {
+	Checks   int `json:"checks"`
+	Critical int `json:"critical"`
+	Warning  int `json:"warning"`
+	Unknown  int `json:"unknown"`
+}
+
+// ObsControlPlaneCheck is one graded signal. Group is postgres, backups,
+// delivery or daemons; State is ok, warning, critical or unknown (not read,
+// or its collector is stale). Value is in Unit (percent, seconds, count or
+// bytes) and WarnAt/CriticalAt are the thresholds of Alert, the alert it
+// mirrors. At is the last success of a backup or archive signal.
+type ObsControlPlaneCheck struct {
+	Key        string     `json:"key"`
+	Group      string     `json:"group"`
+	Label      string     `json:"label"`
+	State      string     `json:"state"`
+	Value      *float64   `json:"value,omitempty"`
+	Unit       string     `json:"unit"`
+	WarnAt     *float64   `json:"warn_at,omitempty"`
+	CriticalAt *float64   `json:"critical_at,omitempty"`
+	At         *time.Time `json:"at,omitempty"`
+	Detail     string     `json:"detail"`
+	Alert      string     `json:"alert,omitempty"`
+}
+
+// ObsControlPlanePostgres is the control plane's Postgres at the instant,
+// from the postgres activity collector; rates cover the window. A nil field
+// was not read.
+type ObsControlPlanePostgres struct {
+	ClientConnections           *int     `json:"client_connections,omitempty"`
+	ConnectionCapacity          *int     `json:"connection_capacity,omitempty"`
+	DatabaseSizeBytes           *int64   `json:"database_size_bytes,omitempty"`
+	LongestQuerySeconds         *float64 `json:"longest_query_seconds,omitempty"`
+	OldestTransactionSeconds    *float64 `json:"oldest_transaction_seconds,omitempty"`
+	IdleInTransactionMaxSeconds *float64 `json:"idle_in_transaction_max_seconds,omitempty"`
+	CacheHitPercent             *float64 `json:"cache_hit_percent,omitempty"`
+	CommitsPerSecond            *float64 `json:"commits_per_second,omitempty"`
+	RollbackPercent             *float64 `json:"rollback_percent,omitempty"`
+	TempBytes                   *int64   `json:"temp_bytes,omitempty"`
+	CollectorAgeSeconds         *float64 `json:"collector_age_seconds,omitempty"`
+}
+
+// ObsControlPlaneBackend is the number of server backends of one client
+// application in one state.
+type ObsControlPlaneBackend struct {
+	Application string `json:"application"`
+	State       string `json:"state"`
+	Count       int    `json:"count"`
+}
+
+// ObsControlPlaneStatement is one of the statements that spent the most
+// execution time over the window (pg_stat_statements, normalized text).
+type ObsControlPlaneStatement struct {
+	QueryID     string   `json:"query_id"`
+	Query       string   `json:"query"`
+	ExecSeconds float64  `json:"exec_seconds"`
+	Calls       *int64   `json:"calls,omitempty"`
+	MeanMs      *float64 `json:"mean_ms,omitempty"`
+}
+
+// ObsControlPlanePool is one daemon's database pool on one node (empty Node
+// on the control plane). Canceled acquires and mean acquire wait cover the
+// window; State is critical when an acquire was canceled in the last five
+// minutes (FaasDBPoolStarved) and warning above the saturation threshold.
+type ObsControlPlanePool struct {
+	Pool               string   `json:"pool"`
+	Job                string   `json:"job"`
+	Node               string   `json:"node,omitempty"`
+	Acquired           int      `json:"acquired"`
+	Idle               int      `json:"idle"`
+	Max                *int     `json:"max,omitempty"`
+	UtilizationPercent *float64 `json:"utilization_percent,omitempty"`
+	CanceledAcquires   int64    `json:"canceled_acquires"`
+	MeanAcquireWaitMs  *float64 `json:"mean_acquire_wait_ms,omitempty"`
+	State              string   `json:"state"`
+}
+
+// ObsControlPlaneNotifyHub is one daemon's pg_notify listener. It is
+// disabled (warning) when it has subscribers but no connection.
+type ObsControlPlaneNotifyHub struct {
+	Hub         string `json:"hub"`
+	Job         string `json:"job"`
+	Node        string `json:"node,omitempty"`
+	Conns       int    `json:"conns"`
+	Subscribers int    `json:"subscribers"`
+	Reconnects  int64  `json:"reconnects"`
+	State       string `json:"state"`
+}
+
+// ObsControlPlaneTarget is a control-plane scrape target (one with no node
+// label) and whether its last scrape succeeded.
+type ObsControlPlaneTarget struct {
+	Job      string `json:"job"`
+	Instance string `json:"instance"`
+	Up       bool   `json:"up"`
+}
+
+// ObsControlPlaneHost is the control-plane host from node_exporter.
+type ObsControlPlaneHost struct {
+	CPUs              *int     `json:"cpus,omitempty"`
+	Load1             *float64 `json:"load1,omitempty"`
+	MemTotalBytes     *int64   `json:"mem_total_bytes,omitempty"`
+	MemAvailableBytes *int64   `json:"mem_available_bytes,omitempty"`
+}
+
+// ObsEgressReport is the operator egress denials and abuse report
+// (ADR-20261127100000) over WindowSeconds: tenant egress the platform
+// dropped, by class, node and app; new destinations; and the abuse signals
+// (egress recycles, account holds, CPU abuse, blocked DNS, build-time image
+// scan findings, host denylist drops).
+type ObsEgressReport struct {
+	AsOf          time.Time               `json:"as_of"`
+	WindowSeconds int                     `json:"window_seconds"`
+	Source        string                  `json:"source"`
+	FailedQueries []string                `json:"failed_queries"`
+	Totals        ObsEgressTotals         `json:"totals"`
+	Classes       []ObsEgressCount        `json:"classes"`
+	Nodes         []ObsEgressCount        `json:"nodes"`
+	Apps          []ObsEgressApp          `json:"apps"`
+	Recycles      []ObsEgressRecycle      `json:"recycles"`
+	Holds         []ObsEgressCount        `json:"holds"`
+	CPUSignals    []ObsEgressCPUSignal    `json:"cpu_signals"`
+	DNSBlocked    []ObsEgressCount        `json:"dns_blocked"`
+	ScanFindings  []ObsEgressScanFinding  `json:"scan_findings"`
+	Denylist      []ObsEgressDenylistDrop `json:"denylist"`
+}
+
+// ObsEgressTotals sums the window. DeniedLastHour is the last hour alone;
+// FlowLogRows is nil when not read (a flat zero on a busy fleet means the
+// flow log stopped recording).
+type ObsEgressTotals struct {
+	Denied          int64  `json:"denied"`
+	DeniedLastHour  int64  `json:"denied_last_hour"`
+	AppsDenied      int    `json:"apps_denied"`
+	NewDestinations int64  `json:"new_destinations"`
+	AbuseRecycles   int64  `json:"abuse_recycles"`
+	AbuseHolds      int64  `json:"abuse_holds"`
+	CPUAbuseSignals int64  `json:"cpu_abuse_signals"`
+	DNSBlocked      int64  `json:"dns_blocked"`
+	ScanBlocked     int64  `json:"scan_blocked"`
+	ScanFlagged     int64  `json:"scan_flagged"`
+	FlowLogRows     *int64 `json:"flow_log_rows,omitempty"`
+}
+
+// ObsEgressCount is a count for one key: a denial class (smtp, rfc1918,
+// metadata, allowlist, port_policy, rate_limit, flood, unresolved), a node,
+// an abuse hold reason or a DNS blocklist category.
+type ObsEgressCount struct {
+	Key   string `json:"key"`
+	Count int64  `json:"count"`
+}
+
+// ObsEgressApp is one app's egress in the window: drops by class, new
+// destinations it contacted, and instances recycled for egress abuse.
+type ObsEgressApp struct {
+	AppID           string           `json:"app_id"`
+	AppSlug         string           `json:"app_slug,omitempty"`
+	AccountID       string           `json:"account_id,omitempty"`
+	Denied          int64            `json:"denied"`
+	Classes         []ObsEgressCount `json:"classes"`
+	NewDestinations int64            `json:"new_destinations"`
+	AbuseRecycles   int64            `json:"abuse_recycles"`
+}
+
+// ObsEgressRecycle is instances of one app schedd destroyed for one egress
+// abuse reason (fanout or flood).
+type ObsEgressRecycle struct {
+	AppID     string `json:"app_id"`
+	AppSlug   string `json:"app_slug,omitempty"`
+	AccountID string `json:"account_id,omitempty"`
+	Reason    string `json:"reason"`
+	Count     int64  `json:"count"`
+}
+
+// ObsEgressCPUSignal is instances pinned at their CPU quota, by plan and
+// action (recycled, shadow or flagged).
+type ObsEgressCPUSignal struct {
+	Plan   string `json:"plan"`
+	Action string `json:"action"`
+	Count  int64  `json:"count"`
+}
+
+// ObsEgressScanFinding is build-time image abuse scan findings, by category
+// and action (block fails the deploy, flag is for review).
+type ObsEgressScanFinding struct {
+	Category string `json:"category"`
+	Action   string `json:"action"`
+	Count    int64  `json:"count"`
+}
+
+// ObsEgressDenylistDrop is host-level drops against one denylist CIDR.
+// Source is firewall (nftables on a compute host) or image_pull (imaged's
+// user-space dialer).
+type ObsEgressDenylistDrop struct {
+	Source string `json:"source"`
+	CIDR   string `json:"cidr"`
+	Count  int64  `json:"count"`
+}

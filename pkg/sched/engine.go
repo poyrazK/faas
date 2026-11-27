@@ -724,6 +724,10 @@ type Engine struct {
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
 	thawTickets    frozenTickets
+	// devPrimeServes (ADR-20261122200000, runtime config
+	// dev_prime_serves_enabled) lets a `gregale dev` deployment go live from
+	// its healthy prime instead of capturing, publishing and parking it.
+	devPrimeServes atomic.Bool
 	// leavingNodes holds the IDs of nodes that no longer admit work
 	// (draining, maintenance, ...), from the recovery runner's node list
 	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
@@ -7383,6 +7387,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 			primeCompleted = ctx.Err() == nil
 			return primeActivationPending(err)
 		}
+		primeCompleted = true
+		return nil
+	}
+
+	// ADR-20261122200000: a developer environment's prime keeps running and
+	// serves; its first capture happens at its first idle park.
+	if upgradeTarget == nil && e.serveDeveloperPrime(ctx, app, limits, dep, ins) {
 		primeCompleted = true
 		return nil
 	}

@@ -92,7 +92,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"characterizationReceipts": "bootonly", // awaited only during a boot
 		"clients":                  "rebuilt",  // created on first use
 		"cpuBoostTails":            "reset",    // adoption writes the steady fence instead
-		"driveBaseKeys":            "reset",    // an adopted guest parks its whole drive, not a delta (ADR-20261115213230)
+		"driveBaseKeys":            "rebuilt",  // from the adoption block's drive_base (ADR-20261115213230)
 		"fences":                   "rebuilt",
 		"guestVsockListeners":      "rebuilt",
 		"jobExits":                 "rebuilt",  // a job's exit receiver; a recorded exit is in the block

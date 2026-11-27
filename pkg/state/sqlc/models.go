@@ -767,6 +767,7 @@ type AlertRule struct {
 	ObservedIncidents               []byte
 	EnvironmentScope                string
 	RecoveryConfirmationChecks      int32
+	EnvironmentID                   pgtype.UUID
 }
 
 type AlertRuleChannel struct {
@@ -1229,6 +1230,13 @@ type ApiKeyApprovalCategory struct {
 	KeyID      pgtype.UUID
 	Categories []string
 	CreatedAt  pgtype.Timestamptz
+}
+
+// ADR-20261127160000 the Connect consent that approves a hosted MCP key's deploys; apid is the only writer.
+type ApiKeyConnectGrant struct {
+	KeyID     pgtype.UUID
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
 }
 
 // ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.

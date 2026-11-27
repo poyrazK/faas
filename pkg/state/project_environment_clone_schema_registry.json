@@ -252,6 +252,15 @@
     "kind": "account_identity"
   },
   {
+    "table": "api_key_connect_grants",
+    "columns": [
+      "granted_at",
+      "granted_by",
+      "key_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "api_key_project_limits",
     "columns": [
       "created_at",
@@ -969,6 +978,7 @@
       "custom_metric_name",
       "edge_rule_id",
       "enabled",
+      "environment_id",
       "environment_scope",
       "event_subscription_id",
       "failure_source",

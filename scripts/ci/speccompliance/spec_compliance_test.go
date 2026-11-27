@@ -571,6 +571,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/memory-pressure":              true, // operator memory pressure report (ADR-20261123190507)
 	"GET /v1/admin/obs/gateway-traffic":              true, // operator gateway traffic report (ADR-20261124093000)
 	"GET /v1/admin/obs/disk-pressure":                true, // operator disk pressure report (ADR-20261124150000)
+	"GET /v1/admin/obs/control-plane":                true, // operator control-plane health report (ADR-20261126120000)
+	"GET /v1/admin/obs/egress":                       true, // operator egress denials and abuse report (ADR-20261127100000)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -1159,6 +1161,25 @@ var dtoExclude = map[string]bool{
 	"ObsDiskNode":           true,
 	"ObsDiskFilesystem":     true,
 	"ObsDiskGuest":          true,
+	// ADR-20261126120000 operator control-plane health report.
+	"ObsControlPlaneReport":    true,
+	"ObsControlPlaneTotals":    true,
+	"ObsControlPlaneCheck":     true,
+	"ObsControlPlanePostgres":  true,
+	"ObsControlPlaneBackend":   true,
+	"ObsControlPlaneStatement": true,
+	"ObsControlPlanePool":      true,
+	"ObsControlPlaneNotifyHub": true,
+	"ObsControlPlaneTarget":    true,
+	"ObsControlPlaneHost":      true,
+	"ObsEgressReport":          true,
+	"ObsEgressTotals":          true,
+	"ObsEgressCount":           true,
+	"ObsEgressApp":             true,
+	"ObsEgressRecycle":         true,
+	"ObsEgressCPUSignal":       true,
+	"ObsEgressScanFinding":     true,
+	"ObsEgressDenylistDrop":    true,
 	// ADR-20261123163340 operator build queue report.
 	"ObsBuildQueueReport":  true,
 	"ObsBuildQueueTotals":  true,

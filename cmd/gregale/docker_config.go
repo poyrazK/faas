@@ -55,6 +55,17 @@ type dockerConfigFile struct {
 // it; a leading ~/ is the home directory. Identity and registry tokens are
 // refused, because a run sends a username and password to the registry.
 func dockerConfigRegistryAuth(ctx context.Context, configPath, image string, helper dockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
+	ref, err := oci.ParseReference(image)
+	if err != nil {
+		return nil, fmt.Errorf("image %q: %w", image, err)
+	}
+	return dockerConfigRegistryHostAuth(ctx, configPath, ref.Registry, helper)
+}
+
+// dockerConfigRegistryHostAuth is dockerConfigRegistryAuth for a registry
+// host rather than an image, as `registry set --docker-config` names one.
+// Docker Hub's API hosts resolve to docker.io, as Docker stores them.
+func dockerConfigRegistryHostAuth(ctx context.Context, configPath, host string, helper dockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
 	file, err := dockerConfigPath(configPath)
 	if err != nil {
 		return nil, err
@@ -67,11 +78,10 @@ func dockerConfigRegistryAuth(ctx context.Context, configPath, image string, hel
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return nil, fmt.Errorf("parse docker config %s: %w", file, err)
 	}
-	ref, err := oci.ParseReference(image)
-	if err != nil {
-		return nil, fmt.Errorf("image %q: %w", image, err)
-	}
-	registry := ref.Registry
+	return dockerConfigAuthFor(ctx, file, config, dockerConfigRegistry(host), helper)
+}
+
+func dockerConfigAuthFor(ctx context.Context, file string, config dockerConfigFile, registry string, helper dockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
 	for key, entry := range config.Auths {
 		if dockerConfigRegistry(key) != registry {
 			continue
@@ -119,7 +129,7 @@ func dockerConfigRegistryAuth(ctx context.Context, configPath, image string, hel
 			return dockerRegistryAuth(username, secret, registry)
 		}
 	}
-	return nil, fmt.Errorf("docker config %s has no credentials for %s; run `docker login %s` or use --registry-username", file, registry, registry)
+	return nil, fmt.Errorf("docker config %s has no credentials for %s; run `docker login %s` or pass a username and password instead", file, registry, registry)
 }
 
 func dockerRegistryAuth(username, password, registry string) (*api.ImageRunRegistryAuth, error) {
@@ -133,7 +143,7 @@ func dockerRegistryAuth(username, password, registry string) (*api.ImageRunRegis
 }
 
 func dockerTokenUnsupported(registry string) error {
-	return fmt.Errorf("the docker config holds an identity token for %s, which image runs cannot use; use --registry-username with a password or access token", registry)
+	return fmt.Errorf("the docker config holds an identity token for %s, which Gregale cannot use; pass a username with a password or access token instead", registry)
 }
 
 // dockerConfigPath returns the config.json a --docker-config value names.

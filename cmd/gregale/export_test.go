@@ -2206,6 +2206,7 @@ var WaitMCPAccessConvergence = waitMCPAccessConvergence
 var WakeRecommendationTier = wakeRecommendationTier
 var WarnClientScopedProtectiveRule = warnClientScopedProtectiveRule
 var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
+var DefaultEdgeRuleMatchPath = defaultEdgeRuleMatchPath
 var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
@@ -3076,12 +3077,36 @@ func RealtimePreviewInView(tier bool, hidden ...string) bool {
 	return realtimePreviewInView(accountCapabilityView(hidden))
 }
 
+// MonetizationInView is monetizationInView for the tier defaults (tier) or
+// for an account view that hides hidden.
+func MonetizationInView(tier bool, hidden ...string) bool {
+	if tier {
+		return monetizationInView(capabilityView{tier: true})
+	}
+	return monetizationInView(accountCapabilityView(hidden))
+}
+
+// VerbsDiscoveredBy lists the verbs of command that discovery shows to an
+// account whose view hides hidden.
+func VerbsDiscoveredBy(command string, hidden ...string) []string {
+	view := accountCapabilityView(hidden)
+	var names []string
+	for _, c := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view), monetizationInView(view))) {
+		if c.Name == command {
+			for _, sub := range c.Subcommands {
+				names = append(names, sub.Name)
+			}
+		}
+	}
+	return names
+}
+
 // RealtimeVerbsDiscoveredBy lists the realtime verbs discovery shows to an
 // account whose view hides hidden.
 func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 	view := accountCapabilityView(hidden)
 	var names []string
-	for _, command := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view))) {
+	for _, command := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view), monetizationInView(view))) {
 		if command.Name == "realtime" {
 			for _, sub := range command.Subcommands {
 				names = append(names, sub.Name)
@@ -3232,3 +3257,41 @@ var WarnShellLineCommand = warnShellLineCommand
 
 // MCPListingKeep exposes mcpListingKeep.
 var MCPListingKeep = mcpListingKeep
+
+// SetDoctorBootTimings shortens `doctor --boot` waits for the test.
+func SetDoctorBootTimings(cleanup func(func()), startup, stayUp, poll time.Duration) {
+	oldStartup, oldStay, oldPoll := doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll
+	doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll = startup, stayUp, poll
+	cleanup(func() { doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll = oldStartup, oldStay, oldPoll })
+}
+
+// ProcNetListeners renders parseProcNetListeners' result as host:port strings.
+func ProcNetListeners(text string) []string {
+	var out []string
+	for _, l := range parseProcNetListeners(text) {
+		out = append(out, l.String())
+	}
+	return out
+}
+
+// RunDoctorImageChecksWithLocal runs the image checks with a stand-in for the
+// local Docker store: images maps a reference to its `docker image inspect`
+// JSON.
+func RunDoctorImageChecksWithLocal(ctx context.Context, ref string, inspector doctorImageInspector, images map[string]string) doctorReport {
+	return runDoctorImageChecksWithLocal(ctx, ref, nil, inspector, func(_ context.Context, ref string) (doctorLocalImage, bool) {
+		raw, ok := images[ref]
+		if !ok {
+			return doctorLocalImage{}, false
+		}
+		img, err := parseDockerImageInspect([]byte(raw))
+		return img, err == nil
+	})
+}
+
+// SetDoctorBootMemorySources stubs where `doctor --boot` reads the plan and an
+// app's RAM for its memory limit.
+func SetDoctorBootMemorySources(cleanup func(func()), plan func(context.Context) (api.Limits, bool), appRAM func(context.Context, string) (int, error)) {
+	oldPlan, oldApp := doctorImagePlanLimits, doctorBootAppRAM
+	doctorImagePlanLimits, doctorBootAppRAM = plan, appRAM
+	cleanup(func() { doctorImagePlanLimits, doctorBootAppRAM = oldPlan, oldApp })
+}

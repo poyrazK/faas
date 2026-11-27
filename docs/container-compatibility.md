@@ -12,6 +12,65 @@ gregale deploy check --image registry.example.com/team/api@sha256:<digest>
 gregale deploy --image registry.example.com/team/api@sha256:<digest>
 ```
 
+For a private registry you are already logged in to with `docker login`, add
+`--docker-config ~/.docker` to `deploy --image`, `deploy check` or `doctor`; see
+[registry credentials](registry-credentials.md).
+
+An image that exists only on your machine deploys without a registry:
+
+```sh
+gregale deploy --local-image team/api:dev        # runs `docker image save`
+gregale deploy --image-archive api.tar           # a file from `docker save -o api.tar team/api:dev`
+```
+
+The CLI converts the saved image into a single-image Linux/amd64 OCI archive
+and uploads it through the resumable upload session. The archive may be as
+large as your plan's app layer (256 MB Free, 512 MB Hobby, 1 GB Pro, 2 GB
+Scale); larger images fail with `source_too_large`. Nothing is built: the image
+deploys exactly as saved. Set `GREGALE_DOCKER=podman` to save with a
+Docker-compatible client other than `docker`. Apps that require signed images
+and function apps only accept registry images. Pushing to a registry is still
+faster for large images and is the better choice in CI. Local image deploys are
+being released gradually; an account without them gets "Local image deploys
+unavailable" and can deploy through a registry instead.
+
+## Boot the image locally before deploying
+
+`doctor` and `deploy check` read image metadata only. Add `--boot` to also run
+the image with your local Docker, the way Gregale starts it: as linux/amd64, with
+`PORT` set to the serving port (the single exposed TCP port, otherwise 8080).
+
+```sh
+gregale doctor --image ghcr.io/acme/api:1.2 --boot
+gregale deploy check --image ghcr.io/acme/api:1.2 --boot --env-file .env
+```
+
+It reports whether the container started or crashed (with its last output),
+answered `GET /` on `0.0.0.0:$PORT`, and was still running 10 seconds after it
+started. When nothing answers, it reads the container's listening sockets and
+names the mistake, such as a server bound to `127.0.0.1` or to a port other
+than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
+app needs to start with `--env-file` (docker env-file format).
+
+The container gets the memory the app would get on Gregale, with no swap: the
+RAM of the app named with `--app`, otherwise your plan's default for a new app
+(512 MB when you are not signed in); `--ram MB` sets it directly. An app that
+needs more memory crashes with `boot_oom_killed` here instead of after the
+deploy. Give the app more RAM with `gregale app update APP --ram MB`. The guest
+kernel on Gregale uses a little of the app's RAM, so leave some headroom. The container is
+removed afterwards, and nothing runs on Gregale. On an Apple silicon Mac, Docker
+runs the amd64 image under emulation, so startup is slower than on Gregale.
+Set `GREGALE_DOCKER=podman` to use another Docker-compatible client.
+
+An image that exists only on your machine is checked too. When the registry
+cannot serve `--image`, `doctor` and `deploy check` read the image from your
+local Docker store (`docker image inspect`, linux/amd64 variant first) and run
+the same metadata checks on it; `--boot` then uses its serving port. The
+registry failure stays as a warning, because `deploy --image` pulls from the
+registry: deploy such an image with `gregale deploy --local-image`. The size
+check uses the unpacked size Docker reports. A registry that has the image but
+answers with the wrong platform or a malformed manifest is reported as is.
+
 Gregale preserves the OCI/Docker process model. Image metadata supplies the
 entrypoint, command, environment, working directory, user, health check, stop
 signal, and exposed ports. Deployment overrides can replace the start command,

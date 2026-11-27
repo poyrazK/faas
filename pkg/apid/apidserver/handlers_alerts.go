@@ -111,6 +111,10 @@ func (s *server) listAlertRules(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
+	environmentID, ok := s.alertRuleEnvironment(w, r, app)
+	if !ok {
+		return
+	}
 	rows, err := s.store.ListAlertRulesForAccount(r.Context(), acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list alert rules"))
@@ -119,7 +123,7 @@ func (s *server) listAlertRules(w http.ResponseWriter, r *http.Request, acct sta
 	out := make([]api.AlertRuleResponse, 0, len(rows))
 	creator := creatorView(r, acct)
 	for _, row := range rows {
-		if row.AppID != "" && row.AppID != app.ID || row.AppID == "" && !creator {
+		if row.AppID != "" && row.AppID != app.ID || row.AppID == "" && !creator || row.EnvironmentID != environmentID {
 			continue
 		}
 		out = append(out, s.alertRuleResponseWithChannels(r.Context(), row))
@@ -166,6 +170,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	}
 	slug := r.PathValue("slug")
 	app, ok := s.loadApp(w, r, acct, slug)
+	if !ok {
+		return
+	}
+	environmentID, ok := s.alertRuleEnvironment(w, r, app)
 	if !ok {
 		return
 	}
@@ -241,6 +249,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if !s.checkNewStageAlertRule(w, state.AlertRule{EnvironmentID: environmentID, AppID: app.ID, Enabled: alertRuleEnabledFrom(req.Enabled),
+		Metric: state.AlertMetric(req.Metric), Comparison: state.AlertComparison(req.Comparison), Action: alertRuleActionFrom(req.Action)}) {
+		return
+	}
 	sealed, prob := sealCreateWebhook(r.Context(), req)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -252,6 +264,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(r.Context(), state.AlertRule{MCPReadinessScope: req.MCPReadinessScope, MCPMinCalls: minCalls, MCPForMinutes: forMinutes,
+		EnvironmentID:                   environmentID,
 		AccountID:                       acct.ID,
 		CreatedByAccountID:              actorAccount(r, acct).ID,
 		AppID:                           app.ID,
@@ -315,6 +328,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	s.audit.Emit(r.Context(), "alert_rule.created", &acct.ID, map[string]any{
 		"rule_id":                             row.ID,
 		"app_id":                              row.AppID,
+		"environment_id":                      row.EnvironmentID,
 		"name":                                row.Name,
 		"metric":                              row.Metric,
 		"comparison":                          row.Comparison,
@@ -494,6 +508,9 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	merged := alertRuleRowForValidation(row, req)
 	if prob := validateAlertRuleRowUpdate(merged); prob != nil {
 		api.WriteProblem(w, prob)
+		return
+	}
+	if !s.checkUpdatedStageAlertRule(w, merged) {
 		return
 	}
 	scopeChanged := merged.EnvironmentScope != row.EnvironmentScope
@@ -823,6 +840,12 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 // here at the pkg/api ↔ pkg/state boundary so pkg/api/alerts.go
 // stays free of the import cycle.
 func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
+	resp := alertRuleResponseFromRow(r)
+	resp.EnvironmentID = r.EnvironmentID
+	return resp
+}
+
+func alertRuleResponseFromRow(r state.AlertRule) api.AlertRuleResponse {
 	return api.AlertRuleResponseFromRow(api.AlertRuleRow{MCPReadinessScope: r.MCPReadinessScope, MCPMinCalls: r.MCPMinCalls, MCPForMinutes: r.MCPForMinutes,
 		ID:                              r.ID,
 		AppID:                           r.AppID,

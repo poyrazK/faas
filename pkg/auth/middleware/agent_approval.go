@@ -35,23 +35,42 @@ type OrgAgentPolicyReader interface {
 // agent or mcp-login key: its own set (every category when it chose none)
 // plus its organization's floor.
 func ApprovalCategoriesFor(ctx context.Context, store any, key state.APIKey) (map[string]bool, error) {
-	gate, ok := store.(AgentApprovalGate)
-	if !ok {
-		return agentapproval.Effective(nil, false, nil), nil
-	}
-	own, chosen, err := gate.APIKeyApprovalCategories(ctx, key.ID)
+	settings, err := approvalSettingsFor(ctx, store, key)
 	if err != nil {
 		return nil, err
 	}
-	var floor []string
+	return settings.effective(), nil
+}
+
+// approvalSettings are a key's own approval categories, whether it chose
+// them, and its organization's floor.
+type approvalSettings struct {
+	own, floor []string
+	chosen     bool
+}
+
+func (s approvalSettings) effective() map[string]bool {
+	return agentapproval.Effective(s.own, s.chosen, s.floor)
+}
+
+func approvalSettingsFor(ctx context.Context, store any, key state.APIKey) (approvalSettings, error) {
+	gate, ok := store.(AgentApprovalGate)
+	if !ok {
+		return approvalSettings{}, nil
+	}
+	var settings approvalSettings
+	var err error
+	if settings.own, settings.chosen, err = gate.APIKeyApprovalCategories(ctx, key.ID); err != nil {
+		return approvalSettings{}, err
+	}
 	if policies, ok := store.(OrgAgentPolicyReader); ok && key.OrgID != "" {
 		policy, err := policies.OrgAgentPolicy(ctx, key.OrgID)
 		if err != nil {
-			return nil, err
+			return approvalSettings{}, err
 		}
-		floor = policy.ApprovalCategories
+		settings.floor = policy.ApprovalCategories
 	}
-	return agentapproval.Effective(own, chosen, floor), nil
+	return settings, nil
 }
 
 // requireAgentApproval answers 428 approval_required to an agent key's
@@ -75,7 +94,7 @@ func (m *Middleware) RequireAgentApprovalForApp(w http.ResponseWriter, r *http.R
 	if key == nil || !ProjectLimitable(*key) || !productionApp(app) {
 		return false
 	}
-	return m.gateAgentRequest(w, r, acct, *key, agentapproval.Rule{Category: api.AgentApprovalProduction})
+	return m.gateAgentRequest(w, r, acct, *key, agentapproval.UploadCommitRule)
 }
 
 // productionApp reports whether an app serves production: previews and
@@ -184,8 +203,9 @@ func (m *Middleware) ungatedCategory(w http.ResponseWriter, r *http.Request, key
 }
 
 // DecideAgentRequest decides an agent key's request under rule: allowed
-// when the key's categories do not include the rule's, or on a person's
-// approval (one use, or every use within rule.Window of the first);
+// when the key's categories do not include the rule's, under the person's
+// Connect grant (ADR-20261127160000), or on a person's approval (one use,
+// or every use within rule.Window of the first);
 // otherwise the outcome of a decided request, or a new request for a
 // person to decide. apid answers gateways with it (ADR-20261111150000).
 func (m *Middleware) DecideAgentRequest(ctx context.Context, acct state.Account, key state.APIKey, rule agentapproval.Rule, binding state.AgentApprovalBinding, reason string) (AgentGateDecision, error) {
@@ -196,11 +216,16 @@ func (m *Middleware) DecideAgentRequest(ctx context.Context, acct state.Account,
 		return AgentGateDecision{Problem: api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Approval unavailable",
 			"this request needs a person's approval, which this server cannot record")}, nil
 	}
-	categories, err := ApprovalCategoriesFor(ctx, m.Authn, key)
+	settings, err := approvalSettingsFor(ctx, m.Authn, key)
 	if err != nil {
 		return AgentGateDecision{}, gateUnavailable("could not load the agent's approval settings; retry shortly", err)
 	}
-	if !agentapproval.Asks(categories, rule) {
+	if !agentapproval.Asks(settings.effective(), rule) {
+		return AgentGateDecision{Allow: true}, nil
+	}
+	if granted, err := m.connectGrantApproves(ctx, key, rule, settings, binding); err != nil {
+		return AgentGateDecision{}, gateUnavailable("could not load the agent's approval settings; retry shortly", err)
+	} else if granted {
 		return AgentGateDecision{Allow: true}, nil
 	}
 	if windows, ok := m.Authn.(AgentApprovalWindowGate); ok && rule.Window > 0 {
