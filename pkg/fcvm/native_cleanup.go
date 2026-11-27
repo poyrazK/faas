@@ -111,6 +111,7 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	v.mu.Lock()
 	if v.recs[lease.Instance] == rec {
 		delete(v.recs, lease.Instance)
+		delete(v.driveBaseKeys, lease.Instance)
 	}
 	if v.proc[lease.Instance] == cmd {
 		delete(v.proc, lease.Instance)
