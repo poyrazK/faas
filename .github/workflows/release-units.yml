@@ -474,7 +474,7 @@ jobs:
 
       - name: Upload unit release
         if: steps.detect.outputs.eligible == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gregale-unit-release
           path: ${{ runner.temp }}/gregale-units/release/
@@ -488,7 +488,7 @@ jobs:
         run: echo "${{ steps.detect.outputs.release_sha }}" > "$RUNNER_TEMP/release-sha"
       - name: Upload the release marker
         if: steps.detect.outputs.eligible == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-release-sha-${{ steps.detect.outputs.release_sha }}
           path: ${{ runner.temp }}/release-sha
@@ -500,7 +500,7 @@ jobs:
       # lane and freezing deploys (deploy_preflight.py `base`).
       - name: Upload the base marker
         if: steps.detect.outputs.eligible == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-release-base-${{ steps.base.outputs.sha }}
           path: ${{ runner.temp }}/release-sha
