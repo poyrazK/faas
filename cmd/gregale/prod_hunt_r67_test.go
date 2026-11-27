@@ -121,6 +121,22 @@ func TestRedisGetNamesTheMissingCache(t *testing.T) {
 	}
 }
 
+// Prod hunt r75: `worker get nope` looked up an app named "get", `function
+// get nope` printed the types usage and `queue get nope` printed usage
+// without naming "get".
+func TestUnknownVerbsAreNamed(t *testing.T) {
+	r63Server(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		http.Error(w, "no", http.StatusTeapot)
+	})
+	for _, args := range [][]string{{"worker", "get", "nope"}, {"function", "get", "nope"}, {"queue", "get", "nope"}} {
+		code, out := r63Run(t, args...)
+		if code != 1 || !strings.Contains(out, `unknown subcommand "get"`) {
+			t.Fatalf("%v: exit=%d out=%s", args, code, out)
+		}
+	}
+}
+
 // Prod hunt r68: `cron get nope` printed only its usage line, never that the
 // ID was malformed or where cron IDs come from.
 func TestCronGetNamesTheMalformedID(t *testing.T) {
