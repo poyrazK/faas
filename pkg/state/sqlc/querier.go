@@ -954,6 +954,9 @@ type Querier interface {
 	// owner, otherwise the account's usage subject, as in the reservation counts.
 	CountManagedPostgresPreviewDatabases(ctx context.Context, db DBTX, arg CountManagedPostgresPreviewDatabasesParams) (int64, error)
 	CountMigrationCutovers(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	// ADR-20261126175800: a sold MCP server's public listing.
+	// The listing page's usage badge: production consumers not revoked.
+	CountOpenMCPListingCustomers(ctx context.Context, db DBTX, arg CountOpenMCPListingCustomersParams) (int64, error)
 	// Per-(account_id, app_slug) open-session cap check at the top of
 	// POST /v1/uploads. Returns the current count; the handler
 	// refuses with 429 upload_session_too_many when count >= 5.
@@ -1356,6 +1359,7 @@ type Querier interface {
 	DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuardedCronParams) error
 	DeleteLegacyStaticEgressProvisioning(ctx context.Context, db DBTX) error
 	DeleteLogArchiveErasure(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	DeleteMCPListing(ctx context.Context, db DBTX, arg DeleteMCPListingParams) (int64, error)
 	DeleteManagedPostgresBindingSecrets(ctx context.Context, db DBTX, bindingID string) (int64, error)
 	DeleteNativePostgresBackupSchedule(ctx context.Context, db DBTX, arg DeleteNativePostgresBackupScheduleParams) (int64, error)
 	DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error)
@@ -2706,6 +2710,7 @@ type Querier interface {
 	GetLatestScopedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestScopedBuildExportPublicationParams) (BuildExportPublication, error)
 	GetMCPAdmissionReceipt(ctx context.Context, db DBTX, arg GetMCPAdmissionReceiptParams) ([]byte, error)
 	GetMCPCatalogMonitor(ctx context.Context, db DBTX, arg GetMCPCatalogMonitorParams) ([]byte, error)
+	GetMCPListing(ctx context.Context, db DBTX, arg GetMCPListingParams) (McpListing, error)
 	GetMCPOAuthRetirementApp(ctx context.Context, db DBTX, arg GetMCPOAuthRetirementAppParams) (string, error)
 	// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
@@ -5886,11 +5891,13 @@ type Querier interface {
 	ObjectRouteWriteSettle(ctx context.Context, db DBTX, arg ObjectRouteWriteSettleParams) (int64, error)
 	ObjectS3BindingDeleteSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) (int64, error)
 	ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg ObjectS3BindingLockAppParams) (pgtype.UUID, error)
+	ObjectS3BindingLockBorrower(ctx context.Context, db DBTX, arg ObjectS3BindingLockBorrowerParams) (pgtype.UUID, error)
 	ObjectS3BindingRevokeLock(ctx context.Context, db DBTX, arg ObjectS3BindingRevokeLockParams) (ObjectStorageS3Credential, error)
 	ObjectS3BindingSecretCount(ctx context.Context, db DBTX, arg ObjectS3BindingSecretCountParams) (int64, error)
 	ObjectS3BindingSecretInsert(ctx context.Context, db DBTX, arg ObjectS3BindingSecretInsertParams) (string, error)
 	ObjectS3BindingStaleSnapshots(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	ObjectS3ComputeBindingsHeldBy(ctx context.Context, db DBTX, arg ObjectS3ComputeBindingsHeldByParams) ([]ObjectS3ComputeBindingsHeldByRow, error)
 	ObjectS3CredentialCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
 	ObjectS3CredentialGet(ctx context.Context, db DBTX, arg ObjectS3CredentialGetParams) (ObjectStorageS3Credential, error)
 	ObjectS3CredentialInsert(ctx context.Context, db DBTX, arg ObjectS3CredentialInsertParams) (ObjectStorageS3Credential, error)
@@ -6674,6 +6681,7 @@ type Querier interface {
 	PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error)
 	PutMCPCatalogMonitor(ctx context.Context, db DBTX, arg PutMCPCatalogMonitorParams) (int64, error)
+	PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingParams) (McpListing, error)
 	PutMCPOAuthRetirement(ctx context.Context, db DBTX, arg PutMCPOAuthRetirementParams) (int64, error)
 	PutPlanFitNotice(ctx context.Context, db DBTX, arg PutPlanFitNoticeParams) error
 	// ADR 20261028161502 amendment 1: a runtime secret envelope's writer

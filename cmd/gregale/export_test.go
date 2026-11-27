@@ -3229,3 +3229,6 @@ var JobReplayCommandNote = jobReplayCommandNote
 var PublicCommandPath = publicCommandPath
 
 var WarnShellLineCommand = warnShellLineCommand
+
+// MCPListingKeep exposes mcpListingKeep.
+var MCPListingKeep = mcpListingKeep

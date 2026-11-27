@@ -250,7 +250,8 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 		SecretSealed: sealed, KID: kid, Label: req.Label, Permission: req.Permission,
 		Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: bucket.Scope, ManagedPrefix: req.Prefix,
 		KeyPrefix: req.KeyPrefix,
-	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
+	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax,
+		Borrowed: bucket.AppID != app.ID})
 	if err != nil {
 		return state.ObjectS3Credential{}, nil, err
 	}
