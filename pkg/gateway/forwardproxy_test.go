@@ -552,6 +552,10 @@ func (f *fakeVmmdClient) StreamDatabaseArchiveImport(context.Context, ...grpc.Ca
 	panic("StreamDatabaseArchiveImport: not stubbed")
 }
 
+func (f *fakeVmmdClient) DeleteSandboxVolume(context.Context, *vmmdpb.DeleteSandboxVolumeRequest, ...grpc.CallOption) (*vmmdpb.DeleteSandboxVolumeResponse, error) {
+	panic("DeleteSandboxVolume: not stubbed")
+}
+
 // All other RPCs panic — the forwarder only calls ForwardHTTPStream.
 func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed")

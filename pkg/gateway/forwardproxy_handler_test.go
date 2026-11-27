@@ -205,6 +205,10 @@ func (s *stubVmmdClient) StreamDatabaseArchiveImport(context.Context, ...grpc.Ca
 	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
 }
 
+func (s *stubVmmdClient) DeleteSandboxVolume(context.Context, *vmmdpb.DeleteSandboxVolumeRequest, ...grpc.CallOption) (*vmmdpb.DeleteSandboxVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "sandbox RPCs are not used by gateway tests")
+}
+
 func (s *stubVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed in handler integration test")
 }
