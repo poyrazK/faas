@@ -44,8 +44,11 @@ not interpret an operational component in a stale snapshot as fresh evidence.
    timestamps are not divisible by 300 seconds.
 
 5. If the source says `deployment success target breached`, the 24-hour
-   deployment-success percentage is below 99% and platform-attributed
-   failures came from at least two accounts (ADR-20261025131406).
+   deployment-success percentage is below 99%, platform-attributed
+   failures came from at least two accounts (ADR-20261025131406), and at least
+   one of them is from the last hour (ADR-20261127103000). The page returns to
+   operational an hour after the last such failure, while the percentage keeps
+   counting it for 24 hours.
    Customer-caused failure codes and user-code build failures never count. One
    tenant's failing apps lower the published percentage but do not degrade the
    page on their own. Find the failing apps:

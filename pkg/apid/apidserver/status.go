@@ -201,6 +201,12 @@ type statusEvaluation struct {
 	// when the percentage came from Prometheus, which cannot tell them apart.
 	deploymentFailedAccounts int
 	deploymentTenantsCounted bool
+	// deploymentRecentFailures counts the platform-attributed failures in the
+	// last statusDeploymentRecentFailureWindow. deploymentRecencyKnown is
+	// false when that count is unavailable, and the breach then stands as
+	// before.
+	deploymentRecentFailures int
+	deploymentRecencyKnown   bool
 }
 
 type deploymentOutcomeCounter interface {
@@ -216,6 +222,13 @@ const statusDeploymentOutcomeWindow = 24 * time.Hour
 // platform: at ~16 deploys a day a single failure is already below the 99%
 // target (Hunt 14 H14-22).
 const statusDeploymentBreachMinFailedAccounts = 2
+
+// statusDeploymentRecentFailureWindow is how recent a platform-attributed
+// deployment failure must be for deployment success to degrade the
+// Deployments component (ADR-20261127103000). The 24-hour percentage stays as
+// published; without this, three rollout failures on 2026-11-27 kept the
+// page degraded for a day while every deploy after them went live.
+const statusDeploymentRecentFailureWindow = time.Hour
 
 // newStatusCache builds a cache. promURL is the local Prometheus base
 // (e.g. "http://10.0.0.1:9090"); empty string disables the cache and
@@ -391,6 +404,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 			buildAvailable = true
 			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(counts.Succeeded+counts.Failed) * 100
 			snap.deploymentFailedAccounts, snap.deploymentTenantsCounted = counts.FailedAccounts, true
+			c.countRecentDeploymentFailures(ctx, counter, now, counts, excluded, &snap)
 		case countErr == nil && len(excluded) > 0:
 			// An empty window after exclusions means only excluded
 			// accounts deployed. Prometheus cannot filter accounts, so
@@ -495,8 +509,7 @@ func applyStatusIndicatorBreaches(snap *statusEvaluation) {
 		if !current.available || current.value == nil || !current.breached(*current.value, current.target) {
 			continue
 		}
-		if current.component == publicstatus.ComponentDeployments &&
-			snap.deploymentTenantsCounted && snap.deploymentFailedAccounts < statusDeploymentBreachMinFailedAccounts {
+		if current.component == publicstatus.ComponentDeployments && !deploymentBreachIsCurrent(snap) {
 			continue
 		}
 		snap.states[current.component] = publicstatus.Worse(snap.states[current.component], publicstatus.StateDegraded)
@@ -505,6 +518,37 @@ func applyStatusIndicatorBreaches(snap *statusEvaluation) {
 		}
 		snap.legacy.Degraded = true
 	}
+}
+
+// deploymentBreachIsCurrent reports whether a deployment-success value below
+// target describes deploys failing now. It needs platform failures from at
+// least two accounts in the 24-hour window (ADR-20261025131406) and at least
+// one in the last hour (ADR-20261127103000). The Prometheus fallback can tell
+// neither, and a missing recent count keeps the breach.
+func deploymentBreachIsCurrent(snap *statusEvaluation) bool {
+	if !snap.deploymentTenantsCounted {
+		return true
+	}
+	if snap.deploymentFailedAccounts < statusDeploymentBreachMinFailedAccounts {
+		return false
+	}
+	return !snap.deploymentRecencyKnown || snap.deploymentRecentFailures > 0
+}
+
+// countRecentDeploymentFailures records how many platform-attributed failures
+// fall in the last statusDeploymentRecentFailureWindow. It skips the query
+// when the 24-hour window has none, since the shorter window is inside it.
+func (c *statusCache) countRecentDeploymentFailures(ctx context.Context, counter deploymentOutcomeCounter, now time.Time, day state.DeploymentOutcomeCounts, excluded []string, snap *statusEvaluation) {
+	if day.Failed == 0 {
+		snap.deploymentRecentFailures, snap.deploymentRecencyKnown = 0, true
+		return
+	}
+	recent, err := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentRecentFailureWindow), excluded...)
+	if err != nil {
+		c.log.Warn("status: recent deployment outcome aggregate failed", "err", err)
+		return
+	}
+	snap.deploymentRecentFailures, snap.deploymentRecencyKnown = recent.Failed, true
 }
 
 const statusHistoryDays = 30
