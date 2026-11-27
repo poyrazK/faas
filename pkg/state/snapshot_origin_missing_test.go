@@ -22,27 +22,9 @@ func TestMemStoreSnapshotsMissingFromOrigin(t *testing.T) {
 	if _, err := m.CreateComputeNode(ctx, second); err != nil {
 		t.Fatalf("CreateComputeNode: %v", err)
 	}
-	fail := func(depID, slug string, cause error) Snapshot {
-		_, dep := seedMemReplicaDeployment(t, m, depID, slug)
-		snap, err := m.CreateSnapshot(ctx, Snapshot{ID: "snap-" + depID, DeploymentID: dep.ID, FCVersion: "fc-1", StorageKey: SnapMemKey(dep.ID)})
-		if err != nil {
-			t.Fatalf("CreateSnapshot: %v", err)
-		}
-		if _, err := m.EnqueueSnapshotReplicasForNode(ctx, second.ID); err != nil {
-			t.Fatalf("Enqueue: %v", err)
-		}
-		job, err := m.ClaimSnapshotReplica(ctx, second.ID)
-		if err != nil || job.SnapshotID != snap.ID {
-			t.Fatalf("Claim = %+v, %v", job, err)
-		}
-		if err := m.MarkSnapshotReplicaFailedWithLease(ctx, snap.ID, second.ID, job.LeaseToken, cause); err != nil {
-			t.Fatalf("MarkFailed: %v", err)
-		}
-		return snap
-	}
-	missing := fail("dep-missing", "origin-missing", SnapshotOriginMissingError(errors.New("storage: object not found")))
-	evicted := fail("dep-evicted", "origin-evicted", PermanentSnapshotReplicaError(errors.New("replica evicted")))
-	transient := fail("dep-transient", "origin-transient", errors.New("connection reset"))
+	missing := failOriginReplica(t, m, second.ID, "dep-missing", "origin-missing", SnapshotOriginMissingError(errors.New("storage: object not found")))
+	evicted := failOriginReplica(t, m, second.ID, "dep-evicted", "origin-evicted", PermanentSnapshotReplicaError(errors.New("replica evicted")))
+	transient := failOriginReplica(t, m, second.ID, "dep-transient", "origin-transient", errors.New("connection reset"))
 
 	if got, _ := m.SnapshotsMissingFromOrigin(ctx, time.Hour, 10); len(got) != 0 {
 		t.Fatalf("a fresh capture inside its grace was returned: %v", got)
@@ -80,4 +62,27 @@ func TestMemStoreSnapshotsMissingFromOriginIgnoresEarlyFailures(t *testing.T) {
 	if got, _ := m.SnapshotsMissingFromOrigin(ctx, time.Hour, 10); len(got) != 0 {
 		t.Fatalf("an early failure retired the snapshot: %v", got)
 	}
+}
+
+// failOriginReplica seeds a live deployment with a snapshot, claims its
+// replica on nodeID and records cause as the replica's failure.
+func failOriginReplica(t *testing.T, m *MemStore, nodeID, depID, slug string, cause error) Snapshot {
+	t.Helper()
+	_, dep := seedMemReplicaDeployment(t, m, depID, slug)
+	ctx := context.Background()
+	snap, err := m.CreateSnapshot(ctx, Snapshot{ID: "snap-" + depID, DeploymentID: dep.ID, FCVersion: "fc-1", StorageKey: SnapMemKey(dep.ID)})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if _, err := m.EnqueueSnapshotReplicasForNode(ctx, nodeID); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	job, err := m.ClaimSnapshotReplica(ctx, nodeID)
+	if err != nil || job.SnapshotID != snap.ID {
+		t.Fatalf("Claim = %+v, %v", job, err)
+	}
+	if err := m.MarkSnapshotReplicaFailedWithLease(ctx, snap.ID, nodeID, job.LeaseToken, cause); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+	return snap
 }
