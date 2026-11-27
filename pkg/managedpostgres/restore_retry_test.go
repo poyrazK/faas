@@ -57,3 +57,23 @@ func TestRestoreRetryAdoptsReadyCopyAfterSourceChanges(t *testing.T) {
 		}
 	}
 }
+
+// A retry while another worker holds the copy's lease answers with the copy,
+// still provisioning, and the conflict, so an environment branch counts it as
+// in progress rather than a failed attempt (prod 2026-11-27).
+func TestRestoreRetryWhileLeasedNamesTheCopyInProgress(t *testing.T) {
+	ctx := context.Background()
+	f := newSlotFixture(t)
+	source, copy := f.sourceAndCopy(t)
+	f.store.mu.Lock()
+	leased := f.store.databases[copy.ID]
+	leased.State, leased.LeaseToken, leased.LeaseUntil = StateProvisioning, "other-worker", time.Now().Add(time.Hour)
+	f.store.databases[copy.ID] = leased
+	f.store.mu.Unlock()
+	calls := f.provider.restoreCalls
+	again, created, err := f.service.RestoreWithResult(ctx, RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID,
+		Name: copy.Name, PointInTime: copy.RestorePointInTime})
+	if !errors.Is(err, ErrConflict) || created || again.ID != copy.ID || again.State != StateProvisioning || f.provider.restoreCalls != calls {
+		t.Fatalf("leased retry = %+v created=%v calls=%d/%d err=%v; want the provisioning copy and a conflict", again, created, f.provider.restoreCalls, calls, err)
+	}
+}

@@ -389,6 +389,13 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 			return existing, false, nil
 		}
 		database, err := s.Reconcile(ctx, existing.AccountID, existing.ID)
+		if errors.Is(err, ErrConflict) && database.ID == "" && existing.State == StateProvisioning {
+			// Another worker holds the restore's lease: the copy is still being
+			// made. Name it with the conflict so a caller can tell that apart
+			// from a failed restore (an environment branch waits instead of
+			// backing off; prod 2026-11-27, two 5 s backoffs per branch).
+			database = existing
+		}
 		return database, false, err
 	}
 	if !errors.Is(err, ErrNotFound) {
