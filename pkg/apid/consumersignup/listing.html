@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP server</title>
+<link rel="stylesheet" href="../signup.css">
+<link rel="stylesheet" href="../listing.css">
+<script src="../listing.js" defer></script>
+</head>
+<body>
+<main class="card listing" aria-live="polite">
+  <header>
+    <p class="eyebrow">MCP server</p>
+    <h1 id="title">Loading…</h1>
+    <p id="summary"></p>
+    <p id="customers" class="muted" hidden></p>
+  </header>
+
+  <section id="listing-view" hidden>
+    <h2>Connect</h2>
+    <div class="key-row">
+      <code id="endpoint"></code>
+      <button id="copy-endpoint" type="button">Copy</button>
+    </div>
+    <p class="install">
+      <a id="cursor" class="button" rel="noopener">Add to Cursor</a>
+      <a id="vscode" class="button" rel="noopener">Add to VS Code</a>
+    </p>
+    <details>
+      <summary>Other clients</summary>
+      <p class="muted">Add this to your client's MCP configuration:</p>
+      <pre id="config"></pre>
+    </details>
+
+    <section id="plans-section" hidden>
+      <h2>Plans</h2>
+      <p id="testmode" class="notice" hidden>Test mode: no real card is charged.</p>
+      <ul id="plans" class="plans"></ul>
+      <p id="trial" class="muted" hidden></p>
+      <p id="signup" hidden><a id="signup-link" class="button">Sign up</a></p>
+    </section>
+
+    <h2>Tools</h2>
+    <ul id="tools" class="tools"></ul>
+    <p id="published" class="muted"></p>
+  </section>
+
+  <section id="message-view" hidden>
+    <p id="message"></p>
+  </section>
+</main>
+<footer class="muted">Hosted by Gregale</footer>
+</body>
+</html>

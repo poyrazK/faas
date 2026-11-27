@@ -60,11 +60,14 @@ import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyReques
 import type { CreateConsumerSignupRequest } from '../models/CreateConsumerSignupRequest.js';
 import type { CreateConsumerSignupResponse } from '../models/CreateConsumerSignupResponse.js';
 import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
+import type { MCPListingResponse } from '../models/MCPListingResponse.js';
 import type { MCPSellerStatsResponse } from '../models/MCPSellerStatsResponse.js';
+import type { PublicMCPListingResponse } from '../models/PublicMCPListingResponse.js';
 import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsumerBillingPolicyRequest.js';
 import type { PutAPIConsumerSpendCapRequest } from '../models/PutAPIConsumerSpendCapRequest.js';
 import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
 import type { PutConsumerSignupRequest } from '../models/PutConsumerSignupRequest.js';
+import type { PutMCPListingRequest } from '../models/PutMCPListingRequest.js';
 import type { StartConsumerUpgradeRequest } from '../models/StartConsumerUpgradeRequest.js';
 import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
@@ -478,6 +481,66 @@ export class ConsumersService {
         429: `Too many sign-ups from this address (\`consumer_signup_rate_limited\`) or for the app today (\`consumer_signup_daily_limit\`).`,
         502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
         503: `The app's billing setup cannot take sign-ups (\`consumer_signup_unavailable\`).`,
+      },
+    });
+  }
+  /**
+   * Read a sold MCP server's public listing.
+   * Needs no credential. Serves while the seller has published a listing
+   * and the app takes sign-ups: the tools as of the last publish, the
+   * offered plans and their current prices, the sign-up link and install
+   * links for MCP clients.
+   *
+   * @returns PublicMCPListingResponse The public listing with plans, sign-up and install links.
+   * @throws ApiError
+   */
+  public static getPublicMcpListing({
+    slug,
+  }: {
+    /**
+     * The app whose public listing to read.
+     */
+    slug: string,
+  }): CancelablePromise<PublicMCPListingResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-signup/{slug}/listing',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        404: `code: not_found`,
+        429: `Too many listing reads from this address (\`consumer_signup_rate_limited\`).`,
+      },
+    });
+  }
+  /**
+   * Read a listed MCP server's registry server.json.
+   * Needs no credential. The MCP registry server.json (schema
+   * 2025-12-11) of a listing with a registry name, with one
+   * streamable-http remote at the listed endpoint; submit it with
+   * mcp-publisher.
+   *
+   * @returns any The server.json document.
+   * @throws ApiError
+   */
+  public static getMcpListingServerJson({
+    slug,
+  }: {
+    /**
+     * The app whose registry server.json to read.
+     */
+    slug: string,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-signup/{slug}/server.json',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        404: `code: not_found`,
+        429: `Too many server.json reads from this address (\`consumer_signup_rate_limited\`).`,
       },
     });
   }
@@ -2349,6 +2412,94 @@ export class ConsumersService {
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
+      },
+    });
+  }
+  /**
+   * Read a sold MCP server's published listing.
+   * @returns MCPListingResponse The app's published listing.
+   * @throws ApiError
+   */
+  public static getMcpListing({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<MCPListingResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/mcp-listing',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Publish or refresh a sold MCP server's public listing.
+   * Publishes the server's title, summary, endpoint and tools as they are
+   * now; the page shows this snapshot until the next publish, which bumps
+   * version. The endpoint must be https on the app's own host. The page
+   * serves while the app takes sign-ups. With registry_name set, the
+   * listing also serves an MCP registry server.json.
+   *
+   * @returns MCPListingResponse The published listing.
+   * @throws ApiError
+   */
+  public static putMcpListing({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PutMCPListingRequest,
+  }): CancelablePromise<MCPListingResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/mcp-listing',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        413: `The request body is above 512 KiB (\`request_too_large\`).`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+      },
+    });
+  }
+  /**
+   * Take a sold MCP server's public listing down.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteMcpListing({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/mcp-listing',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `The app does not exist or has no published listing.`,
       },
     });
   }
