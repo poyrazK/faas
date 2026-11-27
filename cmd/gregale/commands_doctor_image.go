@@ -34,6 +34,10 @@ type doctorImageFlags struct {
 	// starts, serves HTTP on 0.0.0.0:$PORT and stays up (doctor_boot.go).
 	boot    bool
 	envFile string
+	// ramMB overrides the boot's memory limit; app is doctor's --app, whose
+	// RAM is the limit otherwise (doctorBootMemory).
+	ramMB int
+	app   string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -44,6 +48,7 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.dockerConfig, "docker-config", "", "use the image registry's credentials from this Docker config.json or its directory")
 	fs.BoolVar(&f.boot, "boot", false, "with --image, run the image with local Docker and check it starts, serves HTTP on 0.0.0.0:$PORT and stays up")
 	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
+	fs.IntVar(&f.ramMB, "ram", 0, "with --boot, memory limit in MB (default: --app's RAM, else your plan's default for a new app)")
 	return f
 }
 
@@ -71,6 +76,10 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	}
 	if visited["env-file"] && (!f.boot || strings.TrimSpace(f.envFile) == "") {
 		return errors.New("--env-file requires --boot and a file path")
+	}
+	// Docker itself refuses a limit below its minimum, with its own message.
+	if visited["ram"] && (!f.boot || f.ramMB <= 0) {
+		return errors.New("--ram requires --boot and a positive memory limit in MB")
 	}
 	if visited["registry-user"] || visited["registry-password-stdin"] {
 		if f.image == "" || f.user == "" || !f.passwordStdin {
@@ -220,7 +229,8 @@ func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	boot := runDoctorBootChecks(ctx, doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile})
+	memoryMB, memorySource := doctorBootMemory(ctx, flags)
+	boot := runDoctorBootChecks(ctx, doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource})
 	checks := report.Checks[:0]
 	for _, c := range report.Checks {
 		if c.Name != "startup-and-port" {
