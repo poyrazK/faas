@@ -116,6 +116,7 @@ func cmdRegistrySet(args []string) int {
 	username := fs.String("user", "", "username (required)")
 	password := fs.String("password", "", "password (compatibility; visible in shell history; prefer --password-stdin)")
 	passwordStdin := fs.Bool("password-stdin", false, "read password/token from stdin")
+	dockerConfig := fs.String("docker-config", "", "copy the credential `docker login` stored for --registry from this Docker config.json or its directory")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -126,7 +127,19 @@ func cmdRegistrySet(args []string) int {
 	if *passwordStdin && *password != "" {
 		return printErr("Invalid flags", fmt.Errorf("--password and --password-stdin are mutually exclusive"))
 	}
-	if *passwordStdin {
+	if *dockerConfig != "" {
+		if *username != "" || *password != "" || *passwordStdin {
+			return printErr("Invalid flags", fmt.Errorf("--docker-config supplies the user and password; remove --user, --password and --password-stdin"))
+		}
+		if *registry == "" {
+			return printErr("Invalid flags", fmt.Errorf("--docker-config needs --registry to choose the credential"))
+		}
+		cred, err := dockerConfigRegistryHostAuth(context.Background(), *dockerConfig, *registry, runDockerCredentialHelper)
+		if err != nil {
+			return printErr("Could not read registry credentials", err)
+		}
+		*username, *password = cred.Username, cred.Password
+	} else if *passwordStdin {
 		body, err := io.ReadAll(io.LimitReader(osStdin, int64(api.MaxRegistryPasswordBytes)+2))
 		if err != nil {
 			return printErr("Could not read registry password", err)
