@@ -81,17 +81,23 @@ func runtimeFromBaseRef(ref string) string {
 // leaves an artifact made FROM the previous base (release N runs beside
 // N-1, docs/release-compatibility.md), and splitting it at the new pin
 // failed the deployment with image_manifest_invalid. Without a recorded
-// base for runtime, the node's current base is used. drive0 stays the
-// node's current runner base either way (ADR-1500 §4): the /app layer
-// holds no Node, and the base keeps the build's major.
+// base for runtime, with a test base redirect, or when the provenance cannot be read, the node's
+// current base is used: the split then fails only if the artifact was not
+// built FROM it, as it did before. The test harness's base redirect
+// (deployBaseRefOverride) replaces every base reference, so it wins. drive0
+// stays the node's current runner base either way (ADR-1500 §4): the /app
+// layer holds no Node, and the base keeps the build's major.
 func (h *Handler) sharedRuntimeBaseDiffIDs(ctx context.Context, runtime string, dep state.Deployment) ([]string, error) {
 	builtFrom := ""
-	if dep.BuildID != "" {
+	if dep.BuildID != "" && h.deployBaseRefOverride == "" {
 		prov, err := h.store.BuildProvenanceByBuildID(ctx, dep.BuildID)
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 		case err != nil:
-			return nil, fmt.Errorf("read build provenance: %w", err)
+			if h.log != nil {
+				h.log.Warn("imaged: shared runtime split uses the node's current base: build provenance unreadable",
+					"deployment", dep.ID, "build", dep.BuildID, "err", err)
+			}
 		case recordedRunnerBase(prov.RuntimeBaseRef, runtime):
 			builtFrom = prov.RuntimeBaseRef
 		}
