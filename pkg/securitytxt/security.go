@@ -9,7 +9,7 @@ import "net/http"
 // at the apex; .well-known/security.txt in the repository is the same text.
 // Every URL here must resolve (issue #2518): add Encryption and
 // Acknowledgments only once a public key and an acknowledgments page exist.
-const Content = "Contact: mailto:security@gregale.dev\n" +
+const Content = "Contact: mailto:gregale@gregale.dev\n" +
 	"Contact: https://github.com/poyrazK/faas/security/advisories/new\n" +
 	"Expires: 2027-12-31T23:59:59z\n" +
 	"Preferred-Languages: en\n" +

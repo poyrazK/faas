@@ -8,7 +8,7 @@ expiry, canonical URLs and the disclosure policy. The RFC 9116
 key and an acknowledgments page exist, because every URL it lists must
 resolve.
 
-Security reports are accepted at `security@gregale.dev` or through the
+Security reports are accepted at `gregale@gregale.dev` or through the
 GitHub Security Advisories link in the live document. Our responsible
 disclosure policy acknowledges reports within 24 hours, completes triage
 within 72 hours, and provides a status update every seven days until the

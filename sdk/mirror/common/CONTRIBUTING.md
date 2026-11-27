@@ -8,7 +8,7 @@ names the upstream commit it came from in an `Upstream-Commit:` trailer.
 - **Pull requests** are welcome too. We port an accepted change upstream and
   it comes back in the next sync, so the pull request itself is closed rather
   than merged. You keep the credit in the upstream commit.
-- **Security issues** go to `security@gregale.dev`, never a public issue
+- **Security issues** go to `gregale@gregale.dev`, never a public issue
   (see [SECURITY.md](SECURITY.md)).
 
 Some tests in this repository read shared fixtures that live upstream, so a

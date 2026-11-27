@@ -6,7 +6,7 @@ Moved out of the customer page `docs/compliance/responsible-disclosure.md`
 ## Tracker and audit details
 
 - All reports land in an encrypted internal tracker (operator-side,
-  not in this repo) keyed by the `security@gregale.dev` mailbox.
+  not in this repo) keyed by the `gregale@gregale.dev` mailbox.
 - The tracker row carries: `received_at`, `acknowledged_at`,
   `severity`, `affected_component`, `reporter_handle`,
   `pgp_fingerprint_of_reporter` (if PGP used), `internal_status`,

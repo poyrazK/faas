@@ -171,7 +171,7 @@ tracked as a PR in the [issue #755 implementation plan](https://github.com/poyra
 |---|---|---|
 | `docs/compliance/iso27001-statement-of-applicability.md` | PR-2 | Yes |
 | `docs/compliance/subprocessors.md` + `subprocessors.json` + `subprocessor-check` CI gate | PR-3 | Yes |
-| `docs/compliance/responsible-disclosure.md` + `SECURITY.md` + `security@gregale.dev` mailbox | PR-4 | Yes |
+| `docs/compliance/responsible-disclosure.md` + `SECURITY.md` + `gregale@gregale.dev` mailbox | PR-4 | Yes |
 | GDPR self-serve endpoints (`GET /v1/account/export` + `DELETE /v1/account`) | PR-5 (issue #756) | Yes (P6.1–P6.3) |
 | `audit_log` table + hard-delete sweep | PR-6 | Yes (P5.1) |
 | DPA publication path + `POST /v1/account/dpa/sign` | PR-7 | Yes (P1.1, P3.2) |
