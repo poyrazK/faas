@@ -141,7 +141,7 @@ func loadLocalOCIArchiveWithProvenance(ctx context.Context, archivePath string, 
 func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding, runtime string, manifest api.AppManifest, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	var baseDiffIDs []string
 	if runtime != "" {
-		_, ids, err := h.runtimeBaseDiffIDs(ctx, runtime, "")
+		ids, err := h.sharedRuntimeBaseDiffIDs(ctx, runtime, dep)
 		if err != nil {
 			return rootfs.BuildResult{}, fmt.Errorf("imaged: shared runtime app layer: %w", err)
 		}

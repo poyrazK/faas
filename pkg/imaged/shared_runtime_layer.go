@@ -74,6 +74,39 @@ func runtimeFromBaseRef(ref string) string {
 	return runtime
 }
 
+// sharedRuntimeBaseDiffIDs returns the layer diff IDs of the runner base
+// dep's build artifact was made FROM, so the artifact splits at that base.
+// builderd records the digest-pinned base in the build's provenance. A
+// release that moves the node's runner-base pin while a build is in flight
+// leaves an artifact made FROM the previous base (release N runs beside
+// N-1, docs/release-compatibility.md), and splitting it at the new pin
+// failed the deployment with image_manifest_invalid. Without a recorded
+// base for runtime, the node's current base is used. drive0 stays the
+// node's current runner base either way (ADR-1500 §4): the /app layer
+// holds no Node, and the base keeps the build's major.
+func (h *Handler) sharedRuntimeBaseDiffIDs(ctx context.Context, runtime string, dep state.Deployment) ([]string, error) {
+	builtFrom := ""
+	if dep.BuildID != "" {
+		prov, err := h.store.BuildProvenanceByBuildID(ctx, dep.BuildID)
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+		case err != nil:
+			return nil, fmt.Errorf("read build provenance: %w", err)
+		case recordedRunnerBase(prov.RuntimeBaseRef, runtime):
+			builtFrom = prov.RuntimeBaseRef
+		}
+	}
+	_, ids, err := h.runtimeBaseDiffIDs(ctx, runtime, builtFrom)
+	return ids, err
+}
+
+// recordedRunnerBase reports whether ref is a digest-pinned runner base for
+// runtime, the only recorded base an artifact may be split at.
+func recordedRunnerBase(ref, runtime string) bool {
+	parsed, err := oci.ParseReference(ref)
+	return err == nil && parsed.Digest != "" && runtime != "" && runtimeFromBaseRef(ref) == runtime
+}
+
 type sharedRuntimeLayers struct {
 	layers  []io.Reader
 	cleanup func()
