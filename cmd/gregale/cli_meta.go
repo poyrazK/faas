@@ -6595,7 +6595,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "maintenance", Short: "Schedule native PostgreSQL base refreshes in a weekly UTC window", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "day", Short: "UTC weekday", Value: "WEEKDAY", ClosedSet: []string{"sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"}},
-				{Name: "start", Short: "window start in UTC", Value: "HH:MM"},
+				{Name: "start", Short: "UTC time the window opens", Value: "HH:MM"},
 				{Name: "duration", Short: "window length from 1m through 24h", Value: "DURATION"},
 				{Name: "off", Short: "remove the weekly window"},
 			}, Examples: []string{"gregale postgres maintenance orders --day sunday --start 02:00 --duration 1h"}},

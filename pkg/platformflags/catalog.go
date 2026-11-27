@@ -124,6 +124,10 @@ const (
 	// MCPToolInsights releases per-tool cost and argument-mismatch reads for
 	// hosted MCP servers (ADR-20261122194324).
 	MCPToolInsights = "mcp_tool_insights"
+	// PublicSourceDeploys lets source-ref deploys and scans read a public
+	// GitHub repository no installation of the account sees
+	// (ADR-20261126164847).
+	PublicSourceDeploys = "public_source_deploys"
 
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
@@ -643,6 +647,17 @@ var catalog = []Spec{
 		Description: "Serve each hosted MCP tool's estimated compute cost and argument mismatches beside its calls, errors and latency. " +
 			"Off, the reads leave those fields out.",
 		ADR:        "ADR-20261122194324",
+		Consumers:  []string{"apid"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-06-30",
+	},
+	{
+		Key:   PublicSourceDeploys,
+		Label: "Public repository deploys",
+		Description: "Let source-ref deploys and project scans read a public GitHub repository that no installation of the account sees, " +
+			"through githubd's public-read path, pinned to one commit and with no push-to-deploy binding. Decided by account and plan. " +
+			"Off, apid answers such a repository with the installation refusal it always gave.",
+		ADR:        "ADR-20261126164847",
 		Consumers:  []string{"apid"},
 		Attributes: []Attribute{AttributePlan},
 		RetireBy:   "2027-06-30",

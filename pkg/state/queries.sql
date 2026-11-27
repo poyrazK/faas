@@ -24441,7 +24441,13 @@ SELECT (jsonb_build_object(
  -- (#7923) keep the id without a foreign key.
  'deployment_verification_queries.deployment_id', (SELECT count(*) FROM deployment_verification_queries WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'instance_resource_minutes.deployment_id', (SELECT count(*) FROM instance_resource_minutes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
- 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=sqlc.arg(deployment_id)::uuid)
+ 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ -- Data API inspection admissions (#8068) pin the inspected deployment
+ -- without a foreign key.
+ 'data_api_inspection_admissions.deployment_id', (SELECT count(*) FROM data_api_inspection_admissions WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ -- A route split (#8100) records its route app's deployment without a
+ -- foreign key.
+ 'route_splits.target_deployment_id', (SELECT count(*) FROM route_splits WHERE target_deployment_id=sqlc.arg(deployment_id)::uuid)
 ))::jsonb AS borrowers;
 
 -- name: CloneCheckpointCompensationHasWorkloadCleanup :one

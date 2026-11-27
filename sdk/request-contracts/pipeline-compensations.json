@@ -489,6 +489,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [
@@ -646,6 +653,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [
@@ -803,6 +817,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           },
           "output": {
             "type": "object",
@@ -1027,6 +1048,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [
@@ -1189,6 +1217,13 @@
           },
           "replayed": {
             "type": "boolean"
+          },
+          "source_failure": {
+            "type": "string",
+            "enum": [
+              "source_unavailable",
+              "source_forbidden"
+            ]
           }
         },
         "required": [

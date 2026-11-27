@@ -509,6 +509,13 @@ func (c *Client) StreamSourceRef(ctx context.Context, accountID string, installa
 		cancel()
 		return nil, liftErr(err)
 	}
+	return newSourceRefResult(stream, cancel), nil
+}
+
+// newSourceRefResult pipes an archive stream into the io.ReadCloser both
+// StreamSourceRef and StreamPublicSourceRef return. cancel ends the child
+// RPC context when the reader closes.
+func newSourceRefResult(stream grpc.ServerStreamingClient[githubdpb.StreamSourceRefChunk], cancel context.CancelFunc) *StreamSourceRefResult {
 	pr, pw := io.Pipe()
 	res := &streamSourceRefConn{
 		pr:         pr,
@@ -522,7 +529,7 @@ func (c *Client) StreamSourceRef(ctx context.Context, accountID string, installa
 	// pipe. Close-on-error surfaces to Read; Close-on-EOF cleanly
 	// terminates the reader.
 	go res.pump()
-	return &StreamSourceRefResult{Body: res, Stats: &res.stats}, nil
+	return &StreamSourceRefResult{Body: res, Stats: &res.stats}
 }
 
 // GetBranchHead resolves a current branch head. found=false is reserved for

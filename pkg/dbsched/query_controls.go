@@ -240,11 +240,15 @@ func (p *PgStore) exchangeQueryControls(ctx context.Context, owner string, activ
 }
 
 func (p *PgStore) pruneQueryControls(ctx context.Context) error {
+	// One statement: the SQL prepare gate (and the extended protocol) refuse
+	// several commands in one literal.
 	_, err := p.pool.Exec(ctx, `
-		DELETE FROM native_postgres_query_snapshots
-		WHERE observed_at < clock_timestamp() - interval '1 minute';
+		WITH pruned_snapshots AS (
+			DELETE FROM native_postgres_query_snapshots
+			WHERE observed_at < clock_timestamp() - interval '1 minute'
+		)
 		DELETE FROM native_postgres_query_cancels
-		WHERE requested_at < clock_timestamp() - interval '5 minutes';
+		WHERE requested_at < clock_timestamp() - interval '5 minutes'
 	`)
 	return err
 }

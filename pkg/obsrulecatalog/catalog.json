@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "013bb067b3e7c67a4a3bf5152b81be6943191e8236105054af1e70fe94c4f63c",
+      "revision": "3914202fd6f417cefad5c9b7a046b7c25b2ab193a31de21b710b0cdb56b12d33",
       "files": [
         "faas.rules.yml"
       ],
@@ -1541,6 +1541,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7f7b35d7f6448a274c4519ff732e815b874b78c6065c98ca2434f06c5d909e68"
+          }
+        },
+        {
+          "id": "2f0d2b224015d2094bc3f700401c896ca21e2b037d35689e12526e08e0a14300",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_commit",
+          "rule_name": "FaasCommitReceiptStorageGrowing",
+          "definition": {
+            "expression_hash": "f94108532ccbf82aa19a7e7e786897cae4a0a6cfb5427bebb5a9a7315c2baef9",
+            "labels_hash": "a5281e0d559d4a2c6b4d4012631e67a1f4a8528b539f7379f3a74c327a1653b2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6f2d20444316692bf570a5de0d834e35c282ae247c5349d52e7396357a18781e"
           }
         },
         {
@@ -3868,6 +3881,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "5b25a928e775f2178d2a249bb1f2b9562f3ffd7a714b25c664f7a715a33dd3a6"
+          }
+        },
+        {
+          "id": "820dfa294c71d17f9b441955a9e5e721f8f1b40e68bff30212cd617f36992396",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_commit",
+          "rule_name": "FaasCommitReceiptUsageReconciliationStalled",
+          "definition": {
+            "expression_hash": "bca96c1d83d895fc95f2cf475352756e7c695b145df27ed279ec00578fc14dbe",
+            "labels_hash": "a5281e0d559d4a2c6b4d4012631e67a1f4a8528b539f7379f3a74c327a1653b2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a206a49e6730b2e98cb211de79e6f3c3fe16ae8bb74107c9631452ed59922b8b"
           }
         },
         {
@@ -7540,7 +7566,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "73b530814e1140d0f02578a6f94c26a643741202bdb4ded5ffed81408da1ec36",
+      "revision": "d944dc90dd9289ada6eed267c8424896af15f946f29fbb0655a166ce65cce21a",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9159,6 +9185,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7f7b35d7f6448a274c4519ff732e815b874b78c6065c98ca2434f06c5d909e68"
+          }
+        },
+        {
+          "id": "2f0d2b224015d2094bc3f700401c896ca21e2b037d35689e12526e08e0a14300",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_commit",
+          "rule_name": "FaasCommitReceiptStorageGrowing",
+          "definition": {
+            "expression_hash": "f94108532ccbf82aa19a7e7e786897cae4a0a6cfb5427bebb5a9a7315c2baef9",
+            "labels_hash": "a5281e0d559d4a2c6b4d4012631e67a1f4a8528b539f7379f3a74c327a1653b2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6f2d20444316692bf570a5de0d834e35c282ae247c5349d52e7396357a18781e"
           }
         },
         {
@@ -11590,6 +11629,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "5b25a928e775f2178d2a249bb1f2b9562f3ffd7a714b25c664f7a715a33dd3a6"
+          }
+        },
+        {
+          "id": "820dfa294c71d17f9b441955a9e5e721f8f1b40e68bff30212cd617f36992396",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_commit",
+          "rule_name": "FaasCommitReceiptUsageReconciliationStalled",
+          "definition": {
+            "expression_hash": "bca96c1d83d895fc95f2cf475352756e7c695b145df27ed279ec00578fc14dbe",
+            "labels_hash": "a5281e0d559d4a2c6b4d4012631e67a1f4a8528b539f7379f3a74c327a1653b2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a206a49e6730b2e98cb211de79e6f3c3fe16ae8bb74107c9631452ed59922b8b"
           }
         },
         {

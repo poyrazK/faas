@@ -86,6 +86,10 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":           authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote": authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/kill":            authz.OrgActionDeployProject,
+	// Flag change notifications name only the channels to alert: reading
+	// them follows the flag reads, choosing them deploys like a flag write.
+	"GET /v1/projects/{slug}/environments/{environment}/flags/notifications": authz.OrgActionReadProject,
+	"PUT /v1/projects/{slug}/environments/{environment}/flags/notifications": authz.OrgActionDeployProject,
 	// Flag experiments (ADR-20261115163113) follow the flag split.
 	"GET /v1/projects/{slug}/environments/{environment}/experiments":               authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}":         authz.OrgActionReadProject,

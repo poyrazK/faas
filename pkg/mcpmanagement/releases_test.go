@@ -30,6 +30,7 @@ type releaseFixture struct {
 	ambiguous       bool
 	waitReads       int
 	sourceHead      string
+	sourceReviewErr string
 	submissions     map[string]api.DeploymentSubmissionReceipt
 	attempts        []string
 	submissionReads int
@@ -55,6 +56,12 @@ func (f *releaseFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
+		if r.URL.Path == "/v1/apps/alpha/source-review" && f.sourceReviewErr != "" {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(api.Problem{Status: http.StatusNotFound, Code: f.sourceReviewErr, Title: "GitHub installation not found"})
+			return
+		}
 		if r.URL.Path == "/v1/apps/alpha/source-review" {
 			var input api.SourceReviewRequest
 			if json.NewDecoder(r.Body).Decode(&input) != nil {

@@ -494,6 +494,14 @@ func (s *Server) StreamSourceRef(req *githubdpb.StreamSourceRefRequest, stream g
 	if rc == nil {
 		return status.Error(codes.Unavailable, "githubd: source-ref streamer returned nil body")
 	}
+	return sendSourceArchive(stream, rc, resolvedCommitSHA, serviceTruncated, req.GetMaxArchiveBytes())
+}
+
+// sendSourceArchive streams rc to the caller in 32 KiB frames, stamping the
+// cumulative byte count, the cap flag and the resolved commit on each frame,
+// and closes rc. StreamSourceRef and StreamPublicSourceRef share it so both
+// wires carry identical terminal metadata.
+func sendSourceArchive(stream grpc.ServerStreamingServer[githubdpb.StreamSourceRefChunk], rc io.ReadCloser, resolvedCommitSHA string, serviceTruncated bool, maxArchiveBytes int64) error {
 	defer func() { _ = rc.Close() }()
 
 	const chunkSize = 32 * 1024
@@ -507,7 +515,7 @@ func (s *Server) StreamSourceRef(req *githubdpb.StreamSourceRefRequest, stream g
 				Data:          append([]byte(nil), buf[:n]...),
 				BytesStreamed: streamed,
 				Truncated: (serviceTruncated ||
-					(req.GetMaxArchiveBytes() > 0 && streamed > req.GetMaxArchiveBytes())) &&
+					(maxArchiveBytes > 0 && streamed > maxArchiveBytes)) &&
 					rerr == io.EOF,
 				ResolvedCommitSha: resolvedCommitSHA,
 			}
@@ -522,7 +530,7 @@ func (s *Server) StreamSourceRef(req *githubdpb.StreamSourceRefRequest, stream g
 				// no data. It also carries the canonical SHA.
 				if serr := stream.Send(&githubdpb.StreamSourceRefChunk{
 					BytesStreamed:     streamed,
-					Truncated:         serviceTruncated || (req.GetMaxArchiveBytes() > 0 && streamed > req.GetMaxArchiveBytes()),
+					Truncated:         serviceTruncated || (maxArchiveBytes > 0 && streamed > maxArchiveBytes),
 					ResolvedCommitSha: resolvedCommitSHA,
 				}); serr != nil {
 					return toStatusErr(serr)

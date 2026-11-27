@@ -2,6 +2,7 @@ package mcpmanagement
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -24,6 +25,12 @@ func (m *management) attachRetainedSource(ctx context.Context, p *releasePlan, d
 		environment = p.Scope
 	}
 	source, err := m.client.ReviewSourceRef(ctx, p.App, api.SourceReviewRequest{Repo: repo, Ref: commit, Environment: environment})
+	if retainedSourceNeedsInstallation(err) {
+		// A public repository deployed without an installation
+		// (ADR-20261126164847) has no reviewable access to rebuild through.
+		return invalid("invalid_target", "retained source rebuilds need a GitHub installation that can see "+repo+
+			"; a commit deployed from a public repository without one can be deployed again from source instead")
+	}
 	if err != nil {
 		return err
 	}
@@ -33,4 +40,11 @@ func (m *management) attachRetainedSource(ctx context.Context, p *releasePlan, d
 	p.Source, p.RequestedRef = &source, commit
 	p.ExpiresAt = time.Now().Add(releasePlanTTL + time.Duration(api.BuildTimeoutSeconds)*time.Second)
 	return nil
+}
+
+// retainedSourceNeedsInstallation reports a source review refused because no
+// installation of the account sees the repository.
+func retainedSourceNeedsInstallation(err error) bool {
+	var apiErr *api.APIError
+	return errors.As(err, &apiErr) && (apiErr.Problem.Code == api.CodeGitHubInstallNotFound || apiErr.Problem.Code == api.CodeGitHubRepoNotAccessible)
 }

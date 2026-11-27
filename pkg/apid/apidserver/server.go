@@ -541,6 +541,10 @@ type server struct {
 	dashboardExportLimiter *middleware.Limiter
 	// securityMail caps sign-in mail per account (security_mail_limit.go).
 	securityMail *securityMailLimiter
+	// publicSourceFetches caps an account's reads of public repositories
+	// without an installation (ADR-20261126164847); built on first use.
+	publicSourceFetchesOnce sync.Once
+	publicSourceFetches     *securityMailLimiter
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
