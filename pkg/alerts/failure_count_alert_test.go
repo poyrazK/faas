@@ -47,15 +47,23 @@ func TestEvaluatorBootFailures(t *testing.T) {
 			store := state.NewMemStore()
 			rule, ident := seedRouteAlertRule(t, store, state.AlertMetricBootFailures)
 			for _, ago := range tc.failures {
-				data, _ := json.Marshal(map[string]any{"app_id": rule.AppID, "reason": "exit 1"})
-				if err := store.AppendEventAt(context.Background(), "vmmd", "wake.boot_failed", nil, data, now.Add(-ago)); err != nil {
+				data, _ := json.Marshal(map[string]any{"app_id": rule.AppID, "reason": "vmm_boot_failed"})
+				if err := store.AppendEventAt(context.Background(), "schedd", "wake.boot_failed", nil, data, now.Add(-ago)); err != nil {
 					t.Fatal(err)
 				}
 			}
-			// Another app's failed boot is not this rule's.
-			other, _ := json.Marshal(map[string]any{"app_id": "other-app"})
-			if err := store.AppendEventAt(context.Background(), "vmmd", "wake.boot_failed", nil, other, now.Add(-time.Minute)); err != nil {
-				t.Fatal(err)
+			// None of these are this rule's: another app's failed boot, a
+			// mirror-mode boot of a canary candidate, and schedd failing to
+			// publish runtime state (a platform cause).
+			for _, payload := range []map[string]any{
+				{"app_id": "other-app", "reason": "vmm_boot_failed"},
+				{"app_id": rule.AppID, "reason": "vmm_boot_failed", "mirror": true},
+				{"app_id": rule.AppID, "reason": "record_runtime_failed"},
+			} {
+				data, _ := json.Marshal(payload)
+				if err := store.AppendEventAt(context.Background(), "schedd", "wake.boot_failed", nil, data, now.Add(-time.Minute)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			stats, channels := runFailureCountEvaluator(t, store, ident, now)
 			if fired := stats.Fired == 1; fired != tc.wantFire {
@@ -131,9 +139,9 @@ func TestMemStoreFailureCounts(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	store := state.NewMemStore()
-	data, _ := json.Marshal(map[string]any{"app_id": "app-1"})
+	data, _ := json.Marshal(map[string]any{"app_id": "app-1", "reason": "vmm_boot_failed"})
 	for _, at := range []time.Time{now.Add(-time.Minute), now.Add(-2 * time.Hour)} {
-		if err := store.AppendEventAt(ctx, "vmmd", "wake.boot_failed", nil, data, at); err != nil {
+		if err := store.AppendEventAt(ctx, "schedd", "wake.boot_failed", nil, data, at); err != nil {
 			t.Fatal(err)
 		}
 	}

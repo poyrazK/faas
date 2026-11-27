@@ -5,47 +5,57 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// wakeBootFailedKind mirrors events.WakeBootFailed; pkg/state cannot import
-// pkg/events.
-const wakeBootFailedKind = "wake.boot_failed"
+// Mirrors of pkg/events values; pkg/state cannot import pkg/events.
+const (
+	wakeBootFailedKind = "wake.boot_failed"
+	// vmmBootFailedReason is the only BootFailed reason the boot_failures
+	// metric counts: the VM failed to start. record_runtime_failed is schedd
+	// failing to publish runtime state, a platform cause.
+	vmmBootFailedReason = "vmm_boot_failed"
+)
 
 // FailureAlertCounter counts the failures behind the boot_failures and
 // job_failures alert metrics. It is optional so narrow test stores need not
 // implement it; the evaluator degrades a rule on a store without it rather
 // than reporting zero failures.
 type FailureAlertCounter interface {
-	// CountAppBootFailures counts the app's wake.boot_failed events in
-	// [since, until].
+	// CountAppBootFailures counts the app's failed VM boots in [since,
+	// until], leaving out mirror-mode boots of a candidate deployment.
 	CountAppBootFailures(ctx context.Context, appID string, since, until time.Time) (int64, error)
 	// CountAccountFailedJobRuns counts the account's job runs that finished
 	// failed or dead-lettered in [since, until].
 	CountAccountFailedJobRuns(ctx context.Context, accountID string, since, until time.Time) (int64, error)
 }
 
-// CountAppBootFailures reads events through events_kind_at_idx: failed boots
-// are rare, so the (kind, at) range is small before the app filter.
+// CountAppBootFailures runs the sqlc CountAppBootFailures query.
 func (s *PgStore) CountAppBootFailures(ctx context.Context, appID string, since, until time.Time) (int64, error) {
-	var n int64
-	err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM events
-		WHERE kind = $1 AND at >= $2 AND at <= $3 AND data->>'app_id' = $4`,
-		wakeBootFailedKind, since, until, appID).Scan(&n)
+	n, err := sqlc.New().CountAppBootFailures(ctx, s.pool, sqlc.CountAppBootFailuresParams{
+		AppID: appID,
+		Since: pgtype.Timestamptz{Time: since, Valid: true},
+		Until: pgtype.Timestamptz{Time: until, Valid: true},
+	})
 	if err != nil {
 		return 0, fmt.Errorf("state: count app boot failures: %w", err)
 	}
 	return n, nil
 }
 
-// CountAccountFailedJobRuns reads job_runs through job_runs_failed_finished_idx.
+// CountAccountFailedJobRuns runs the sqlc CountAccountFailedJobRuns query.
 func (s *PgStore) CountAccountFailedJobRuns(ctx context.Context, accountID string, since, until time.Time) (int64, error) {
-	var n int64
-	err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM job_runs
-		WHERE account_id = $1::uuid AND aggregate_status IN ('failed', 'dead_letter')
-		  AND finished_at >= $2 AND finished_at <= $3`,
-		accountID, since, until).Scan(&n)
+	var account pgtype.UUID
+	if err := account.Scan(accountID); err != nil {
+		return 0, fmt.Errorf("state: count account failed job runs: account id: %w", err)
+	}
+	n, err := sqlc.New().CountAccountFailedJobRuns(ctx, s.pool, sqlc.CountAccountFailedJobRunsParams{
+		AccountID: account,
+		Since:     pgtype.Timestamptz{Time: since, Valid: true},
+		Until:     pgtype.Timestamptz{Time: until, Valid: true},
+	})
 	if err != nil {
 		return 0, fmt.Errorf("state: count account failed job runs: %w", err)
 	}
@@ -62,9 +72,11 @@ func (m *MemStore) CountAppBootFailures(_ context.Context, appID string, since, 
 			continue
 		}
 		var data struct {
-			AppID string `json:"app_id"`
+			AppID  string `json:"app_id"`
+			Reason string `json:"reason"`
+			Mirror *bool  `json:"mirror"`
 		}
-		if json.Unmarshal(e.Data, &data) == nil && data.AppID == appID {
+		if json.Unmarshal(e.Data, &data) == nil && data.AppID == appID && data.Reason == vmmBootFailedReason && data.Mirror == nil {
 			n++
 		}
 	}

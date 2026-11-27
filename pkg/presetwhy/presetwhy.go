@@ -174,7 +174,11 @@ var catalog = map[string]row{
 			DocsURL: "/docs/alerts#boot-and-job-failures",
 		},
 		Observed: func(observed float64) (why, fix string) {
-			return fmt.Sprintf("each job run records its final status; %.0f job runs in this account finished failed or dead-lettered within the rolling 1-hour window", observed),
+			runs := "job runs"
+			if observed == 1 {
+				runs = "job run"
+			}
+			return fmt.Sprintf("each job run records its final status; %.0f %s in this account finished failed or dead-lettered within the rolling 1-hour window", observed, runs),
 				"• `gregale job runs <job>` lists recent runs and their status\n• `gregale job logs <job> <run> <task>` shows why a task failed\n• retry a run with `gregale job retry <job> <run> <task>` once the cause is fixed"
 		},
 	},

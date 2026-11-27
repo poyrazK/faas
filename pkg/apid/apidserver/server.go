@@ -5139,6 +5139,9 @@ func (s *server) handler() http.Handler {
 	// Control-plane health: Postgres, backups and WAL, outboxes, pools (ADR-20261126120000).
 	mux.HandleFunc("GET /v1/admin/obs/control-plane",
 		s.authLimited(s.requireOperatorSessionRead(s.obsControlPlane)))
+	// Egress denials and abuse signals, fleet-wide (ADR-20261127100000).
+	mux.HandleFunc("GET /v1/admin/obs/egress",
+		s.authLimited(s.requireOperatorSessionRead(s.obsEgress)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",

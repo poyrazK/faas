@@ -370,7 +370,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
 		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected || IsRouteAlertMetric(metric) ||
-		metric == AlertMetricAIBudgetAlerts || metric == AlertMetricJobFailures {
+		metric == AlertMetricAIBudgetAlerts || metric == AlertMetricBootFailures || metric == AlertMetricJobFailures {
 		return action == "" || action == "webhook"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
@@ -769,10 +769,14 @@ const AlertMetricAIBudgetAlerts = "ai_budget_alerts"
 // could set (Observe audit 2026-11-21, finding 18). App-scoped.
 const AlertMetricOOMKills = "oom_kills"
 
-// AlertMetricBootFailures counts the app's failed boots within the window. An
-// app that crashes on start and scales to zero between wakes answers some
-// requests and never trips api_up; support saw these as boot_failing
-// attention signals with no alert a customer could set. App-scoped.
+// AlertMetricBootFailures counts the app's failed VM boots within the window,
+// leaving out mirror-mode boots of a candidate deployment and schedd's own
+// runtime-state write failures. An app that crashes on start and scales to
+// zero between wakes answers some requests and never trips api_up; support
+// saw these as boot_failing attention signals with no alert a customer could
+// set. App-scoped. Webhook action only: a node fault also fails boots, and
+// the count is not tied to one deployment, so a rollback could undo a
+// healthy release, and fire again on the same failures after the cooldown.
 const AlertMetricBootFailures = "boot_failures"
 
 // AlertMetricJobFailures counts the account's job runs that finished failed
@@ -851,6 +855,8 @@ func AlertMetricActionRestriction(metric string) string {
 		return "log search alerts support webhook action only"
 	case AlertMetricAIBudgetAlerts:
 		return "AI budget alerts support webhook action only"
+	case AlertMetricBootFailures:
+		return "boot failure alerts support webhook action only"
 	case AlertMetricJobFailures:
 		return "job failure alerts support webhook action only"
 	}

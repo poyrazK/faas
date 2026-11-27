@@ -7,11 +7,11 @@
 --   job_failures   the account's job runs that finished failed or
 --                  dead-lettered within the window. A rule lives on an app
 --                  but counts every job, like account_spend_eur. Webhook
---                  action only (alert_rules_job_failures_chk).
+--                  action only (alert_rules_failure_count_action_chk).
 -- Each gets a preset so it shows in the dashboard grid.
 --
--- alert_rules_job_failures_chk is added NOT VALID and validated first. Each
--- metric CHECK is then replaced online, as in
+-- alert_rules_failure_count_action_chk is added NOT VALID and validated
+-- first. Each metric CHECK is then replaced online, as in
 -- 20261112122644583_ai_budget_alert_metric: a widened copy of its current
 -- definition (which keeps metrics other migrations added) is added NOT VALID
 -- under a new name and validated, the old one is dropped, the old name is
@@ -24,12 +24,12 @@
 SET lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
- IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_job_failures_chk') THEN
-  ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_job_failures_chk CHECK ((metric <> 'job_failures') OR (action = 'webhook')) NOT VALID;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_failure_count_action_chk') THEN
+  ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_failure_count_action_chk CHECK ((metric NOT IN ('boot_failures', 'job_failures')) OR (action = 'webhook')) NOT VALID;
  END IF;
 END $$;
 -- +goose StatementEnd
-ALTER TABLE alert_rules VALIDATE CONSTRAINT alert_rules_job_failures_chk;
+ALTER TABLE alert_rules VALIDATE CONSTRAINT alert_rules_failure_count_action_chk;
 -- +goose StatementBegin
 DO $$ DECLARE base text;
 BEGIN
@@ -120,7 +120,7 @@ BEGIN
   RAISE EXCEPTION 'delete boot_failures and job_failures alert rules before rollback';
  END IF;
  DELETE FROM alert_presets WHERE name IN ('boot_failing', 'job_failures');
- ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_job_failures_chk;
+ ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_failure_count_action_chk;
  SELECT pg_get_constraintdef(oid) INTO rules_def FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_chk';
  IF position(clause in rules_def) > 0 THEN
   ALTER TABLE alert_rules DROP CONSTRAINT alert_rules_metric_chk;

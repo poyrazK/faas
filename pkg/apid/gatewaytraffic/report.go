@@ -129,7 +129,7 @@ func Read(ctx context.Context, client *promql.Client, window time.Duration, at t
 	if client == nil || client.BaseURL() == "" {
 		return Samples{Source: SourceNotConfigured, ByQuery: map[string][]promql.VectorSample{}}
 	}
-	return read(ctx, client, window, at)
+	return read(ctx, client.WithTimeout(Budget(window)), window, at)
 }
 
 func read(ctx context.Context, q VectorQuerier, window time.Duration, at time.Time) Samples {

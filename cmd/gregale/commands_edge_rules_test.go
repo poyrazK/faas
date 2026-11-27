@@ -931,6 +931,8 @@ func TestWarnRootOnlyProtectiveRule(t *testing.T) {
 		{kind: "jwt", warn: true},
 		{kind: "maintenance", warn: true},
 		{kind: "ip", pathGiven: true},
+		{kind: "waf"},
+		{kind: "challenge"},
 		{kind: "redirect"},
 		{kind: "cors"},
 	}
@@ -943,6 +945,29 @@ func TestWarnRootOnlyProtectiveRule(t *testing.T) {
 		got := strings.Contains(stderr.String(), "covers only the root path")
 		if got != tc.warn {
 			t.Errorf("kind=%s pathGiven=%v: warned=%v, want %v (stderr %q)", tc.kind, tc.pathGiven, got, tc.warn, stderr.String())
+		}
+	}
+}
+
+// A waf or challenge rule created without --match-path covers every path; a
+// WAF made with the obvious command inspected only / and left the rest open.
+func TestDefaultEdgeRuleMatchPath(t *testing.T) {
+	cases := []struct {
+		kind, given string
+		pathGiven   bool
+		want        string
+	}{
+		{kind: "waf", given: "/", want: "/**"},
+		{kind: "challenge", given: "/", want: "/**"},
+		{kind: "waf", given: "/", pathGiven: true, want: "/"},
+		{kind: "waf", given: "/api/**", pathGiven: true, want: "/api/**"},
+		{kind: "ip", given: "/", want: "/"},
+		{kind: "validate", given: "/", want: "/"},
+		{kind: "redirect", given: "/", want: "/"},
+	}
+	for _, tc := range cases {
+		if got := main.DefaultEdgeRuleMatchPath(tc.kind, tc.given, tc.pathGiven); got != tc.want {
+			t.Errorf("kind=%s given=%q pathGiven=%v: got %q, want %q", tc.kind, tc.given, tc.pathGiven, got, tc.want)
 		}
 	}
 }
