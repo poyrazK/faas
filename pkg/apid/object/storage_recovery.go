@@ -61,7 +61,7 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 		} else {
 			err = s.inventoryRequestRecorder(b)(callCtx)
 			if err == nil {
-				err = backend.Provider.CreateBucket(callCtx, b.PhysicalName)
+				err = s.createProviderBucket(callCtx, backend, b)
 			}
 			if err == nil {
 				s.startAllVersionAccounting(callCtx, backend.Provider, b)
@@ -118,6 +118,25 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 		s.wakeObjectInventory()
 	}
 	return err
+}
+
+// createProviderBucket sends the provider's Object Lock creation flag when
+// the bucket's journal holds the customer's creation request. Recovery reads
+// the same journal, so a retry never drops it (ADR-20261119065000).
+func (s *Service) createProviderBucket(ctx context.Context, backend objectstorage.Backend, b state.ObjectBucket) error {
+	// An unreadable journal must not create the bucket without the flag.
+	locked, err := objectLockRequired(ctx, s.Host.Store(), b)
+	if err != nil {
+		return err
+	}
+	if !locked {
+		return backend.Provider.CreateBucket(ctx, b.PhysicalName)
+	}
+	creator, ok := backend.Provider.(objectstorage.ObjectLockBucketCreator)
+	if !ok {
+		return objectstorage.ErrInvalid
+	}
+	return creator.CreateObjectLockBucket(ctx, b.PhysicalName)
 }
 
 // accountErasureDue reports a bucket whose owner's deletion grace has ended:

@@ -208,7 +208,7 @@ func (s *server) dashboardCreateStorageBucket(w http.ResponseWriter, r *http.Req
 	if !publicRead {
 		serveAt = ""
 	}
-	req := object.CreateBucketRequest{Name: strings.TrimSpace(r.FormValue("name")), Scope: strings.TrimSpace(r.FormValue("scope")), Region: strings.TrimSpace(r.FormValue("region")), Public: publicRead, ServeAt: serveAt}
+	req := object.CreateBucketRequest{Name: strings.TrimSpace(r.FormValue("name")), Scope: strings.TrimSpace(r.FormValue("scope")), Region: strings.TrimSpace(r.FormValue("region")), Public: publicRead, ServeAt: serveAt, ObjectLock: r.FormValue("object_lock") == "on"}
 	slug := r.PathValue("slug")
 	resp := s.forwardDashboardStorageJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets", "", url.Values{}, req, s.object.CreateBucket)
 	if !dashboardMutationSucceeded(w, resp) {

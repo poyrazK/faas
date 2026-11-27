@@ -2474,6 +2474,14 @@ bucket lock, exact-version lock, versioning, history listing and all-version
 inventory. These flags do not change immutable placement. Capability discovery
 makes no native request and does not establish native permissions or health.
 
+Providers that accept Object Lock only in `CreateBucket` (OVHcloud) are
+enrolled with `"object_lock":{"enabled":true,"creation_only":true}`
+(ADR-20261119065000). `creation_only` requires `enabled`. Customers then choose
+Object Lock when creating a bucket (`object_lock: true`, `gregale add bucket
+--object-lock`); enabling it on an existing bucket answers
+`409 object_lock_requires_new_bucket` (S3: `InvalidBucketState`). Every member
+of a placement pool must declare the same `object_lock` block.
+
 `GET /v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities` lists the enrolled
 bucket configuration and default event hold capabilities.
 `GET .../object-lock` returns durable progress, separate desired/native observed

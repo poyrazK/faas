@@ -742,6 +742,7 @@ var cliCommands = []cliCommand{
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "region", Short: "object-storage region", Value: "REGION"},
+				{Name: "object-lock", Short: "create the bucket with Object Lock (permanent; keeps every version)"},
 				{Name: "public", Short: "serve objects publicly from the app host"},
 				{Name: "serve-at", Short: "public mount path", Value: "PATH"},
 				{Name: "permission", Short: "compute binding permission", Value: "MODE", ClosedSet: []string{"read", "write", "read_write"}},

@@ -205,6 +205,12 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if !ok {
 		return m, api.ErrCapacity("plan limits not loaded")
 	}
+	if prob := s.RouteSplitProblem(ctx, nil, &state.EdgeRule{
+		AccountID: acct.ID, AppID: app.ID, Name: req.Name, Kind: state.EdgeRuleKind(req.Kind),
+		MatchHost: strings.ToLower(req.MatchHost), MatchPath: matchPath, Enabled: enabled,
+	}); prob != nil {
+		return m, prob
+	}
 	action := withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty)
 	if prob := s.sealHeaderSecrets(ctx, app, &action, nil); prob != nil {
 		return m, prob
@@ -454,6 +460,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 	if req.MatchHost != nil {
 		hosts = append(hosts, *req.MatchHost)
 	}
+	if prob := s.RouteSplitProblem(ctx, &row, updatedRule(row, req)); prob != nil {
+		return m, prob
+	}
 	params := penaltyUpdateParams(row, req, edgeRuleUpdateParamsFrom(req, row.Kind))
 	if params.Action != nil {
 		app, appErr := s.Host.Store().AppByID(ctx, row.AppID)
@@ -577,4 +586,22 @@ func penaltyUpdateParams(row state.EdgeRule, req api.UpdateEdgeRuleRequest, para
 	}
 	params.Action = &action
 	return params
+}
+
+// updatedRule is row as req would leave the fields a route split checks.
+func updatedRule(row state.EdgeRule, req api.UpdateEdgeRuleRequest) *state.EdgeRule {
+	after := row
+	if req.Name != nil {
+		after.Name = *req.Name
+	}
+	if req.MatchHost != nil {
+		after.MatchHost = strings.ToLower(*req.MatchHost)
+	}
+	if req.MatchPath != nil {
+		after.MatchPath = *req.MatchPath
+	}
+	if req.Enabled != nil {
+		after.Enabled = *req.Enabled
+	}
+	return &after
 }

@@ -92,6 +92,7 @@ func cmdAddBucket(args []string) int {
 	region := fs.String("region", "", "object-storage region (uses the account default when omitted)")
 	public := fs.Bool("public", false, "serve objects publicly from the app host")
 	serveAt := fs.String("serve-at", "", "public mount path (required with --public)")
+	objectLock := fs.Bool("object-lock", false, "create the bucket with Object Lock; permanent, keeps every object version, and cannot be added later on some storage")
 	permission := fs.String("permission", api.ObjectBucketPermissionReadWrite, "compute binding permission: read|write|read_write")
 	label := fs.String("label", "compute", "label for the bucket-scoped compute credential")
 	prefix := fs.String("prefix", "", "uppercase prefix for injected storage secret names")
@@ -108,7 +109,7 @@ func cmdAddBucket(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add bucket NAME [--app APP] [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
+	usage := "usage: gregale add bucket NAME [--app APP] [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--object-lock] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
 	// A standalone app reads the default scope, so --env defaults to it once
 	// the app is known; only a project app outside a linked checkout needs
 	// --env (Snapbox SB-2). The CLI named the answer and still made the user
@@ -153,7 +154,9 @@ func cmdAddBucket(args []string) int {
 		return printErr("Could not resolve object-storage bucket", err)
 	}
 	bucketCreated := false
-	if !found {
+	// Object Lock is chosen at creation; resending the create for an
+	// existing bucket lets the server confirm it has it (ADR-20261119065000).
+	if !found || *objectLock {
 		// add bucket always binds; on a plan without compute bindings the bind
 		// step is refused, so refuse before leaving an unattached bucket.
 		if problem := addBucketBindingUnavailable(ctx, client); problem != nil {
@@ -161,12 +164,12 @@ func cmdAddBucket(args []string) int {
 		}
 		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("bucket", appName, name, *scope))
 		bucket, err = client.CreateObjectBucket(createCtx, appName, api.CreateObjectBucketRequest{
-			Name: name, Scope: strings.TrimSpace(*scope), Region: strings.TrimSpace(*region), Public: *public, ServeAt: strings.TrimSpace(*serveAt),
+			Name: name, Scope: strings.TrimSpace(*scope), Region: strings.TrimSpace(*region), Public: *public, ServeAt: strings.TrimSpace(*serveAt), ObjectLock: *objectLock,
 		})
 		if err != nil {
 			return printErr("Could not create object-storage bucket", err)
 		}
-		bucketCreated = true
+		bucketCreated = !found
 	}
 	bucket, err = waitForObjectBucket(ctx, client, appName, bucket, *waitTimeout)
 	if err != nil {
