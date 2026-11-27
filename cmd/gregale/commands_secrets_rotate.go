@@ -105,7 +105,7 @@ func secretsRotate(args []string) int {
 			}
 			p, err := parseDotenvLine(line)
 			if err != nil {
-				_, _ = fmt.Fprintln(osStderr, err)
+				_, _ = fmt.Fprintln(osStderr, "env rotate:", err)
 				return 1
 			}
 			pair = p

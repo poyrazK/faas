@@ -46,4 +46,8 @@ func TestEgressAllowlistRefusesBlockedRanges(t *testing.T) {
 	if code, body := patch(held.String(), "100.0.0.0/8", "203.0.113.0/24"); code != http.StatusOK {
 		t.Fatalf("held entry plus public ranges: %d %s, want 200", code, body)
 	}
+	// The held entry in an unmasked spelling is still the held entry.
+	if code, body := patch("192.168.1.1/16", "203.0.113.0/24"); code != http.StatusOK {
+		t.Fatalf("held entry unmasked: %d %s, want 200", code, body)
+	}
 }

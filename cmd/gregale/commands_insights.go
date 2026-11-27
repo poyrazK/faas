@@ -80,6 +80,11 @@ func cmdInsights(args []string) int {
 		return 1
 	}
 	verb, args := args[0], args[1:]
+	// insightsVerbs lists the singular names, so they must run too: `insight
+	// event signup` refused "event" while naming it as valid (review of r60).
+	if plural, ok := map[string]string{"event": "events", "request": "requests"}[verb]; ok {
+		verb = plural
+	}
 	if verb == "cohorts" {
 		return cmdInsightCohorts(args)
 	}

@@ -19,7 +19,9 @@ func TestJobStartFailureClassifiesCustomerErrors(t *testing.T) {
 		class string
 	}{
 		{"not in PATH", &exec.Error{Name: "echo a; echo b", Err: exec.ErrNotFound}, 127, "failed"},
-		{"absolute path missing", &fs.PathError{Op: "fork/exec", Path: "/bin/nope", Err: syscall.ENOENT}, 127, "failed"},
+		{"absolute path missing", &exec.Error{Name: "/bin/nope", Err: fs.ErrNotExist}, 127, "failed"},
+		{"absolute path not executable", &exec.Error{Name: "/app/run.sh", Err: fs.ErrPermission}, 126, "failed"},
+		{"interpreter missing", &fs.PathError{Op: "fork/exec", Path: "/app/run", Err: syscall.ENOENT}, 127, "failed"},
 		{"not executable", &fs.PathError{Op: "fork/exec", Path: "/app/run.sh", Err: syscall.EACCES}, 126, "failed"},
 		{"bad format", &fs.PathError{Op: "fork/exec", Path: "/app/run", Err: syscall.ENOEXEC}, 126, "failed"},
 		{"directory", &fs.PathError{Op: "fork/exec", Path: "/app", Err: syscall.EISDIR}, 126, "failed"},
@@ -28,11 +30,21 @@ func TestJobStartFailureClassifiesCustomerErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			code, class := jobStartFailure(tc.err)
+			code, class := jobStartFailure(tc.err, nil)
 			if code != tc.code || class != tc.class {
 				t.Fatalf("jobStartFailure(%v) = %d %q, want %d %q", tc.err, code, class, tc.code, tc.class)
 			}
 		})
+	}
+}
+
+// A missing or unreadable working directory fails exec with the same ENOENT
+// as a missing program; it is not the command's fault (review of r62).
+func TestJobStartFailureKeepsABadWorkdirInfra(t *testing.T) {
+	err := &fs.PathError{Op: "fork/exec", Path: "/app/run", Err: syscall.ENOENT}
+	dirErr := &fs.PathError{Op: "stat", Path: "/app", Err: syscall.ENOENT}
+	if code, class := jobStartFailure(err, dirErr); code != 126 || class != "infra" {
+		t.Fatalf("jobStartFailure with a missing workdir = %d %q, want 126 \"infra\"", code, class)
 	}
 }
 

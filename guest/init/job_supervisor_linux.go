@@ -225,7 +225,11 @@ func superviseJobCommandWithStdio(m JobManifest, proc jobProcess, grace time.Dur
 		}
 	}
 	if err := cmd.Start(); err != nil {
-		exitCode, errorClass := jobStartFailure(err)
+		var dirErr error
+		if proc.Dir != "" {
+			_, dirErr = os.Stat(proc.Dir)
+		}
+		exitCode, errorClass := jobStartFailure(err, dirErr)
 		if hint := jobStartHint(proc.Argv); hint != "" {
 			log.Error("runJob: os/exec start", "err", err, "command", proc.Argv[0], "hint", hint)
 		} else {

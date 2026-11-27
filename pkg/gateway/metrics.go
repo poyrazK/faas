@@ -2842,8 +2842,11 @@ func (m *Metrics) ObserveNotificationPayloadRejected() {
 // release's 5xx series appeared with its first errors already counted, and
 // increase() dropped them: app health read "10 of 41 requests returned 5xx
 // (24.39%), too few to classify" while 30 of 62 had failed (prod hunt r58).
-// The admitted set is capped per app, so this adds at most four series per
-// admitted deployment.
+// It runs on the deployment's first request, so only the other three classes
+// start at zero: the first request's own class is still created counted, and
+// what it sees before the first scrape is lost. The admitted set is capped per
+// app; each class is a histogram (11 buckets + +Inf + sum + count), so this
+// adds about 56 series per admitted deployment.
 func (m *Metrics) preInstantiateDeploymentClasses(appID, deploymentID string) {
 	if m == nil || m.requestDurationByDeployment == nil {
 		return

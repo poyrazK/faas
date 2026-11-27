@@ -448,8 +448,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			// rest of the platform denylist) was saved and reported as
 			// "updated", though no allowlist opens it (prod hunt r58:
 			// 10.0.0.0/8). Only new entries are refused, so an app that
-			// already holds one can still change its list.
-			if blocked, ok := egressAllowlistBlockedRange(prefix); ok && !slices.Contains(app.EgressAllowlist, prefix) {
+			// already holds one can still change its list. Held entries
+			// compare masked: 10.0.0.1/8 resubmits the stored 10.0.0.0/8.
+			if blocked, ok := egressAllowlistBlockedRange(prefix); ok && !slices.ContainsFunc(app.EgressAllowlist, func(h netip.Prefix) bool { return h.Masked() == prefix.Masked() }) {
 				return api.ErrInvalidEgressAllowlist(raw, fmt.Errorf("it is inside %s, which apps can never reach; an allowlist entry does not open it (see https://gregale.dev/docs/egress-denylist)", blocked))
 			}
 			key := prefix.String()

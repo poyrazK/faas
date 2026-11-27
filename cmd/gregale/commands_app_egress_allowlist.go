@@ -74,7 +74,9 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		case action == "add":
 			current = append(current, prefix)
 		case held < 0:
-			return printErr("Not in the egress allowlist", fmt.Errorf("%s is not in %s's egress allowlist; `gregale app %s egress-allowlist show` lists it", prefix, slug, slug))
+			// Idempotent like add: scripts run remove to make sure an entry is gone.
+			_, _ = fmt.Fprintf(osStdout, "%s is not in %s's egress allowlist; nothing changed.\n", prefix, slug)
+			return 0
 		default:
 			current = append(current[:held], current[held+1:]...)
 		}

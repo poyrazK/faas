@@ -72,6 +72,7 @@ type appNetworkPrivateNetwork struct {
 	StatusDetail string   `json:"status_detail,omitempty"`
 	Error        string   `json:"error,omitempty"`
 	NotOffered   bool     `json:"not_offered,omitempty"`
+	PlanDenied   bool     `json:"plan_denied,omitempty"`
 }
 
 type appNetworkUpstreams struct {
@@ -179,6 +180,7 @@ func loadAppNetworkSnapshot(ctx context.Context, client *Client, slug string) (a
 		snapshot.PrivateNetwork.Error = privateErr.Error()
 		snapshot.PrivateNetwork.Detail = "private network attachment status could not be read"
 		snapshot.PrivateNetwork.NotOffered = apiErrorCodeIs(privateErr, api.CodePrivateNetworkNotEnabled)
+		snapshot.PrivateNetwork.PlanDenied = apiErrorCodeIs(privateErr, api.CodePlanPrivateNetworkNotAllowed)
 	} else {
 		snapshot.PrivateNetwork.Available = true
 		snapshot.PrivateNetwork.Status = "not_configured"
@@ -424,6 +426,15 @@ func buildAppNetworkDoctorReport(snapshot appNetworkSnapshot, now time.Time) app
 			Name:   "private-network",
 			Status: "skipped",
 			Detail: "private network attachments are not offered on this installation",
+		})
+	case !snapshot.PrivateNetwork.Available && snapshot.PrivateNetwork.PlanDenied:
+		// Retrying never helps a plan denial (review of r58).
+		report.Checks = append(report.Checks, appNetworkCheck{
+			Name:        "private-network",
+			Status:      "warn",
+			Detail:      snapshot.PrivateNetwork.Detail,
+			Observed:    snapshot.PrivateNetwork.Error,
+			Remediation: "Private networks need a higher plan; upgrade with `gregale billing plan pro`.",
 		})
 	case !snapshot.PrivateNetwork.Available:
 		report.Checks = append(report.Checks, appNetworkCheck{

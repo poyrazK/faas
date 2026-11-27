@@ -28,7 +28,7 @@ func TestEgressAllowlistRemoveAbsentAndAddPresent(t *testing.T) {
 		return false
 	})
 	code, stdout, stderr := runCLI(t, "app", "web", "egress-allowlist", "remove", "9.9.9.9/32")
-	if code == 0 || !strings.Contains(stderr, "9.9.9.9/32 is not in web's egress allowlist") {
+	if code != 0 || !strings.Contains(stdout, "9.9.9.9/32 is not in web's egress allowlist; nothing changed") {
 		t.Fatalf("remove absent = %d:\n%s%s", code, stdout, stderr)
 	}
 	code, stdout, stderr = runCLI(t, "app", "web", "egress-allowlist", "add", "1.1.1.1")
