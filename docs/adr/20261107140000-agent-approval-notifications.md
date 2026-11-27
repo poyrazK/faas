@@ -136,3 +136,13 @@ agent stops retrying.
   is the person who chose to run the agent and usually the right one.
 - **Store expiry and emit `agent.approval.expired`.** Needs a writer for
   expiry and a sweep; left for later if customers ask for it.
+
+## Amendment (2026-11-27): the Connect consent is the approval
+
+ADR-20261127160000: a hosted MCP connection whose person chose deploy access
+on the Connect screen does not ask again for its production deploys,
+promotions, checked rollbacks, restarts, domain and cron removals,
+configuration changes (with `env:write`) and undo; each such request writes
+the audit event `agent_approval.connect_grant` instead of opening an approval
+request. Organization floors, budgets, protected environments and every
+other request still ask as described here.
