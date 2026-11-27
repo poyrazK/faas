@@ -390,8 +390,8 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 	}
 	return &Handler{
 		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{}, verifiedBases: &verifiedBaseFiles{},
-		runtimeBaseRetries: newRuntimeBaseRetries(),
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log, servingSince: time.Now().UTC(),
+		runtimeBaseRetries: newRuntimeBaseRetries(),
 	}
 }
 
