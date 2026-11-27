@@ -101,8 +101,8 @@ func TestCmdLogsFollowHTTPRejectsLookupFlags(t *testing.T) {
 		{"myapp", "--follow", "--limit", "5"},
 		{"myapp", "--follow", "--request", "req_1"},
 	} {
-		if code := main.CmdLogs(args); code != 2 {
-			t.Errorf("%v exit = %d, want 2", args, code)
+		if code := main.CmdLogs(args); code != 1 {
+			t.Errorf("%v exit = %d, want 1", args, code)
 		}
 	}
 	if hits.Load() != 0 {

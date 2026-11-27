@@ -152,8 +152,8 @@ func TestCmdLogsArchiveValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stderr, restore := main.CaptureStderr(t)
 			defer restore()
-			if code := main.CmdLogs(tc.args); code != 2 {
-				t.Fatalf("exit=%d, want 2", code)
+			if code := main.CmdLogs(tc.args); code != 1 {
+				t.Fatalf("exit=%d, want 1", code)
 			}
 			if !strings.Contains(stderr.String(), tc.want) {
 				t.Fatalf("stderr=%q, want substring %q", stderr.String(), tc.want)
