@@ -73,7 +73,7 @@ func (m *MemStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS
 func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBindingCreateRequest, cloneAuthorized bool) (ObjectS3Credential, error) {
 	c := req.Credential
 	bucket, ok := m.objectBuckets[c.BucketID]
-	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" || !cloneAuthorized && !m.cloneBucketAccessibleLocked(bucket) {
+	if !ok || bucket.AccountID != c.AccountID || (bucket.AppID == c.ManagedAppID) == req.Borrowed || bucket.State != "ready" || !cloneAuthorized && !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	app, ok := m.apps[c.ManagedAppID]
@@ -514,4 +514,31 @@ func cloneObjectS3Credential(c ObjectS3Credential) ObjectS3Credential {
 		c.RotationStampedAt = &v
 	}
 	return c
+}
+
+func (m *MemStore) ObjectS3ComputeBindingsHeldBy(ctx context.Context, accountID, appID string) ([]HeldObjectS3ComputeBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return nil, err
+	}
+	var out []HeldObjectS3ComputeBinding
+	for _, c := range m.objectS3Credentials {
+		if c.AccountID != accountID || c.ManagedAppID != appID || c.Status != ObjectS3CredentialStatusActive || c.RotationParentID != "" || c.URL != nil {
+			continue
+		}
+		bucket, ok := m.objectBuckets[c.BucketID]
+		if !ok || bucket.AccountID != accountID {
+			continue
+		}
+		out = append(out, HeldObjectS3ComputeBinding{Credential: c, BucketAppID: bucket.AppID})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].Credential, out[j].Credential
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.ID < b.ID
+	})
+	return out, nil
 }

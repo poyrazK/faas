@@ -34,12 +34,14 @@ package apidserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -179,6 +181,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.alertEnvironmentScopeProblem(r.Context(), app, req.EnvironmentScope); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := api.ValidateRouteInsightAlert(req.Metric, req.WindowSpec, app.ID); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -264,6 +270,8 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		AppID:                           app.ID,
 		Name:                            req.Name,
 		Enabled:                         alertRuleEnabledFrom(req.Enabled),
+		ObserveOnly:                     req.ObserveOnly,
+		EnvironmentScope:                req.EnvironmentScope,
 		Metric:                          state.AlertMetric(req.Metric),
 		Comparison:                      state.AlertComparison(req.Comparison),
 		Threshold:                       req.Threshold,
@@ -281,6 +289,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		WebhookSecretSealed:             sealed,
 		NotifyResolved:                  req.NotifyResolved,
 		CooldownMinutes:                 alertRuleCooldownFrom(req.CooldownMinutes),
+		RecoveryConfirmationChecks:      alertRecoveryChecksFrom(req.RecoveryConfirmationChecks),
 		PostDeployRollbackWindowSeconds: alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds),
 	}, limits)
 	if err != nil {
@@ -389,7 +398,23 @@ func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.alertRuleResponseWithChannels(r.Context(), row))
+	response := s.alertRuleResponseWithChannels(r.Context(), row)
+	response.ObservedIncidents = row.ObservedIncidents
+	if store, ok := s.store.(state.AlertObservationCoverageStore); ok && row.ObserveOnly {
+		coverage, err := store.AlertObservationCoverage(r.Context(), row, time.Now().UTC())
+		if err != nil {
+			s.log.Warn("could not read alert observation coverage", "rule", logsanitize.Field(row.ID), "err", err)
+		} else {
+			response.ObservationCoverage = &coverage
+		}
+	}
+	evidence := row.AnomalyEvaluation
+	cooldownIsCurrent := evidence.Reason != api.AlertAnomalyNotificationCooldown || row.State == state.AlertStateFiring
+	if row.Enabled && api.IsAnomalyAlertComparison(string(row.Comparison)) &&
+		evidence.Reason != "" && evidence.EvaluatedAt.Equal(row.LastEvaluatedAt) && cooldownIsCurrent {
+		response.AnomalyEvaluation = &evidence
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // --- list deliveries -------------------------------------------------------
@@ -488,6 +513,22 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	if !s.checkUpdatedStageAlertRule(w, merged) {
 		return
 	}
+	scopeChanged := merged.EnvironmentScope != row.EnvironmentScope
+	if scopeChanged && !row.ObserveOnly && !merged.ObserveOnly {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("switch to Observe only to change the environment"))
+		return
+	}
+	if (scopeChanged || row.ObserveOnly && !merged.ObserveOnly) && merged.EnvironmentScope != "" && merged.EnvironmentScope != api.DefaultEnvScope {
+		app, err := s.store.AppByID(r.Context(), row.AppID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not resolve the alert app"))
+			return
+		}
+		if prob := s.alertEnvironmentScopeProblem(r.Context(), app, merged.EnvironmentScope); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	if prob := s.anomalyAlertsGate(flagSubject(r, acct), string(merged.Comparison)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -527,6 +568,11 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if row.ObserveOnly && !merged.ObserveOnly && merged.WebhookURL != "" && len(row.WebhookSecretSealed) == 0 &&
+		(req.WebhookSecret == nil || *req.WebhookSecret == "") {
+		api.WriteProblem(w, api.ErrAlertRuleInvalid("add a webhook_secret before switching to Notify"))
+		return
+	}
 	// Optional secret re-seal.
 	var sealedPtr *[]byte
 	if req.WebhookSecret != nil {
@@ -546,9 +592,17 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		}
 		sealedPtr = &sealed
 	}
+	var promotionChannels *[]string
+	if row.ObserveOnly && !merged.ObserveOnly && merged.WebhookURL == "" {
+		promotionChannels = newChannels
+		newChannels = nil
+	}
 	updated, err := s.store.UpdateAlertRule(r.Context(), id, state.UpdateAlertRuleParams{MCPMinCalls: req.MCPMinCalls, MCPForMinutes: req.MCPForMinutes,
 		Name:                            req.Name,
 		Enabled:                         req.Enabled,
+		ObserveOnly:                     req.ObserveOnly,
+		EnvironmentScope:                req.EnvironmentScope,
+		PromotionChannelIDs:             promotionChannels,
 		Metric:                          ptrAlertMetric(req.Metric),
 		Comparison:                      ptrAlertComparison(req.Comparison),
 		Threshold:                       req.Threshold,
@@ -557,12 +611,17 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealedPtr,
 		CooldownMinutes:                 req.CooldownMinutes,
+		RecoveryConfirmationChecks:      req.RecoveryConfirmationChecks,
 		PostDeployRollbackWindowSeconds: req.PostDeployRollbackWindowSeconds,
 		NotifyResolved:                  req.NotifyResolved,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such alert rule")
+			return
+		}
+		if errors.Is(err, state.ErrInvalidArgument) {
+			api.WriteProblem(w, api.ErrAlertRuleInvalid("the alert rule changed or the updated settings are invalid"))
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not update alert rule"))
@@ -579,6 +638,12 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// `threshold` on either side.
 	oldMap := map[string]any{}
 	newMap := map[string]any{}
+	if req.ObserveOnly != nil {
+		oldMap["observe_only"], newMap["observe_only"] = row.ObserveOnly, updated.ObserveOnly
+	}
+	if req.EnvironmentScope != nil {
+		oldMap["environment_scope"], newMap["environment_scope"] = row.EnvironmentScope, updated.EnvironmentScope
+	}
 	if req.PostDeployRollbackWindowSeconds != nil {
 		oldMap["post_deploy_rollback_window_seconds"] = row.PostDeployRollbackWindowSeconds
 		newMap["post_deploy_rollback_window_seconds"] = updated.PostDeployRollbackWindowSeconds
@@ -622,6 +687,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	if req.CooldownMinutes != nil {
 		oldMap["cooldown_minutes"] = row.CooldownMinutes
 		newMap["cooldown_minutes"] = updated.CooldownMinutes
+	}
+	if req.RecoveryConfirmationChecks != nil {
+		oldMap["recovery_confirmation_checks"] = row.RecoveryConfirmationChecks
+		newMap["recovery_confirmation_checks"] = updated.RecoveryConfirmationChecks
 	}
 	s.audit.Emit(r.Context(), "alert_rule.updated", &acct.ID, map[string]any{
 		"rule_id": updated.ID,
@@ -782,6 +851,8 @@ func alertRuleResponseFromRow(r state.AlertRule) api.AlertRuleResponse {
 		AppID:                           r.AppID,
 		Name:                            r.Name,
 		Enabled:                         r.Enabled,
+		ObserveOnly:                     r.ObserveOnly,
+		EnvironmentScope:                r.EnvironmentScope,
 		Metric:                          string(r.Metric),
 		Comparison:                      string(r.Comparison),
 		Threshold:                       r.Threshold,
@@ -798,6 +869,7 @@ func alertRuleResponseFromRow(r state.AlertRule) api.AlertRuleResponse {
 		WebhookURL:                      r.WebhookURL,
 		NotifyResolved:                  r.NotifyResolved,
 		CooldownMinutes:                 r.CooldownMinutes,
+		RecoveryConfirmationChecks:      r.RecoveryConfirmationChecks,
 		PostDeployRollbackWindowSeconds: r.PostDeployRollbackWindowSeconds,
 		State:                           string(r.State),
 		LastFiredAt:                     r.LastFiredAt,
@@ -817,6 +889,7 @@ func alertDeliveryResponse(d state.AlertDelivery) api.AlertDeliveryResponse {
 		lastErr = dashboard.FormatAlertError(lastErr)
 	}
 	return api.AlertDeliveryResponse{
+		Anomaly:          alertDeliveryAnomalyEvidence(d),
 		ReadinessEventID: d.ReadinessEventID, ReadinessDestination: d.ReadinessDestination, ReadinessFailoverReason: d.ReadinessFailoverReason,
 		ID:             d.ID,
 		RuleID:         d.RuleID,
@@ -832,6 +905,29 @@ func alertDeliveryResponse(d state.AlertDelivery) api.AlertDeliveryResponse {
 		DeliveredAt:    d.DeliveredAt,
 		IsTest:         d.IsTest,
 	}
+}
+
+func alertDeliveryAnomalyEvidence(d state.AlertDelivery) *api.AlertDeliveryAnomalyEvidence {
+	if d.IsTest || len(d.Payload) == 0 {
+		return nil
+	}
+	var saved struct {
+		api.AlertDeliveryAnomalyEvidence
+		Event string   `json:"event"`
+		Ratio *float64 `json:"ratio"` // A measured zero is valid.
+	}
+	if err := json.Unmarshal(d.Payload, &saved); err != nil || saved.Event != "alert.fired" {
+		return nil
+	}
+	if !api.IsAnomalyAlertComparison(saved.Comparison) ||
+		api.ValidateAnomalyAlertRule(saved.Metric, saved.Comparison, saved.Threshold, true) != "" ||
+		!slices.Contains(api.AllowedAlertRuleWindowSpecs, saved.Window) ||
+		saved.Baseline <= 0 || saved.BaselineDays <= 0 || saved.Ratio == nil || *saved.Ratio < 0 {
+		return nil
+	}
+	evidence := saved.AlertDeliveryAnomalyEvidence
+	evidence.Ratio = *saved.Ratio
+	return &evidence
 }
 
 // alertRuleEnabledFrom returns the create-request's enabled flag
@@ -906,7 +1002,33 @@ func (s *server) anomalyAlertsGate(subject platformflags.Subject, comparison str
 	return nil
 }
 
+func alertRecoveryChecksFrom(value *int) int {
+	if value == nil {
+		return 1
+	}
+	return *value
+}
+
+func validateAlertRecoveryChecks(checks int, comparison string) *api.Problem {
+	if checks != 1 && checks != api.AnomalyReplayRecoveryChecks {
+		return api.ErrAlertRuleInvalid("recovery_confirmation_checks must be 1 or 2")
+	}
+	if checks == api.AnomalyReplayRecoveryChecks && !api.IsAnomalyAlertComparison(comparison) {
+		return api.ErrAlertRuleInvalid("two-check recovery requires a baseline comparison")
+	}
+	return nil
+}
+
 func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
+	if p := validateAlertRecoveryChecks(alertRecoveryChecksFrom(req.RecoveryConfirmationChecks), req.Comparison); p != nil {
+		return p
+	}
+	if req.ObserveOnly && !api.IsAnomalyAlertComparison(req.Comparison) {
+		return api.ErrAlertRuleInvalid("observe_only requires a baseline comparison")
+	}
+	if p := validateAlertEnvironmentMode(req.EnvironmentScope, req.Metric, req.Comparison, req.ObserveOnly, alertRuleActionFrom(req.Action)); p != nil {
+		return p
+	}
 	if p := api.ValidateMCPReadinessAlertScope(req.Metric, req.MCPReadinessScope); p != nil {
 		return p
 	}
@@ -963,7 +1085,7 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 		}
 	}
 	if req.WebhookURL == "" && req.WebhookSecret == "" {
-		if len(req.ChannelIDs) == 0 {
+		if len(req.ChannelIDs) == 0 && !req.ObserveOnly {
 			return api.ErrAlertRuleInvalid("set webhook_url and webhook_secret, or deliver to notification channels with channel_ids")
 		}
 		return nil // channel-only rule (ADR-749)
@@ -993,6 +1115,17 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 // create path. Cooldown is optional on update so a nil merge is
 // fine. Secret is also optional: nil means "don't reseal".
 func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
+	if merged.RecoveryConfirmationChecks != 0 {
+		if p := validateAlertRecoveryChecks(merged.RecoveryConfirmationChecks, string(merged.Comparison)); p != nil {
+			return p
+		}
+	}
+	if merged.ObserveOnly && !api.IsAnomalyAlertComparison(string(merged.Comparison)) {
+		return api.ErrAlertRuleInvalid("observe_only requires a baseline comparison")
+	}
+	if p := validateAlertEnvironmentMode(merged.EnvironmentScope, string(merged.Metric), string(merged.Comparison), merged.ObserveOnly, merged.Action); p != nil {
+		return p
+	}
 	if p := api.ValidateMCPReadinessAlertScope(string(merged.Metric), merged.MCPReadinessScope); p != nil {
 		return p
 	}
@@ -1104,6 +1237,12 @@ func alertRuleRowForValidation(existing state.AlertRule, req api.UpdateAlertRule
 	if req.Enabled != nil {
 		merged.Enabled = *req.Enabled
 	}
+	if req.ObserveOnly != nil {
+		merged.ObserveOnly = *req.ObserveOnly
+	}
+	if req.EnvironmentScope != nil {
+		merged.EnvironmentScope = *req.EnvironmentScope
+	}
 	if req.Metric != nil {
 		merged.Metric = state.AlertMetric(*req.Metric)
 	}
@@ -1127,6 +1266,9 @@ func alertRuleRowForValidation(existing state.AlertRule, req api.UpdateAlertRule
 	}
 	if req.CooldownMinutes != nil {
 		merged.CooldownMinutes = *req.CooldownMinutes
+	}
+	if req.RecoveryConfirmationChecks != nil {
+		merged.RecoveryConfirmationChecks = *req.RecoveryConfirmationChecks
 	}
 	if req.NotifyResolved != nil {
 		merged.NotifyResolved = *req.NotifyResolved

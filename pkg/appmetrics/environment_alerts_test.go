@@ -18,12 +18,12 @@ func TestFetchEnvironmentAlertMetric(t *testing.T) {
 				queries = append(queries, q)
 				return 3, nil
 			}}
-			_, source := appmetrics.FetchEnvironmentAlertMetric(context.Background(), stub, nil, "app-1", "env-1", "5m", metric)
+			_, source := appmetrics.FetchEnvironmentAlertMetric(context.Background(), stub, nil, "app-1", "staging", "5m", metric)
 			if source != appmetrics.SourcePrometheus || len(queries) != 1 {
 				t.Fatalf("source = %q, queries = %d", source, len(queries))
 			}
 			q := queries[0]
-			if !strings.Contains(q, `app="app-1",environment="env-1"`) || !strings.Contains(q, "gateway_environment_") ||
+			if !strings.Contains(q, `app="app-1",scope="staging"`) || !strings.Contains(q, "gateway_environment_") ||
 				strings.Contains(q, "gateway_request_duration_seconds") || strings.Contains(q, "gateway_cold_boot_total") ||
 				strings.Contains(q, "gateway_capacity_refusals_total") {
 				t.Fatalf("query %q reads more than the stage", q)
@@ -32,8 +32,9 @@ func TestFetchEnvironmentAlertMetric(t *testing.T) {
 	}
 	stub := &stubPromQL{fn: func(string) (float64, error) { return 0, nil }}
 	for _, tc := range []struct{ app, env, metric string }{
-		{"app-1", "env-1", "queue_depth"},
+		{"app-1", "staging", "queue_depth"},
 		{"app-1", "", "request_count"},
+		{"app-1", "production", "request_count"},
 		{"app-1", `env"`, "request_count"},
 	} {
 		if _, source := appmetrics.FetchEnvironmentAlertMetric(context.Background(), stub, nil, tc.app, tc.env, "5m", tc.metric); !appmetrics.IsDegradedSource(source) {

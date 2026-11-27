@@ -15,14 +15,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
-// seedStageRule creates a rule like seedRule but in environment envID.
-func seedStageRule(t *testing.T, store *state.MemStore, envID string, metric state.AlertMetric, threshold float64) (state.AlertRule, *age.X25519Identity) {
+// seedStageRule creates a rule like seedRule but in a new stage whose slug
+// is slug.
+func seedStageRule(t *testing.T, store *state.MemStore, slug string, metric state.AlertMetric, threshold float64) (state.AlertRule, *age.X25519Identity) {
 	t.Helper()
 	base, ident, _ := seedRule(t, store, metric, state.AlertGt, threshold)
 	if err := store.DeleteAlertRule(context.Background(), base.ID); err != nil {
 		t.Fatal(err)
 	}
-	base.ID, base.EnvironmentID = "", envID
+	project, err := store.CreateProject(context.Background(), state.Project{AccountID: base.AccountID, Slug: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := store.CreateProjectEnvironment(context.Background(), state.ProjectEnvironment{AccountID: base.AccountID, ProjectID: project.ID, Slug: slug})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.ID, base.EnvironmentID = "", env.ID
 	if metric == state.AlertMetricFailedInvocs {
 		base.FailureSource = state.AlertFailureAny
 	}
@@ -45,7 +54,7 @@ func stageEvaluator(store *state.MemStore, prom *selectivePromQL, ident *age.X25
 // never the app-wide ones production rules read.
 func TestEvaluatorStageRuleReadsEnvironmentSeries(t *testing.T) {
 	store := state.NewMemStore()
-	rule, ident := seedStageRule(t, store, "env-1", state.AlertMetricErrorRate, 5)
+	rule, ident := seedStageRule(t, store, "staging", state.AlertMetricErrorRate, 5)
 	var mu sync.Mutex
 	var queries []string
 	prom := &selectivePromQL{fn: func(q string) (float64, error) {
@@ -66,7 +75,7 @@ func TestEvaluatorStageRuleReadsEnvironmentSeries(t *testing.T) {
 		t.Fatalf("stats = %+v, want the stage rule to fire", stats)
 	}
 	dispatch.mu.Lock()
-	if len(dispatch.calls) != 1 || dispatch.calls[0].Payload["environment_id"] != "env-1" || dispatch.calls[0].Payload["app_id"] != rule.AppID {
+	if len(dispatch.calls) != 1 || dispatch.calls[0].Payload["environment_id"] != rule.EnvironmentID || dispatch.calls[0].Payload["app_id"] != rule.AppID {
 		t.Fatalf("payload does not name the stage: %+v", dispatch.calls)
 	}
 	dispatch.mu.Unlock()
@@ -76,7 +85,7 @@ func TestEvaluatorStageRuleReadsEnvironmentSeries(t *testing.T) {
 		t.Fatal("no queries")
 	}
 	for _, q := range queries {
-		if !strings.Contains(q, `environment="env-1"`) || !strings.Contains(q, `app="`+rule.AppID+`"`) || strings.Contains(q, "gateway_request_duration_seconds") {
+		if !strings.Contains(q, `scope="staging"`) || !strings.Contains(q, `app="`+rule.AppID+`"`) || strings.Contains(q, "gateway_request_duration_seconds") {
 			t.Fatalf("query %q does not read the stage's own series", q)
 		}
 	}
@@ -87,7 +96,7 @@ func TestEvaluatorStageRuleReadsEnvironmentSeries(t *testing.T) {
 // state.CountFailedInvocationsInEnvironmentSince's tests).
 func TestEvaluatorStageRuleIgnoresProductionInvocations(t *testing.T) {
 	store := state.NewMemStore()
-	rule, ident := seedStageRule(t, store, "env-1", state.AlertMetricFailedInvocs, 1)
+	rule, ident := seedStageRule(t, store, "staging", state.AlertMetricFailedInvocs, 1)
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
 		if _, err := store.EnqueueInvocation(context.Background(), state.Invocation{AccountID: rule.AccountID, AppID: rule.AppID,

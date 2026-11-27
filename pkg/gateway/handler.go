@@ -208,7 +208,10 @@ type App struct {
 	// ProductionAppID is a PR preview's production app, whose app-wide edge
 	// rules the preview applies too (ADR-091 amendment 2026-10-30). Empty
 	// for production apps.
-	ProductionAppID string
+	ProductionAppID   string
+	IsAPISandbox      bool
+	APISandboxPartner bool
+	APISandboxRun     bool
 	// MaintenanceMode (ADR-091 amendment / §4.1.2.0) is the
 	// coarse-grained per-app maintenance flag mirrored from
 	// apps.maintenance_mode. When true, every inbound request is
@@ -363,10 +366,6 @@ type App struct {
 	// PublicEnvironmentID identifies a stable environment URL or a verified
 	// scoped domain. Exact revision/alias URLs keep their own policy semantics.
 	PublicEnvironmentID string
-	// StageEnvironmentID is PublicEnvironmentID when the environment is not
-	// production: requests on a stage's host are also counted per stage
-	// (gateway_environment_*), and production's alert rules leave them out.
-	StageEnvironmentID string
 	// CustomDomainRoute records that the resolved host is a verified custom
 	// domain, so its cache entry can revalidate current domain ownership.
 	CustomDomainRoute bool
@@ -1389,7 +1388,8 @@ type Handler struct {
 	credentialMatcher CredentialMatcher
 	// consumerKeyTouches coalesces best-effort last_used_at writes so a hot
 	// customer key does not turn every request into a database update.
-	consumerKeyTouches *consumerKeyToucher
+	consumerKeyTouches    *consumerKeyToucher
+	sandboxSuccessTouches *consumerKeyToucher
 	// publicAuthCache is the unsealed basic-auth credential
 	// cache (issue #477 / ADR-079). Nil = no caching; the
 	// basic-auth path falls back to per-request unsealing
@@ -2137,6 +2137,9 @@ func (h *Handler) WithConsumerAuth(store ConsumerAuthStore) *Handler {
 	h.consumerAuthStore = store
 	if store != nil && h.consumerKeyTouches == nil {
 		h.consumerKeyTouches = newConsumerKeyToucher()
+	}
+	if _, ok := store.(sandboxPartnerStore); ok {
+		h.sandboxSuccessTouches = newConsumerKeyToucher()
 	}
 	return h
 }
@@ -6382,7 +6385,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer finishGRPC()
 	// One request copy per group of context values below: each WithContext
 	// copies the whole *http.Request, and nothing reads r between them.
-	r = r.WithContext(withEnvironmentHostMark(withCapacityRefusalMark(withResponseCacheFill(r.Context(), h.responseCache))))
+	r = r.WithContext(withCapacityRefusalMark(withResponseCacheFill(r.Context(), h.responseCache)))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
@@ -6607,7 +6610,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ok && lookedApp.EnvironmentNotReady {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Environment is not ready", "the stage clone has not published all of its workloads and resources"))
-		markEnvironmentHost(r, lookedApp.StageEnvironmentID)
 		h.observe(r, rec.status, lookedApp.ID, string(lookedApp.Plan), false, Target{})
 		return
 	}
@@ -6636,7 +6638,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	app = lookedApp
 haveApp:
-	markEnvironmentHost(r, app.StageEnvironmentID)
 	// Previews serve unreleased code on guessable hosts; every answer for
 	// one, proxied or from the edge, tells search engines not to index it.
 	if app.IsPreview {
@@ -6735,6 +6736,9 @@ haveApp:
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 			"Deployment smoke not authorized", "the smoke challenge is unknown or expired on this gateway"))
 		return
+	}
+	if !deploymentSmoke && h.metrics != nil {
+		r = r.WithContext(withRequestEnvironment(r.Context(), app))
 	}
 	workloadAdmissionScope := app.Scope
 	if app.PinnedDeploymentScope != "" {
@@ -7316,7 +7320,7 @@ haveApp:
 		projectReleaseScope = "production"
 	}
 	var asyncRule *EdgeRuleAsyncResolved
-	if !deploymentSmoke {
+	if !app.APISandboxRun && !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
 	}
 	if h.pinPublicRoutingPolicy(w, r, app, publicRoutingInputs(r, app, versionKey, smokeDeploymentID, asyncRule != nil)) {
@@ -7609,7 +7613,7 @@ haveApp:
 
 	// Scoped local execution retains ordinary authentication, body limits and
 	// rate/budget admission, then streams without VM upload spooling or wake.
-	if h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
+	if !app.APISandboxRun && h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -8209,6 +8213,11 @@ haveApp:
 		return
 	}
 
+	if app.APISandboxRun && rec.sandboxPartnerKeyID != "" && !h.claimSandboxPartnerStep(w, r, rec, app, target) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+		return
+	}
+
 	// Stamp the per-instance identity on the request BEFORE proxying so
 	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
 	// the HTTP bytes to this exact instance. A retry restamps for its own
@@ -8663,6 +8672,9 @@ haveApp:
 	// The held-back tools/list answer reaches the client before the
 	// request's bytes and latency are recorded.
 	finishAccountTools()
+	if completionTarget.DeploymentID != "" && r.Context().Err() == nil {
+		h.recordSandboxPartnerSuccess(r.Context(), app.ID, rec)
+	}
 	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
 	requestAttrs.addTarget(completionTarget)
@@ -8782,7 +8794,7 @@ haveApp:
 		// behind a wake rather than by how long the wake took.
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
-			h.metrics.ObserveEnvironmentColdBoot(app.ID, app.StageEnvironmentID)
+			h.metrics.environmentRequests.observeColdBoot(r.Context(), app.ID)
 			if !platformWakeStart.IsZero() {
 				switch {
 				case startupOOM.Any():
@@ -8882,10 +8894,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			h.metrics.ObservePlatformError(appID, plan)
 			ObservedRouteCarrierFrom(r.Context()).MarkUnanswered5xx()
 		}
-		if capacityRefusalForSLO(r, status) {
+		refused := capacityRefusalForSLO(r, status)
+		if refused {
 			h.metrics.ObserveCapacityRefusal(appID)
-			h.metrics.ObserveEnvironmentCapacityRefusal(appID, environmentHostFrom(r))
 		}
+		class := statusClassBucket(status)
+		h.metrics.environmentRequests.observe(r.Context(), appID, class, elapsed, refused)
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
 		// to keep cardinality bounded — full status codes would explode
@@ -8902,8 +8916,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// ObserveRequestDuration call; that helper is retained for
 		// test paths that don't carry a deployment id.
 		deploymentLabel := h.metrics.deploymentLabels.admit(appID, api.Plan(plan), target.DeploymentID)
-		h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, statusClassBucket(status), deploymentLabel, elapsed, traceIDFromContext(r.Context()))
-		h.metrics.ObserveEnvironmentRequestDuration(appID, environmentHostFrom(r), statusClassBucket(status), elapsed)
+		h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, class, deploymentLabel, elapsed, traceIDFromContext(r.Context()))
 		// ADR-093: per-route emission. Gated on a non-empty
 		// routeLabel (the routeLabelSet always returns a non-empty
 		// label for an opted-in app — the empty string is the
@@ -8913,7 +8926,6 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// (preserved per ADR-042 §1 deviation). The gateway's series
 		// budget may decline a route it has no room for
 		// (ADR-20261024154324).
-		class := statusClassBucket(status)
 		if routeLabel != "" && h.metrics.AdmitRouteSeries(appID, plan, routeLabel, code, class, time.Now()) {
 			h.metrics.ObserveRequestRoute(appID, plan, routeLabel, code)
 			h.metrics.ObserveRequestDurationRoute(appID, routeLabel, class, elapsed)
@@ -9567,8 +9579,10 @@ func (h *Handler) RoutesFor(appID string) (routes []string, overflowed bool) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status      int
-	wroteHeader bool
+	status                     int
+	wroteHeader                bool
+	sandboxPartnerKeyID        string
+	sandboxPartnerStepResponse func(int)
 	// platformResponse marks a response the gateway wrote itself (a
 	// forwarder problem), not the app: its bytes are not app egress.
 	platformResponse bool
@@ -9750,6 +9764,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// Who wrote the response is fixed when its headers commit; a header
 		// set afterwards never unbills bytes already sent.
 		s.platformProblem = s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
+		if s.sandboxPartnerStepResponse != nil {
+			s.sandboxPartnerStepResponse(code)
+		}
 		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed

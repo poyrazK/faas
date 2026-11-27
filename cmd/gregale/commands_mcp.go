@@ -74,7 +74,7 @@ func cmdMCP(args []string) int {
 		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
-	case "auth", "replay", "insights", "keys", "stats":
+	case "auth", "replay", "insights", "keys", "stats", "listing":
 		if !mcpGatewayPreviewCLI() {
 			printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
 			return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
@@ -86,6 +86,8 @@ func cmdMCP(args []string) int {
 			return cmdMCPInsights(args[1:])
 		case "stats":
 			return cmdMCPStats(args[1:])
+		case "listing":
+			return cmdMCPListing(args[1:])
 		case "keys":
 			return cmdMCPKeys(args[1:])
 		}

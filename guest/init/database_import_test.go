@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -189,16 +188,6 @@ func TestFilterImportTOC(t *testing.T) {
 		if !strings.Contains(got, kept) {
 			t.Errorf("filtered list lost %q:\n%s", kept, got)
 		}
-	}
-}
-
-func TestMissingExtensions(t *testing.T) {
-	got := missingExtensions("neon,pg_stat_statements,pgcrypto,vector", "citext,pgcrypto,uuid-ossp", []string{"neon"})
-	if !slices.Equal(got, []string{"pg_stat_statements", "vector"}) {
-		t.Fatalf("missing = %v", got)
-	}
-	if got := missingExtensions("", "pgcrypto", nil); len(got) != 0 {
-		t.Fatalf("no source extensions, missing %v", got)
 	}
 }
 

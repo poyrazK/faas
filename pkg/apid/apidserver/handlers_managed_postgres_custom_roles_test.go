@@ -68,7 +68,9 @@ func TestManagedPostgresCustomRoleRoutes(t *testing.T) {
 	d, applied := installCustomRoles(t, (*e.Acct()).ID, (*e.S()).ManagedPostgres(), (*e.S()).ManagedPostgresBindings())
 	base := "/v1/postgres/databases/" + d.ID + "/roles"
 
-	// Dark until the platform flag releases it.
+	// Beta boots the flag on (ADR-20261125232048); an operator turning it
+	// off darkens the routes.
+	(*e.S()).SeedPlatformFlag(platformflags.PostgresCustomRoles, platformflags.Definition{})
 	if rec := e.Do(t, http.MethodGet, base, nil, nil); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "postgres_custom_roles_unavailable") {
 		t.Fatalf("unreleased: %d %s", rec.Code, rec.Body.String())
 	}

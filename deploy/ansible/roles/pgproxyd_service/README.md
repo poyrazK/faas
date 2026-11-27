@@ -20,6 +20,10 @@ distinct 0-255 per node) and `pgproxyd_cancel_peers` (the other nodes'
 overlay listeners by id). A client's cancel request can reach any node's
 pgproxyd; it is forwarded to the instance that issued the client's key.
 
+For replica-only bindings, `pgproxyd_replica_max_replay_lag_bytes` sets the
+`replica_max_replay_lag_bytes` configuration value. The default is 16 MiB.
+Set it to zero to require a sample with zero backlog.
+
 The node's mTLS bundle (vmmd server leaf and the pgproxyd client leaves) is
 staged by the `database_node` role (`database_node_pki_source`).
 

@@ -280,10 +280,33 @@ CREATE TABLE sandbox_session_captures (
  mem_bytes bigint NOT NULL,
  vmstate_bytes bigint NOT NULL DEFAULT 0,
  has_backing boolean NOT NULL DEFAULT false,
+ volume_backup_id uuid,
  state text NOT NULL DEFAULT 'live',
  created_at timestamptz NOT NULL DEFAULT now(),
  consumed_at timestamptz,
  checked_at timestamptz
+);
+CREATE TABLE sandbox_volumes (
+ session_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ node_id text NOT NULL,
+ size_gb integer NOT NULL,
+ latest_backup_id uuid,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE sandbox_volume_backups (
+ id uuid PRIMARY KEY,
+ session_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ node_id text NOT NULL,
+ reason text NOT NULL,
+ state text NOT NULL,
+ size_bytes bigint NOT NULL DEFAULT 0,
+ data_chunks integer NOT NULL DEFAULT 0,
+ uploaded_bytes bigint NOT NULL DEFAULT 0,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ deleted_at timestamptz
 );
 CREATE TABLE agent_sandbox_task_calls (
  sandbox_id uuid PRIMARY KEY,

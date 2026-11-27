@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -35,7 +36,17 @@ func (w *ScheddWaker) Wake(ctx context.Context, databaseID string) (Backend, err
 	if rt.GetVmmdTarget() == "" || rt.GetNodeId() == "" {
 		return Backend{}, errors.New("pgproxy: schedd returned no vmmd target or node")
 	}
-	return backendFromRuntime(rt.GetVmmdTarget(), rt.GetNodeId(), rt.GetReplicaVmmdTarget(), rt.GetStandbyNodeId()), nil
+	backend := backendFromRuntime(rt.GetVmmdTarget(), rt.GetNodeId(), rt.GetReplicaVmmdTarget(), rt.GetStandbyNodeId())
+	backend.PrimaryEpochMicros = rt.GetPrimaryEpochMicros()
+	return backend, nil
+}
+
+func (w *ScheddWaker) ReplicaRoute(ctx context.Context, databaseID string) (Backend, *int64, time.Time, error) {
+	rt, err := w.client.GetDatabaseReplica(ctx, &scheddpb.DatabaseRef{DatabaseId: databaseID})
+	if err != nil || !rt.GetAvailable() || rt.GetObservedAt() == nil || !rt.GetObservedAt().IsValid() {
+		return Backend{}, nil, time.Time{}, err
+	}
+	return Backend{Target: rt.GetReplicaVmmdTarget(), Node: rt.GetStandbyNodeId()}, rt.ReplayLagBytes, rt.GetObservedAt().AsTime(), nil
 }
 
 // backendFromRuntime is the backend schedd names. A standby serving reads
@@ -90,6 +101,7 @@ func NewVmmdDialerWith(tlsCfg *tls.Config, dial func(context.Context, string, *t
 var _ SessionDialer = (*VmmdDialer)(nil)
 
 func (d *VmmdDialer) client(ctx context.Context, backend Backend) (vmmdpb.VmmdClient, error) {
+	backend.PrimaryEpochMicros = 0 // Placement does not change the vmmd connection identity.
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	conn, ok := d.conns[backend]
@@ -108,6 +120,8 @@ func (d *VmmdDialer) client(ctx context.Context, backend Backend) (vmmdpb.VmmdCl
 // Dial opens a session. The stream outlives ctx, which only bounds setup;
 // Close ends it.
 func (d *VmmdDialer) Dial(ctx context.Context, backend Backend, databaseID string) (io.ReadWriteCloser, error) {
+	replicaOnly := backend.replicaOnly
+	backend.replicaOnly = false
 	c, err := d.client(ctx, backend)
 	if err != nil {
 		return nil, err
@@ -117,7 +131,11 @@ func (d *VmmdDialer) Dial(ctx context.Context, backend Backend, databaseID strin
 	streamCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	stopSetup := context.AfterFunc(ctx, cancel)
 	defer stopSetup()
-	stream, err := c.DatabaseSession(streamCtx)
+	open := c.DatabaseSession
+	if replicaOnly {
+		open = c.DatabaseReplicaSession
+	}
+	stream, err := open(streamCtx)
 	if err != nil {
 		cancel()
 		return nil, err

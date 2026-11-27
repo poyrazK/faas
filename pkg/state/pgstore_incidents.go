@@ -18,11 +18,16 @@ import (
 // unknown leave the episode alone. Every CTE reads the same snapshot, so the
 // trim never sees the episode it is making room for.
 const setAlertRuleStateSQL = `
-	with changed as (
+	with scope_aware as (
+		select set_config('faas.scoped_alert_state', 'on', true)
+	), changed as (
 		update alert_rules
 		   set state      = $2,
 		       updated_at = $3
-		 where id = $1 and state <> $2
+		  from scope_aware
+		 where id = $1 and state <> $2 and not observe_only
+		   and ($6::timestamptz is null or (enabled and last_evaluated_at = $6
+		        and latest_anomaly_evaluation->>'reason' = 'recovery_confirmed'))
 		returning id, account_id, state
 	), opened as (
 		insert into alert_episodes (id, rule_id, account_id, opened_at)

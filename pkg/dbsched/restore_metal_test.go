@@ -76,6 +76,11 @@ func newMetalNode(t *testing.T, workdir string, bases map[int]string, name strin
 // to mirror (nil: none), under the prefix "dr".
 func newMirroredMetalNode(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases dbvm.Leaser, bucket, mirror dbarchive.Remote) *metalNode {
 	t.Helper()
+	return newMetalNodeWithArchives(t, workdir, bases, name, capacity, leases, bucket, mirror, nil)
+}
+
+func newMetalNodeWithArchives(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases dbvm.Leaser, bucket, mirror, recovery dbarchive.Remote) *metalNode {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	dir, err := os.MkdirTemp(workdir, name)
@@ -95,13 +100,21 @@ func newMirroredMetalNode(t *testing.T, workdir string, bases map[int]string, na
 		offsite = dbarchive.NewOffsite(archive, bucket, "native", mirror, "dr")
 		tiered.Offsite, tiered.OffsitePrefix = mirror, "dr"
 	}
+	var incoming *dbarchive.TieredStore
+	if recovery != nil {
+		scratch, err := dbarchive.NewLocalStore(filepath.Join(dir, "incoming"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		incoming = &dbarchive.TieredStore{LocalStore: scratch, Remote: recovery, Prefix: "dr"}
+	}
 	archiveLn, err := net.Listen("unix", filepath.Join(dir, "a.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() {
 		handoff := &dbarchive.Uploader{Store: archive, Remote: bucket, Prefix: "native"}
-		_ = (&dbarchive.Server{Store: tiered, Backups: tiered, Retention: tiered, Handoff: handoff}).Serve(ctx, archiveLn)
+		_ = (&dbarchive.Server{Store: tiered, Backups: tiered, Retention: tiered, Handoff: handoff, Recovery: incoming}).Serve(ctx, archiveLn)
 	}()
 	parent := "dbsched-metal-" + name
 	if err := os.MkdirAll(filepath.Join("/sys/fs/cgroup", parent), 0o755); err != nil {

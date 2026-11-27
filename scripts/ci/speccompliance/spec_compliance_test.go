@@ -414,6 +414,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/consumer-signup/{slug}/signup.css":                                    true,
 	"GET /v1/consumer-signup/{slug}/upgrade":                                       true, // hosted HTML upgrade page over the documented upgrade API (ADR-20261124094745)
 	"GET /v1/consumer-signup/{slug}/upgrade.js":                                    true,
+	"GET /v1/consumer-signup/{slug}/listing/page":                                  true, // hosted HTML MCP listing page over the documented listing API (ADR-20261126175800)
+	"GET /v1/consumer-signup/{slug}/listing.js":                                    true,
+	"GET /v1/consumer-signup/{slug}/listing.css":                                   true,
 	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
 	"POST /v1/product-control/customer/{slug}/session":                             true,
 	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
@@ -863,6 +866,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"APISandboxPartnerStep": true, // internal permit for an in-flight guest request
 	// ADR-20261124094745: bodies of the consumer link path the gateway
 	// serves on an app's own host, not an apid route.
 	"LinkConsumerRequest":  true,
@@ -931,23 +935,24 @@ var dtoExclude = map[string]bool{
 	"ObjectVersionRetention": true,
 	"ObjectVersionLegalHold": true,
 	// Parsed ARN routing helper; notification wire requests carry a string destination.
-	"ObjectNotificationTarget":          true,
-	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
-	"ScenarioSimulationRequest":         true, // ADR-20261017201006: authenticated host-to-store command; never a customer JSON request.
-	"ScenarioSimulationDecision":        true, // ADR-20261017201006: internal persisted decision and fixture response; not a public response DTO.
-	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
-	"CliAuthCodeRequest":                true, // Optional purpose on the private browser/device-code mint
-	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
-	"CliAuthExchangeRequest":            true, // POST /v1/cli-auth/exchange
-	"CliAuthExchangeResponse":           true, // POST /v1/cli-auth/exchange
-	"CliAuthStatus":                     true, // enum used by CLI auth
-	"ComputeNodeEnrollmentRequest":      true, // authenticated operator-only compute-node mutation payload
-	"ComputeNodeOperatorResponse":       true, // authenticated operator-only compute-node projection
-	"StatusPage":                        true, // GET /status/slo.json (public status)
-	"SessionsRevokeRequest":             true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
-	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
-	"ManagedPostgresPreviewOwner":       true, // ADR-20261102123523 preview-databases capability; documented at launch
-	"SetManagedPostgresPreviewsRequest": true, // ADR-20261102123523 preview-databases capability; documented at launch
+	"ObjectNotificationTarget":            true,
+	"ObjectWriteConditions":               true, // internal S3 protocol validators, not a JSON wire DTO
+	"ScenarioSimulationRequest":           true, // ADR-20261017201006: authenticated host-to-store command; never a customer JSON request.
+	"ScenarioSimulationDecision":          true, // ADR-20261017201006: internal persisted decision and fixture response; not a public response DTO.
+	"ApplyResponseApp":                    true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeRequest":                  true, // Optional purpose on the private browser/device-code mint
+	"CliAuthCodeResponse":                 true, // POST /v1/cli-auth/code (anonymous)
+	"CliAuthExchangeRequest":              true, // POST /v1/cli-auth/exchange
+	"CliAuthExchangeResponse":             true, // POST /v1/cli-auth/exchange
+	"CliAuthStatus":                       true, // enum used by CLI auth
+	"ComputeNodeEnrollmentRequest":        true, // authenticated operator-only compute-node mutation payload
+	"ComputeNodeOperatorResponse":         true, // authenticated operator-only compute-node projection
+	"StatusPage":                          true, // GET /status/slo.json (public status)
+	"SessionsRevokeRequest":               true, // IAM-3 (ADR-039): the only field is csrf_token, which is inlined in the OpenAPI spec rather than $ref'd
+	"ManagedPostgresPlanLimits":           true, // internal plan policy, not a wire DTO
+	"ManagedPostgresPreviewOwner":         true, // ADR-20261102123523 preview-databases capability; documented at launch
+	"SetManagedPostgresPreviewsRequest":   true, // ADR-20261102123523 preview-databases capability; documented at launch
+	"ManagedPostgresPreviewMaskingPolicy": true, // Request body for the same preview capability.
 	// ADR-20261116213000 postgres_custom_roles flag; documented at launch.
 	"ManagedPostgresCustomRole":           true,
 	"ManagedPostgresCustomRoleList":       true,
@@ -1817,6 +1822,13 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
+		filepath.Join(root, "pkg", "api", "api_sandbox.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_approval.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_comparison.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_run.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_scenario.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_suite.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_webhook_partner.go"),
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
@@ -2021,6 +2033,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envFile),
 		filepath.Join(root, "pkg", "api", registryFile),
 		filepath.Join(root, "pkg", "api", alertsFile),
+		filepath.Join(root, "pkg", "api", "alert_anomaly_evaluation.go"),
 		filepath.Join(root, "pkg", "api", alertsDeliveryFile),
 		filepath.Join(root, "pkg", "api", alertsPresetsFile),
 		filepath.Join(root, "pkg", "api", "notification_channels.go"), // ADR-749 channel DTOs
@@ -2118,6 +2131,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", "managed_postgres_recovery_region.go"),
 		filepath.Join(root, "pkg", "api", envBatchFile),
 		filepath.Join(root, "pkg", "api", "app_scaling.go"), // ADR-20261104104521
 		filepath.Join(root, "pkg", "api", agentInspectionFile),
@@ -2131,6 +2145,14 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_pipeline_indexes.go"),
 		filepath.Join(root, "pkg", "api", "data_connection_checks.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_table_health.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_binding_timeouts.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_backup_schedule.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_error_history.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_restore_drill.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_upgrade_rehearsal.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_autovacuum.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_sessions.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_resize.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_compute_policy.go"),
@@ -2240,6 +2262,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "apid", "apidserver", "handlers_api_monetization_funnel.go"),
 		filepath.Join(root, "pkg", "api", "consumer_signup.go"),  // ADR-20261021143000 consumer self-service sign-up
 		filepath.Join(root, "pkg", "api", "mcp_seller_stats.go"), // ADR-20261126082046 seller stats
+		filepath.Join(root, "pkg", "api", "mcp_listing.go"),      // ADR-20261126175800 server listing
 		filepath.Join(root, "pkg", "api", "consumer_credit_packs.go"),
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans
@@ -2308,6 +2331,16 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "verification_contracts.go"), // ADR-20261122220000: verification contracts
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_auto_grow.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_maintenance.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_restore_check.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_native_diagnostics.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_extensions.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_query_insights.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_masked_branch.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_import.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_export.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_migration.go"),
 		filepath.Join(root, "pkg", "api", "debug_rollout.go"),          // ADR-1447 amendment: rollout explanation + debug status
 		filepath.Join(root, "pkg", "api", "agent_connections.go"),      // ADR-20261030133644: connected agents
 		filepath.Join(root, "pkg", "api", "agent_approvals.go"),        // ADR-20261104140058: approvals for risky agent actions
@@ -2322,7 +2355,44 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
 	}
+	// Both scenario save handlers decode the same DTO, while the library
+	// endpoint always requires expected_revision and has a separate schema.
+	dtos["APISandboxLibraryScenarioSaveRequest"] = dtos["APISandboxScenarioSaveRequest"]
+	// The preview response embeds the stable database switch's fields.
+	for field := range dtos["DatabaseSwitch"] {
+		dtos["MigrationDatabaseSwitch"][field] = true
+	}
 	addRuntimeBuildSchemas(t, root, spec, dtos)
+	// The guest, scheduler and API share diagnostic DTOs. Check their
+	// fields under the OpenAPI names.
+	diagnosticsDTOs, err := scanDTOs([]string{
+		filepath.Join(root, "pkg", "dbguest", "diagnostics.go"),
+		filepath.Join(root, "pkg", "dbguest", "table_health.go"),
+		filepath.Join(root, "pkg", "dbguest", "autovacuum.go"),
+		filepath.Join(root, "pkg", "dbguest", "sessions.go"),
+	})
+	if err != nil {
+		t.Fatalf("scan native PostgreSQL diagnostic DTOs: %v", err)
+	}
+	for field, required := range diagnosticsDTOs["Diagnostics"] {
+		dtos["ManagedPostgresDiagnostics"][field] = required
+	}
+	dtos["ManagedPostgresActivitySample"] = diagnosticsDTOs["ActivitySample"]
+	dtos["ManagedPostgresLockWait"] = diagnosticsDTOs["LockWait"]
+	for field, required := range diagnosticsDTOs["TableHealth"] {
+		dtos["ManagedPostgresTableHealth"][field] = required
+	}
+	dtos["ManagedPostgresTableHealthSample"] = diagnosticsDTOs["TableHealthSample"]
+	dtos["ManagedPostgresTableHealthRow"] = diagnosticsDTOs["TableHealthRow"]
+	for field, required := range diagnosticsDTOs["AutovacuumStatus"] {
+		dtos["ManagedPostgresAutovacuum"][field] = required
+	}
+	dtos["ManagedPostgresAutovacuumSettings"] = diagnosticsDTOs["AutovacuumSettings"]
+	for field, required := range diagnosticsDTOs["Sessions"] {
+		dtos["ManagedPostgresSessions"][field] = required
+	}
+	dtos["ManagedPostgresSessionSample"] = diagnosticsDTOs["SessionSample"]
+	dtos["ManagedPostgresSession"] = diagnosticsDTOs["SessionRow"]
 	// This public SDK schema names an inline Go map. Verify its actual wire
 	// shape before including it in both directions of schema parity.
 	checkReleaseSecretVersionMap(t, root, spec)

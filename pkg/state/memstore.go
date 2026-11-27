@@ -157,6 +157,18 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	apiSandboxOperations           map[string]APISandboxOperation
+	apiSandboxRuns                 map[string]APISandboxRun
+	apiSandboxComparisons          map[string]apiSandboxComparison
+	apiSandboxWebhookPartners      map[string]APISandboxWebhookPartner
+	apiSandboxPartners             map[string]APISandboxPartner
+	apiSandboxScenarios            map[string]savedAPISandboxScenario
+	apiSandboxScenarioLibrary      map[string]map[string]sandboxScenarioLibraryEntry
+	apiSandboxSuites               map[string]api.APISandboxSuite
+	apiSandboxSuiteRuns            map[string]APISandboxSuiteRun
+	apiSandboxSuiteScenarios       map[string][]APISandboxSuiteScenario
+	apiSandboxSuiteAutomatic       map[string]apiSandboxSuiteQueuedRequest
+	apiSandboxReleaseAdmissions    map[string]string
 	executionEnvironments          map[string]ExecutionEnvironment
 	executionTaskVersions          map[string]ExecutionTaskVersion
 	executionTaskInvocations       map[string]ExecutionTaskInvocation
@@ -509,7 +521,9 @@ type MemStore struct {
 	alertRuleChannels             map[string][]string                               // rule id → channel ids (ADR-749)
 	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
 	alertChannelStandDowns        map[alertChannelRetryKey]memStandDown             // ADR-20261104142830
-	appSLOs                       map[string][]SLO                                  // app id → definitions (ADR-747), lazily made
+	alertWebhookStandDowns        map[string]memWebhookStandDown
+	alertDeferredFires            map[string]memDeferredAlertFire
+	appSLOs                       map[string][]SLO // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
 	syntheticRuns                 map[string][]SyntheticCheckRun
@@ -660,6 +674,7 @@ type MemStore struct {
 	flagNotifications                    []FlagNotification                  // ADR-20261125085913
 	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
 	routeSplits                          map[string]RouteSplit               // ADR-20261121170000 amendment 2, by ID, lazily made
+	mcpListings                          map[string]MCPListing               // ADR-20261126175800, by app ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -5412,6 +5427,7 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 }
 
 func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
+	app = app.WithAPISandboxEgress()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
@@ -5567,6 +5583,22 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []A
 }
 
 func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, limits api.Limits) (App, error) {
+	app = app.WithAPISandboxEgress()
+	if IsAPISandbox(app) {
+		for _, existing := range m.apps {
+			if existing.Slug == app.Slug {
+				return App{}, ErrConflict
+			}
+		}
+	}
+	if app.APISandboxRunID != "" {
+		if app.APISandboxScenario == nil {
+			return App{}, ErrInvalidArgument
+		}
+		if _, exists := m.apiSandboxRuns[app.APISandboxRunID]; exists {
+			return App{}, ErrConflict
+		}
+	}
 	app, err := m.prepareAppIfUnderQuotaLocked(app, limits, m.apps)
 	if err != nil {
 		return App{}, err
@@ -5578,8 +5610,47 @@ func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, lim
 		return App{}, err
 	}
 	m.ensureServiceAddressIndexLocked(&app)
+	app = m.recordAPISandboxAppLocked(app)
 	m.apps[app.ID] = app
 	return app, nil
+}
+
+func (m *MemStore) recordAPISandboxAppLocked(app App) App {
+	if IsAPISandbox(app) {
+		if m.apiSandboxOperations == nil {
+			m.apiSandboxOperations = make(map[string]APISandboxOperation)
+		}
+		now := time.Now().UTC()
+		m.apiSandboxOperations[app.ID] = APISandboxOperation{
+			AppID: app.ID, SmokePath: app.APISandboxSmokePath, Phase: APISandboxPreparingDatabase,
+			StartedAt: now, NextAttemptAt: &now, Scenario: cloneAPISandboxScenario(app.APISandboxScenario),
+		}
+		if app.APISandboxPartnerLabel != "" {
+			if m.apiSandboxPartners == nil {
+				m.apiSandboxPartners = make(map[string]APISandboxPartner)
+			}
+			m.apiSandboxPartners[app.ID] = APISandboxPartner{Label: app.APISandboxPartnerLabel}
+		}
+		if app.APISandboxRunID != "" {
+			if m.apiSandboxRuns == nil {
+				m.apiSandboxRuns = make(map[string]APISandboxRun)
+			}
+			m.apiSandboxRuns[app.APISandboxRunID] = APISandboxRun{
+				AppID: app.ID, APISandboxRunReport: api.APISandboxRunReport{
+					ID: app.APISandboxRunID, SourceDeploymentID: app.Manifest.APISandboxSourceDeploymentID,
+					ScenarioRevision: app.APISandboxScenario.Revision, ScenarioName: app.APISandboxScenario.Name,
+					Status: api.APISandboxRunQueued, PartnerWebhook: app.APISandboxRunPartnerWebhook, Steps: []api.APISandboxRunStep{}, CreatedAt: now,
+					PartnerStepCount: apiSandboxPartnerStepCount(app),
+				},
+			}
+		}
+		app.APISandboxRunID = ""
+		app.APISandboxRunPartnerWebhook = false
+		app.APISandboxSmokePath = ""
+		app.APISandboxScenario = nil
+		app.APISandboxPartnerLabel = ""
+	}
+	return app
 }
 
 // enrollNewAppsLocked gives apps about to be published their ADR-595
@@ -7584,6 +7655,11 @@ func (m *MemStore) updateAppLocked(ctx context.Context, id string, p UpdateAppPa
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	if IsAPISandbox(a) &&
+		((p.SetEgressAllowlist && !slices.Equal(derefPrefixes(p.EgressAllowlist), a.WithAPISandboxEgress().EgressAllowlist)) ||
+			(p.SetEgressPorts && len(p.EgressPorts) != 0)) {
+		return App{}, ErrAPISandboxEgressPolicy
+	}
 	var guardErr error
 	p, guardErr = prepareServiceBindingPlanUpdate(a, p)
 	if guardErr != nil {
@@ -8112,6 +8188,14 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.publishMemTrafficAppPurgeLocked(id)
 	m.forgetOwnedOperationsLocked("", id)
+	delete(m.apiSandboxScenarioLibrary, id)
+	delete(m.apiSandboxSuites, id)
+	for runID, run := range m.apiSandboxSuiteRuns {
+		if run.AppID == id {
+			delete(m.apiSandboxSuiteRuns, runID)
+			delete(m.apiSandboxSuiteScenarios, runID)
+		}
+	}
 	for key, connection := range m.toolOAuthConnections {
 		if connection.Record.AppID == id {
 			delete(m.toolOAuthConnections, key)
@@ -8909,6 +8993,9 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if IsAPISandbox(app) && (d.branchInput == nil || d.branchInput.SandboxSourceID == "") {
+		return Deployment{}, 0, ErrConflict
 	}
 	if err := m.checkProjectDeploymentEnvironmentLocked(app, normalizedDeploymentScope(d.Scope)); err != nil {
 		return Deployment{}, 0, err
@@ -25829,7 +25916,10 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
 	in = defaultMCPProtocolAlert(in)
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
+	if in.RecoveryConfirmationChecks == 0 {
+		in.RecoveryConfirmationChecks = 1
+	}
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
@@ -25842,7 +25932,7 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 			return AlertRule{}, ErrConflict
 		}
 	}
-	if in.State == "" {
+	if in.State == "" || in.ObserveOnly {
 		in.State = AlertStateOk
 	}
 	if in.Action == "" {
@@ -25866,7 +25956,10 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
 	in = defaultMCPProtocolAlert(in)
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
+	if in.RecoveryConfirmationChecks == 0 {
+		in.RecoveryConfirmationChecks = 1
+	}
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
@@ -25927,7 +26020,7 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 	if in.CreatedAt.IsZero() {
 		in.CreatedAt = time.Now()
 	}
-	if in.State == "" {
+	if in.State == "" || in.ObserveOnly {
 		in.State = AlertStateOk
 	}
 	if in.Action == "" {
@@ -25992,6 +26085,7 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if !ok {
 		return AlertRule{}, ErrNotFound
 	}
+	before := r
 	if p.MCPMinCalls != nil {
 		r.MCPMinCalls = *p.MCPMinCalls
 	}
@@ -26003,6 +26097,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	}
 	if p.Enabled != nil {
 		r.Enabled = *p.Enabled
+	}
+	if p.ObserveOnly != nil {
+		r.ObserveOnly = *p.ObserveOnly
+	}
+	if p.EnvironmentScope != nil {
+		r.EnvironmentScope = *p.EnvironmentScope
 	}
 	if p.Metric != nil {
 		r.Metric = *p.Metric
@@ -26029,6 +26129,9 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.CooldownMinutes != nil {
 		r.CooldownMinutes = *p.CooldownMinutes
 	}
+	if p.RecoveryConfirmationChecks != nil {
+		r.RecoveryConfirmationChecks = *p.RecoveryConfirmationChecks
+	}
 	if p.NotifyResolved != nil {
 		r.NotifyResolved = *p.NotifyResolved
 	}
@@ -26041,10 +26144,39 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.PostDeployRollbackWindowSeconds != nil {
 		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
 	}
-	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) {
+	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) || !validAlertObservationMode(r) || !validAlertRecoveryConfirmation(r) ||
+		!alertScopeEditAllowed(before, p, r.ObserveOnly) {
 		return AlertRule{}, ErrInvalidArgument
 	}
-	r.UpdatedAt = time.Now()
+	if before.ObserveOnly && !r.ObserveOnly && r.WebhookURL == "" {
+		channels := m.alertRuleChannels[id]
+		if p.PromotionChannelIDs != nil {
+			channels = m.ownedAlertRuleChannelsLocked(r.AccountID, *p.PromotionChannelIDs)
+			if len(channels) != len(*p.PromotionChannelIDs) {
+				return AlertRule{}, ErrInvalidArgument
+			}
+		}
+		if len(channels) == 0 {
+			return AlertRule{}, ErrInvalidArgument
+		}
+		m.storeAlertRuleChannelsLocked(id, channels)
+	}
+	r.AnomalyEvaluation = api.AlertAnomalyEvaluation{}
+	r.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	if observationEndsOnEdit(before, p, r.ObserveOnly, r.Enabled) {
+		r.ObservedIncidents = endObservedIncident(r.ObservedIncidents, r.UpdatedAt, api.AlertObservationEnded)
+	}
+	if before.ObserveOnly && (!r.ObserveOnly || observationConditionChanged(before, p)) {
+		r.observationChecks = nil
+	}
+	if r.ObserveOnly != before.ObserveOnly {
+		if r.ObserveOnly {
+			m.queueAlertChannelStandDownsLocked(before, StandDownDisabled, r.UpdatedAt, true)
+			m.queueAlertWebhookStandDownLocked(before, r.UpdatedAt)
+		}
+		r.State = AlertStateOk
+		m.recordAlertEpisodeLocked(r, r.UpdatedAt)
+	}
 	m.alertRules[id] = r
 	return r, nil
 }
@@ -26077,12 +26209,22 @@ func (m *MemStore) deleteAlertRuleLocked(id string) {
 	// (ADR-20261104142830), unless its account is being deleted too.
 	if rule, ok := m.alertRules[id]; ok {
 		if _, live := m.accounts[rule.AccountID]; live {
-			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC())
+			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC(), false)
 		}
 	}
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
 	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
+	for key, fire := range m.alertDeferredFires {
+		if fire.RuleID == id {
+			delete(m.alertDeferredFires, key)
+		}
+	}
+	for key, notice := range m.alertWebhookStandDowns {
+		if notice.Rule.ID == id {
+			delete(m.alertWebhookStandDowns, key)
+		}
+	}
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)
 	delete(m.readinessPagerDutyAckPolicies, id+":primary")
@@ -27156,23 +27298,29 @@ func matchHostPattern(pattern, host string) bool {
 //
 // On won=true the returned deliveryID is the new row's UUID; on
 // won=false it is "".
-func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, error) {
+func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, AlertFireRecipients, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.alertRules[ruleID]
 	if !ok {
-		return "", false, ErrNotFound
+		return "", false, AlertFireRecipients{}, ErrNotFound
+	}
+	if r.ObserveOnly {
+		return "", false, AlertFireRecipients{}, nil
+	}
+	if !alertFireMatchesScope(payload, r.EnvironmentScope) {
+		return "", false, AlertFireRecipients{}, ErrConflict
 	}
 	// Fire and recovery/retry writers share the journal's unique key.
 	if _, exists := m.alertDeliveries[idempotencyKey]; exists {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	cacheKey := ruleID + "\x00" + idempotencyKey
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
-		return "", false, nil
+		return "", false, AlertFireRecipients{}, nil
 	}
 	if r.Action == AlertActionRollback && alertRollbackMetricAllowed(r.Metric) && !api.IsFiniteFloat(observed) {
-		return "", false, ErrInvalidArgument
+		return "", false, AlertFireRecipients{}, ErrInvalidArgument
 	}
 	if r.LastFiredAt.Before(at) || r.LastFiredAt.IsZero() {
 		r.LastFiredAt = at.UTC()
@@ -27201,20 +27349,34 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 			ObservedValue:  observed,
 			FiredAt:        at.UTC(),
 		}
+		if r.State != AlertStateFiring {
+			r.State, r.UpdatedAt = AlertStateFiring, at.UTC()
+			m.alertRules[ruleID] = r
+			m.recordAlertEpisodeLocked(r, at.UTC())
+		}
+		recipients := m.queueDeferredAlertFiresLocked(r, m.alertDeliveries[idempotencyKey])
 		m.captureAlertRollbackLocked(id, r, observed, at)
-		return id, true, nil
+		return id, true, recipients, nil
 	}
-	return "", false, nil
+	return "", false, AlertFireRecipients{}, nil
 }
 
 func (m *MemStore) SetAlertRuleState(_ context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
+	return m.setAlertRuleState(ruleID, to, at, nil)
+}
+
+func (m *MemStore) setAlertRuleState(ruleID string, to AlertState, at time.Time, confirmedAt *time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.alertRules[ruleID]
 	if !ok {
 		return false, ErrNotFound
 	}
-	if r.State == to {
+	if r.State == to || r.ObserveOnly {
+		return false, nil
+	}
+	if confirmedAt != nil && (!r.Enabled || !r.LastEvaluatedAt.Equal(*confirmedAt) ||
+		r.AnomalyEvaluation.Reason != api.AlertAnomalyRecoveryConfirmed) {
 		return false, nil
 	}
 	r.State = to

@@ -46,6 +46,7 @@ const (
 	Githubd_GetInstallationAccess_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/GetInstallationAccess"
 	Githubd_MintInstallationToken_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
 	Githubd_StreamSourceRef_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
+	Githubd_StreamPublicSourceRef_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/StreamPublicSourceRef"
 	Githubd_GetBranchHead_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
 	Githubd_GetInstallationRepository_FullMethodName  = "/onebox.faas.githubd.v1.Githubd/GetInstallationRepository"
 	Githubd_GetCIPullRequest_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/GetCIPullRequest"
@@ -193,6 +194,21 @@ type GithubdClient interface {
 	//   - UNAVAILABLE when githubd is down or codeload
 	//     returns 5xx.
 	StreamSourceRef(ctx context.Context, in *StreamSourceRefRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamSourceRefChunk], error)
+	// StreamPublicSourceRef streams the tar.gz archive of a repository
+	// GitHub reports as public, with no account or installation
+	// (ADR-20261126164847). githubd proves the repository is public on
+	// every call, resolves the ref to a commit SHA, and streams the same
+	// frames as StreamSourceRef under the same max_archive_bytes cap.
+	//
+	// Errors:
+	//   - PERMISSION_DENIED (github_repo_not_accessible) when the
+	//     repository is private, missing or renamed; the three are not
+	//     distinguished.
+	//   - INVALID_ARGUMENT when (repo, ref) fails validation or the ref
+	//     does not exist.
+	//   - UNAVAILABLE (source_ref_unavailable) when GitHub refuses or
+	//     rate-limits the read, or returns 5xx.
+	StreamPublicSourceRef(ctx context.Context, in *StreamPublicSourceRefRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamSourceRefChunk], error)
 	// GetBranchHead returns a branch's current commit. NOT_FOUND means the
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
@@ -429,6 +445,25 @@ func (c *githubdClient) StreamSourceRef(ctx context.Context, in *StreamSourceRef
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Githubd_StreamSourceRefClient = grpc.ServerStreamingClient[StreamSourceRefChunk]
+
+func (c *githubdClient) StreamPublicSourceRef(ctx context.Context, in *StreamPublicSourceRefRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamSourceRefChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Githubd_ServiceDesc.Streams[1], Githubd_StreamPublicSourceRef_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamPublicSourceRefRequest, StreamSourceRefChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Githubd_StreamPublicSourceRefClient = grpc.ServerStreamingClient[StreamSourceRefChunk]
 
 func (c *githubdClient) GetBranchHead(ctx context.Context, in *GetBranchHeadRequest, opts ...grpc.CallOption) (*GetBranchHeadResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -701,6 +736,21 @@ type GithubdServer interface {
 	//   - UNAVAILABLE when githubd is down or codeload
 	//     returns 5xx.
 	StreamSourceRef(*StreamSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error
+	// StreamPublicSourceRef streams the tar.gz archive of a repository
+	// GitHub reports as public, with no account or installation
+	// (ADR-20261126164847). githubd proves the repository is public on
+	// every call, resolves the ref to a commit SHA, and streams the same
+	// frames as StreamSourceRef under the same max_archive_bytes cap.
+	//
+	// Errors:
+	//   - PERMISSION_DENIED (github_repo_not_accessible) when the
+	//     repository is private, missing or renamed; the three are not
+	//     distinguished.
+	//   - INVALID_ARGUMENT when (repo, ref) fails validation or the ref
+	//     does not exist.
+	//   - UNAVAILABLE (source_ref_unavailable) when GitHub refuses or
+	//     rate-limits the read, or returns 5xx.
+	StreamPublicSourceRef(*StreamPublicSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error
 	// GetBranchHead returns a branch's current commit. NOT_FOUND means the
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
@@ -830,6 +880,9 @@ func (UnimplementedGithubdServer) MintInstallationToken(context.Context, *MintIn
 }
 func (UnimplementedGithubdServer) StreamSourceRef(*StreamSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error {
 	return status.Error(codes.Unimplemented, "method StreamSourceRef not implemented")
+}
+func (UnimplementedGithubdServer) StreamPublicSourceRef(*StreamPublicSourceRefRequest, grpc.ServerStreamingServer[StreamSourceRefChunk]) error {
+	return status.Error(codes.Unimplemented, "method StreamPublicSourceRef not implemented")
 }
 func (UnimplementedGithubdServer) GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBranchHead not implemented")
@@ -1138,6 +1191,17 @@ func _Githubd_StreamSourceRef_Handler(srv interface{}, stream grpc.ServerStream)
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Githubd_StreamSourceRefServer = grpc.ServerStreamingServer[StreamSourceRefChunk]
+
+func _Githubd_StreamPublicSourceRef_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamPublicSourceRefRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(GithubdServer).StreamPublicSourceRef(m, &grpc.GenericServerStream[StreamPublicSourceRefRequest, StreamSourceRefChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Githubd_StreamPublicSourceRefServer = grpc.ServerStreamingServer[StreamSourceRefChunk]
 
 func _Githubd_GetBranchHead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetBranchHeadRequest)
@@ -1511,6 +1575,11 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StreamSourceRef",
 			Handler:       _Githubd_StreamSourceRef_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "StreamPublicSourceRef",
+			Handler:       _Githubd_StreamPublicSourceRef_Handler,
 			ServerStreams: true,
 		},
 	},

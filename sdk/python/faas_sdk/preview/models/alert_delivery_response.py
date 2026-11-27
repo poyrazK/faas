@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -18,6 +18,10 @@ from ..models.alert_delivery_response_readiness_failover_reason import (
 )
 from ..models.alert_delivery_response_status import AlertDeliveryResponseStatus, check_alert_delivery_response_status
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.alert_delivery_anomaly_evidence import AlertDeliveryAnomalyEvidence
+
 
 T = TypeVar("T", bound="AlertDeliveryResponse")
 
@@ -44,6 +48,8 @@ class AlertDeliveryResponse:
     fired_at: datetime.datetime
     is_test: bool
     """true iff the row was written by Dispatcher.DispatchTest"""
+    anomaly: AlertDeliveryAnomalyEvidence | Unset = UNSET
+    """Baseline comparison captured at the time of an anomaly alert fire."""
     readiness_event_id: UUID | Unset = UNSET
     """Stable readiness logical event associated with this physical delivery."""
     readiness_destination: AlertDeliveryResponseReadinessDestination | Unset = UNSET
@@ -78,6 +84,10 @@ class AlertDeliveryResponse:
         fired_at = self.fired_at.isoformat()
 
         is_test = self.is_test
+
+        anomaly: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.anomaly, Unset):
+            anomaly = self.anomaly.to_dict()
 
         readiness_event_id: str | Unset = UNSET
         if not isinstance(self.readiness_event_id, Unset):
@@ -118,6 +128,8 @@ class AlertDeliveryResponse:
                 "is_test": is_test,
             }
         )
+        if anomaly is not UNSET:
+            field_dict["anomaly"] = anomaly
         if readiness_event_id is not UNSET:
             field_dict["readiness_event_id"] = readiness_event_id
         if readiness_destination is not UNSET:
@@ -137,6 +149,8 @@ class AlertDeliveryResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.alert_delivery_anomaly_evidence import AlertDeliveryAnomalyEvidence
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -155,6 +169,13 @@ class AlertDeliveryResponse:
         fired_at = datetime.datetime.fromisoformat(d.pop("fired_at"))
 
         is_test = d.pop("is_test")
+
+        _anomaly = d.pop("anomaly", UNSET)
+        anomaly: AlertDeliveryAnomalyEvidence | Unset
+        if isinstance(_anomaly, Unset):
+            anomaly = UNSET
+        else:
+            anomaly = AlertDeliveryAnomalyEvidence.from_dict(_anomaly)
 
         _readiness_event_id = d.pop("readiness_event_id", UNSET)
         readiness_event_id: UUID | Unset
@@ -207,6 +228,7 @@ class AlertDeliveryResponse:
             observed_value=observed_value,
             fired_at=fired_at,
             is_test=is_test,
+            anomaly=anomaly,
             readiness_event_id=readiness_event_id,
             readiness_destination=readiness_destination,
             readiness_failover_reason=readiness_failover_reason,

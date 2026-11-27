@@ -115,6 +115,7 @@
     {"path": "kubernetes", "source": "docs/kubernetes.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "labels", "source": "docs/labels.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "managed-postgres", "source": "docs/postgres.md"},
+    {"path": "native-postgres-operations", "source": "docs/native-postgres-operations.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "mcp", "source": "docs/mcp.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "mcp-hosting", "source": "docs/mcp-hosting.md"},
     {"path": "migrate-from-heroku", "source": "docs/migrate-from-heroku.md"},

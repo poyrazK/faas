@@ -27,6 +27,11 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"AlertDeferredFireRecipients":            true,
+	"CountDeploymentOutcomesSince":           true,
+	"UpdateAlertDeliveryStatus":              true,
+	"ClaimAlertFire":                         true,
+	"ListDeploymentPromotions":               true,
 	"AdmitExecution":                         true,
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
@@ -193,6 +198,7 @@ var memDispatched = map[string]bool{
 	"RenewOperationExecution":                                 true,
 	"RequestTelemetryAnalyticsByDimension":                    true,
 	"RequestTelemetryAnalyticsByRoute":                        true,
+	"GetRequestTelemetryByAppAndIdentifier":                   true,
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
@@ -311,6 +317,49 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) UpdateAlertDeliveryStatus(ctx context.Context, id string, status state.AlertDeliveryStatus, attempts, code int, detail string, deliveredAt *time.Time) error {
+	if override, ok := s.over.(interface {
+		UpdateAlertDeliveryStatus(context.Context, string, state.AlertDeliveryStatus, int, int, string, *time.Time) error
+	}); ok {
+		return override.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
+	}
+	return s.MemStore.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
+}
+
+func (s *Mem) AlertDeferredFireRecipients(ctx context.Context, ruleID string, firedAt time.Time) (state.AlertDeferredRecipients, error) {
+	if override, ok := s.over.(interface {
+		AlertDeferredFireRecipients(context.Context, string, time.Time) (state.AlertDeferredRecipients, error)
+	}); ok {
+		return override.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+	}
+	return s.MemStore.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+}
+
+func (s *Mem) CountDeploymentOutcomesSince(ctx context.Context, since time.Time, excludedAccounts ...string) (state.DeploymentOutcomeCounts, error) {
+	if override, ok := s.over.(interface {
+		CountDeploymentOutcomesSince(context.Context, time.Time, ...string) (state.DeploymentOutcomeCounts, error)
+	}); ok {
+		return override.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
+	}
+	return s.MemStore.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
+}
+
+func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, state.AlertFireRecipients, error) {
+	if override, ok := s.over.(interface {
+		ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, state.AlertFireRecipients, error)
+	}); ok {
+		return override.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+	}
+	return s.MemStore.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+}
+
+func (s *Mem) ListDeploymentPromotions(ctx context.Context, accountID, appID, scope string, before time.Time, limit int) ([]state.DeploymentPromotion, error) {
+	if override, ok := s.over.(state.DeploymentPromotionHistoryStore); ok {
+		return override.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
+	}
+	return s.MemStore.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
 }
 
 func (s *Mem) GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error) {
@@ -1475,6 +1524,15 @@ func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 
 		return o.RenewOperationExecution(p0, p1, p2, p3)
 	}
 	return s.MemStore.RenewOperationExecution(p0, p1, p2, p3)
+}
+
+func (s *Mem) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, query sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
+	if override, ok := s.over.(interface {
+		GetRequestTelemetryByAppAndIdentifier(context.Context, sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
+	}); ok {
+		return override.GetRequestTelemetryByAppAndIdentifier(ctx, query)
+	}
+	return s.MemStore.GetRequestTelemetryByAppAndIdentifier(ctx, query)
 }
 
 func (s *Mem) RequestTelemetryAnalyticsByDimension(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {

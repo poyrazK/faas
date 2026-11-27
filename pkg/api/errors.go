@@ -731,6 +731,10 @@ const (
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
 	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
+	// CodePublicSourceFetchRateLimited marks an account past
+	// PublicSourceFetchesPerHour reads of public repositories without a
+	// GitHub installation (ADR-20261126164847).
+	CodePublicSourceFetchRateLimited = "public_source_fetch_rate_limited"
 	// CodeNotificationChannelInUse marks a channel delete refused because the
 	// channel is the only destination of alert rules (ADR-20261029203000).
 	CodeNotificationChannelInUse = "notification_channel_in_use"
@@ -820,7 +824,8 @@ const (
 	// CodeRouteSplitInFlight (409): the app already has a split in flight.
 	CodeRouteSplitInFlight = "route_split_in_flight"
 	// CodeRouteSplitUnsupported (422): the app has something a split does
-	// not carry yet (managed bindings, service bindings, a project).
+	// not carry (a project, a preview, a binding not ready, an app that admits
+	// it as a caller by name).
 	CodeRouteSplitUnsupported = "route_split_unsupported"
 	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
 	// project would detach services that still call each other by service
@@ -2348,10 +2353,17 @@ func StatusForCode(code string) int {
 		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired,
 		CodeBillingEmailInUse, CodeBillingContactMember, CodeBillingSubscriptionEnding, CodeDevDebugNotDeveloperEnvironment:
 		return http.StatusConflict
-	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
+	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending,
+		CodeGitHubRepoNotAccessible:
 		return http.StatusForbidden
-	case CodeGitHubAppNotInstalled, CodeWorkflowFunctionNotInvocable:
+	case CodeGitHubAppNotInstalled, CodeWorkflowFunctionNotInvocable, CodeGitHubInstallNotFound:
 		return http.StatusNotFound
+	// githubd's source-ref streams return these through gRPC; without them
+	// apid answered a missing ref or an unreachable GitHub with HTTP 500.
+	case CodeInvalidRef:
+		return http.StatusBadRequest
+	case CodeSourceRefUnavailable:
+		return http.StatusServiceUnavailable
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
 	case CodeStoredWorkflowEventsUnavailable:
@@ -7451,6 +7463,21 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		"Source-ref fetch unavailable",
 		reason).
 		WithDocs(docsBase + "/deploy-from-source#failure-modes")
+}
+
+// ErrPublicSourceFetchRateLimited is the 429 for an account past
+// PublicSourceFetchesPerHour reads of public repositories without an
+// installation (ADR-20261126164847).
+func ErrPublicSourceFetchRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodePublicSourceFetchRateLimited,
+		"Public repository reads rate limited",
+		fmt.Sprintf("This account has read %d public GitHub repositories without a GitHub installation in the last hour. Connect GitHub to deploy without this limit.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/deploy-from-source")
 }
 
 // PreviewDatabaseRetryAfter is the Retry-After of

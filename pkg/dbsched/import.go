@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbvm"
 )
 
 // Importing another PostgreSQL database (ADR-1027 migration off Neon). The
@@ -23,7 +25,7 @@ type ImportSpec struct {
 
 // Validate rejects a spec vmmd or the guest would refuse.
 func (s ImportSpec) Validate() error {
-	if s.Host == "" || len(s.Host) > 253 || s.Port < 1 || s.Port > 65535 {
+	if err := (dbvm.ImportSource{Host: s.Host, Port: s.Port}).Validate(); err != nil {
 		return fmt.Errorf("%w: import source endpoint", ErrInvalid)
 	}
 	if err := s.Source.Validate(); err != nil {
@@ -54,6 +56,54 @@ func (s *Scheduler) Import(ctx context.Context, id string, spec ImportSpec) (dbg
 	return status, err
 }
 
+// CustomerImport inspects or starts a copy using the customer import op,
+// which older vmmd or guest versions cannot accidentally start.
+func (s *Scheduler) CustomerImport(ctx context.Context, id string, spec ImportSpec, checkOnly bool) (dbguest.ImportStatus, error) {
+	client, ok := s.vmm.(interface {
+		CustomerImport(context.Context, Node, string, ImportSpec, bool) (dbguest.ImportStatus, error)
+	})
+	if !ok {
+		return noImport, ErrImportUnsupported
+	}
+	node, err := s.sourceInspectionNode(ctx, id, spec)
+	if err != nil {
+		return noImport, err
+	}
+	status, err := client.CustomerImport(ctx, node, id, spec, checkOnly)
+	_ = s.Touch(ctx, id)
+	return status, err
+}
+
+// CheckMigration uses the native relay without starting or reserving a copy.
+func (s *Scheduler) CheckMigration(ctx context.Context, id string, spec ImportSpec) (*vmmdpb.DatabaseMigrationCheck, error) {
+	client, ok := s.vmm.(interface {
+		CheckMigration(context.Context, Node, string, ImportSpec) (*vmmdpb.DatabaseMigrationCheck, error)
+	})
+	if !ok {
+		return nil, ErrImportUnsupported
+	}
+	node, err := s.sourceInspectionNode(ctx, id, spec)
+	if err != nil {
+		return nil, err
+	}
+	check, err := client.CheckMigration(ctx, node, id, spec)
+	_ = s.Touch(ctx, id)
+	return check, err
+}
+
+func (s *Scheduler) sourceInspectionNode(ctx context.Context, id string, spec ImportSpec) (Node, error) {
+	if err := spec.Validate(); err != nil {
+		return Node{}, err
+	}
+	vm, err := s.Wake(ctx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	return s.node(ctx, vm.NodeID)
+}
+
+var ErrImportUnsupported = errors.New("dbsched: customer import unavailable")
+
 // ImportStatus reports a database's import without waking it, so a
 // database that is not running reports none. An unfinished import did not
 // survive its VM stopping (the restore is one transaction, so the target
@@ -78,23 +128,23 @@ func (s *Scheduler) ImportStatus(ctx context.Context, id string) (dbguest.Import
 }
 
 func (s *Scheduler) guestImport(ctx context.Context, vm VM) (dbguest.ImportStatus, error) {
-	node, err := s.node(ctx, vm.NodeID)
-	if err != nil {
+	resp, err := s.guestImportStatus(ctx, vm)
+	if err != nil || resp.Import == nil {
 		return noImport, err
-	}
-	resp, err := s.vmm.Control(ctx, node, vm.DatabaseID, dbguest.Request{Op: dbguest.OpImportStatus})
-	if err != nil {
-		return noImport, err
-	}
-	if resp.Import == nil {
-		return noImport, nil
 	}
 	return *resp.Import, nil
 }
 
-// importing reports whether a running database is importing, so idle
-// parking and eviction leave it alone: its import is its activity.
+func (s *Scheduler) guestImportStatus(ctx context.Context, vm VM) (dbguest.Response, error) {
+	node, err := s.node(ctx, vm.NodeID)
+	if err != nil {
+		return dbguest.Response{}, err
+	}
+	return s.vmm.Control(ctx, node, vm.DatabaseID, dbguest.Request{Op: dbguest.OpImportStatus})
+}
+
+// importing protects database copies in progress from idle parking.
 func (s *Scheduler) importing(ctx context.Context, vm VM) bool {
-	status, err := s.guestImport(ctx, vm)
-	return err == nil && status.State == dbguest.ImportRunning
+	resp, err := s.guestImportStatus(ctx, vm)
+	return err == nil && (resp.MigrationRunning || resp.Import != nil && resp.Import.State == dbguest.ImportRunning)
 }

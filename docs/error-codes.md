@@ -134,6 +134,12 @@ HTTP 410 Gone · App deleted; App was deleted while wake was in flight
 
 See [Alerts](alerts.md), [Crons](crons.md).
 
+### `app_has_borrowed_bucket_bindings`
+
+HTTP 409 Conflict · Conflict
+
+Undo the split instead: gregale app scale &lt;app> --split-status, then gregale app scale &lt;app> --undo-split ID.
+
 ### `app_has_buckets`
 
 HTTP 409 Conflict · Conflict
@@ -1443,6 +1449,10 @@ HTTP 400 Bad Request · Doc must be a JSON object with a top-level 'openapi' or 
 ### `invalid_pkce`
 
 HTTP 400 Bad Request · Invalid OAuth Request
+
+### `invalid_postgres_restore_receipt`
+
+HTTP 400 Bad Request · Invalid PostgreSQL restore manifest
 
 ### `invalid_public_auth_ip_allowlist`
 
@@ -3486,7 +3496,7 @@ HTTP 409 Conflict · Route health gate blocked
 
 ### `route_split_changed`
 
-HTTP 409 Conflict · Suggestion changed
+HTTP 409 Conflict · Binding changed; Suggestion changed
 
 ### `route_split_in_flight`
 
@@ -3494,7 +3504,7 @@ HTTP 409 Conflict · Split in flight; Undo in progress
 
 ### `route_split_unsupported`
 
-HTTP 409 Conflict or 422 Unprocessable Entity · Split not supported for this app; No live build
+HTTP 409 Conflict or 422 Unprocessable Entity · Split not supported for this app; Binding not ready; No live build
 
 ### `run_artifact_destination_limit`
 

@@ -40,6 +40,22 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresGet(args[1:])
 	case subStatus:
 		return postgresConditions.status(args[1:])
+	case "diagnose":
+		return cmdPostgresDiagnose(args[1:])
+	case "sessions":
+		return cmdPostgresSessions(args[1:])
+	case "cancel-query":
+		return cmdPostgresCancelQuery(args[1:])
+	case "tables":
+		return cmdPostgresTables(args[1:])
+	case "autovacuum":
+		return cmdPostgresAutovacuum(args[1:])
+	case "extensions":
+		return cmdPostgresExtensions(args[1:])
+	case "errors":
+		return cmdPostgresErrorHistory(args[1:])
+	case "queries":
+		return cmdPostgresQueries(args[1:])
 	case subWait:
 		return postgresConditions.wait(args[1:])
 	case subLabel:
@@ -66,6 +82,10 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresSuspendTimeout(args[1:])
 	case "resize":
 		return cmdPostgresResize(args[1:])
+	case "maintenance":
+		return cmdPostgresMaintenance(args[1:])
+	case "auto-grow":
+		return cmdPostgresAutoGrow(args[1:])
 	case "resize-status":
 		return cmdPostgresResizeStatus(args[1:])
 	// ADR-1027 major upgrades: a preview, callable but out of customer
@@ -75,8 +95,24 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresUpgrade(args[1:])
 	case "upgrade-status":
 		return cmdPostgresUpgradeStatus(args[1:])
+	case "upgrade-rehearsal":
+		return cmdPostgresUpgradeRehearsal(args[1:])
+	case "restore-drill":
+		return cmdPostgresRestoreDrill(args[1:])
 	case subRestore:
 		return cmdPostgresRestore(args[1:])
+	case "recovery-region":
+		return cmdPostgresRecoveryRegion(args[1:])
+	case "export":
+		return cmdPostgresExport(args[1:])
+	case "backup-schedule":
+		return cmdPostgresBackupSchedule(args[1:])
+	case "import":
+		return cmdPostgresImport(args[1:])
+	case "import-status":
+		return cmdPostgresImportStatus(args[1:])
+	case "migrate":
+		return cmdPostgresMigrate(args[1:])
 	case "branch":
 		return cmdPostgresBranch(args[1:])
 	case "cutover":
@@ -107,7 +143,7 @@ func cmdPostgresAttach(args []string) int {
 	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise default)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|session|auth")
+	access := fs.String("access", "read_write", "backend-supported credential access")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -124,7 +160,7 @@ func cmdPostgresAttach(args []string) int {
 	}
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api|session|auth]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access MODE]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -620,8 +656,11 @@ func cmdPostgresUndelete(args []string) int {
 func cmdPostgresRestore(args []string) int {
 	args = normalizePostgresArgs(args)
 	fs := newFlagSet("postgres restore", flag.ContinueOnError)
-	name := fs.String("name", "", "name for the restored database (required)")
-	pointInTime := fs.String("point-in-time", "", "RFC3339 restore timestamp (required)")
+	check := fs.Bool("check", false, "inspect archived recovery evidence for the timestamp")
+	name := fs.String("name", "", "name for the restored database")
+	pointInTime := fs.String("point-in-time", "", "RFC3339 restore timestamp")
+	region := fs.String("region", "", "restore in the database's configured recovery region")
+	latest := fs.Bool("latest", false, "restore the latest verified point in the recovery region")
 	switchApp := fs.String("switch", "", "move this app to the restored copy, keeping its code")
 	scope := fs.String("env", "", "with --switch: the environment whose bindings move (default default)")
 	confirmed := fs.Bool("yes", false, "with --switch: switch without prompting")
@@ -631,8 +670,27 @@ func cmdPostgresRestore(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	const usage = "usage: gregale postgres restore DATABASE_ID --name NAME --point-in-time RFC3339 [--switch APP [--env SCOPE] [--yes] [--no-wait]]"
-	if fs.NArg() != 1 || *name == "" || *pointInTime == "" || *timeout <= 0 || *interval <= 0 || (*switchApp == "" && (*scope != "" || *confirmed || *noWait)) {
+	const ordinaryUsage = "usage: gregale postgres restore DATABASE --name NAME --point-in-time RFC3339 [--switch APP [--env SCOPE] [--yes] [--no-wait]]"
+	const previewUsage = "usage: gregale postgres restore DATABASE (--point-in-time RFC3339 | --region REGION --latest) (--check | --name NAME [--switch APP [--env SCOPE] [--yes] [--no-wait]])"
+	if *check {
+		valid := fs.NArg() == 1 && *pointInTime != ""
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "check" && f.Name != "point-in-time" {
+				valid = false
+			}
+		})
+		if !valid {
+			PrintUsage(os.Stderr, previewUsage, "postgres")
+			return 1
+		}
+		return cmdPostgresRestoreCheck(fs.Arg(0), *pointInTime)
+	}
+	if fs.NArg() != 1 || *name == "" || (*pointInTime != "") == *latest || *latest && *region == "" ||
+		*region != "" && *switchApp != "" || *timeout <= 0 || *interval <= 0 || (*switchApp == "" && (*scope != "" || *confirmed || *noWait)) {
+		usage := ordinaryUsage
+		if *region != "" || *latest {
+			usage = previewUsage
+		}
 		PrintUsage(os.Stderr, usage, "postgres")
 		return 1
 	}
@@ -644,11 +702,24 @@ func cmdPostgresRestore(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	sourceID, err := postgresDatabaseID(context.Background(), client, fs.Arg(0))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	var sourceID string
+	if *region == "" {
+		sourceID, err = postgresDatabaseID(ctx, client, fs.Arg(0))
+	} else {
+		sourceID, err = postgresConditions.resolveRef(ctx, client, fs.Arg(0))
+	}
 	if err != nil {
 		return printErr("Could not find managed PostgreSQL database", err)
 	}
-	result, err := client.RestoreManagedPostgresDatabase(context.Background(), sourceID, api.RestoreManagedPostgresDatabaseRequest{Name: *name, PointInTime: *pointInTime})
+	request := api.RestoreManagedPostgresDatabaseRequest{Name: *name, PointInTime: *pointInTime, Region: *region}
+	var result api.ManagedPostgresDatabase
+	if org := client.ProjectOrganization(); *region != "" && org != "" {
+		result, err = client.RestoreOrgManagedPostgresDatabase(ctx, org, sourceID, request)
+	} else {
+		result, err = client.RestoreManagedPostgresDatabase(ctx, sourceID, request)
+	}
 	if err != nil {
 		return printErr("Could not restore managed PostgreSQL database", err)
 	}
@@ -673,6 +744,8 @@ func cmdPostgresBindings(args []string) int {
 		return cmdPostgresBindingsGet(args[1:])
 	case "rotate":
 		return cmdPostgresBindingsRotate(args[1:])
+	case "timeouts":
+		return cmdPostgresBindingTimeouts(args[1:])
 	case "delete":
 		return cmdPostgresBindingsDelete(args[1:])
 	default:
@@ -884,7 +957,9 @@ func postgresAvailabilityOK(value string) bool {
 }
 
 func postgresAccessOK(value string) bool {
-	return slices.Contains(postgresVocab("access"), value)
+	// The API checks the account flag and target provider for this mode.
+	// Keep it out of shared hints, where the target provider is unknown.
+	return value == "replica_only" || slices.Contains(postgresVocab("access"), value)
 }
 
 // invalidPostgresChoice names the first enumerated flag whose value is outside
@@ -893,6 +968,9 @@ func postgresAccessOK(value string) bool {
 func invalidPostgresChoice(command string, flagValues ...string) bool {
 	for i := 0; i+1 < len(flagValues); i += 2 {
 		name, value := flagValues[i], flagValues[i+1]
+		if name == "access" && postgresAccessOK(value) {
+			continue
+		}
 		if vocab := postgresVocab(name); !slices.Contains(vocab, value) {
 			printCommandValidation(os.Stderr, "gregale %s: invalid --%s %q (want %s)\n", command, name, value, strings.Join(vocab, "|"))
 			return true
@@ -940,7 +1018,9 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	if database.RestoreSlotUntil != "" {
 		_, _ = fmt.Fprintf(w, "  restore_slot_until: %s (a temporary copy past your plan's database limit; delete its source, purge another database or upgrade to keep it)\n", database.RestoreSlotUntil)
 	}
-	if database.RestoreSourceDatabaseID != "" {
+	if database.MaskedBranch {
+		_, _ = fmt.Fprintf(w, "  masked_from:      %s\n", database.RestoreSourceDatabaseID)
+	} else if database.RestoreSourceDatabaseID != "" {
 		_, _ = fmt.Fprintf(w, "  restored_from:    %s at %s\n", database.RestoreSourceDatabaseID, database.RestorePointInTime)
 	}
 	if database.ExpiresAt != "" {

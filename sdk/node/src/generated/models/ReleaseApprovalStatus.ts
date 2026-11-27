@@ -7,6 +7,14 @@ import type { ReleaseApprovalDecision } from './ReleaseApprovalDecision.js';
  * A release's approval state.
  */
 export type ReleaseApprovalStatus = {
+  /**
+   * The release approval applies before its release command.
+   */
+  before_release_command?: boolean;
+  /**
+   * The release requires current passing sandbox evidence in addition to human approval.
+   */
+  require_passing_sandbox_suite?: boolean;
   deployment_id: string;
   app: string;
   state: 'not_required' | 'waiting' | 'approved' | 'rejected' | 'expired';

@@ -59,7 +59,8 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		if !state.SameAppResourceOwner(caller, target) {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
-		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
+		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted ||
+			state.IsAPISandbox(caller) || state.IsAPISandbox(target) {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
 		rehearsalRun, err := AuthorizeRehearsalService(ctx, store, caller, target)

@@ -32,6 +32,39 @@ type fakeHost struct {
 	// deleteNotFound answers 404 without deleting, as a refused access
 	// check does.
 	deleteNotFound bool
+	// bindings are the source's; bound records what each route's app got.
+	bindings  []routesplit.Binding
+	bound     map[string][]routesplit.Binding
+	boundFrom map[string]string
+	bindErrID string
+	released  map[string]bool
+	// releasedAfterDelete is set when a release came after the app's delete.
+	releasedAfterDelete bool
+	releaseErr          *api.Problem
+}
+
+func (h *fakeHost) Bindings(context.Context, state.App) ([]routesplit.Binding, *api.Problem) {
+	return h.bindings, nil
+}
+
+func (h *fakeHost) Bind(_ context.Context, _ state.Account, source, target state.App, b routesplit.Binding) *api.Problem {
+	if b.ID == h.bindErrID {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Conflict", "no room for another key")
+	}
+	h.bound[target.ID] = append(h.bound[target.ID], b)
+	h.boundFrom[target.ID] = source.ID
+	return nil
+}
+
+func (h *fakeHost) ReleaseBindings(_ context.Context, _ state.Account, target state.App) *api.Problem {
+	if h.releaseErr != nil {
+		return h.releaseErr
+	}
+	if h.deleted[target.ID] {
+		h.releasedAfterDelete = true
+	}
+	h.released[target.ID] = true
+	return nil
 }
 
 func (h *fakeHost) ResourceAccount(ctx context.Context, app state.App) (state.Account, error) {
@@ -137,6 +170,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f := &fixture{ctx: ctx, store: store, acct: acct, source: source, clock: time.Now()}
 	f.host = &fakeHost{store: store, resized: map[string]int{}, deleted: map[string]bool{},
+		bound: map[string][]routesplit.Binding{}, boundFrom: map[string]string{}, released: map[string]bool{},
 		split: &routeresources.Split{Kind: routeresources.SplitMemory, Route: "GET /exports/{id}", Method: "GET", PathGlob: "/exports/*",
 			RouteRAMMB: 1920, CurrentRAMMB: 1024, MainRAMMB: 256}}
 	f.svc = &routesplit.Service{Store: store, Host: f.host, Now: func() time.Time { return f.clock }}
@@ -249,76 +283,134 @@ func TestApplyRefuses(t *testing.T) {
 	}
 }
 
-func TestManagedBindingsAreRefused(t *testing.T) {
+// The route's app gets its own binding like each of the app's default-scope
+// bindings before its first deployment; bindings of other scopes stay. Undo
+// releases them before it deletes the app.
+func TestBindingsAreCarried(t *testing.T) {
 	f := newFixture(t)
-	secret := state.AppSecret{AccountID: f.acct.ID, AppID: f.source.ID, Key: "DATABASE_URL", ManagedPostgresBindingID: uuid.NewString()}
-	f.svc.Store = bindingStore{Mem: f.store, secrets: []state.AppSecret{secret}}
-	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported {
-		t.Fatalf("managed binding: %+v", prob)
+	f.host.bindings = []routesplit.Binding{
+		{Kind: routesplit.BindingPostgres, ID: "pg-1", Scope: "default", Label: "DATABASE_URL", Ready: true},
+		{Kind: routesplit.BindingBucket, ID: "s3-1", Scope: "default", Label: "GREGALE_S3_ASSETS_*", Ready: true},
+		{Kind: routesplit.BindingPostgres, ID: "pg-2", Scope: "staging", Label: "DATABASE_URL", Ready: false},
+	}
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	bound := f.host.bound[split.TargetAppID]
+	if len(bound) != 2 || bound[0].ID != "pg-1" || bound[1].ID != "s3-1" {
+		t.Fatalf("bound = %+v", bound)
+	}
+	if f.host.boundFrom[split.TargetAppID] != f.source.ID {
+		t.Fatalf("bound from %q, want the source", f.host.boundFrom[split.TargetAppID])
+	}
+	if err := f.store.MarkDeploymentLive(f.ctx, split.TargetDeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Step(f.ctx)
+	f.svc.Step(f.ctx)
+	done := f.read(t, split.ID)
+	if done.Phase != state.RouteSplitDone {
+		t.Fatalf("split = %+v", done)
+	}
+	if _, prob := f.svc.Undo(f.ctx, f.acct, f.source, done); prob != nil {
+		t.Fatalf("undo: %+v", prob)
+	}
+	if !f.host.released[split.TargetAppID] || !f.host.deleted[split.TargetAppID] || f.host.releasedAfterDelete {
+		t.Fatalf("released %v deleted %v (after delete %v)", f.host.released, f.host.deleted, f.host.releasedAfterDelete)
 	}
 }
 
-// bindingStore reports a managed binding the MemStore cannot set up here and
-// forwards the rest of routesplit.Store.
-type bindingStore struct {
-	Mem     *state.MemStore
-	secrets []state.AppSecret
+func TestUnreadyBindingRefuses(t *testing.T) {
+	f := newFixture(t)
+	f.host.bindings = []routesplit.Binding{{Kind: routesplit.BindingPostgres, ID: "pg-1", Scope: "default", Label: "DATABASE_URL", Ready: false}}
+	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported || !strings.Contains(prob.Detail, "DATABASE_URL") {
+		t.Fatalf("unready binding: %+v", prob)
+	}
+	if splits, _ := f.store.RouteSplitsForApp(f.ctx, f.acct.ID, f.source.ID, 10); len(splits) != 0 {
+		t.Fatalf("a refused split was recorded: %+v", splits)
+	}
 }
 
-func (s bindingStore) ListAppSecrets(context.Context, string, string) ([]state.AppSecret, error) {
-	return s.secrets, nil
+// A binding the route's app cannot get rolls the split back: the bindings
+// it did get are released and the app deleted.
+func TestBindFailureRollsBack(t *testing.T) {
+	f := newFixture(t)
+	f.host.bindings = []routesplit.Binding{
+		{Kind: routesplit.BindingPostgres, ID: "pg-1", Scope: "default", Label: "DATABASE_URL", Ready: true},
+		{Kind: routesplit.BindingBucket, ID: "s3-1", Scope: "default", Label: "GREGALE_S3_ASSETS_*", Ready: true},
+	}
+	f.host.bindErrID = "s3-1"
+	if _, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request()); prob == nil || !strings.Contains(prob.Detail, "GREGALE_S3_ASSETS_*") {
+		t.Fatalf("bind failure: %+v", prob)
+	}
+	splits, _ := f.store.RouteSplitsForApp(f.ctx, f.acct.ID, f.source.ID, 10)
+	if len(splits) != 1 || splits[0].Phase != state.RouteSplitRolledBack {
+		t.Fatalf("splits = %+v", splits)
+	}
+	target, err := f.store.AppBySlug(f.ctx, splits[0].TargetSlug)
+	if err == nil && target.Status != state.AppDeleted {
+		t.Fatalf("route's app left: %+v", target)
+	}
+	if len(f.host.released) != 1 || f.host.releasedAfterDelete {
+		t.Fatalf("released %v (after delete %v)", f.host.released, f.host.releasedAfterDelete)
+	}
 }
 
-func (s bindingStore) CreateRouteSplit(ctx context.Context, split state.RouteSplit) (state.RouteSplit, error) {
-	return s.Mem.CreateRouteSplit(ctx, split)
+// A release that fails keeps the route's app: deleting it would strand a
+// live credential.
+func TestReleaseFailureKeepsTheApp(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	f.host.releaseErr = api.ErrCapacity("provider down")
+	f.clock = f.clock.Add(api.RouteSplitDeployTimeout + time.Minute)
+	f.svc.Step(f.ctx)
+	if got := f.read(t, split.ID); got.Phase == state.RouteSplitRolledBack || f.host.deleted[split.TargetAppID] {
+		t.Fatalf("split = %+v, deleted %v", got, f.host.deleted)
+	}
 }
 
-func (s bindingStore) RouteSplit(ctx context.Context, accountID, id string) (state.RouteSplit, error) {
-	return s.Mem.RouteSplit(ctx, accountID, id)
+// Service bindings carry with the manifest; another app that admits the
+// app as a caller by name would refuse the route's app, so that refuses.
+func TestNamedCallerRefuses(t *testing.T) {
+	f := newFixture(t)
+	source := f.source
+	source.Manifest.ServiceBindings = []api.AppServiceBinding{{Binding: "BILLING", Service: "billing"}}
+	if _, prob := f.svc.Apply(f.ctx, f.acct, source, f.request()); prob != nil {
+		t.Fatalf("service bindings alone: %+v", prob)
+	}
+
+	g := newFixture(t)
+	callers := []string{"Shop"}
+	if _, err := g.store.CreateApp(g.ctx, state.App{AccountID: g.acct.ID, Slug: "billing", Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1,
+		Manifest: state.AppManifest{AllowedServiceCallers: &callers}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, prob := g.svc.Apply(g.ctx, g.acct, g.source, g.request()); prob == nil || prob.Code != api.CodeRouteSplitUnsupported || !strings.Contains(prob.Detail, "billing") {
+		t.Fatalf("named caller: %+v", prob)
+	}
 }
 
-func (s bindingStore) RouteSplitsForApp(ctx context.Context, accountID, appID string, limit int) ([]state.RouteSplit, error) {
-	return s.Mem.RouteSplitsForApp(ctx, accountID, appID, limit)
-}
-
-func (s bindingStore) InFlightRouteSplits(ctx context.Context, after state.RouteSplitCursor, limit int) ([]state.RouteSplit, error) {
-	return s.Mem.InFlightRouteSplits(ctx, after, limit)
-}
-
-func (s bindingStore) AdvanceRouteSplit(ctx context.Context, split state.RouteSplit, from string) (state.RouteSplit, error) {
-	return s.Mem.AdvanceRouteSplit(ctx, split, from)
-}
-
-func (s bindingStore) ClaimRouteSplit(ctx context.Context, split state.RouteSplit, until time.Time) (state.RouteSplit, bool, error) {
-	return s.Mem.ClaimRouteSplit(ctx, split, until)
-}
-
-func (s bindingStore) ReleaseRouteSplit(ctx context.Context, claimed state.RouteSplit) error {
-	return s.Mem.ReleaseRouteSplit(ctx, claimed)
-}
-
-func (s bindingStore) SeedRouteSplitTarget(ctx context.Context, seed state.RouteSplitSeed) (state.Deployment, error) {
-	return s.Mem.SeedRouteSplitTarget(ctx, seed)
-}
-
-func (s bindingStore) AccountByID(ctx context.Context, id string) (state.Account, error) {
-	return s.Mem.AccountByID(ctx, id)
-}
-
-func (s bindingStore) AppByID(ctx context.Context, id string) (state.App, error) {
-	return s.Mem.AppByID(ctx, id)
-}
-
-func (s bindingStore) AppBySlug(ctx context.Context, slug string) (state.App, error) {
-	return s.Mem.AppBySlug(ctx, slug)
-}
-
-func (s bindingStore) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
-	return s.Mem.DeploymentByID(ctx, id)
-}
-
-func (s bindingStore) ListEdgeRulesForApp(ctx context.Context, appID string) ([]state.EdgeRule, error) {
-	return s.Mem.ListEdgeRulesForApp(ctx, appID)
+func TestNamesCaller(t *testing.T) {
+	callers := []string{" other ", "shop"}
+	scopes := api.ServiceCallerScopes{"shop": {}}
+	for _, tc := range []struct {
+		name     string
+		manifest state.AppManifest
+		want     bool
+	}{
+		{"none", state.AppManifest{}, false},
+		{"callers", state.AppManifest{AllowedServiceCallers: &callers}, true},
+		{"scopes", state.AppManifest{AllowedServiceCallScopes: &scopes}, true},
+		{"other", state.AppManifest{AllowedServiceCallers: &[]string{"shopping"}}, false},
+	} {
+		if got := routesplit.NamesCaller(tc.manifest, "shop"); got != tc.want {
+			t.Errorf("%s: NamesCaller = %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }
 
 func TestDeployTimeoutRollsBack(t *testing.T) {

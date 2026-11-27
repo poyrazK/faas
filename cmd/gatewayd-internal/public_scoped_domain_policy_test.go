@@ -49,7 +49,7 @@ func TestPublicScopedDomainPostgresPolicyAndFreshAdmission(t *testing.T) {
 			f.edgeRule(t, host, scopedPublicHeaders("fallback"))
 			g := newGatewaydEdgeRules(f.store, nil, nil, nil)
 			old, admitted := f.compiledAppWithRouter(t, g, router, host)
-			if admitted.PublicEnvironmentID != environment.ID || admitted.StageEnvironmentID != environment.ID || admitted.PinnedDeploymentID != deployment.ID {
+			if admitted.PublicEnvironmentID != environment.ID || admitted.PinnedDeploymentID != deployment.ID {
 				t.Fatalf("scoped policy identity: %+v", admitted)
 			}
 			if got := g.MatchHeaders(old, host, "/", "GET"); got == nil || got.ResponseHeaders[0].Value != "fallback" {

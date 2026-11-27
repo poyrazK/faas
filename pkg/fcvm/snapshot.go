@@ -247,6 +247,10 @@ type RestoreSpec struct {
 	// capacity so it matches the drive the snapshot was captured with.
 	AgentInput bool
 	InputKey   string
+	// SandboxVolume is the restore counterpart of ColdBootSpec's: the
+	// session's workspace volume, bound in under the name its capture
+	// recorded.
+	SandboxVolume string
 	// Storage, when set, carries a sealed crash capture's memory, vmstate,
 	// private drive and backing identity (a crashcrypt.Backend decrypting
 	// on read). Those objects are copied into this instance's staging and

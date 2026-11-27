@@ -5,6 +5,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestRenderManagedPostgresNeverIncludesCredentialMaterial(t *testing.T) {
@@ -17,6 +20,9 @@ func TestRenderManagedPostgresNeverIncludesCredentialMaterial(t *testing.T) {
 			ID: "db-1", Name: "orders", Region: "eu", PostgresMajor: 16,
 			ServiceClass: "burstable", Availability: "single_zone", ScaleToZero: true,
 			StorageLimitLabel: "50 GiB", RestoreWindowSeconds: 604800, State: "ready",
+			StorageAlerts: []api.ManagedPostgresStorageAlert{{
+				State: "recovered", SampledAt: time.Date(2026, 10, 30, 14, 50, 0, 0, time.UTC),
+			}},
 			Bindings: []ManagedPostgresBindingItem{{ID: "binding-1", AppID: "app-1", Scope: "production", EnvironmentKey: "DATABASE_URL", Access: "read_write", State: "ready", CredentialGeneration: 1}},
 		}}},
 	}
@@ -24,7 +30,7 @@ func TestRenderManagedPostgresNeverIncludesCredentialMaterial(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	body := out.Body.String()
-	for _, want := range []string{"orders", "db-1", "DATABASE_URL", "ready", "50 GiB"} {
+	for _, want := range []string{"orders", "db-1", "DATABASE_URL", "ready", "50 GiB", "Storage alerts", "Storage recovered", "2026-10-30 14:50 UTC"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}

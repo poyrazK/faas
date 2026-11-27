@@ -2039,6 +2039,22 @@ const (
 	MCPSellerStatsMaxSignups       = 100_000
 	MCPSellerStatsQuoteParallelism = 8
 	MCPSellerStatsQuoteBudget      = 20 * time.Second
+	// MCP listing (ADR-20261126175800): a published listing has at most
+	// MCPListingMaxTools tools; titles, summaries, tool fields and the
+	// endpoint are at most these many characters, and the registry
+	// server.json description at most MCPListingRegistryDescriptionMax.
+	// The tools as stored JSON stay under MCPListingToolsMaxBytes, below the
+	// mcp_listings.tools CHECK of 262144 bytes with room for jsonb's spacing.
+	MCPListingMaxTools               = 200
+	MCPListingTitleMax               = 80
+	MCPListingSummaryMax             = 500
+	MCPListingToolNameMax            = 128
+	MCPListingToolTitleMax           = 128
+	MCPListingToolDescriptionMax     = 1024
+	MCPListingEndpointMax            = 2048
+	MCPListingRequestMaxBytes        = 512 << 10
+	MCPListingRegistryDescriptionMax = 100
+	MCPListingToolsMaxBytes          = 256000
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
@@ -2693,15 +2709,6 @@ const QueueLeaseMaxResponseBytes = 8 << 20
 const QueueLeaseMaxWaitSeconds = 20
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
-
-// GatewayStageMetricEnvironmentsPerApp and GatewayStageMetricEnvironmentsMax
-// bound the per-stage request series one gatewayd-internal process keeps
-// (gateway_environment_*; ADR-20261104120000): stages past either cap are
-// not counted per environment, and their alert rules read no traffic.
-const (
-	GatewayStageMetricEnvironmentsPerApp = 20
-	GatewayStageMetricEnvironmentsMax    = 5000
-)
 
 // EnvironmentGitOpsMaxDefinitionBytes bounds one complete environment graph,
 // independently of the smaller non-secret configuration object it may contain.
@@ -19259,6 +19266,13 @@ const (
 	AlertChannelResolveRetryBatch      = 100
 )
 
+// PublicSourceFetchesPerHour caps the reads of public GitHub repositories one
+// account makes without an installation, scans and deploys together
+// (ADR-20261126164847). Every account shares githubd's one public-read token,
+// 5,000 GitHub calls an hour, so no plan raises it. Counted in the database
+// counter every apid shares (ADR 20261108160000).
+const PublicSourceFetchesPerHour = 30
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -19342,14 +19356,20 @@ const AlertRatioMinRequests = 10
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.
 const (
-	AnomalyBaselineDays       = 7
-	AnomalyBaselineMinDays    = 5
-	AnomalyBaselineCacheTTL   = time.Hour
-	AnomalyAlertMinRequests   = 50
-	AnomalyAboveMultiplierMin = 1.5
-	AnomalyAboveMultiplierMax = 20.0
-	AnomalyBelowMultiplierMin = 0.05
-	AnomalyBelowMultiplierMax = 0.67
+	AnomalyBaselineDays          = 7
+	AnomalyBaselineMinDays       = 5
+	AnomalyBaselineCacheTTL      = time.Hour
+	AnomalyAlertMinRequests      = 50
+	AnomalyAboveMultiplierMin    = 1.5
+	AnomalyAboveMultiplierMax    = 20.0
+	AnomalyBelowMultiplierMin    = 0.05
+	AnomalyBelowMultiplierMax    = 0.67
+	AnomalyPreviewChecks         = 7 * 24
+	AnomalyPreviewStep           = time.Hour
+	AnomalyIncidentReplayChecks  = 2 * 60
+	AnomalyIncidentReplayStep    = time.Minute
+	AnomalyReplayRecoveryChecks  = 2
+	AnomalyObservedIncidentLimit = 20
 )
 
 // AnomalyAlertMetrics are the request metrics that support baseline

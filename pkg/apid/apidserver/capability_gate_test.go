@@ -52,6 +52,51 @@ func TestCapabilityGateReleasesByTier(t *testing.T) {
 	}
 }
 
+func TestExistingDataAPIRoutesRemainReachableWithPreviewDisabled(t *testing.T) {
+	srv, do, _ := gatedServer(t)
+	srv.SeedPlatformFlag(capabilityFlag(t, "data-api"), platformflags.Definition{Enabled: false})
+	srv.SeedPlatformFlag(capabilityFlag(t, "native-postgres-operations"), platformflags.Definition{Enabled: false})
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/apps/orders/data-api-inspections"},
+		{http.MethodGet, "/v1/apps/orders/data-api-inspections/11111111-1111-4111-8111-111111111111"},
+		{http.MethodPost, "/v1/postgres/databases/11111111-1111-4111-8111-111111111111/data-api-catalog-preview"},
+	} {
+		if r := do(route.method, route.path); missingRoute(r) {
+			t.Errorf("%s %s was hidden: %d %s", route.method, route.path, r.Code, r.Body)
+		}
+		anonymous := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(anonymous, httptest.NewRequest(route.method, route.path, nil))
+		if anonymous.Code != http.StatusUnauthorized {
+			t.Errorf("anonymous %s %s = %d, want 401", route.method, route.path, anonymous.Code)
+		}
+	}
+	if r := do(http.MethodGet, "/v1/apps/orders/data-api/status"); !missingRoute(r) {
+		t.Errorf("Data API preview route = %d %s, want the missing-route answer", r.Code, r.Body)
+	}
+}
+
+func TestExistingMonetizationRoutesHonorGlobalRelease(t *testing.T) {
+	for _, tc := range []struct {
+		switchValue string
+		released    bool
+	}{
+		{switchValue: "0", released: false},
+		{switchValue: "1", released: true},
+	} {
+		t.Run(tc.switchValue, func(t *testing.T) {
+			t.Setenv("FAAS_API_MONETIZATION_ENABLED", tc.switchValue)
+			srv, do, _ := gatedServer(t)
+			srv.SeedPlatformFlag(platformflags.APIMonetization, platformflags.Definition{Enabled: false})
+
+			for _, path := range []string{"/v1/apps/shop/mcp-stats", "/v1/apps/shop/monetization-funnel"} {
+				if r := do(http.MethodGet, path); missingRoute(r) == tc.released {
+					t.Errorf("%s = %d %s, want released=%v", path, r.Code, r.Body, tc.released)
+				}
+			}
+		})
+	}
+}
+
 func TestCapabilityGateAccountRuleRevealsPreview(t *testing.T) {
 	srv, do, acct := gatedServer(t)
 	allow := true

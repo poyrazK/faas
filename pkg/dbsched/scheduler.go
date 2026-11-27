@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
@@ -262,10 +263,12 @@ type Scheduler struct {
 	// Standbys (standby.go): the databases this process is attaching a
 	// standby to, when each was last tried, and since when a running
 	// standby has looked abandoned.
-	attaching     sync.Map // database id -> struct{}
-	attachTried   sync.Map // database id -> time.Time
-	unsyncedSince sync.Map // database id -> time.Time
-	standbyWG     sync.WaitGroup
+	attaching      sync.Map // database id -> struct{}
+	attachTried    sync.Map // database id -> time.Time
+	unsyncedSince  sync.Map // database id -> time.Time
+	standbyWG      sync.WaitGroup
+	replicaSamples sync.Map // database id -> replicaSample
+	replicaProbes  singleflight.Group
 	// nodeFailing is since when each node's vmmd has not answered.
 	nodeFailing sync.Map // node id -> time.Time
 	// moveWG tracks operators' moves running in the background.
@@ -584,7 +587,7 @@ func (s *Scheduler) bootstrap(ctx context.Context, node Node, vm VM) (string, er
 	if err := s.vmm.CreateVolume(ctx, node, vm.DatabaseID, vm.VolumeBytes); err != nil {
 		return errCodeVolume, err
 	}
-	if err := s.vmm.Start(ctx, node, vm); err != nil {
+	if err := s.startPrimary(ctx, node, vm); err != nil {
 		return errCodeBoot, err
 	}
 	resp, err := s.vmm.Control(ctx, node, vm.DatabaseID, dbguest.Request{Op: dbguest.OpStatus})
@@ -721,6 +724,7 @@ func (s *Scheduler) pollReady(ctx context.Context, node Node, id string, timeout
 	for {
 		resp, err := s.vmm.Control(ctx, node, id, dbguest.Request{Op: dbguest.OpStatus})
 		if err == nil && resp.State == dbguest.StateReady {
+			s.autovacuumBeforeServing(ctx, node, id, dbguest.StateReady)
 			return nil
 		}
 		if err == nil && resp.State == dbguest.StateFailed {
@@ -738,9 +742,22 @@ func (s *Scheduler) pollReady(ctx context.Context, node Node, id string, timeout
 // touched and returned at once; a parked one is admitted against its node's
 // RAM ceiling, booted and awaited.
 func (s *Scheduler) Wake(ctx context.Context, id string) (VM, error) {
-	unlock := s.lock(id)
-	defer unlock()
-	return s.wakeLocked(ctx, id)
+	deadline := time.Now().Add(s.cfg.WakeQueueWait)
+	for {
+		unlock := s.lock(id)
+		vm, err := s.wakeLocked(ctx, id)
+		unlock()
+		if !errors.Is(err, ErrStorageResizePending) || !time.Now().Before(deadline) {
+			return vm, err
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return vm, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
@@ -781,7 +798,7 @@ func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 		_ = s.store.Transition(context.WithoutCancel(ctx), id, []State{StateWaking}, StateParked, TransitionOptions{LastError: errCodeBoot})
 		return vm, fmt.Errorf("dbsched: wake %s: %w", id, err)
 	}
-	if err = s.vmm.Start(ctx, node, vm); err == nil {
+	if err = s.startPrimary(ctx, node, vm); err == nil {
 		err = s.waitReady(ctx, node, id)
 	}
 	if err != nil {
@@ -839,6 +856,10 @@ func (s *Scheduler) Park(ctx context.Context, id string) error {
 }
 
 func (s *Scheduler) parkLocked(ctx context.Context, id string) error {
+	return s.parkLockedMode(ctx, id, time.Time{})
+}
+
+func (s *Scheduler) parkLockedMode(ctx context.Context, id string, idleCutoff time.Time) error {
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {
 		return err
@@ -846,7 +867,7 @@ func (s *Scheduler) parkLocked(ctx context.Context, id string) error {
 	if vm.State == StateParked {
 		return nil
 	}
-	if err := s.store.Transition(ctx, id, []State{StateRunning, StateParking}, StateParking, TransitionOptions{}); err != nil {
+	if err := s.store.Transition(ctx, id, []State{StateRunning, StateParking}, StateParking, TransitionOptions{IdleCutoff: idleCutoff}); err != nil {
 		return err
 	}
 	node, err := s.node(ctx, vm.NodeID)
@@ -861,7 +882,11 @@ func (s *Scheduler) parkLocked(ctx context.Context, id string) error {
 		return fmt.Errorf("dbsched: park %s: %w", id, err)
 	}
 	defer s.freed.signal(vm.NodeID)
-	return s.store.Transition(ctx, id, []State{StateParking}, StateParked, TransitionOptions{})
+	var options TransitionOptions
+	if !idleCutoff.IsZero() {
+		options.IdleParkFrom = vm.StateChangedAt
+	}
+	return s.store.Transition(ctx, id, []State{StateParking}, StateParked, options)
 }
 
 // Get returns the database's runtime record with its node target.
@@ -938,7 +963,7 @@ func (s *Scheduler) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	all := []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, StateUpgrading, StateFailed, StateDeleting}
+	all := []State{StateProvisioning, stateRehearsalRestore, stateRegionalRestore, StateParked, StateWaking, StateRunning, StateParking, StateUpgrading, StateFailed, StateDeleting}
 	if err := s.store.Transition(ctx, id, all, StateDeleting, TransitionOptions{}); err != nil {
 		return err
 	}
@@ -1121,13 +1146,26 @@ func (s *Scheduler) ParkIdle(ctx context.Context) (int, error) {
 			_ = s.store.Touch(ctx, vm.DatabaseID, s.now())
 			continue
 		}
-		if err := s.Park(ctx, vm.DatabaseID); err != nil {
+		didPark, err := s.parkIdleDatabase(ctx, vm.DatabaseID, cutoff)
+		if err != nil {
 			s.log.Warn("dbsched: idle park failed", "database_id", vm.DatabaseID, "err", err)
 			continue
 		}
-		parked++
+		if didPark {
+			parked++
+		}
 	}
 	return parked, nil
+}
+
+func (s *Scheduler) parkIdleDatabase(ctx context.Context, id string, cutoff time.Time) (bool, error) {
+	unlock := s.lock(id)
+	defer unlock()
+	current, err := s.store.Get(ctx, id)
+	if err != nil || current.State != StateRunning || current.AlwaysOn || current.LastActiveAt.After(cutoff) {
+		return false, err
+	}
+	return true, s.parkLockedMode(ctx, id, cutoff)
 }
 
 // SetAlwaysOn changes whether a database scales to zero. Turning it on
@@ -1193,6 +1231,9 @@ func (s *Scheduler) SettleLostNodes(ctx context.Context) (int, error) {
 	}
 	settled := 0
 	for _, vm := range vms {
+		if vm.State == stateMaintenanceHandoff {
+			continue // The rolling worker owns the fenced handoff.
+		}
 		if _, ok := known[vm.NodeID]; ok && !lost[vm.NodeID] {
 			continue
 		}
@@ -1272,8 +1313,25 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var active map[string]baseRefresh
+	if store, ok := s.store.(*PgStore); ok {
+		active, err = store.activeBaseRefreshes(ctx)
+		if err != nil {
+			return err
+		}
+		s.settleBaseRefreshes(ctx, store, active)
+	}
 	for _, vm := range stuck {
+		if _, maintained := active[vm.DatabaseID]; maintained {
+			continue
+		}
 		unlock := s.lock(vm.DatabaseID)
+		current, err := s.store.Get(ctx, vm.DatabaseID)
+		if err != nil || current.State != vm.State || current.NodeID != vm.NodeID ||
+			!current.StateChangedAt.Equal(vm.StateChangedAt) {
+			unlock()
+			continue
+		}
 		node, err := s.node(ctx, vm.NodeID)
 		if err == nil {
 			err = s.vmm.Stop(ctx, node, vm.DatabaseID)
@@ -1292,6 +1350,11 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 
 // RunIdleLoop parks idle databases every interval until ctx ends.
 func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
+	if store, ok := s.store.(*PgStore); ok {
+		go s.runQueryInsights(ctx, store)
+		go s.runAutovacuum(ctx, store)
+		go s.runRequestedDrills(ctx, store)
+	}
 	if err := s.Observe(ctx); err != nil {
 		s.log.Warn("dbsched: catalog observation failed", "err", err)
 	}
@@ -1308,9 +1371,20 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 				if _, err := s.SampleStorage(ctx); err != nil {
 					s.log.Warn("dbsched: storage sample failed", "err", err)
 				}
+				if store, ok := s.store.(*PgStore); ok {
+					if err := store.pruneQueryControls(ctx); err != nil {
+						s.log.Warn("dbsched: prune query controls", "err", err)
+					}
+					if err := store.pruneErrorHistory(ctx); err != nil {
+						s.log.Warn("dbsched: expire pooled database error history", "err", err)
+					}
+				}
 				if _, err := s.RunDrills(ctx); err != nil {
 					s.log.Warn("dbsched: restore drills failed", "err", err)
 				}
+			}
+			if store, ok := s.store.(*PgStore); ok {
+				s.resumeRollingRefreshes(ctx, store)
 			}
 			if _, err := s.SettleLostNodes(ctx); err != nil {
 				s.log.Warn("dbsched: lost-node sweep failed", "err", err)

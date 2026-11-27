@@ -654,6 +654,7 @@ type Metrics struct {
 	// the aggregate caused Prometheus increase() to discard the first request
 	// for every newly seen deployment.
 	requestDurationByDeployment *prometheus.HistogramVec
+	environmentRequests         *environmentRequestMetrics
 	// requestsByRoute backs the per-route observability counter
 	// (ADR-093 / issue #273 — opt-in follow-up to ADR-042 §1).
 	// Labels: app, plan, route, code. The `route` label admits
@@ -699,12 +700,6 @@ type Metrics struct {
 	// so a dual-emit migration would have doubled the cold-boot
 	// rate for no benefit.
 	coldBoot *prometheus.CounterVec
-	// environmentRequestDuration and environmentColdBoot count requests on an
-	// environment host per environment (environment_metrics.go).
-	environmentRequestDuration  *prometheus.HistogramVec
-	environmentColdBoot         *prometheus.CounterVec
-	environmentCapacityRefusals *prometheus.CounterVec
-	stageEnvironments           stageMetricEnvironments
 	// topTenantRPS is the gateway-side mirror of apid's
 	// apid_top_tenant_rps gauge (issue #300). It shares the
 	// label name `account_id` with apid so a single Grafana
@@ -1665,27 +1660,21 @@ func NewMetrics() *Metrics {
 		// ~50ms mark separates the two regimes for an at-a-glance
 		// p50/p95 reading.
 		requestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "gateway_request_duration_seconds",
-			Help: "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
-			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
-			},
+			Name:    "gateway_request_duration_seconds",
+			Help:    "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
+			Buckets: requestDurationBuckets,
 		}, []string{"app", "class"}),
 		requestDurationByDeployment: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "gateway_request_duration_by_deployment_seconds",
-			Help: "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
-			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
-			},
+			Name:    "gateway_request_duration_by_deployment_seconds",
+			Help:    "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
+			Buckets: requestDurationBuckets,
 		}, []string{"app", "class", "deployment"}),
+		environmentRequests: newEnvironmentRequestMetrics(),
 		// Issue #273 / ADR-042. Renamed outright from gateway_cold_wake_total.
 		coldBoot: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_cold_boot_total",
 			Help: "Requests that triggered a cold boot for an app. Issue #273 / ADR-042 (renamed from gateway_cold_wake_total).",
 		}, []string{"app"}),
-		environmentRequestDuration:  newEnvironmentRequestDuration(),
-		environmentColdBoot:         newEnvironmentColdBoot(),
-		environmentCapacityRefusals: newEnvironmentCapacityRefusals(),
 		topTenantRPS: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_top_tenant_rps",
 			Help: "Top-N 5s request rate per tenant observed at the edge (issue #300). Label key is account_id for parity with apid_top_tenant_rps; the label VALUE at the gateway is the resolved app_id (gatewayd-internal is pre-auth and only sees hostname→app routing). Cardinality bounded at topAccountSetCap (1000) + 1 \"other\" overflow by pkg/wire/topn.go via the cmd/gatewayd-internal/topn.go sampler. The overflow bucket literally named \"other\" matches apid's gauge.",
@@ -2280,7 +2269,8 @@ func NewMetrics() *Metrics {
 		Name: "geoip_db_build_timestamp_seconds",
 		Help: "Unix time the loaded geoip country database was built (its build_epoch); NaN when none is loaded. time() minus it is the database's age (ADR-091 amendment 2026-11-02, later).",
 	}, m.geoipDBBuildTimestamp)
-	reg.MustRegister(m.requests, m.platformErrors, m.capacityRefusals, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryPlatformDropped, m.serviceRequests, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestAnalyticsRollups, m.instanceRouteMinutesDropped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.platformWakeExcluded, m.wakeLatencyByNode, m.appWakeLatency, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.environmentRequestDuration, m.environmentColdBoot, m.environmentCapacityRefusals, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.capacityRefusals, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryPlatformDropped, m.serviceRequests, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestAnalyticsRollups, m.instanceRouteMinutesDropped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.platformWakeExcluded, m.wakeLatencyByNode, m.appWakeLatency, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.environmentRequests.duration, m.environmentRequests.refusals, m.environmentRequests.coldBoots)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)

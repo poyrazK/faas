@@ -171,8 +171,11 @@ func (s invocationVersionPolicyReader) AppByID(ctx context.Context, id string) (
 	}
 	app := App{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID),
 		ProjectID: pgUUIDString(row.ProjectID), PreviewOfSlug: row.PreviewOfSlug.String, Status: AppStatus(row.Status),
+		PreviewPrNumber: int(row.PreviewPrNumber.Int32), PreviewPrState: row.PreviewPrState.String,
+		PreviewExpiresAt: optionalPgTime(row.PreviewExpiresAt),
 		// Worker jobs capture a lineage pin and skip ingress canaries.
-		Manifest: AppManifest{ExecutionMode: row.ExecutionMode}}
+		Manifest: AppManifest{ExecutionMode: row.ExecutionMode,
+			APISandboxSourceDeploymentID: row.ApiSandboxSourceDeploymentID, APISandboxRun: row.ApiSandboxRun}}
 	if row.DeletedAt.Valid {
 		at := row.DeletedAt.Time
 		app.DeletedAt = &at
@@ -293,7 +296,9 @@ func (s memInvocationVersionReader) AppByID(_ context.Context, id string) (App, 
 	}
 	return App{ID: app.ID, AccountID: app.AccountID, ProjectID: app.ProjectID,
 		PreviewOfSlug: app.PreviewOfSlug, Status: app.Status, DeletedAt: cloneTimePtr(app.DeletedAt),
-		Manifest: AppManifest{ExecutionMode: app.Manifest.ExecutionMode}}, nil
+		PreviewPrNumber: app.PreviewPrNumber, PreviewPrState: app.PreviewPrState, PreviewExpiresAt: cloneTimePtr(app.PreviewExpiresAt),
+		Manifest: AppManifest{ExecutionMode: app.Manifest.ExecutionMode,
+			APISandboxSourceDeploymentID: app.Manifest.APISandboxSourceDeploymentID, APISandboxRun: app.Manifest.APISandboxRun}}, nil
 }
 
 func (s memInvocationVersionReader) LiveDeployments(_ context.Context, appID string) ([]Deployment, error) {

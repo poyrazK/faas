@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-//go:embed signup.html signup.js signup.css upgrade.html upgrade.js
+//go:embed signup.html signup.js signup.css upgrade.html upgrade.js listing.html listing.js listing.css
 var pageFiles embed.FS
 
 // Page serves the hosted sign-up page while the app takes sign-ups.

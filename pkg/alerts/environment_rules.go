@@ -22,8 +22,12 @@ func (e *Evaluator) observeEnvironment(ctx context.Context, rule state.AlertRule
 	if rule.Metric == state.AlertMetricFailedInvocs {
 		return e.observeEnvironmentFailedInvocations(ctx, rule)
 	}
+	scope, ok := e.stageScope(ctx, rule)
+	if !ok {
+		return 0, false, skipDegraded
+	}
 	window := string(rule.WindowSpec)
-	observed, source := appmetrics.FetchEnvironmentAlertMetric(ctx, e.promQL, e.log, rule.AppID, rule.EnvironmentID, window, string(rule.Metric))
+	observed, source := appmetrics.FetchEnvironmentAlertMetric(ctx, e.promQL, e.log, rule.AppID, scope, window, string(rule.Metric))
 	if source != appmetrics.SourcePrometheus {
 		return 0, false, skipDegraded
 	}
@@ -31,7 +35,7 @@ func (e *Evaluator) observeEnvironment(ctx context.Context, rule state.AlertRule
 	if breached && ratioMetric(rule.Metric) {
 		// As for production: a share of a handful of requests is not
 		// evidence (ADR-20261109153000).
-		requests, src := appmetrics.FetchEnvironmentAlertMetric(ctx, e.promQL, e.log, rule.AppID, rule.EnvironmentID, window, "request_count")
+		requests, src := appmetrics.FetchEnvironmentAlertMetric(ctx, e.promQL, e.log, rule.AppID, scope, window, "request_count")
 		if src != appmetrics.SourcePrometheus {
 			return 0, false, skipDegraded
 		}
@@ -40,6 +44,23 @@ func (e *Evaluator) observeEnvironment(ctx context.Context, rule state.AlertRule
 		}
 	}
 	return observed, breached, ""
+}
+
+// stageScope is the slug the gateway labels the rule's stage's requests
+// with (scope on gateway_environment_*).
+func (e *Evaluator) stageScope(ctx context.Context, rule state.AlertRule) (string, bool) {
+	reader, ok := e.store.(interface {
+		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
+	})
+	if !ok {
+		return "", false
+	}
+	env, err := reader.ProjectEnvironmentByID(ctx, rule.EnvironmentID)
+	if err != nil || env.AccountID != rule.AccountID {
+		e.log.Warn("alerts: resolve stage rule environment", "rule", rule.ID, "environment_id", rule.EnvironmentID, "err", err)
+		return "", false
+	}
+	return env.Slug, true
 }
 
 func (e *Evaluator) observeEnvironmentFailedInvocations(ctx context.Context, rule state.AlertRule) (float64, bool, string) {

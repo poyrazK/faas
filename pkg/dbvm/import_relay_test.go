@@ -3,6 +3,7 @@
 package dbvm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
@@ -11,13 +12,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
 	"net/netip"
+	"os"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 func TestImportSourcesMustBePublic(t *testing.T) {
@@ -159,4 +165,82 @@ func TestImportRelayRefusesPrivateSources(t *testing.T) {
 		t.Fatalf("with private sources allowed: %v", err)
 	}
 	_ = conn.Close()
+}
+
+func TestCustomerImportKeepsActiveSourcePinned(t *testing.T) {
+	const id = "2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"
+	const activeID = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+	const otherID = "4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a"
+	root, err := os.MkdirTemp("", "pgim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	vm := &databaseVM{root: root}
+	active := ImportSource{Host: "active.example.com", Port: 5432}
+	other := ImportSource{Host: "other.example.com", Port: 5432}
+	vm.importSrc.Store(&active)
+	rt := &Runtime{vms: map[string]*databaseVM{id: vm}}
+	listener, err := net.Listen("unix", rt.udsPath(vm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	mockErr := make(chan error, 4)
+	go func() {
+		for range 4 {
+			conn, err := listener.Accept()
+			if err != nil {
+				mockErr <- err
+				return
+			}
+			mockErr <- respondImportRunning(conn, activeID)
+		}
+	}()
+	for _, test := range []struct {
+		op        dbguest.Op
+		operation string
+		want      string
+	}{
+		{dbguest.OpCustomerImport, activeID, ""},
+		{dbguest.OpCustomerImport, otherID, dbguest.ErrCodeImportOperationMismatch},
+		{dbguest.OpImportCheck, activeID, dbguest.ErrCodeImportOperationMismatch},
+		{dbguest.OpMigrationCheck, activeID, dbguest.ErrCodeImportOperationMismatch},
+	} {
+		req := dbguest.Request{Op: test.op, Import: &dbguest.ImportSource{
+			Database: "source", User: "source_role", Password: "fixture-password",
+			TargetDatabase: "customer", Owner: "customer_role", OperationID: test.operation,
+		}}
+		result, err := rt.ControlImport(t.Context(), id, other, req)
+		if err != nil || result.Error != test.want || result.Import == nil || result.Import.OperationID != activeID {
+			t.Fatalf("%s: got %+v, %v", test.op, result, err)
+		}
+		if got := vm.importSrc.Load(); got != &active || vm.importLn != nil {
+			t.Fatalf("%s changed the active relay", test.op)
+		}
+		if err := <-mockErr; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func respondImportRunning(conn net.Conn, operation string) error {
+	defer func() { _ = conn.Close() }()
+	reader := bufio.NewReader(conn)
+	if _, err := reader.ReadString('\n'); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(conn, "OK 1000\n"); err != nil {
+		return err
+	}
+	var request dbguest.Request
+	if err := json.NewDecoder(reader).Decode(&request); err != nil {
+		return err
+	}
+	if request.Op != dbguest.OpImportStatus {
+		return fmt.Errorf("guest received unexpected operation %s", request.Op)
+	}
+	return json.NewEncoder(conn).Encode(dbguest.Response{State: dbguest.StateReady, Import: &dbguest.ImportStatus{
+		State: dbguest.ImportRunning, OperationID: operation,
+	}})
 }

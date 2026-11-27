@@ -169,6 +169,8 @@ var registry = []Spec{
 	)},
 	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
+		cols("alert_webhook_stand_downs", "webhook_secret_sealed"),
+		cols("alert_channel_stand_downs", "pagerduty_target_sealed"),
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
@@ -192,6 +194,7 @@ var registry = []Spec{
 	{Domain: Delivery, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
 		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
+		cols("api_sandbox_webhook_partners", "signing_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
 	// ADR-20261110210000 slice 3k: the control plane's secretd also opens the

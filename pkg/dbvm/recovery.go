@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
@@ -73,7 +74,7 @@ func (rec vmRecord) validate() error {
 		return fmt.Errorf("dbvm: record slot %d", rec.Slot)
 	case rec.Major < dbguest.MinMajor || rec.Major > dbguest.MaxMajor:
 		return fmt.Errorf("dbvm: record major %d", rec.Major)
-	case rec.RestoreSource != "" && validID(rec.RestoreSource) != nil:
+	case rec.RestoreSource != "" && !validRecordedArchiveSource(rec.RestoreSource, rec.DatabaseID):
 		return errors.New("dbvm: record restore source")
 	case (rec.PrimaryNode == "") != (rec.PrimaryTarget == ""):
 		return errors.New("dbvm: record primary")
@@ -100,6 +101,27 @@ func (r *Runtime) Stale(id string) bool {
 	}
 	current, ok := r.cfg.Bases[vm.record.Major]
 	return ok && (vm.base != current || vm.record.LaunchVersion < launchVersion)
+}
+
+// ImageIdentities identifies a VM's running image and the node's desired
+// image for its major. BasePath gives a digest-derived name independent of
+// the directory in which each node built the image.
+func (r *Runtime) ImageIdentities(id string) (running, desired string) {
+	vm, err := r.running(id)
+	if err != nil {
+		return "", ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.cfg.Bases[vm.record.Major]
+	if !ok || current == "" || vm.base == "" || vm.waiting || vm.record.DatabaseID != id {
+		return "", ""
+	}
+	return databaseImageIdentity(vm.base, vm.record.LaunchVersion), databaseImageIdentity(current, launchVersion)
+}
+
+func databaseImageIdentity(path string, launch int) string {
+	return fmt.Sprintf("%s:%d", filepath.Base(path), launch)
 }
 
 // SetStandbyNode records which node's standby may stream this running
@@ -165,4 +187,9 @@ func readRecord(dir string) (vmRecord, error) {
 		return vmRecord{}, fmt.Errorf("dbvm: read record: %w", err)
 	}
 	return rec, rec.validate()
+}
+
+func validRecordedArchiveSource(raw, target string) bool {
+	source, _ := dbarchive.ParseRecoverySource(raw)
+	return source != target && validID(source) == nil
 }

@@ -9,7 +9,11 @@ import (
 // SetManagedPostgresPreviews sets what a database gives PR preview
 // environments: "off", "empty" or "copy" (ADR-20261102123523).
 func (c *Client) SetManagedPostgresPreviews(ctx context.Context, id, previews string) (ManagedPostgresDatabase, error) {
+	return c.SetManagedPostgresPreviewsWithPolicy(ctx, id, SetManagedPostgresPreviewsRequest{Previews: previews})
+}
+
+func (c *Client) SetManagedPostgresPreviewsWithPolicy(ctx context.Context, id string, req SetManagedPostgresPreviewsRequest) (ManagedPostgresDatabase, error) {
 	var out ManagedPostgresDatabase
-	err := c.do(ctx, http.MethodPut, "/v1/postgres/databases/"+url.PathEscape(id)+"/previews", SetManagedPostgresPreviewsRequest{Previews: previews}, &out)
+	err := c.do(ctx, http.MethodPut, "/v1/postgres/databases/"+url.PathEscape(id)+"/previews", req, &out)
 	return out, err
 }

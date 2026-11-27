@@ -42,7 +42,8 @@ func (s *MemoryStore) ReserveResize(ctx context.Context, expected Database, oper
 	}
 	for _, binding := range s.bindings {
 		if binding.DatabaseID == database.ID && binding.State != BindingStateDeleted &&
-			(binding.State != BindingStateReady || binding.RotationPreviousGeneration != 0 || binding.LeaseToken != "") {
+			(binding.State != BindingStateReady || binding.RotationPreviousGeneration != 0 || binding.LeaseToken != "" ||
+				(binding.Access == CredentialReplicaOnly && operation.TargetSpec().Class != ClassProduction)) {
 			return ResizeOperation{}, ErrConflict
 		}
 	}

@@ -332,7 +332,7 @@ func (s *server) listDevSessions(w http.ResponseWriter, r *http.Request, acct st
 	}
 	out := api.DevSessionListResponse{Sessions: []api.DevSessionSummary{}}
 	for _, app := range rows {
-		if app.AccountID != acct.ID || !state.IsDeveloperApp(app) {
+		if app.AccountID != acct.ID || !state.IsDeveloperApp(app) || state.IsAPISandbox(app) {
 			continue
 		}
 		item := api.DevSessionSummary{

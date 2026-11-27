@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // defaultProductionBranch is the branch fallback used when the
@@ -101,6 +104,11 @@ type RealService struct {
 	// proxies the codeload body. nil-safe: StreamSourceRef
 	// returns an error when Streamer is unconfigured.
 	Streamer SourceRefStreamer
+	// PublicStreamer reads repositories GitHub reports as public, with no
+	// installation (ADR-20261126164847). nil-safe: StreamPublicSourceRef
+	// answers Unimplemented when it is unconfigured, which apid reads as "no
+	// public path".
+	PublicStreamer PublicSourceRefStreamer
 	// BranchHeads resolves branch refs for webhook freshness checks and the
 	// source-ref promotion guard.
 	BranchHeads    BranchHeadClient
@@ -1075,6 +1083,44 @@ func (s *RealService) StreamSourceRef(ctx context.Context, accountID string, ins
 	// at EOF — same posture as the tarball SHA on the
 	// multipart path.
 	return res.Body, res.ResolvedCommitSHA, false, 0, nil
+}
+
+var _ githubdgrpc.PublicSourceRefService = (*RealService)(nil)
+
+// StreamPublicSourceRef streams a public repository's archive with no
+// installation (ADR-20261126164847). Errors are problems apid passes through:
+// github_repo_not_accessible for a repository GitHub does not confirm as
+// public, invalid_ref for a missing ref, source_ref_unavailable otherwise.
+func (s *RealService) StreamPublicSourceRef(ctx context.Context, repoFullName, ref string, maxArchiveBytes int64) (io.ReadCloser, string, error) {
+	if s.PublicStreamer == nil {
+		return nil, "", status.Error(codes.Unimplemented, "githubd: public repository reads are not configured")
+	}
+	res, err := s.PublicStreamer.StreamPublic(ctx, repoFullName, ref, maxArchiveBytes)
+	if err != nil {
+		return nil, "", publicSourceRefProblem(err, ref)
+	}
+	if res.Body == nil {
+		return nil, "", fmt.Errorf("githubd: public source-ref streamer returned nil body")
+	}
+	return res.Body, res.ResolvedCommitSHA, nil
+}
+
+func publicSourceRefProblem(err error, ref string) error {
+	switch {
+	case errors.Is(err, ErrRepositoryNotPublic):
+		return api.NewProblem(http.StatusForbidden, api.CodeGitHubRepoNotAccessible, "Repository is not accessible",
+			"the repository is private, does not exist, or was renamed; to deploy a private repository, connect GitHub and grant the Gregale app access to it")
+	case errors.Is(err, gitfetch.ErrNotFound):
+		if isCanonicalCommitSHA(ref) {
+			return api.ErrSourceRefUnavailable("GitHub could not fetch the requested commit")
+		}
+		return api.ErrInvalidRef(ref)
+	case errors.Is(err, gitfetch.ErrUnauthorized):
+		return api.ErrSourceRefUnavailable("GitHub refused or rate-limited the public repository read; retry in a minute")
+	case errors.Is(err, gitfetch.ErrBadArchive):
+		return api.ErrSourceRefUnavailable("GitHub returned an invalid source archive")
+	}
+	return err
 }
 
 // GetBranchHead returns the current head for a branch owned by the supplied
