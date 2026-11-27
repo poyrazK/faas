@@ -42,7 +42,7 @@ var localImageIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 // localImageConflicts are deploy flags a local image cannot honour: other
 // sources, previews, and options the upload session does not carry.
 var localImageConflicts = []string{
-	"image", "tarball", "path", "repo", "repository", "template", "github", "project", "project-slug",
+	"image", "docker-config", "tarball", "path", "repo", "repository", "template", "github", "project", "project-slug",
 	"function", "runtime", "handler", "dockerfile", "worktree", "anonymous",
 	"dry-run", "plan", "diff", "server-diff", "resume-upload-id",
 	"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollout", "safe",

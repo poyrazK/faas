@@ -2942,6 +2942,7 @@ var cliCommands = []cliCommand{
 			{Name: "image", Value: "REF", Short: "inspect the Linux/amd64 image without downloading layers"},
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
 			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},
+			{Name: "docker-config", Value: "PATH", Short: "with --image, use the credentials `docker login` stored for the image's registry, from this config.json or its directory, including credential helpers"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
 		},
@@ -3176,6 +3177,7 @@ var cliCommands = []cliCommand{
 			{Name: "release-secrets-request-id", Group: "Projects", Short: "replay the printed encrypted staging request", Value: "ID"},
 			{Name: "config-file", Group: "Projects", Short: "activate non-secret workload variables with an atomic verified release", Value: "PATH"},
 			{Name: "image", Group: "Source and build", Short: "deploy a digest-pinned container image", Value: "REF"},
+			{Name: "docker-config", Group: "Source and build", Short: "with --image, save the credential `docker login` stored for the image's registry (config.json or its directory, credential helpers included) to the app before deploying", Value: "PATH"},
 			{Name: "local-image", Group: "Source and build", Short: "deploy a linux/amd64 image from this machine's Docker without a registry (uploads `docker save` output)", Value: "NAME"},
 			{Name: "image-archive", Group: "Source and build", Short: "deploy a linux/amd64 image from a `docker save` archive without a registry", Value: "PATH"},
 			{Name: "tarball", Group: "Source and build", Short: "deploy from a source tarball", Value: "PATH"},
@@ -6930,8 +6932,9 @@ var cliCommands = []cliCommand{
 			{Name: "set", Short: "Set a registry credential", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "registry", Short: "registry host", Req: true, Value: "host"},
-				{Name: "user", Short: "registry username", Req: true, Value: "user"},
+				{Name: "user", Short: "registry username (required unless --docker-config)", Value: "user"},
 				{Name: "password-stdin", Short: "read the registry password/token from stdin"},
+				{Name: "docker-config", Short: "copy the credential `docker login` stored for --registry from this config.json or its directory, including credential helpers", Value: "PATH"},
 			}},
 			{Name: "rm", Short: "Remove a registry credential", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
