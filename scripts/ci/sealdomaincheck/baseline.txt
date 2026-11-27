@@ -48,6 +48,16 @@ plain agent_approval_requests.body_sha256
 plain analytics_events.subject_hash
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+# Sandbox invite, report-share and receiver outcome tokens are stored as SHA-256 digests.
+plain api_sandbox_partners.invite_hash
+plain api_sandbox_runs.share_hash
+plain api_sandbox_webhook_partners.invite_hash
+plain api_sandbox_webhook_partners.outcome_token_hash
+# Scenario definitions hold synthetic fixture input and example requests.
+plain api_sandbox_provisioning.scenario
+plain api_sandbox_scenarios.definition
+plain api_sandbox_suite_scenarios.definition
+plain app_api_sandbox_scenarios.definition
 plain app_basic_auth_verifiers.sealed_sha256
 plain app_env_batch_receipts.request_sha256
 plain app_fork_execs.stderr

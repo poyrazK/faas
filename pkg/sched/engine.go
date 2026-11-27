@@ -4183,6 +4183,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: %w", err)
 	}
+	app = app.WithAPISandboxEgress()
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),
@@ -6366,6 +6367,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: %w", err)
 	}
+	app = app.WithAPISandboxEgress()
 	return AppSpec{
 		migrationRuntime:   migrationInputs,
 		WakeID:             ins.WakeID,

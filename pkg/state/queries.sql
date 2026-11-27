@@ -10137,8 +10137,10 @@ ORDER BY n.name LIMIT sqlc.arg(row_limit)::integer;
 
 -- ADR-570: identity-only projection for a durable invocation version snapshot.
 -- name: ReadInvocationVersionApp :one
-SELECT id, account_id, project_id, preview_of_slug, status, deleted_at,
-  coalesce(manifest->>'execution_mode', '')::text AS execution_mode
+SELECT id, account_id, project_id, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, status, deleted_at,
+  coalesce(manifest->>'execution_mode', '')::text AS execution_mode,
+  coalesce(manifest->>'api_sandbox_source_deployment_id', '')::text AS api_sandbox_source_deployment_id,
+  coalesce(manifest->>'api_sandbox_run' = 'true', false)::boolean AS api_sandbox_run
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
 -- ADR-570/ADR-521: operation dispatch reads only deployment identity in the same snapshot.

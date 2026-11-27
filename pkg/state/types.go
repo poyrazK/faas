@@ -1471,8 +1471,14 @@ type DeployToken struct {
 // runner-scaffold payload (env, healthz path, entrypoint) the guest-init
 // consumes inside the microVM (spec §4.6, §4.9).
 type App struct {
-	ID        string
-	AccountID string
+	// The sandbox configuration is a create-only input persisted on its provisioning row.
+	APISandboxSmokePath         string
+	APISandboxPartnerLabel      string
+	APISandboxRunID             string
+	APISandboxRunPartnerWebhook bool
+	APISandboxScenario          *api.APISandboxScenario
+	ID                          string
+	AccountID                   string
 	// AccountID is an immutable storage namespace, not a human ownership FK.
 	// OrgID owns shared authorization, runtime policy, billing and lifecycle.
 	OrgID string
@@ -2138,6 +2144,11 @@ type WorkerScaling struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
+	// APISandboxSourceDeploymentID identifies an owner-created shareable sandbox.
+	// It is set only during sandbox provisioning.
+	APISandboxSourceDeploymentID string `json:"api_sandbox_source_deployment_id,omitempty"`
+	APISandboxPartner            bool   `json:"api_sandbox_partner,omitempty"`
+	APISandboxRun                bool   `json:"api_sandbox_run,omitempty"`
 	// DeclaredAccess is the public-URL access the app's project service
 	// declares in gregale.yaml or Compose ("public" or "key",
 	// ADR-20261124090000). A deploy that finds it set but no declaration
@@ -2306,7 +2317,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
-	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
+	return m.APISandboxSourceDeploymentID == "" && !m.APISandboxPartner && !m.APISandboxRun && len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && (m.Uses == nil || m.Uses.IsZero()) && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&

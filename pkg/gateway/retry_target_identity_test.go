@@ -65,3 +65,27 @@ func TestPublicRetryRefreshesTargetIdentityWithoutMutatingPriorAttempt(t *testin
 		t.Fatal("attempt stamping mutated the inbound or prior attempt's headers")
 	}
 }
+
+func TestAPISandboxRevisionFollowsActualRetryTarget(t *testing.T) {
+	app := App{ID: "sandbox", AccountID: "account", IsAPISandbox: true}
+	first := Target{AppID: app.ID, DeploymentID: "stale-revision", InstanceID: "old"}
+	second := Target{AppID: app.ID, DeploymentID: "serving-revision", InstanceID: "new"}
+	backend := &fakeBackend{app: app}
+	backend.AddTarget(second)
+	handler := NewHandlerWith(backend, nil, nil).WithRetryEnabled(true).WithRetryDefault(RetryPolicy{MaxAttempts: 2})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "https://sandbox.example/notes", nil)
+	handler.proxyAttempt(response, request, first, false, func(Target) {}, func(w http.ResponseWriter, r *http.Request, selected Target) {
+		if selected.InstanceID == first.InstanceID {
+			markStaleTarget(r.Context())
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		forwardedResponseHeader(r.Context(), w.Header(), api.RevisionHeader, "spoofed-by-guest")
+		w.WriteHeader(http.StatusOK)
+	}, app)
+	if response.Code != http.StatusOK || response.Header().Get(api.RevisionHeader) != second.DeploymentID ||
+		len(response.Header().Values(api.RevisionHeader)) != 1 {
+		t.Fatalf("retry evidence = %v, status=%d", response.Header().Values(api.RevisionHeader), response.Code)
+	}
+}

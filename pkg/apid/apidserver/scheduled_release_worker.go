@@ -104,7 +104,7 @@ func (s *server) runScheduledRelease(ctx context.Context, store state.ScheduledR
 		// A release waiting for approval before its release command is not
 		// a build that did not finish (ADR-20261020085706 amendment 14).
 		// imaged closes it if the schedule ends first.
-		if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err == nil && wait.Pending() {
+		if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err == nil && (wait.Pending() || wait.SandboxSuiteWindowOpen(d, now)) {
 			decision = schedule.WaitOrExpire(sr, now, "it was still waiting for approval before its release command")
 		}
 	}

@@ -87,7 +87,7 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 	// node is offered each new revision once (attempted_revision), so a
 	// retired node is not retried forever; a vmmd restart drops the cache.
 	rows, err := s.pool.Query(ctx, `
-		SELECT app_id, node_id, slug, revision, allowlist, ports
+		SELECT app_id, node_id, slug, revision, allowlist, ports, preview_of_slug
 		FROM (
 		SELECT a.id::text AS app_id,
 		       i.node_id::text AS node_id,
@@ -95,6 +95,7 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 		       a.egress_allowlist_revision AS revision,
 		       a.egress_allowlist::text AS allowlist,
 		       a.egress_ports AS ports,
+		       COALESCE(a.preview_of_slug, '') AS preview_of_slug,
 		       COALESCE(p.observed_at, 'epoch'::timestamptz) AS observed_at
 		FROM apps a
 		JOIN instances i ON i.app_id = a.id
@@ -116,6 +117,7 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 		       a.egress_allowlist_revision,
 		       a.egress_allowlist::text,
 		       a.egress_ports,
+		       COALESCE(a.preview_of_slug, ''),
 		       p.observed_at
 		FROM apps a
 		JOIN app_egress_policy_node_status p ON p.app_id = a.id
@@ -137,11 +139,13 @@ func (s *PgStore) ListPendingAppEgressPolicyTargets(ctx context.Context, appID s
 		var target AppEgressPolicyApplyTarget
 		var allowlistText string
 		var egressPorts []int32
-		if err := rows.Scan(&target.AppID, &target.NodeID, &target.Slug, &target.Revision, &allowlistText, &egressPorts); err != nil {
+		var previewOfSlug string
+		if err := rows.Scan(&target.AppID, &target.NodeID, &target.Slug, &target.Revision, &allowlistText, &egressPorts, &previewOfSlug); err != nil {
 			return nil, fmt.Errorf("state: scan pending app egress policy target: %w", err)
 		}
-		target.Allowlist = cidrTextToPrefixes(allowlistText)
-		target.EgressPorts = egressPortsFromDB(egressPorts)
+		app := App{PreviewOfSlug: previewOfSlug, EgressAllowlist: cidrTextToPrefixes(allowlistText), EgressPorts: egressPortsFromDB(egressPorts)}
+		app = app.WithAPISandboxEgress()
+		target.Allowlist, target.EgressPorts = app.EgressAllowlist, app.EgressPorts
 		targets = append(targets, target)
 	}
 	if err := rows.Err(); err != nil {

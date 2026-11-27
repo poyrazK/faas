@@ -42,6 +42,11 @@ func SharedHTTPClient() *http.Client {
 			return sharedLoopback
 		}
 	}
+	return GuardedHTTPClient()
+}
+
+// GuardedHTTPClient always rejects private egress, including in local test environments.
+func GuardedHTTPClient() *http.Client {
 	sharedGuardedOnce.Do(func() { sharedGuarded = oci.NewEgressHTTPClient() })
 	return sharedGuarded
 }

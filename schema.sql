@@ -15181,6 +15181,34 @@ $$;
 
 
 --
+-- Name: guard_api_sandbox_postgres_binding(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_api_sandbox_postgres_binding() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM apps
+        WHERE id = NEW.app_id AND starts_with(preview_of_slug, 'api-sandbox:')
+          AND NOT (
+              NEW.database_id = NEW.app_id AND NEW.scope = 'default'
+              AND ((NEW.environment_key = 'DATABASE_URL' AND NEW.access = 'read_write')
+                  OR (NEW.environment_key = 'MIGRATION_DATABASE_URL' AND NEW.access = 'migration'))
+          )
+    ) OR EXISTS (
+        SELECT 1 FROM apps
+        WHERE id = NEW.database_id AND id <> NEW.app_id AND starts_with(preview_of_slug, 'api-sandbox:')
+    ) THEN
+        RAISE EXCEPTION 'API sandbox database bindings are dedicated to the sandbox'
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'managed_postgres_sandbox_binding';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_app_managed_postgres_bindings(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -28024,6 +28052,48 @@ END $$;
 
 
 --
+-- Name: require_api_sandbox_release_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.require_api_sandbox_release_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    policy app_release_approval_policies%ROWTYPE;
+BEGIN
+    SELECT * INTO policy FROM app_release_approval_policies WHERE app_id = NEW.app_id FOR SHARE;
+    IF NOT FOUND OR NOT policy.require_passing_sandbox_suite THEN
+        RETURN NULL;
+    END IF;
+
+    -- Match the existing pre-command approval boundary. A first production
+    -- release has no serving baseline and other scopes have their own lane.
+    IF EXISTS (
+        SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+        WHERE d.id = NEW.deployment_id AND d.app_id = NEW.app_id
+          AND d.status = 'snapshotting' AND cardinality(d.release_command) > 0
+          AND coalesce(nullif(d.scope, ''), 'default') IN ('default', 'production')
+          AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+          AND NOT (d.environment_workload_runtime IS NOT NULL AND d.environment_workload_held)
+          AND d.rollout_completed_at IS NULL
+          AND (d.created_at >= policy.created_at OR d.rollout_started_at >= policy.created_at)
+          AND EXISTS (
+              SELECT 1 FROM deployments live WHERE live.app_id = d.app_id AND live.status = 'live'
+                AND live.scope IN ('default', 'production')
+          )
+    ) AND NOT EXISTS (
+        SELECT 1 FROM api_sandbox_release_admissions
+        WHERE deployment_id = NEW.deployment_id AND task_id = NEW.id
+    ) THEN
+        RAISE EXCEPTION 'production release command requires a sandbox suite admission'
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'api_sandbox_release_command_requires_admission';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: require_deployment_layer_artifacts(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -34086,6 +34156,251 @@ CREATE TABLE public.api_keys (
 
 
 --
+-- Name: api_sandbox_approval_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_approval_checks (
+    comparison_id uuid NOT NULL,
+    baseline_artifact_pin text NOT NULL,
+    candidate_artifact_pin text NOT NULL,
+    CONSTRAINT api_sandbox_approval_checks_baseline_artifact_pin_check CHECK ((char_length(baseline_artifact_pin) = 64)),
+    CONSTRAINT api_sandbox_approval_checks_candidate_artifact_pin_check CHECK ((char_length(candidate_artifact_pin) = 64))
+);
+
+
+--
+-- Name: api_sandbox_comparisons; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_comparisons (
+    id uuid NOT NULL,
+    baseline_run_id uuid NOT NULL,
+    candidate_run_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_sandbox_comparisons_check CHECK ((baseline_run_id <> candidate_run_id))
+);
+
+
+--
+-- Name: api_sandbox_partners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_partners (
+    app_id uuid NOT NULL,
+    label text NOT NULL,
+    invite_hash bytea,
+    invited_at timestamp with time zone,
+    redeemed_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    consumer_key_id uuid,
+    first_success_at timestamp with time zone,
+    CONSTRAINT api_sandbox_partners_check CHECK (((invite_hash IS NULL) OR ((invited_at IS NOT NULL) AND (redeemed_at IS NULL) AND (revoked_at IS NULL)))),
+    CONSTRAINT api_sandbox_partners_check1 CHECK (((consumer_key_id IS NULL) = (redeemed_at IS NULL))),
+    CONSTRAINT api_sandbox_partners_check2 CHECK (((first_success_at IS NULL) OR ((redeemed_at IS NOT NULL) AND (first_success_at >= redeemed_at)))),
+    CONSTRAINT api_sandbox_partners_invite_hash_check CHECK (((invite_hash IS NULL) OR (octet_length(invite_hash) = 32))),
+    CONSTRAINT api_sandbox_partners_label_check CHECK (((char_length(label) >= 1) AND (char_length(label) <= 100)))
+);
+
+
+--
+-- Name: api_sandbox_provisioning; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_provisioning (
+    app_id uuid NOT NULL,
+    smoke_path text DEFAULT ''::text NOT NULL,
+    phase text DEFAULT 'preparing_database'::text NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now(),
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    deployment_id uuid,
+    failure jsonb,
+    verification jsonb,
+    scenario bytea,
+    CONSTRAINT api_sandbox_provisioning_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT api_sandbox_provisioning_check1 CHECK (((phase = ANY (ARRAY['live'::text, 'failed'::text])) = (next_attempt_at IS NULL))),
+    CONSTRAINT api_sandbox_provisioning_check2 CHECK (((phase = 'live'::text) = (verification IS NOT NULL))),
+    CONSTRAINT api_sandbox_provisioning_check3 CHECK (((verification IS NULL) OR ((deployment_id IS NOT NULL) AND (jsonb_typeof(verification) = 'object'::text) AND (NOT ((verification ->> 'deployment_id'::text) IS DISTINCT FROM (deployment_id)::text))))),
+    CONSTRAINT api_sandbox_provisioning_phase_check CHECK ((phase = ANY (ARRAY['preparing_database'::text, 'running_migrations'::text, 'starting_release'::text, 'verifying_api'::text, 'live'::text, 'failed'::text]))),
+    CONSTRAINT api_sandbox_provisioning_scenario_check CHECK (((scenario IS NULL) OR ((octet_length(scenario) >= 2) AND (octet_length(scenario) <= 24704)))),
+    CONSTRAINT api_sandbox_provisioning_smoke_path_check CHECK ((octet_length(smoke_path) <= 512))
+);
+
+
+--
+-- Name: api_sandbox_release_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_release_admissions (
+    deployment_id uuid NOT NULL,
+    task_id uuid NOT NULL,
+    suite_run_id uuid NOT NULL
+);
+
+
+--
+-- Name: api_sandbox_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_runs (
+    id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    sandbox_app_id uuid,
+    scenario_revision uuid NOT NULL,
+    scenario_name text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    steps jsonb DEFAULT '[]'::jsonb NOT NULL,
+    failure_code text DEFAULT ''::text NOT NULL,
+    sandbox_deployment_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    share_hash bytea,
+    share_expires_at timestamp with time zone,
+    partner_step_count integer DEFAULT 0 NOT NULL,
+    partner_claim uuid,
+    partner_claim_until timestamp with time zone,
+    partner_webhook boolean DEFAULT false NOT NULL,
+    partner_outcome_until timestamp with time zone,
+    CONSTRAINT api_sandbox_runs_check CHECK (((share_expires_at IS NULL) = (share_hash IS NULL))),
+    CONSTRAINT api_sandbox_runs_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT api_sandbox_runs_check2 CHECK (((status = 'running'::text) = (lease_token IS NOT NULL))),
+    CONSTRAINT api_sandbox_runs_check3 CHECK (((status = ANY (ARRAY['passed'::text, 'failed'::text, 'interrupted'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT api_sandbox_runs_partner_claim_pair CHECK (((partner_claim IS NULL) = (partner_claim_until IS NULL))),
+    CONSTRAINT api_sandbox_runs_partner_step_count_check CHECK (((partner_step_count >= 0) AND (partner_step_count <= 7))),
+    CONSTRAINT api_sandbox_runs_scenario_name_check CHECK (((char_length(scenario_name) >= 1) AND (char_length(scenario_name) <= 100))),
+    CONSTRAINT api_sandbox_runs_share_hash_check CHECK (((share_hash IS NULL) OR (octet_length(share_hash) = 32))),
+    CONSTRAINT api_sandbox_runs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'passed'::text, 'failed'::text, 'interrupted'::text]))),
+    CONSTRAINT api_sandbox_runs_steps_check CHECK ((jsonb_typeof(steps) = 'array'::text))
+);
+
+
+--
+-- Name: api_sandbox_scenarios; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_scenarios (
+    deployment_id uuid NOT NULL,
+    revision uuid NOT NULL,
+    definition bytea NOT NULL,
+    source_request_id uuid,
+    CONSTRAINT api_sandbox_scenarios_definition_check CHECK (((octet_length(definition) >= 2) AND (octet_length(definition) <= 24576)))
+);
+
+
+--
+-- Name: TABLE api_sandbox_scenarios; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_sandbox_scenarios IS 'The currently saved API sandbox scenario for a retained release. Each sandbox stores its own copy.';
+
+
+--
+-- Name: api_sandbox_suite_auto_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_suite_auto_requests (
+    deployment_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    next_attempt_at timestamp with time zone,
+    CONSTRAINT api_sandbox_suite_auto_requests_check CHECK (((next_attempt_at IS NULL) = (status = ANY (ARRAY['started'::text, 'approval_ended'::text, 'disabled'::text])))),
+    CONSTRAINT api_sandbox_suite_auto_requests_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'waiting_for_capacity'::text, 'waiting_for_baseline'::text, 'waiting_for_scenarios'::text, 'unavailable'::text, 'started'::text, 'approval_ended'::text, 'disabled'::text])))
+);
+
+
+--
+-- Name: api_sandbox_suite_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_suite_runs (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    suite_revision uuid NOT NULL,
+    baseline_deployment_id uuid NOT NULL,
+    candidate_deployment_id uuid NOT NULL,
+    baseline_artifact_pin text NOT NULL,
+    candidate_artifact_pin text NOT NULL,
+    scenario_count smallint NOT NULL,
+    completed_count smallint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone,
+    next_attempt_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    failure_code text DEFAULT ''::text NOT NULL,
+    automatic boolean DEFAULT false NOT NULL,
+    waiting_for_capacity boolean DEFAULT false NOT NULL,
+    CONSTRAINT api_sandbox_suite_runs_baseline_artifact_pin_check CHECK ((char_length(baseline_artifact_pin) = 64)),
+    CONSTRAINT api_sandbox_suite_runs_candidate_artifact_pin_check CHECK ((char_length(candidate_artifact_pin) = 64)),
+    CONSTRAINT api_sandbox_suite_runs_check CHECK (((completed_count >= 0) AND (completed_count <= scenario_count))),
+    CONSTRAINT api_sandbox_suite_runs_check1 CHECK ((deadline_at > created_at)),
+    CONSTRAINT api_sandbox_suite_runs_check2 CHECK ((baseline_deployment_id <> candidate_deployment_id)),
+    CONSTRAINT api_sandbox_suite_runs_check3 CHECK (((next_attempt_at IS NULL) = (finished_at IS NOT NULL))),
+    CONSTRAINT api_sandbox_suite_runs_check4 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT api_sandbox_suite_runs_check5 CHECK (((failure_code = ''::text) OR (finished_at IS NOT NULL))),
+    CONSTRAINT api_sandbox_suite_runs_failure_code_check CHECK ((failure_code = ANY (ARRAY[''::text, 'timed_out'::text, 'approval_inputs_changed'::text, 'entitlement_changed'::text]))),
+    CONSTRAINT api_sandbox_suite_runs_scenario_count_check CHECK (((scenario_count >= 1) AND (scenario_count <= 5)))
+);
+
+
+--
+-- Name: api_sandbox_suite_scenarios; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_suite_scenarios (
+    suite_run_id uuid NOT NULL,
+    "position" smallint NOT NULL,
+    scenario_id uuid NOT NULL,
+    scenario_revision uuid NOT NULL,
+    scenario_name text NOT NULL,
+    definition bytea NOT NULL,
+    comparison_id uuid NOT NULL,
+    CONSTRAINT api_sandbox_suite_scenarios_definition_check CHECK (((octet_length(definition) >= 2) AND (octet_length(definition) <= 24576))),
+    CONSTRAINT api_sandbox_suite_scenarios_position_check CHECK ((("position" >= 0) AND ("position" <= 4))),
+    CONSTRAINT api_sandbox_suite_scenarios_scenario_name_check CHECK (((char_length(scenario_name) >= 1) AND (char_length(scenario_name) <= 100)))
+);
+
+
+--
+-- Name: api_sandbox_suites; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_suites (
+    app_id uuid NOT NULL,
+    revision uuid NOT NULL,
+    scenario_ids uuid[] NOT NULL,
+    run_before_approval boolean DEFAULT false NOT NULL,
+    CONSTRAINT api_sandbox_suites_scenario_ids_check CHECK (((cardinality(scenario_ids) <= 5) AND (array_position(scenario_ids, NULL::uuid) IS NULL)))
+);
+
+
+--
+-- Name: api_sandbox_webhook_partners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_sandbox_webhook_partners (
+    run_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    scenario_revision uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    invite_hash bytea,
+    target_url text DEFAULT ''::text NOT NULL,
+    signing_secret_sealed bytea,
+    outcome_token_hash bytea,
+    ready_at timestamp with time zone,
+    outcome_count integer,
+    outcome_at timestamp with time zone,
+    CONSTRAINT api_sandbox_webhook_partners_check CHECK (((outcome_at IS NULL) = (outcome_count IS NULL))),
+    CONSTRAINT api_sandbox_webhook_partners_outcome_count_check CHECK (((outcome_count >= 0) AND (outcome_count <= 1000)))
+);
+
+
+--
 -- Name: app_api_routes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34099,6 +34414,22 @@ CREATE TABLE public.app_api_routes (
     CONSTRAINT app_api_routes_check CHECK ((last_seen >= first_seen)),
     CONSTRAINT app_api_routes_request_count_check CHECK ((request_count > 0)),
     CONSTRAINT app_api_routes_route_template_check CHECK (((length(route_template) >= 1) AND (length(route_template) <= 256)))
+);
+
+
+--
+-- Name: app_api_sandbox_scenarios; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_api_sandbox_scenarios (
+    app_id uuid NOT NULL,
+    id uuid NOT NULL,
+    revision uuid NOT NULL,
+    name text NOT NULL,
+    definition bytea NOT NULL,
+    source_request_id uuid,
+    CONSTRAINT app_api_sandbox_scenarios_definition_check CHECK (((octet_length(definition) >= 2) AND (octet_length(definition) <= 24576))),
+    CONSTRAINT app_api_sandbox_scenarios_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 100)))
 );
 
 
@@ -35165,6 +35496,7 @@ CREATE TABLE public.app_release_approval_policies (
     updated_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    require_passing_sandbox_suite boolean DEFAULT false NOT NULL,
     CONSTRAINT app_release_approval_policies_after_stage_check CHECK (((after_stage >= 1) AND (after_stage <= 10))),
     CONSTRAINT app_release_approval_policies_approvers_check CHECK ((approvers = ANY (ARRAY['admin'::text, 'developer'::text]))),
     CONSTRAINT app_release_approval_policies_notify_channel_ids_check CHECK ((cardinality(notify_channel_ids) <= 5)),
@@ -67197,11 +67529,195 @@ ALTER TABLE ONLY public.api_keys
 
 
 --
+-- Name: api_sandbox_approval_checks api_sandbox_approval_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_approval_checks
+    ADD CONSTRAINT api_sandbox_approval_checks_pkey PRIMARY KEY (comparison_id);
+
+
+--
+-- Name: api_sandbox_comparisons api_sandbox_comparisons_baseline_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_comparisons
+    ADD CONSTRAINT api_sandbox_comparisons_baseline_run_id_key UNIQUE (baseline_run_id);
+
+
+--
+-- Name: api_sandbox_comparisons api_sandbox_comparisons_candidate_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_comparisons
+    ADD CONSTRAINT api_sandbox_comparisons_candidate_run_id_key UNIQUE (candidate_run_id);
+
+
+--
+-- Name: api_sandbox_comparisons api_sandbox_comparisons_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_comparisons
+    ADD CONSTRAINT api_sandbox_comparisons_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: apps api_sandbox_fixed_egress; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.apps
+    ADD CONSTRAINT api_sandbox_fixed_egress CHECK (((COALESCE(preview_of_slug, ''::text) !~~ 'api-sandbox:%'::text) OR ((egress_allowlist = ARRAY['127.0.0.1/32'::cidr]) AND (cardinality(egress_ports) = 0)))) NOT VALID;
+
+
+--
+-- Name: api_sandbox_partners api_sandbox_partners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_partners
+    ADD CONSTRAINT api_sandbox_partners_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_sandbox_provisioning api_sandbox_provisioning_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_provisioning
+    ADD CONSTRAINT api_sandbox_provisioning_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_sandbox_release_admissions api_sandbox_release_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_release_admissions
+    ADD CONSTRAINT api_sandbox_release_admissions_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: api_sandbox_release_admissions api_sandbox_release_admissions_task_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_release_admissions
+    ADD CONSTRAINT api_sandbox_release_admissions_task_id_key UNIQUE (task_id);
+
+
+--
+-- Name: api_sandbox_runs api_sandbox_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_runs
+    ADD CONSTRAINT api_sandbox_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_sandbox_runs api_sandbox_runs_sandbox_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_runs
+    ADD CONSTRAINT api_sandbox_runs_sandbox_app_id_key UNIQUE (sandbox_app_id);
+
+
+--
+-- Name: api_sandbox_scenarios api_sandbox_scenarios_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_scenarios
+    ADD CONSTRAINT api_sandbox_scenarios_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: api_sandbox_suite_auto_requests api_sandbox_suite_auto_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_auto_requests
+    ADD CONSTRAINT api_sandbox_suite_auto_requests_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: api_sandbox_suite_auto_requests api_sandbox_suite_auto_requests_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_auto_requests
+    ADD CONSTRAINT api_sandbox_suite_auto_requests_run_id_key UNIQUE (run_id);
+
+
+--
+-- Name: api_sandbox_suite_runs api_sandbox_suite_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_runs
+    ADD CONSTRAINT api_sandbox_suite_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_sandbox_suite_scenarios api_sandbox_suite_scenarios_comparison_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_scenarios
+    ADD CONSTRAINT api_sandbox_suite_scenarios_comparison_id_key UNIQUE (comparison_id);
+
+
+--
+-- Name: api_sandbox_suite_scenarios api_sandbox_suite_scenarios_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_scenarios
+    ADD CONSTRAINT api_sandbox_suite_scenarios_pkey PRIMARY KEY (suite_run_id, "position");
+
+
+--
+-- Name: api_sandbox_suite_scenarios api_sandbox_suite_scenarios_suite_run_id_scenario_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_scenarios
+    ADD CONSTRAINT api_sandbox_suite_scenarios_suite_run_id_scenario_id_key UNIQUE (suite_run_id, scenario_id);
+
+
+--
+-- Name: api_sandbox_suites api_sandbox_suites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suites
+    ADD CONSTRAINT api_sandbox_suites_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_sandbox_webhook_partners api_sandbox_webhook_partners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_webhook_partners
+    ADD CONSTRAINT api_sandbox_webhook_partners_pkey PRIMARY KEY (run_id);
+
+
+--
 -- Name: app_api_routes app_api_routes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.app_api_routes
     ADD CONSTRAINT app_api_routes_pkey PRIMARY KEY (account_id, app_id, route_template);
+
+
+--
+-- Name: app_api_sandbox_scenarios app_api_sandbox_scenarios_app_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_api_sandbox_scenarios
+    ADD CONSTRAINT app_api_sandbox_scenarios_app_id_name_key UNIQUE (app_id, name);
+
+
+--
+-- Name: app_api_sandbox_scenarios app_api_sandbox_scenarios_app_id_revision_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_api_sandbox_scenarios
+    ADD CONSTRAINT app_api_sandbox_scenarios_app_id_revision_key UNIQUE (app_id, revision);
+
+
+--
+-- Name: app_api_sandbox_scenarios app_api_sandbox_scenarios_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_api_sandbox_scenarios
+    ADD CONSTRAINT app_api_sandbox_scenarios_pkey PRIMARY KEY (app_id, id);
 
 
 --
@@ -82436,6 +82952,69 @@ CREATE INDEX api_keys_rotated_from_idx ON public.api_keys USING btree (rotated_f
 
 
 --
+-- Name: api_sandbox_provisioning_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_provisioning_pending_idx ON public.api_sandbox_provisioning USING btree (next_attempt_at, app_id) WHERE (next_attempt_at IS NOT NULL);
+
+
+--
+-- Name: api_sandbox_runs_source_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_runs_source_idx ON public.api_sandbox_runs USING btree (source_deployment_id, created_at DESC, id DESC);
+
+
+--
+-- Name: api_sandbox_runs_work_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_runs_work_idx ON public.api_sandbox_runs USING btree (created_at, id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: api_sandbox_suite_auto_requests_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_suite_auto_requests_due ON public.api_sandbox_suite_auto_requests USING btree (next_attempt_at, deployment_id) WHERE (next_attempt_at IS NOT NULL);
+
+
+--
+-- Name: api_sandbox_suite_runs_active_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_sandbox_suite_runs_active_app ON public.api_sandbox_suite_runs USING btree (app_id) WHERE (finished_at IS NULL);
+
+
+--
+-- Name: api_sandbox_suite_runs_candidate; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_suite_runs_candidate ON public.api_sandbox_suite_runs USING btree (candidate_deployment_id, created_at DESC, id DESC);
+
+
+--
+-- Name: api_sandbox_suite_runs_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_suite_runs_due ON public.api_sandbox_suite_runs USING btree (next_attempt_at, id) WHERE (finished_at IS NULL);
+
+
+--
+-- Name: api_sandbox_webhook_partners_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_webhook_partners_expiry ON public.api_sandbox_webhook_partners USING btree (expires_at);
+
+
+--
+-- Name: api_sandbox_webhook_partners_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_sandbox_webhook_partners_source ON public.api_sandbox_webhook_partners USING btree (source_deployment_id);
+
+
+--
 -- Name: app_application_standards_observation_due; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -94512,6 +95091,13 @@ CREATE TRIGGER api_keys_preserve_runs_principal BEFORE INSERT ON public.api_keys
 
 
 --
+-- Name: app_tasks api_sandbox_release_command_requires_admission; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER api_sandbox_release_command_requires_admission AFTER INSERT ON public.app_tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((new.kind = 'release'::text)) EXECUTE FUNCTION public.require_api_sandbox_release_admission();
+
+
+--
 -- Name: builder_usage app_builder_owner; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -98932,6 +99518,13 @@ CREATE TRIGGER managed_postgres_restore_sources_guard BEFORE UPDATE OF state ON 
 
 
 --
+-- Name: managed_postgres_bindings managed_postgres_sandbox_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_sandbox_binding_guard BEFORE INSERT OR UPDATE OF app_id, database_id, scope, environment_key, access ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_api_sandbox_postgres_binding();
+
+
+--
 -- Name: managed_postgres_cutovers managed_postgres_source_fence_cancellation; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -103251,6 +103844,134 @@ ALTER TABLE ONLY public.api_keys
 
 
 --
+-- Name: api_sandbox_approval_checks api_sandbox_approval_checks_comparison_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_approval_checks
+    ADD CONSTRAINT api_sandbox_approval_checks_comparison_id_fkey FOREIGN KEY (comparison_id) REFERENCES public.api_sandbox_comparisons(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_comparisons api_sandbox_comparisons_baseline_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_comparisons
+    ADD CONSTRAINT api_sandbox_comparisons_baseline_run_id_fkey FOREIGN KEY (baseline_run_id) REFERENCES public.api_sandbox_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_comparisons api_sandbox_comparisons_candidate_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_comparisons
+    ADD CONSTRAINT api_sandbox_comparisons_candidate_run_id_fkey FOREIGN KEY (candidate_run_id) REFERENCES public.api_sandbox_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_partners api_sandbox_partners_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_partners
+    ADD CONSTRAINT api_sandbox_partners_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_provisioning api_sandbox_provisioning_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_provisioning
+    ADD CONSTRAINT api_sandbox_provisioning_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_release_admissions api_sandbox_release_admissions_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_release_admissions
+    ADD CONSTRAINT api_sandbox_release_admissions_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_release_admissions api_sandbox_release_admissions_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_release_admissions
+    ADD CONSTRAINT api_sandbox_release_admissions_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.app_tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_runs api_sandbox_runs_sandbox_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_runs
+    ADD CONSTRAINT api_sandbox_runs_sandbox_app_id_fkey FOREIGN KEY (sandbox_app_id) REFERENCES public.apps(id) ON DELETE SET NULL;
+
+
+--
+-- Name: api_sandbox_runs api_sandbox_runs_source_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_runs
+    ADD CONSTRAINT api_sandbox_runs_source_deployment_id_fkey FOREIGN KEY (source_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_scenarios api_sandbox_scenarios_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_scenarios
+    ADD CONSTRAINT api_sandbox_scenarios_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_suite_auto_requests api_sandbox_suite_auto_requests_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_auto_requests
+    ADD CONSTRAINT api_sandbox_suite_auto_requests_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_suite_runs api_sandbox_suite_runs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_runs
+    ADD CONSTRAINT api_sandbox_suite_runs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_suite_runs api_sandbox_suite_runs_candidate_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_runs
+    ADD CONSTRAINT api_sandbox_suite_runs_candidate_deployment_id_fkey FOREIGN KEY (candidate_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_suite_scenarios api_sandbox_suite_scenarios_suite_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suite_scenarios
+    ADD CONSTRAINT api_sandbox_suite_scenarios_suite_run_id_fkey FOREIGN KEY (suite_run_id) REFERENCES public.api_sandbox_suite_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_suites api_sandbox_suites_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_suites
+    ADD CONSTRAINT api_sandbox_suites_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_sandbox_webhook_partners api_sandbox_webhook_partners_source_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_sandbox_webhook_partners
+    ADD CONSTRAINT api_sandbox_webhook_partners_source_deployment_id_fkey FOREIGN KEY (source_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_api_routes app_api_routes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103264,6 +103985,14 @@ ALTER TABLE ONLY public.app_api_routes
 
 ALTER TABLE ONLY public.app_api_routes
     ADD CONSTRAINT app_api_routes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_api_sandbox_scenarios app_api_sandbox_scenarios_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_api_sandbox_scenarios
+    ADD CONSTRAINT app_api_sandbox_scenarios_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

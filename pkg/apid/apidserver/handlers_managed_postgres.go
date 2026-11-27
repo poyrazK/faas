@@ -783,6 +783,10 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("managed PostgreSQL bindings"))
 		return
 	}
+	if state.IsAPISandbox(app) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Sandbox database is fixed", "Gregale provisions a dedicated database for each API sandbox"))
+		return
+	}
 	// Application Auth is a dark launch: without it the mode is unknown.
 	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)

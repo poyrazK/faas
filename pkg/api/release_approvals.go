@@ -28,12 +28,13 @@ const (
 
 // ReleaseApprovalPolicy is an app's approval policy.
 type ReleaseApprovalPolicy struct {
-	App               string `json:"app"`
-	RequiredApprovals int    `json:"required_approvals"`
-	AfterStage        int    `json:"after_stage"`
-	TimeoutMinutes    int    `json:"timeout_minutes"`
-	Approvers         string `json:"approvers"`
-	AllowSelfApproval bool   `json:"allow_self_approval"`
+	RequirePassingSandboxSuite bool   `json:"require_passing_sandbox_suite,omitempty"`
+	App                        string `json:"app"`
+	RequiredApprovals          int    `json:"required_approvals"`
+	AfterStage                 int    `json:"after_stage"`
+	TimeoutMinutes             int    `json:"timeout_minutes"`
+	Approvers                  string `json:"approvers"`
+	AllowSelfApproval          bool   `json:"allow_self_approval"`
 	// NotifyChannels names the notification channels told when a release
 	// waits, is approved or rejected, or times out.
 	NotifyChannels []string `json:"notify_channels"`
@@ -46,11 +47,12 @@ type ReleaseApprovalPolicy struct {
 // PUT /v1/apps/{slug}/release-approval-policy. Zero values take the defaults:
 // after stage 1, a 24-hour timeout and owner or admin approvers.
 type SetReleaseApprovalPolicyRequest struct {
-	RequiredApprovals int    `json:"required_approvals"`
-	AfterStage        int    `json:"after_stage,omitempty"`
-	TimeoutMinutes    int    `json:"timeout_minutes,omitempty"`
-	Approvers         string `json:"approvers,omitempty"`
-	AllowSelfApproval bool   `json:"allow_self_approval,omitempty"`
+	RequirePassingSandboxSuite *bool  `json:"require_passing_sandbox_suite,omitempty"`
+	RequiredApprovals          int    `json:"required_approvals"`
+	AfterStage                 int    `json:"after_stage,omitempty"`
+	TimeoutMinutes             int    `json:"timeout_minutes,omitempty"`
+	Approvers                  string `json:"approvers,omitempty"`
+	AllowSelfApproval          bool   `json:"allow_self_approval,omitempty"`
 	// NotifyChannels names Slack or email notification channels.
 	NotifyChannels []string `json:"notify_channels,omitempty"`
 }
@@ -132,16 +134,18 @@ type ReleaseApprovalDecision struct {
 
 // ReleaseApprovalStatus is one release's approval state.
 type ReleaseApprovalStatus struct {
-	DeploymentID      string                    `json:"deployment_id"`
-	App               string                    `json:"app"`
-	State             string                    `json:"state"`
-	RequiredApprovals int                       `json:"required_approvals,omitempty"`
-	Approvals         int                       `json:"approvals"`
-	AfterStage        int                       `json:"after_stage,omitempty"`
-	DeployedBy        string                    `json:"deployed_by,omitempty"`
-	WaitingSince      string                    `json:"waiting_since,omitempty"`
-	ExpiresAt         string                    `json:"expires_at,omitempty"`
-	Decisions         []ReleaseApprovalDecision `json:"decisions"`
+	DeploymentID               string                    `json:"deployment_id"`
+	App                        string                    `json:"app"`
+	State                      string                    `json:"state"`
+	RequiredApprovals          int                       `json:"required_approvals,omitempty"`
+	Approvals                  int                       `json:"approvals"`
+	AfterStage                 int                       `json:"after_stage,omitempty"`
+	DeployedBy                 string                    `json:"deployed_by,omitempty"`
+	WaitingSince               string                    `json:"waiting_since,omitempty"`
+	ExpiresAt                  string                    `json:"expires_at,omitempty"`
+	Decisions                  []ReleaseApprovalDecision `json:"decisions"`
+	BeforeReleaseCommand       bool                      `json:"before_release_command,omitempty"`
+	RequirePassingSandboxSuite bool                      `json:"require_passing_sandbox_suite,omitempty"`
 }
 
 // Remaining is how many more approvals the release needs.

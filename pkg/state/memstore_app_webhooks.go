@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -308,6 +309,10 @@ func (m *MemStore) UpdateAppWebhook(_ context.Context, id string, p UpdateAppWeb
 	w, ok := m.appWebhooks[id]
 	if !ok {
 		return AppWebhook{}, ErrNotFound
+	}
+	if strings.HasPrefix(w.TargetURL, api.APISandboxWebhookReceiverPrefix) ||
+		(p.TargetURL != nil && strings.HasPrefix(*p.TargetURL, api.APISandboxWebhookReceiverPrefix)) {
+		return AppWebhook{}, ErrConflict
 	}
 	urlChanged := p.TargetURL != nil && w.TargetURL != *p.TargetURL
 	if p.TargetURL != nil {
