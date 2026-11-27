@@ -601,6 +601,7 @@
         "=/v1/apps",
         "=/v1/apps/{}",
         "/v1/apps/{}/operation-preview",
+        "/v1/apps/{}/release-review",
         "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
@@ -5230,8 +5231,7 @@
       "docs_url": "/docs/deploys",
       "acceptance_test": "pkg/state/release_review_pg_test.go::TestPgReleaseReview",
       "routes": [
-        "/dashboard/apps/{}/release-review",
-        "/v1/apps/{}/release-review"
+        "/dashboard/apps/{}/release-review"
       ]
     },
     {
