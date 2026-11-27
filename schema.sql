@@ -25800,7 +25800,11 @@ BEGIN
   IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve permanent Object Lock history until physical bucket deletion'; END IF;
   RETURN OLD;
  END IF;
- IF NOT FOUND OR b.state<>'ready' OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) THEN
+ -- A bucket created with Object Lock journals its accepted request while it
+ -- is provisioning (ADR-20261119065000). Only that first, waiting request
+ -- may be inserted before the bucket is ready.
+ IF NOT FOUND OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) OR (b.state<>'ready' AND NOT
+  (TG_OP='INSERT' AND b.state='provisioning' AND NEW.enabled_required AND NEW.state='waiting' AND NOT NEW.dispatched AND NEW.revision=1)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Object Lock configuration requires an owned ready bucket';
  END IF;
  IF TG_OP='INSERT' THEN
@@ -34128,6 +34132,24 @@ CREATE TABLE public.api_key_approval_categories (
 --
 
 COMMENT ON TABLE public.api_key_approval_categories IS 'ADR-20261104140058 the action categories an agent key must have a person approve; apid is the only writer.';
+
+
+--
+-- Name: api_key_connect_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_connect_grants (
+    key_id uuid NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE api_key_connect_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_key_connect_grants IS 'ADR-20261127160000 the Connect consent that approves a hosted MCP key''s deploys; apid is the only writer.';
 
 
 --
@@ -67538,6 +67560,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 ALTER TABLE ONLY public.api_key_approval_categories
     ADD CONSTRAINT api_key_approval_categories_pkey PRIMARY KEY (key_id);
+
+
+--
+-- Name: api_key_connect_grants api_key_connect_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_connect_grants
+    ADD CONSTRAINT api_key_connect_grants_pkey PRIMARY KEY (key_id);
 
 
 --
@@ -103866,6 +103896,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 ALTER TABLE ONLY public.api_key_approval_categories
     ADD CONSTRAINT api_key_approval_categories_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_key_connect_grants api_key_connect_grants_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_connect_grants
+    ADD CONSTRAINT api_key_connect_grants_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

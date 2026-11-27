@@ -283,6 +283,38 @@ same request, and the approval lets it through once. A request expires
 after 30 minutes. The member who connected the agent can decide, and so can
 the organization's owners and admins. No API key can approve a request.
 
+#### Deploy access on the Connect screen is your approval
+
+When you connect a client through the hosted server (ChatGPT, Claude, Cursor
+and others) and choose **Deploy and manage apps**, the Gregale sign-in page
+lists one more permission: the agent may deploy, promote, roll back, restart
+and undo its changes in production without asking you again each time.
+Approving that sign-in is your approval of those requests
+(ADR-20261127160000). They go through with no review link:
+
+- deploys of a production app (upload, source and repository deploys, a
+  deployment retry, and the app settings a deploy applies from `gregale.yaml`)
+- promotion and traffic changes, canary advances, checked rollbacks and
+  restarts
+- removing a custom domain, its hosts or a cron
+- non-secret environment variable writes and configuration rollbacks (with
+  the `env:write` choice)
+- undoing the agent's own changes
+
+Each one is recorded in your audit log as `agent_approval.connect_grant`,
+with the connection's key, the request, and who granted it and when; the
+agent's activity log records the write as before. Everything else still asks:
+deleting apps, databases, buckets, secrets or variables, credentials,
+billing, secret values, commands, feature flags, dead-letter replays, workflow
+recovery, edge rules, and project or environment releases. Your
+organization's required approvals (`gregale org agent policy set
+--approvals`) still apply, and with `production` among them undo asks too.
+Plan limits, spend caps, agent budgets and protected environments are
+unchanged. To keep a connection read-only, choose **Inspect only**; revoking
+the connection ends the grant. Connections made before this change keep
+asking until they reconnect. Agent keys (`gregale key create --scopes agent`)
+never carry the grant.
+
 Choose the kinds when you create an agent key, or `none` to let it act
 alone:
 
@@ -319,9 +351,10 @@ deploy applies it.
 
 An agent can undo its own changes: `gregale_plan_undo` lists them with what
 undoing each will do, and `gregale_apply_undo` applies that plan. Applying
-always asks you first, whatever approval categories the agent chose; it waits
-like any other approval and then undoes exactly the plan you approved
-(`core` toolset; apply only on servers that allow writes).
+asks you first, whatever approval categories the agent chose, unless you
+granted deploy access on the Connect screen (above); it waits like any other
+approval and then undoes exactly the plan you approved (`core` toolset; apply
+only on servers that allow writes).
 
 When the bridge applies a plan, it sends the plan's reviewable `reason` as
 the `Gregale-Agent-Reason` header, so the review page, notifications and the
@@ -1997,8 +2030,9 @@ Each distinct attributed deployment is checked once before projection and once
 before release; app identity is checked last. Requests with unavailable deployment
 attribution keep it unavailable.
 
-Remote OAuth review has an optional, unchecked **App diagnostics** checkbox
-for each app. Approval covers retained request, performance, wake, sampled CPU profile function labels and
+Remote OAuth review has an optional **App diagnostics** checkbox for each
+app, ticked by default like every Connect choice (ADR-20261127160000 §6);
+untick the apps it should not cover. Approval covers retained request, performance, wake, sampled CPU profile function labels and
 collection/attribution summaries, and scheduler residency diagnostics across **all of that app's environments** and pins its
 current immutable ID. App-wide/future-app
 access, default reads and named environment reads do not implicitly approve it.

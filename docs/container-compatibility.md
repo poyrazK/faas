@@ -50,12 +50,26 @@ answered `GET /` on `0.0.0.0:$PORT`, and was still running 10 seconds after it
 started. When nothing answers, it reads the container's listening sockets and
 names the mistake, such as a server bound to `127.0.0.1` or to a port other
 than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
-app needs to start with `--env-file` (docker env-file format). The container is
-removed afterwards, and nothing runs on Gregale. An image Docker can run but
-the registry cannot serve (one that exists only on your machine) still boots;
-its metadata check reports the registry error. On an Apple silicon Mac, Docker
+app needs to start with `--env-file` (docker env-file format).
+
+The container gets the memory the app would get on Gregale, with no swap: the
+RAM of the app named with `--app`, otherwise your plan's default for a new app
+(512 MB when you are not signed in); `--ram MB` sets it directly. An app that
+needs more memory crashes with `boot_oom_killed` here instead of after the
+deploy. Give the app more RAM with `gregale app update APP --ram MB`. The guest
+kernel on Gregale uses a little of the app's RAM, so leave some headroom. The container is
+removed afterwards, and nothing runs on Gregale. On an Apple silicon Mac, Docker
 runs the amd64 image under emulation, so startup is slower than on Gregale.
 Set `GREGALE_DOCKER=podman` to use another Docker-compatible client.
+
+An image that exists only on your machine is checked too. When the registry
+cannot serve `--image`, `doctor` and `deploy check` read the image from your
+local Docker store (`docker image inspect`, linux/amd64 variant first) and run
+the same metadata checks on it; `--boot` then uses its serving port. The
+registry failure stays as a warning, because `deploy --image` pulls from the
+registry: deploy such an image with `gregale deploy --local-image`. The size
+check uses the unpacked size Docker reports. A registry that has the image but
+answers with the wrong platform or a malformed manifest is reported as is.
 
 Gregale preserves the OCI/Docker process model. Image metadata supplies the
 entrypoint, command, environment, working directory, user, health check, stop

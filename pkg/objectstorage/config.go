@@ -327,6 +327,9 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if b.ObjectLock.Enabled && !SupportsNativeObjectLock(p) {
 			return nil, fmt.Errorf("object storage: backend %s lacks its declared Object Lock contract", b.ID)
 		}
+		if _, creator := p.(ObjectLockBucketCreator); b.ObjectLock.CreationOnly && !creator {
+			return nil, fmt.Errorf("object storage: backend %s cannot create Object Lock buckets", b.ID)
+		}
 		r.backends[b.ID] = Backend{ObjectLock: b.ObjectLock, Encryption: cloneEncryptionConfig(b.Encryption), AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage, MaxBuckets: b.MaxBuckets, GatewayCredential: gatewayCredential}
 		configs[b.ID] = b
 	}

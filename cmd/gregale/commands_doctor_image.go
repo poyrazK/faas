@@ -34,6 +34,10 @@ type doctorImageFlags struct {
 	// starts, serves HTTP on 0.0.0.0:$PORT and stays up (doctor_boot.go).
 	boot    bool
 	envFile string
+	// ramMB overrides the boot's memory limit; app is doctor's --app, whose
+	// RAM is the limit otherwise (doctorBootMemory).
+	ramMB int
+	app   string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -44,6 +48,7 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.dockerConfig, "docker-config", "", "use the image registry's credentials from this Docker config.json or its directory")
 	fs.BoolVar(&f.boot, "boot", false, "with --image, run the image with local Docker and check it starts, serves HTTP on 0.0.0.0:$PORT and stays up")
 	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
+	fs.IntVar(&f.ramMB, "ram", 0, "with --boot, memory limit in MB (default: --app's RAM, else your plan's default for a new app)")
 	return f
 }
 
@@ -71,6 +76,10 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	}
 	if visited["env-file"] && (!f.boot || strings.TrimSpace(f.envFile) == "") {
 		return errors.New("--env-file requires --boot and a file path")
+	}
+	// Docker itself refuses a limit below its minimum, with its own message.
+	if visited["ram"] && (!f.boot || f.ramMB <= 0) {
+		return errors.New("--ram requires --boot and a positive memory limit in MB")
 	}
 	if visited["registry-user"] || visited["registry-password-stdin"] {
 		if f.image == "" || f.user == "" || !f.passwordStdin {
@@ -104,6 +113,10 @@ type doctorImage struct {
 	VolumePaths     []string                    `json:"volume_paths,omitempty"`
 	// Layers summarizes compressed layer sizes from the image manifest.
 	Layers *doctorImageLayers `json:"layers,omitempty"`
+	// Source is "local-docker" when the registry could not serve the image
+	// and the metadata came from the local Docker store; Digest is then the
+	// local image ID.
+	Source string `json:"source,omitempty"`
 	// Booted is set when --boot ran the image with local Docker.
 	Booted bool `json:"booted,omitempty"`
 }
@@ -128,7 +141,7 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 		}
 		auth = &oci.BasicAuth{Username: cred.Username, Password: cred.Password}
 	}
-	report := runDoctorImageChecks(ctx, flags.image, auth, inspector)
+	report := runDoctorImageChecksWithLocal(ctx, flags.image, auth, inspector, readLocalDockerImage)
 	if flags.boot {
 		addDoctorBootChecks(&report, flags)
 	}
@@ -146,6 +159,12 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 }
 
 func runDoctorImageChecks(ctx context.Context, ref string, auth *oci.BasicAuth, inspector doctorImageInspector) doctorReport {
+	return runDoctorImageChecksWithLocal(ctx, ref, auth, inspector, nil)
+}
+
+// runDoctorImageChecksWithLocal falls back to local, when not nil, if the
+// registry cannot serve ref (doctor_local_image.go).
+func runDoctorImageChecksWithLocal(ctx context.Context, ref string, auth *oci.BasicAuth, inspector doctorImageInspector, local doctorLocalImageReader) doctorReport {
 	rep := doctorReport{Image: &doctorImage{Reference: ref}, Checks: []doctorCheck{}}
 	if hint, denied := statefuldenylist.Match(ref); denied {
 		rep.Checks = append(rep.Checks, doctorCheck{Name: "stateless-only", Status: "error", Code: api.CodeStatelessOnlyViolation, Hint: hint, Fix: "Use a stateless application image and an external data store."})
@@ -154,32 +173,55 @@ func runDoctorImageChecks(ctx context.Context, ref string, auth *oci.BasicAuth, 
 	}
 	result, err := inspector.InspectImage(ctx, ref, auth)
 	if err != nil {
-		rep.Checks = append(rep.Checks, doctorImageAccessError(err))
+		access := doctorImageAccessError(err)
+		if local == nil || !doctorLocalImageFallback(err) {
+			rep.Checks = append(rep.Checks, access)
+			return rep
+		}
+		img, ok := local(ctx, ref)
+		if !ok {
+			rep.Checks = append(rep.Checks, access)
+			return rep
+		}
+		rep.Image = describeDoctorLocalImage(ref, img)
+		rep.Checks = append(rep.Checks, doctorLocalRegistryCheck(access, ref))
+		rep.Checks = append(rep.Checks, doctorImageConfigChecks(img.Config)...)
+		rep.Checks = append(rep.Checks, doctorLocalImageSize(ctx, img.SizeBytes))
+		rep.Checks = append(rep.Checks, doctorImageTailChecks(img.Config)...)
 		return rep
 	}
 	rep.Image = describeDoctorImage(result)
 	rep.Checks = append(rep.Checks, doctorCheck{Name: "registry-metadata", Status: "ok"})
-	rep.Checks = append(rep.Checks, doctorImagePlatformCheck(result.Config))
-	rep.Checks = append(rep.Checks, doctorImageContractCheck(result.Config))
-	rep.Checks = append(rep.Checks, doctorImageListenerCheck(result.Config))
-	rep.Checks = append(rep.Checks, doctorImageHealthcheck(result.Config.Healthcheck))
-	rep.Checks = append(rep.Checks, doctorImageStopSignal(result.Config.StopSignal))
+	rep.Checks = append(rep.Checks, doctorImageConfigChecks(result.Config)...)
 	sizeCheck, layers := doctorImageSize(ctx, result)
 	rep.Image.Layers = layers
 	rep.Checks = append(rep.Checks, sizeCheck)
-	if len(result.Config.Volumes) > 0 {
-		rep.Checks = append(rep.Checks, doctorCheck{Name: "volumes", Status: "warn", Hint: "Image VOLUME declarations do not provision persistent storage. Snapshots are a startup cache; filesystem contents are not guaranteed across instances, cold fallback, redeployment or node failure.", Fix: "Keep durable state in object storage or an external database; use local paths only for disposable data."})
+	rep.Checks = append(rep.Checks, doctorImageTailChecks(result.Config)...)
+	return rep
+}
+
+// doctorImageConfigChecks are the checks an image config alone answers.
+func doctorImageConfigChecks(cfg oci.ImageConfig) []doctorCheck {
+	return []doctorCheck{doctorImagePlatformCheck(cfg), doctorImageContractCheck(cfg), doctorImageListenerCheck(cfg), doctorImageHealthcheck(cfg.Healthcheck), doctorImageStopSignal(cfg.StopSignal)}
+}
+
+// doctorImageTailChecks are the volume warning and the checks metadata
+// cannot answer.
+func doctorImageTailChecks(cfg oci.ImageConfig) []doctorCheck {
+	var checks []doctorCheck
+	if len(cfg.Volumes) > 0 {
+		checks = append(checks, doctorCheck{Name: "volumes", Status: "warn", Hint: "Image VOLUME declarations do not provision persistent storage. Snapshots are a startup cache; filesystem contents are not guaranteed across instances, cold fallback, redeployment or node failure.", Fix: "Keep durable state in object storage or an external database; use local paths only for disposable data."})
 	}
 	for _, name := range []string{"startup-and-port", "filesystem-and-user", "plan-and-deployment-policy"} {
-		rep.Checks = append(rep.Checks, doctorCheck{Name: name, Status: "skipped", Reason: "Metadata inspection cannot verify running processes, unpacked layer contents and filesystem overhead, or account/deployment settings; image-size is an estimate from compressed layers. Deployment validation remains authoritative."})
+		checks = append(checks, doctorCheck{Name: name, Status: "skipped", Reason: "Metadata inspection cannot verify running processes, unpacked layer contents and filesystem overhead, or account/deployment settings; image-size is an estimate. Deployment validation remains authoritative."})
 	}
-	return rep
+	return checks
 }
 
 // addDoctorBootChecks runs the image locally and replaces the skipped
 // startup-and-port check with what the run found. It boots even when registry
-// metadata could not be read, so an image that exists only in the local Docker
-// store can be checked too; PORT is then the default serving port.
+// metadata could not be read from the registry or the local Docker store;
+// PORT is then the default serving port.
 func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
 	port := api.DefaultAppPort
 	if report.Image != nil && report.Image.ServingPort > 0 {
@@ -187,7 +229,8 @@ func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	boot := runDoctorBootChecks(ctx, doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile})
+	memoryMB, memorySource := doctorBootMemory(ctx, flags)
+	boot := runDoctorBootChecks(ctx, doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource})
 	checks := report.Checks[:0]
 	for _, c := range report.Checks {
 		if c.Name != "startup-and-port" {
@@ -323,6 +366,9 @@ func renderDoctorImage(w io.Writer, img *doctorImage) {
 			_, _ = fmt.Fprintf(w, "  booted with local Docker as linux/amd64, PORT=%d (registry metadata unavailable)\n", api.DefaultAppPort)
 		}
 		return
+	}
+	if note := doctorLocalImageSourceNote(img); note != "" {
+		_, _ = fmt.Fprintln(w, note)
 	}
 	if img.InputReference != "" {
 		_, _ = fmt.Fprintf(w, "  requested: %q\n  immutable source: %q\n", img.InputReference, img.SourceReference)

@@ -1397,6 +1397,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				jailer.WithListenerStore(fdStore)
 				mgr.WithAdoptAdmittedRuntimes(cfg.AdoptAdmittedRuntimes)
 			}
+			mgr.WithAdoptionDriveBase(cfg.AdoptionDriveBase)
 			adoptionReport, err = startAdoption(ctx, mgr, cfg.AdoptionRecord, cfg.AdoptRunningVMs, claimEpoch, newAdoptionMetrics(ops.Registry()), log)
 			if err != nil {
 				return err

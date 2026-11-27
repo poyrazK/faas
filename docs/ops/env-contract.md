@@ -1213,6 +1213,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_UPSTREAM_PROBE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_UPSTREAM_PROBE_PARTITION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_VCPU_BUDGET` | vmmd | `default` |  |  | `` |  |
+| `FAAS_VMMD_ADOPTION_DRIVE_BASE` | vmmd | `default` |  | false | `` | vmmd restart adoption: true writes each guest's drive layer key into its adoption block so an adopted guest parks a drive delta (overrides vmmd.toml adoption_drive_base; ADR-20261115213230 amendment 1); an older vmmd cannot open a journal holding it, so turn on only once every node and rollback target reads it |
 | `FAAS_VMMD_ADOPTION_RECORD` | vmmd | `dropin` |  | false | `` | vmmd restart adoption: true writes version-7 adoption blocks (overrides vmmd.toml adoption_record); ansible vmmd_adoption_record, default false; turn on only once every node and rollback target reads version 7 |
 | `FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES` | vmmd | `dropin` |  | false | `` | vmmd restart adoption: true also adopts runtime-admitted guests (overrides vmmd.toml adopt_admitted_runtimes; needs FAAS_VMMD_ADOPT_RUNNING_VMS); ansible vmmd_adopt_admitted_runtimes, default false |
 | `FAAS_VMMD_ADOPT_RUNNING_VMS` | vmmd | `dropin` |  | false | `` | vmmd restart adoption: true adopts running guests at startup so a rollout can skip the drain (overrides vmmd.toml adopt_running_vms; needs FAAS_VMMD_ADOPTION_RECORD); ansible vmmd_adopt_running_vms, default false |
