@@ -28,6 +28,7 @@ import (
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
 	"AlertDeferredFireRecipients":            true,
+	"CountDeploymentOutcomesSince":           true,
 	"UpdateAlertDeliveryStatus":              true,
 	"ClaimAlertFire":                         true,
 	"ListDeploymentPromotions":               true,
@@ -334,6 +335,15 @@ func (s *Mem) AlertDeferredFireRecipients(ctx context.Context, ruleID string, fi
 		return override.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
 	}
 	return s.MemStore.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+}
+
+func (s *Mem) CountDeploymentOutcomesSince(ctx context.Context, since time.Time, excludedAccounts ...string) (state.DeploymentOutcomeCounts, error) {
+	if override, ok := s.over.(interface {
+		CountDeploymentOutcomesSince(context.Context, time.Time, ...string) (state.DeploymentOutcomeCounts, error)
+	}); ok {
+		return override.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
+	}
+	return s.MemStore.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
 }
 
 func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, state.AlertFireRecipients, error) {
