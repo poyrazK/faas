@@ -145,6 +145,7 @@ type Querier interface {
 	AdvanceEventExecutionReconciliations(ctx context.Context, db DBTX, batchLimit int32) (int64, error)
 	AdvanceFlagExperiment(ctx context.Context, db DBTX, arg AdvanceFlagExperimentParams) error
 	AdvanceImagePreparation(ctx context.Context, db DBTX, arg AdvanceImagePreparationParams) (int64, error)
+	AdvanceProductStripeInvoiceSend(ctx context.Context, db DBTX, arg AdvanceProductStripeInvoiceSendParams) (int64, error)
 	AdvanceProjectEnvironmentCloneCheckpointIntent(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneCheckpointIntentParams) (int64, error)
 	AdvanceProjectEnvironmentCloneConfigurationClock(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneConfigurationClockParams) (int64, error)
 	AdvanceProjectEnvironmentCloneOperationStatus(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneOperationStatusParams) (int64, error)
@@ -350,6 +351,8 @@ type Querier interface {
 	// ADR-581: persist an irreversible accounting obligation before provider I/O.
 	BeginManagedPostgresAccounting(ctx context.Context, db DBTX, arg BeginManagedPostgresAccountingParams) (int64, error)
 	BeginManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg BeginManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error)
+	BeginProductStripeInvoiceReminder(ctx context.Context, db DBTX, arg BeginProductStripeInvoiceReminderParams) (int64, error)
+	BeginProductStripeInvoiceSend(ctx context.Context, db DBTX, arg BeginProductStripeInvoiceSendParams) (int64, error)
 	BeginProjectEnvironmentClonePostgresCopyReaderCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresCopyReaderCleanupParams) (ProjectEnvironmentClonePostgresCopyReader, error)
 	BeginProjectEnvironmentClonePostgresCopyTargetCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresCopyTargetCleanupParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	BeginProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error)
@@ -813,6 +816,7 @@ type Querier interface {
 	CompleteOperatorColdBoot(ctx context.Context, db DBTX, arg CompleteOperatorColdBootParams) (OperatorIntent, error)
 	CompleteOperatorNode(ctx context.Context, db DBTX, arg CompleteOperatorNodeParams) (pgtype.UUID, error)
 	CompleteOperatorRestartIntent(ctx context.Context, db DBTX, arg CompleteOperatorRestartIntentParams) (OperatorIntent, error)
+	CompleteProductStripeInvoiceReminder(ctx context.Context, db DBTX, arg CompleteProductStripeInvoiceReminderParams) (int64, error)
 	CompleteProjectEnvironmentClonePublication(ctx context.Context, db DBTX, arg CompleteProjectEnvironmentClonePublicationParams) (int64, error)
 	CompleteRequestAnalyticsWindow(ctx context.Context, db DBTX, id pgtype.UUID) error
 	CompleteScenarioWorkerFault(ctx context.Context, db DBTX, arg CompleteScenarioWorkerFaultParams) (int64, error)
@@ -6296,6 +6300,7 @@ type Querier interface {
 	ProductBillingCredited(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
 	ProductBillingDocument(ctx context.Context, db DBTX, arg ProductBillingDocumentParams) (ProductControlBillingDocument, error)
 	ProductBillingDocuments(ctx context.Context, db DBTX, arg ProductBillingDocumentsParams) ([]ProductControlBillingDocument, error)
+	ProductBillingExportInvoice(ctx context.Context, db DBTX, arg ProductBillingExportInvoiceParams) (string, error)
 	ProductBillingGetHandoff(ctx context.Context, db DBTX, arg ProductBillingGetHandoffParams) (ProductBillingGetHandoffRow, error)
 	ProductBillingInsertDocument(ctx context.Context, db DBTX, arg ProductBillingInsertDocumentParams) error
 	ProductBillingInsertHandoff(ctx context.Context, db DBTX, arg ProductBillingInsertHandoffParams) error
@@ -6340,6 +6345,7 @@ type Querier interface {
 	// statement, so every writer records it (ADR-20261021154511). A customer
 	// without a trial starts one when assigned a plan offering it, and keeps
 	// any trial they had (ADR-20261021195901).
+	// Reviewed assignments use the same effective time as their fee projection.
 	ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error
 	ProductControlSetHead(ctx context.Context, db DBTX, arg ProductControlSetHeadParams) error
 	// Records since when a payment method has been on file, or clears it
@@ -6385,15 +6391,14 @@ type Querier interface {
 	ProductOnboardingTenant(ctx context.Context, db DBTX, arg ProductOnboardingTenantParams) (PlatformTenant, error)
 	ProductOnboardingTenantCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	ProductOverdueAllHolds(ctx context.Context, db DBTX) ([]ProductControlOverdueHold, error)
-	ProductOverdueCustomerHold(ctx context.Context, db DBTX, arg ProductOverdueCustomerHoldParams) (ProductOverdueCustomerHoldRow, error)
 	ProductOverdueDeleteAppHolds(ctx context.Context, db DBTX, arg ProductOverdueDeleteAppHoldsParams) ([]ProductControlOverdueHold, error)
 	ProductOverdueDeleteHold(ctx context.Context, db DBTX, arg ProductOverdueDeleteHoldParams) error
 	ProductOverdueDeletePolicy(ctx context.Context, db DBTX, arg ProductOverdueDeletePolicyParams) (int64, error)
 	// Each customer's oldest exported statement that is still unpaid its app's
 	// policy days after its due date. Drafts have no due date and never count.
 	ProductOverdueDue(ctx context.Context, db DBTX, now pgtype.Timestamptz) ([]ProductOverdueDueRow, error)
-	// Holds apply while their policy exists and their invoice is still unpaid, so
-	// payment or a cleared policy takes effect before the next recomputation.
+	// An existing hold follows the next qualifying statement when its invoice
+	// settles. The point lookup and app list share the same payment snapshot.
 	ProductOverdueHolds(ctx context.Context, db DBTX, arg ProductOverdueHoldsParams) ([]ProductOverdueHoldsRow, error)
 	// Policy deletion waits for a running recomputation; the recomputation skips
 	// when another replica holds the lock.
@@ -6407,8 +6412,22 @@ type Querier interface {
 	ProductOverdueTryLock(ctx context.Context, db DBTX) (bool, error)
 	ProductOverdueUpsertHold(ctx context.Context, db DBTX, arg ProductOverdueUpsertHoldParams) error
 	ProductOwnerAttention(ctx context.Context, db DBTX, arg ProductOwnerAttentionParams) ([]ProductOwnerAttentionRow, error)
+	// Discover possible statements from both runs and paid terms held during a
+	// closed month. The canonical billing review prices trials and proration and
+	// rechecks finalization before an item is displayed.
+	ProductOwnerBillingQueueCandidates(ctx context.Context, db DBTX, arg ProductOwnerBillingQueueCandidatesParams) ([]ProductOwnerBillingQueueCandidatesRow, error)
+	ProductOwnerDueSchedule(ctx context.Context, db DBTX, arg ProductOwnerDueScheduleParams) (ProductOwnerDueScheduleRow, error)
+	ProductOwnerDueScheduleScopes(ctx context.Context, db DBTX, arg ProductOwnerDueScheduleScopesParams) ([]ProductOwnerDueScheduleScopesRow, error)
 	ProductOwnerGetChange(ctx context.Context, db DBTX, arg ProductOwnerGetChangeParams) (ProductOwnerGetChangeRow, error)
 	ProductOwnerInsertChange(ctx context.Context, db DBTX, arg ProductOwnerInsertChangeParams) error
+	// Include unfinished exports even if they already recorded their own
+	// handoff and still need to mark the export complete.
+	ProductOwnerInvoiceQueue(ctx context.Context, db DBTX, arg ProductOwnerInvoiceQueueParams) ([]ProductOwnerInvoiceQueueRow, error)
+	ProductOwnerLatestSchedule(ctx context.Context, db DBTX, arg ProductOwnerLatestScheduleParams) (ProductOwnerLatestScheduleRow, error)
+	ProductOwnerOutstandingBalances(ctx context.Context, db DBTX, arg ProductOwnerOutstandingBalancesParams) (ProductOwnerOutstandingBalancesRow, error)
+	ProductOwnerPaymentQueue(ctx context.Context, db DBTX, arg ProductOwnerPaymentQueueParams) ([]ProductOwnerPaymentQueueRow, error)
+	ProductOwnerPlanChangedAfter(ctx context.Context, db DBTX, arg ProductOwnerPlanChangedAfterParams) (bool, error)
+	ProductOwnerResolveSchedule(ctx context.Context, db DBTX, arg ProductOwnerResolveScheduleParams) (int64, error)
 	ProductOwnerRuns(ctx context.Context, db DBTX, arg ProductOwnerRunsParams) ([]ProductOwnerRunsRow, error)
 	ProductPlanGetChange(ctx context.Context, db DBTX, arg ProductPlanGetChangeParams) (ProductPlanGetChangeRow, error)
 	ProductPlanInsertChange(ctx context.Context, db DBTX, arg ProductPlanInsertChangeParams) error
@@ -6420,6 +6439,7 @@ type Querier interface {
 	// One statement reference and signed aggregate, independent of document count.
 	// No reasons, snapshots, invoice handoffs or unrelated operation credits.
 	ProductRunDetailsBilling(ctx context.Context, db DBTX, arg ProductRunDetailsBillingParams) (ProductRunDetailsBillingRow, error)
+	ProductStripeInvoiceSend(ctx context.Context, db DBTX, arg ProductStripeInvoiceSendParams) (ProductStripeInvoiceSendRow, error)
 	// Customer work history is sourced from independent receipts, including old
 	// features/plans. No price, input, result body, owner notes or document is read.
 	ProductWorkHistory(ctx context.Context, db DBTX, arg ProductWorkHistoryParams) ([]ProductWorkHistoryRow, error)
@@ -9241,6 +9261,7 @@ type Querier interface {
 	// Checks after all triggers and writes, so a slow statement cannot commit a
 	// checkpoint after its authoritative lease or positive evidence has expired.
 	VerifyAutomaticApplicationStandardObservation(ctx context.Context, db DBTX, arg VerifyAutomaticApplicationStandardObservationParams) (bool, error)
+	VerifyProductStripeInvoiceSend(ctx context.Context, db DBTX, arg VerifyProductStripeInvoiceSendParams) (int64, error)
 	// Preserve an arrival in the wait-registration/park window without releasing
 	// coordinator custody. Legacy running runs retain their existing wake policy.
 	WakeNativeWorkflowForReceivedEvent(ctx context.Context, db DBTX, runID pgtype.UUID) error

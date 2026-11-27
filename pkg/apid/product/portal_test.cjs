@@ -449,6 +449,50 @@ test('an overdue invoice hold pauses new runs and links only to the provider htt
   assert.equal(clear.get('overdue-status').hidden, true);
 });
 
+test('checking payment follows the next overdue invoice and enables work after the final payment', async () => {
+  const holds = [1, 2].map(n => ({ due_at: `2026-10-${14 + n}T00:00:00Z`, hosted_invoice_url: `https://invoice.stripe.com/i/in_${n}`, payment_check_id: randomUUID() }));
+  let index = 0, unavailable = true;
+  const b = browser(async (path, options) => {
+    if (path.endsWith('/product')) {
+      const data = fixture();
+      data.overdue_hold = holds[index];
+      return teamResponse(data);
+    }
+    if (path.endsWith('/billing/check-payment')) {
+      assert.equal(options.method, 'POST');
+      assert.deepEqual(JSON.parse(options.body), { hold_id: holds[index].payment_check_id });
+      if (unavailable) return teamResponse({ detail: 'Could not confirm payment right now. Try again shortly.' }, 503);
+      return teamResponse({ overdue_hold: holds[++index] || null });
+    }
+  });
+  await b.signIn();
+  const status = b.get('overdue-status'), button = () => status.children.find(el => el.tag === 'button');
+  const run = () => b.get('features').children[0].children.find(el => el.tag === 'form').children.at(-1);
+  const checks = () => b.calls.filter(call => call.path.endsWith('/billing/check-payment'));
+  assert.equal(checks().length, 0);
+  await button().onclick();
+  assert.match(b.get('message').textContent, /try again/i);
+  assert.equal(run().disabled, true);
+  assert.equal(button().disabled, false);
+
+  unavailable = false;
+  const firstClick = button().onclick;
+  const checking = firstClick();
+  assert.equal(button().disabled, true);
+  await firstClick();
+  await checking;
+  assert.equal(checks().length, 2);
+  assert.equal(status.children.find(el => el.tag === 'a').href, holds[1].hosted_invoice_url);
+  assert.match(b.get('message').textContent, /another overdue invoice/i);
+  assert.equal(run().disabled, true);
+
+  await button().onclick();
+  assert.equal(checks().length, 3);
+  assert.equal(status.hidden, true);
+  assert.equal(run().disabled, false);
+  assert.match(b.get('message').textContent, /payment hold cleared/i);
+});
+
 test('billing details load and save through the product team billing provider for roles that manage billing', async () => {
   let saved;
   const withManageBilling = manage => async (path, options) => {
@@ -597,7 +641,9 @@ const jsonResponse = data => ({ ok: true, status: 200, json: async () => data })
 const missingPlan = () => ({ ok: false, status: 404, json: async () => ({ detail: 'Not recorded' }) });
 const planTerms = plan => ({ plan, label: plan === 'pro' ? '<script>Pro</script>' : 'Starter', revision: quote, currency: 'EUR', features: [{ name: 'export', label: 'Export', monthly_starts: plan === 'pro' ? 100 : 10, unit_price_millicents: plan === 'pro' ? 10000 : 25000, starts: 1, remaining_starts: plan === 'pro' ? 99 : 9 }] });
 const planChoices = () => ({ current: planTerms('starter'), offers: [planTerms('pro')], period: '2026-10', head_revision: quote, suspended: false });
-const planPreview = (request, hash = quote) => ({ request, hash, before: planTerms('starter'), after: planTerms(request.plan), period: '2026-10' });
+const planPreview = (request, hash = quote) => ({ request, hash, before: planTerms('starter'), after: planTerms(request.plan), period: '2026-10',
+  pricing: { this_month_before_millicents: 4_900_000, this_month_after_millicents: 4_900_000, next_month_after_millicents: 0,
+    next_period: '2026-11', runs: [{ feature: 'export', starts: 1, before_millicents: 25000, after_millicents: 0 }] } });
 const planReceipt = preview => ({ id: preview.request.id, preview, actor_role: 'manager', effective_at: '2026-10-16T12:00:00Z' });
 const planView = (plan = 'starter', manage = true) => {
   const data = fixture(); data.access = { role: manage ? 'manager' : 'billing', permissions: { manage_plan: manage, view_work: false, run_work: false, view_billing: !manage } };
@@ -803,7 +849,10 @@ test('plan managers compare exact prices and carried usage, then explicitly conf
   await reviewPlan(b);
   assert.match(textTree(b.get('plan-comparison')), /EUR 0.25.*10 starts\/month.*1 used.*9 remaining/);
   assert.match(textTree(b.get('plan-comparison')), /EUR 0.10.*100 starts\/month.*99 remaining/);
-  assert.match(textTree(b.get('plan-comparison')), /Monthly fee.*No monthly fee.*No monthly fee/);
+  assert.match(textTree(b.get('plan-comparison')), /Recurring plan fee.*No monthly fee.*No monthly fee/);
+  assert.match(textTree(b.get('plan-comparison')), /Plan fee for 2026-10 UTC\s+EUR 49.00\s+EUR 49.00/);
+  assert.match(textTree(b.get('plan-comparison')), /Projected plan fee for 2026-11 UTC\s+—\s+EUR 0.00/);
+  assert.match(textTree(b.get('plan-comparison')), /Export next run\s+EUR 0.25 on success\s+EUR 0.00 on success/);
   assert.equal(b.get('plan-options').children[0].textContent, '<script>Pro</script>');
   assert.equal(b.calls.filter(c => c.path.endsWith('/plans/confirm')).length, 0);
   await b.get('plan-confirm').onclick();

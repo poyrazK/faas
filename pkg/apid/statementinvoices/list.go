@@ -41,7 +41,7 @@ func (s *Service) ListInvoices(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	out := api.StatementInvoiceListResponse{Invoices: make([]api.StatementInvoiceExportResponse, 0, len(invoices))}
 	for _, invoice := range invoices {
-		out.Invoices = append(out.Invoices, statementInvoiceExportResponse(invoice))
+		out.Invoices = append(out.Invoices, s.statementInvoiceExportResponse(invoice))
 	}
 	if len(invoices) == limit {
 		out.NextCursor = state.InvoiceCursor(invoices[len(invoices)-1])

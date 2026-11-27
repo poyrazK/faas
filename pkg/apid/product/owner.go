@@ -68,7 +68,7 @@ func (s *Service) OwnerConsole(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	query, err := ownerQuery(r, "tenant", "period", "customers_cursor", "attention_cursor", "runs_cursor", "documents_cursor", "document")
+	query, err := ownerQuery(r, "tenant", "period", "customers_cursor", "attention_cursor", "runs_cursor", "documents_cursor", "document", "runs", "billing_month", "billing_cursor", "invoice_cursor", "payment_cursor")
 	if err == nil {
 		err = s.loadOwnerConsole(w, r, c, query)
 	}
@@ -102,6 +102,10 @@ func ownerAllowed(key string, allowed []string) bool {
 }
 
 func (s *Service) loadOwnerConsole(w http.ResponseWriter, r *http.Request, c *ownerContext, q url.Values) error {
+	if q.Has("runs") && (q.Get("runs") != "review" || q.Get("tenant") == "" || q.Get("period") == "") {
+		return state.ErrInvalidArgument
+	}
+	c.data.ReviewRuns = q.Get("runs") == "review"
 	c.data.Main = true
 	c.data.Period = q.Get("period")
 	if c.data.Period == "" {
@@ -158,9 +162,19 @@ func (s *Service) ownerOverview(r *http.Request, c *ownerContext, q url.Values) 
 		return err
 	}
 	for _, item := range attention.Items {
-		c.data.Attention = append(c.data.Attention, dashboard.ProductControlAttention{TenantID: item.TenantID, Period: item.Period, Unresolved: item.Unresolved, NeedsReview: item.NeedsReview, URL: ownerURL(c, item.TenantID, item.Period, nil)})
+		link := ownerURL(c, item.TenantID, item.Period, nil) + "#billing"
+		if item.Unresolved > 0 {
+			link = ownerReviewRunsURL(c.data.BaseURL, item.TenantID, item.Period)
+		}
+		c.data.Attention = append(c.data.Attention, dashboard.ProductControlAttention{TenantID: item.TenantID, Period: item.Period, Unresolved: item.Unresolved, NeedsReview: item.NeedsReview, URL: link})
 	}
 	c.data.NextAttentionURL = ownerPageURL(c, q, "attention_cursor", attention.NextCursor)
+	if err := s.ownerBillingQueue(r, c, q); err != nil {
+		return err
+	}
+	if err := s.ownerPaymentQueue(r, c, q); err != nil {
+		return err
+	}
 	return s.ownerOverdue(r, c)
 }
 
@@ -229,6 +243,14 @@ func (s *Service) ownerCustomer(r *http.Request, c *ownerContext, q url.Values) 
 		return err
 	}
 	scope := state.ProductBillingScope{AccountID: c.account.ID, AppID: c.app.ID, TenantID: tenant.ID, Period: c.data.Period}
+	if store, ok := s.Host.Store().(state.ProductPlanScheduleStore); ok {
+		schedule, err := store.GetProductPlanSchedule(r.Context(), scope)
+		if err == nil {
+			c.data.PlanSchedule = &schedule
+		} else if !errors.Is(err, state.ErrNotFound) {
+			return err
+		}
+	}
 	review, err := c.billing.ReviewProductBilling(r.Context(), scope)
 	if err != nil {
 		return err
@@ -272,10 +294,15 @@ func ownerFeatures(r *http.Request, c *ownerContext, catalog api.ProductCatalog,
 }
 
 func (s *Service) ownerRuns(r *http.Request, c *ownerContext, scope state.ProductBillingScope, q url.Values) error {
-	page, err := c.owner.ListProductOwnerRuns(r.Context(), scope, q.Get("runs_cursor"))
+	list := c.owner.ListProductOwnerRuns
+	if c.data.ReviewRuns {
+		list = c.owner.ListProductOwnerReviewRuns
+	}
+	page, err := list(r.Context(), scope, q.Get("runs_cursor"))
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	for _, run := range page.Runs {
 		e := run.Evidence
 		status := string(run.State)
@@ -288,9 +315,28 @@ func (s *Service) ownerRuns(r *http.Request, c *ownerContext, scope state.Produc
 		if e.WaivedAt != nil {
 			status += " · charge waived"
 		}
-		c.data.Runs = append(c.data.Runs, dashboard.ProductControlRun{ID: e.OperationID, Feature: e.Receipt.Feature, AdmittedAt: e.Receipt.AdmittedAt.UTC().Format(time.RFC3339), State: status, Price: ownerMoney(e.Receipt.Currency, e.Receipt.UnitPriceMillicents), Credited: ownerMoney(e.Receipt.Currency, run.CreditedMillicents), URL: c.data.BaseURL + "/runs/" + url.PathEscape(e.OperationID), CanWaive: e.ResolvedState == "" && e.WaivedAt == nil, CanCredit: e.ResolvedState == api.OperationSucceeded && e.WaivedAt == nil && c.data.Billing.Finalized != nil && run.CreditedMillicents < e.Receipt.UnitPriceMillicents})
+		active := run.State == api.OperationAccepted || run.State == api.OperationRunning || run.State == api.OperationWaiting
+		item := dashboard.ProductControlRun{
+			ID: e.OperationID, Feature: e.Receipt.Feature, AdmittedAt: e.Receipt.AdmittedAt.UTC().Format(time.RFC3339), State: status,
+			Price: ownerMoney(e.Receipt.Currency, e.Receipt.UnitPriceMillicents), Credited: ownerMoney(e.Receipt.Currency, run.CreditedMillicents),
+			URL: c.data.BaseURL + "/runs/" + url.PathEscape(e.OperationID), Active: active,
+			CanWaive:  e.ResolvedState == "" && e.WaivedAt == nil && (!c.data.ReviewRuns || !active),
+			CanCredit: e.ResolvedState == api.OperationSucceeded && e.WaivedAt == nil && c.data.Billing.Finalized != nil && run.CreditedMillicents < e.Receipt.UnitPriceMillicents,
+		}
+		if c.data.ReviewRuns {
+			item.Age = max(time.Duration(0), now.Sub(e.Receipt.AdmittedAt)).Truncate(time.Minute).String()
+			if run.State != "" {
+				item.ExecutionURL = "/dashboard/apps/" + url.PathEscape(c.app.Slug) + "/customer-operations/" + url.PathEscape(e.OperationID)
+			}
+		}
+		c.data.Runs = append(c.data.Runs, item)
 	}
 	c.data.NextRunsURL = ownerPageURL(c, q, "runs_cursor", page.NextCursor)
+	if c.data.ReviewRuns && c.data.NextRunsURL != "" {
+		c.data.NextRunsURL += "#runs"
+	}
+	c.data.ReviewRunsURL = ownerReviewRunsURL(c.data.BaseURL, scope.TenantID, scope.Period)
+	c.data.AllRunsURL = ownerURL(c, scope.TenantID, scope.Period, nil) + "#runs"
 	return nil
 }
 
@@ -299,13 +345,22 @@ func (s *Service) ownerDocuments(r *http.Request, c *ownerContext, scope state.P
 	if err != nil {
 		return err
 	}
-	if err := s.withInvoices(r.Context(), c.account.ID, &page, true); err != nil {
-		return err
-	}
 	for _, doc := range page.Documents {
 		item := dashboard.ProductControlDocument{ID: doc.ID, Kind: doc.Kind, Amount: ownerMoney(doc.Currency, doc.AmountMillicents), CreatedAt: doc.CreatedAt.UTC().Format(time.RFC3339), OperationID: doc.OperationID, StatementID: doc.StatementID, Reason: doc.Reason}
-		if doc.Invoice != nil {
-			item.Exported, item.Invoice, item.InvoiceURL, item.DashboardURL = true, ownerInvoice(*doc.Invoice), doc.Invoice.HostedInvoiceURL, doc.Invoice.DashboardURL
+		invoice := doc.Invoice
+		var export *api.StatementInvoiceExportResponse
+		if doc.Kind == "statement" && s.DocumentInvoice != nil {
+			export, err = s.DocumentInvoice(r.Context(), c.account.ID, doc.ID)
+			if err != nil {
+				return err
+			}
+			invoice = documentInvoice(export, true)
+			if export != nil {
+				item.ExportProvider, item.ExportCustomer = export.Provider, export.Customer
+			}
+		}
+		if invoice != nil {
+			item.Exported, item.Invoice, item.InvoiceURL, item.DashboardURL = true, ownerInvoice(*invoice), invoice.HostedInvoiceURL, invoice.DashboardURL
 		}
 		handoff, err := c.billing.GetProductBillingHandoff(r.Context(), scope, doc.ID)
 		if err == nil {
@@ -313,6 +368,9 @@ func (s *Service) ownerDocuments(r *http.Request, c *ownerContext, scope state.P
 		} else if !errors.Is(err, state.ErrNotFound) {
 			return err
 		}
+		item.CanReviewExport = s.canReviewInvoice() && doc.Kind == "statement" && doc.AmountMillicents > 0 &&
+			(export != nil && export.Status == state.StatementInvoiceExportCreating && (item.Reference == "" || item.Reference == export.InvoiceID) ||
+				export == nil && invoice == nil && item.Reference == "")
 		c.data.Documents = append(c.data.Documents, item)
 	}
 	c.data.NextDocumentsURL = ownerPageURL(c, q, "documents_cursor", page.NextCursor)
@@ -332,7 +390,7 @@ func ownerDocumentPage(r *http.Request, c *ownerContext, scope state.ProductBill
 
 // ownerInvoice summarises a statement's export and payment status.
 func ownerInvoice(e api.ProductDocumentInvoice) string {
-	provider := map[string]string{"stripe": "Stripe", "paddle": "Paddle", "lago": "Lago"}[e.Provider]
+	provider := ownerInvoiceProvider(e.Provider)
 	if e.ExportStatus != state.StatementInvoiceExportCompleted {
 		return "Export to " + provider + " has not finished. Retry gregale product statements export; it resumes the same invoice."
 	}
@@ -394,6 +452,11 @@ func ownerURL(c *ownerContext, tenant, period string, extra url.Values) string {
 	return c.data.BaseURL + "?" + extra.Encode()
 }
 
+func ownerReviewRunsURL(base, tenant, period string) string {
+	q := url.Values{"tenant": {tenant}, "period": {period}, "runs": {"review"}}
+	return base + "?" + q.Encode() + "#runs"
+}
+
 func ownerPageURL(c *ownerContext, q url.Values, key, cursor string) string {
 	if cursor == "" {
 		return ""
@@ -413,7 +476,16 @@ func ownerUUID(value string) bool {
 
 func (s *Service) ownerError(w http.ResponseWriter, r *http.Request, c *ownerContext, err error) {
 	status, message := http.StatusInternalServerError, "Product Control is temporarily unavailable."
+	var problem *api.Problem
 	switch {
+	case errors.As(err, &problem):
+		status = problem.Status
+		if status < 500 || problem.Code == api.CodeBillingProviderUnavailable {
+			message = problem.Detail
+			if message == "" {
+				message = problem.Title
+			}
+		}
 	case errors.Is(err, state.ErrInvalidArgument):
 		status, message = 400, "Check the form fields and try again."
 	case errors.Is(err, state.ErrNotFound):
@@ -450,6 +522,9 @@ func (s *Service) OwnerRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 		var value api.ProductOperationExplanation
 		value, err = explainOperation(r.Context(), c.products, acct.ID, c.app.ID, r.PathValue("operation"), after)
 		c.data.Explanation = &value
+		if err == nil && value.Evidence.ResolvedState == "" && value.Evidence.WaivedAt == nil {
+			c.data.ReviewRunsURL = ownerReviewRunsURL(c.data.BaseURL, value.Evidence.TenantID, value.Evidence.Receipt.Period)
+		}
 		if value.NextGeneration > 0 {
 			c.data.NextExecutionURL = r.URL.Path + "?after=" + strconv.Itoa(value.NextGeneration)
 		}

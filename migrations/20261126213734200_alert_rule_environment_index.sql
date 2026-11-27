@@ -1,4 +1,4 @@
--- filename: 20261126195012200_alert_rule_environment_index.sql
+-- filename: 20261126213734200_alert_rule_environment_index.sql
 -- migration-compat: expand
 -- ADR-20261104120000 amendment 2026-11-22: lists a stage's alert rules, and
 -- makes an app rule's name unique within one environment, so a stage can

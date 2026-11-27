@@ -143,6 +143,7 @@ type StatementInvoiceExport struct {
 	// claimToken and claimedUntil hold the MemStore's claim.
 	claimToken   string
 	claimedUntil time.Time
+	stripeSend   ProductStripeInvoiceSend
 }
 
 // ErrStatementInvoiceExportInProgress reports that another attempt holds
@@ -383,7 +384,7 @@ func (m *MemStore) ClaimStatementInvoiceExport(_ context.Context, accountID, exp
 	if !ok || e.AccountID != accountID {
 		return StatementInvoiceExport{}, ErrNotFound
 	}
-	if e.claimToken != token && e.claimedUntil.After(time.Now()) {
+	if e.claimToken != token && e.claimedUntil.After(m.clock()) {
 		return StatementInvoiceExport{}, ErrStatementInvoiceExportInProgress
 	}
 	e.claimToken, e.claimedUntil = token, until
@@ -445,6 +446,12 @@ func (m *MemStore) ReserveStatementHandoff(_ context.Context, accountID, exportI
 			return ErrNotFound
 		}
 		blocked = m.tenantHandoffOverlapLocked(statement)
+	case StatementSourceProductControl:
+		var err error
+		blocked, err = m.productStatementHandoffBlockedLocked(accountID, e.StatementID)
+		if err != nil {
+			return err
+		}
 	}
 	if blocked {
 		return ErrConflict

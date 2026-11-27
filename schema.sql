@@ -20984,6 +20984,22 @@ END $$;
 
 
 --
+-- Name: invalidate_product_plan_schedule(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invalidate_product_plan_schedule() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE product_control_customer_changes SET schedule_status = 'needs_review'
+    WHERE account_id = OLD.account_id AND app_id = OLD.app_id AND tenant_id = OLD.tenant_id
+      AND schedule_status = 'pending';
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: invalidate_route_lifecycle_approvals(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -55881,8 +55897,11 @@ CREATE TABLE public.product_control_customer_changes (
     fingerprint text NOT NULL,
     receipt jsonb NOT NULL,
     created_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    schedule_status text,
     CONSTRAINT product_control_customer_changes_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT product_control_customer_changes_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text))
+    CONSTRAINT product_control_customer_changes_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT product_plan_schedule_status_chk CHECK ((((scheduled_for IS NULL) AND (schedule_status IS NULL)) OR ((scheduled_for IS NOT NULL) AND (schedule_status IS NOT NULL) AND (schedule_status = ANY (ARRAY['pending'::text, 'applied'::text, 'cancelled'::text, 'needs_review'::text])))))
 );
 
 
@@ -56334,6 +56353,30 @@ CREATE TABLE public.product_control_revisions (
     app_id uuid NOT NULL,
     revision text NOT NULL,
     spec jsonb NOT NULL
+);
+
+
+--
+-- Name: product_control_stripe_invoice_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_stripe_invoice_sends (
+    export_id uuid NOT NULL,
+    review_hash text NOT NULL,
+    terms_hash text NOT NULL,
+    due_at timestamp with time zone NOT NULL,
+    stage text NOT NULL,
+    send_started_at timestamp with time zone,
+    send_event_id text,
+    send_event_at timestamp with time zone,
+    reminder_hash text,
+    reminder_started_at timestamp with time zone,
+    reminder_sent_at timestamp with time zone,
+    CONSTRAINT product_control_stripe_invoice_sends_event_chk CHECK ((((send_event_id IS NULL) AND (send_event_at IS NULL)) OR ((stage = 'sent'::text) AND (send_event_id IS NOT NULL) AND (send_event_at IS NOT NULL) AND (send_event_id ~ '^evt_[A-Za-z0-9]{1,120}$'::text) AND (send_event_at >= date_trunc('second'::text, send_started_at))))),
+    CONSTRAINT product_control_stripe_invoice_sends_reminder_chk CHECK ((((reminder_hash IS NULL) AND (reminder_started_at IS NULL) AND (reminder_sent_at IS NULL)) OR ((stage = 'sent'::text) AND (reminder_hash IS NOT NULL) AND (length(reminder_hash) = 64) AND (reminder_started_at IS NOT NULL) AND ((reminder_sent_at IS NULL) OR (reminder_sent_at >= reminder_started_at))))),
+    CONSTRAINT product_control_stripe_invoice_sends_review_hash_check CHECK ((length(review_hash) = 64)),
+    CONSTRAINT product_control_stripe_invoice_sends_stage_chk CHECK ((((stage = ANY (ARRAY['preparing'::text, 'finalizing'::text])) AND (send_started_at IS NULL)) OR ((stage = ANY (ARRAY['sending'::text, 'sent'::text])) AND (send_started_at IS NOT NULL)))),
+    CONSTRAINT product_control_stripe_invoice_sends_terms_hash_check CHECK ((length(terms_hash) = 64))
 );
 
 
@@ -76453,6 +76496,14 @@ ALTER TABLE ONLY public.product_control_revisions
 
 
 --
+-- Name: product_control_stripe_invoice_sends product_control_stripe_invoice_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_stripe_invoice_sends
+    ADD CONSTRAINT product_control_stripe_invoice_sends_pkey PRIMARY KEY (export_id);
+
+
+--
 -- Name: product_control_waivers product_control_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -89723,6 +89774,27 @@ CREATE INDEX product_email_recovery_recent ON public.product_control_email_recov
 
 
 --
+-- Name: product_plan_schedule_customer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_plan_schedule_customer_idx ON public.product_control_customer_changes USING btree (account_id, app_id, tenant_id, created_at DESC, id DESC) WHERE (scheduled_for IS NOT NULL);
+
+
+--
+-- Name: product_plan_schedule_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_plan_schedule_due_idx ON public.product_control_customer_changes USING btree (scheduled_for, id) WHERE (schedule_status = 'pending'::text);
+
+
+--
+-- Name: product_plan_schedule_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX product_plan_schedule_pending_idx ON public.product_control_customer_changes USING btree (account_id, app_id, tenant_id) WHERE (schedule_status = 'pending'::text);
+
+
+--
 -- Name: production_lifecycle_reviews_app; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -98988,6 +99060,13 @@ CREATE TRIGGER private_network_peering_set_updated_at_trg BEFORE UPDATE ON publi
 --
 
 CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.private_networks FOR EACH ROW EXECUTE FUNCTION public.private_network_set_updated_at();
+
+
+--
+-- Name: product_control_customers product_plan_schedule_on_customer_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER product_plan_schedule_on_customer_change AFTER UPDATE OF plan, revision, suspended, auth_organization_id ON public.product_control_customers FOR EACH ROW WHEN (((((old.plan IS DISTINCT FROM new.plan) OR (old.revision IS DISTINCT FROM new.revision)) OR (old.suspended IS DISTINCT FROM new.suspended)) OR (old.auth_organization_id IS DISTINCT FROM new.auth_organization_id))) EXECUTE FUNCTION public.invalidate_product_plan_schedule();
 
 
 --
@@ -113580,6 +113659,14 @@ ALTER TABLE ONLY public.product_control_receipts
 
 ALTER TABLE ONLY public.product_control_revisions
     ADD CONSTRAINT product_control_revisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_stripe_invoice_sends product_control_stripe_invoice_sends_export_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_stripe_invoice_sends
+    ADD CONSTRAINT product_control_stripe_invoice_sends_export_id_fkey FOREIGN KEY (export_id) REFERENCES public.usage_statement_invoice_exports(id) ON DELETE CASCADE;
 
 
 --

@@ -22,6 +22,8 @@ import (
 // can stop using a key without knowing the provider.
 var errKeyRejected = errors.New("billing provider rejected the key")
 
+var errInvoiceLookupUnconfirmed = errors.New("billing provider could not find the invoice")
+
 // providerMaxItems bounds the items Paddle and Lago receive; a statement
 // with more lines exports as one summary item.
 const providerMaxItems = 100
@@ -58,6 +60,36 @@ type provider interface {
 		record func(invoiceID string) error, reject func()) *api.Problem
 	payment(ctx context.Context, conn connection, invoiceID string) (state.StatementInvoicePayment, bool, error)
 	dashboardURL(livemode bool, invoiceID string) string
+}
+
+func (s *Service) lookupInvoicePayment(ctx context.Context, p provider, conn connection, export state.StatementInvoiceExport, observedAt time.Time) (state.StatementInvoicePayment, bool, error) {
+	payment, known, err := p.payment(ctx, conn, export.ProviderInvoiceID)
+	if !s.productInvoiceWorkflowEnabled(export) {
+		if errors.Is(err, errInvoiceLookupUnconfirmed) {
+			return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+		}
+		return payment, known, err
+	}
+	if export.Provider == state.BillingProviderPaddle {
+		payment.HostedInvoiceURL = paddleCheckoutURL(payment.Status, payment.HostedInvoiceURL)
+	}
+	stripe, isStripe := p.(stripeProvider)
+	if !isStripe || !errors.Is(err, errInvoiceLookupUnconfirmed) ||
+		(export.PaymentStatus != state.InvoicePaymentDraft && export.PaymentStatus != "") {
+		return payment, known, err
+	}
+
+	// A Stripe 404 can come from a different account. A deletion event proves
+	// the draft was removed even if its last successful read used another key.
+	from := export.CreatedAt
+	if earliest := observedAt.Add(-stripeinvoice.InvoiceSendEventLookback); from.Before(earliest) {
+		from = earliest
+	}
+	deleted, eventErr := stripe.client.HasInvoiceDeletionEvent(ctx, conn.key, export.ProviderInvoiceID, export.Livemode, from, observedAt)
+	if eventErr == nil && deleted {
+		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+	}
+	return payment, known, err
 }
 
 func (s *Service) provider(name string) provider {
@@ -295,6 +327,9 @@ func (p stripeProvider) payment(ctx context.Context, conn connection, invoiceID 
 	if err != nil {
 		return state.StatementInvoicePayment{}, false, err
 	}
+	if invoice.Deleted {
+		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
+	}
 	return stripeInvoicePayment(invoice)
 }
 
@@ -435,10 +470,25 @@ func (p paddleProvider) collect(ctx context.Context, conn connection, export *st
 	if !hasBusiness {
 		business.ID = ""
 	}
-	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address, business.ID); err != nil {
-		return paddleCallProblem(err)
+	return callProblemOrNil(p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address, business.ID), paddleCallProblem)
+}
+
+func (p paddleProvider) billingDetails(ctx context.Context, conn connection, customer string) (paddleinvoice.Address, paddleinvoice.Business, *api.Problem) {
+	address, found, err := p.client.ActiveAddress(ctx, conn.key, customer)
+	if err != nil {
+		return address, paddleinvoice.Business{}, paddleCallProblem(err)
 	}
-	return nil
+	if !found || address.ID == "" {
+		return address, paddleinvoice.Business{}, providerProblem(http.StatusUnprocessableEntity, "Paddle customer has no address",
+			"Add an active billing address in Paddle or in the workspace's Billing details, then try again. The invoice stays a draft.")
+	}
+	// The customer's business, when it has one, carries its tax identifier
+	// onto the invoice (ADR-20261020120000).
+	business, _, err := p.client.ActiveBusiness(ctx, conn.key, customer)
+	if err != nil {
+		return address, business, paddleCallProblem(err)
+	}
+	return address, business, nil
 }
 
 // paddleStatuses map Paddle transaction statuses to payment statuses.
@@ -457,8 +507,12 @@ func (p paddleProvider) payment(ctx context.Context, conn connection, id string)
 	if err != nil {
 		return state.StatementInvoicePayment{}, false, err
 	}
+	return paddleTransactionPayment(txn)
+}
+
+func paddleTransactionPayment(txn paddleinvoice.TransactionState) (state.StatementInvoicePayment, bool, error) {
 	if txn.Deleted {
-		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
 	}
 	status, ok := paddleStatuses[txn.Status]
 	if !ok {
@@ -470,6 +524,17 @@ func (p paddleProvider) payment(ctx context.Context, conn connection, id string)
 	}
 	return knownPayment(state.StatementInvoicePayment{Status: status, AmountPaidMinor: max(txn.GrandTotal-remaining, 0),
 		AmountRemainingMinor: remaining, DueAt: txn.DueAt, PaidAt: txn.PaidAt}, txn.CheckoutURL)
+}
+
+// Paddle can expose checkout for a ready draft. Only share the link after
+// issuance, including when reading a payment observation written by an older build.
+func paddleCheckoutURL(status, url string) string {
+	switch status {
+	case state.InvoicePaymentOpen, state.InvoicePaymentPaid:
+		return url
+	default:
+		return ""
+	}
 }
 
 // --- Lago (ADR-1507) ---
@@ -588,8 +653,10 @@ func (p lagoProvider) payment(ctx context.Context, conn connection, id string) (
 	}
 	var status string
 	switch {
-	case inv.Deleted:
+	case inv.Status == "deleted":
 		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
+	case inv.Deleted:
+		return state.StatementInvoicePayment{}, false, errInvoiceLookupUnconfirmed
 	case inv.Status == "voided":
 		status = state.InvoicePaymentVoid
 	case inv.Status == "finalized" && inv.PaymentStatus == "succeeded":

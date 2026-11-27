@@ -43,6 +43,7 @@ type ProductOverdueHolds struct {
 type ProductCustomerOverdueHold struct {
 	DueAt            time.Time `json:"due_at"`
 	HostedInvoiceURL string    `json:"hosted_invoice_url,omitempty"`
+	PaymentCheckID   string    `json:"payment_check_id,omitempty"`
 }
 
 // ProviderHostedURL returns raw when it is a plain https URL with a host and
