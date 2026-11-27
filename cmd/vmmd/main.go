@@ -2317,6 +2317,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// control-plane Prometheus without exposing node_exporter on a new port.
 		hostMetrics := newHostJournalMetrics(ops.Registry(), nil, nil)
 		go hostMetrics.runSampler(ctx, log)
+		registerJailTmpfsMetrics(ops.Registry(), fcvm.JailChrootBase, nil)
 		mux := newMetricsMux(ops, cbm, frm, wpm, dsm)
 		if identitySigner != nil {
 			mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {

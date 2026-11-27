@@ -28,6 +28,7 @@ import (
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
 	"AlertDeferredFireRecipients":            true,
+	"CountDeploymentOutcomesSince":           true,
 	"UpdateAlertDeliveryStatus":              true,
 	"ClaimAlertFire":                         true,
 	"ListDeploymentPromotions":               true,
@@ -98,6 +99,7 @@ var memDispatched = map[string]bool{
 	"AdmitScheduledWorkflow":                                  true,
 	"AppByID":                                                 true,
 	"AppBySlug":                                               true,
+	"BuildProvenanceByBuildID":                                true,
 	"ApplyProductCustomerChange":                              true,
 	"FinalizeProductBilling":                                  true,
 	"GetProductBillingDocument":                               true,
@@ -334,6 +336,15 @@ func (s *Mem) AlertDeferredFireRecipients(ctx context.Context, ruleID string, fi
 		return override.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
 	}
 	return s.MemStore.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+}
+
+func (s *Mem) CountDeploymentOutcomesSince(ctx context.Context, since time.Time, excludedAccounts ...string) (state.DeploymentOutcomeCounts, error) {
+	if override, ok := s.over.(interface {
+		CountDeploymentOutcomesSince(context.Context, time.Time, ...string) (state.DeploymentOutcomeCounts, error)
+	}); ok {
+		return override.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
+	}
+	return s.MemStore.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
 }
 
 func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, state.AlertFireRecipients, error) {
@@ -713,6 +724,15 @@ func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
 		return o.AppByID(p0, p1)
 	}
 	return s.MemStore.AppByID(p0, p1)
+}
+
+func (s *Mem) BuildProvenanceByBuildID(p0 context.Context, p1 string) (state.BuildProvenance, error) {
+	if o, ok := s.over.(interface {
+		BuildProvenanceByBuildID(context.Context, string) (state.BuildProvenance, error)
+	}); ok {
+		return o.BuildProvenanceByBuildID(p0, p1)
+	}
+	return s.MemStore.BuildProvenanceByBuildID(p0, p1)
 }
 
 func (s *Mem) AppBySlug(p0 context.Context, p1 string) (state.App, error) {

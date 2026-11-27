@@ -20,9 +20,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -277,6 +281,49 @@ func mapExitToErrorClass(exitCode int32, signal int32) string { //nolint:unused 
 		return "infra"
 	}
 	return "failed"
+}
+
+// jobStartFailure classifies an entrypoint that never started. A command
+// that is missing or not executable is the customer's error, reported like a
+// shell does (127 not found, 126 not executable) and classed "failed" so the
+// task follows its own retry rules instead of dead-lettering as an
+// infrastructure fault (prod hunt r62). dirErr is the result of checking the
+// working directory: with SysProcAttr set, a failed chdir comes back as the
+// same fork/exec ENOENT as a missing program, so a bad directory, like
+// anything else, stays "infra".
+func jobStartFailure(err, dirErr error) (int32, string) { //nolint:unused // called by the Linux guest supervisor.
+	if dirErr != nil {
+		return 126, "infra"
+	}
+	var lookup *exec.Error
+	if errors.As(err, &lookup) {
+		switch {
+		case errors.Is(lookup.Err, exec.ErrNotFound), errors.Is(lookup.Err, fs.ErrNotExist):
+			return 127, "failed"
+		case errors.Is(lookup.Err, fs.ErrPermission):
+			return 126, "failed"
+		}
+		return 126, "infra"
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && pathErr.Op == "fork/exec" {
+		switch {
+		case errors.Is(pathErr.Err, syscall.ENOENT):
+			return 127, "failed"
+		case errors.Is(pathErr.Err, syscall.EACCES), errors.Is(pathErr.Err, syscall.ENOEXEC), errors.Is(pathErr.Err, syscall.EISDIR):
+			return 126, "failed"
+		}
+	}
+	return 126, "infra"
+}
+
+// jobStartHint explains the usual cause of a one-argument entrypoint that
+// holds a shell line: the whole string was taken as a program name.
+func jobStartHint(argv []string) string { //nolint:unused // called by the Linux guest supervisor.
+	if len(argv) == 1 && strings.ContainsAny(argv[0], " \t;|&$") {
+		return "the entrypoint is one argument holding a shell line; run it through a shell, e.g. --command '/bin/sh,-c,<line>'"
+	}
+	return ""
 }
 
 // jobManifestPath is the canonical location vmmd writes the

@@ -655,8 +655,10 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	store := state.NewMemStore()
 	ctx := context.Background()
 	// Terminal time, rather than queue time, decides whether a deployment falls
-	// inside the rolling public-status window.
-	queuedAt := time.Now().Add(-time.Hour)
+	// inside the rolling public-status window. Thirty minutes keeps the
+	// failures inside the last hour, which a breach also needs
+	// (ADR-20261127103000).
+	queuedAt := time.Now().Add(-30 * time.Minute)
 	acct, _ := store.CreateAccount(ctx, "deployment-status@example.com", api.PlanPro)
 	app, _ := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: "deployment-status", RAMMB: 256,

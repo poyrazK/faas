@@ -137,7 +137,7 @@ Codes: `capacity_unavailable`, `release_infrastructure_failed`,
 
 These mean the platform could not finish the deploy, not that the app is
 wrong. Wait a minute and deploy again; check
-[status.gregale.dev](https://status.gregale.dev) if it keeps happening.
+[gregale.dev/status](https://gregale.dev/status) if it keeps happening.
 
 When a deployment fails, the release that was serving keeps serving. Nothing
 changes for your users until a new deployment succeeds.

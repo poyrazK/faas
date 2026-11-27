@@ -867,7 +867,7 @@ func TestUpdateAppEgressAllowlist_TooLong(t *testing.T) {
 	mustSeedApp(t, e, "pro-big")
 	many := make([]string, 0, 17)
 	for i := 1; i <= 17; i++ {
-		many = append(many, fmt.Sprintf("10.0.%d.0/24", i))
+		many = append(many, fmt.Sprintf("203.0.%d.0/24", i))
 	}
 	rec := e.do(t, "PATCH", "/v1/apps/pro-big", api.UpdateAppRequest{
 		EgressAllowlist: &many,
@@ -5983,7 +5983,7 @@ func TestUpdateAppEgressAllowlist_ExtraBudgetAllowsOneOverCap(t *testing.T) {
 	}
 	seventeen := make([]string, 0, 17)
 	for i := 1; i <= 17; i++ {
-		seventeen = append(seventeen, fmt.Sprintf("10.0.%d.0/24", i))
+		seventeen = append(seventeen, fmt.Sprintf("203.0.%d.0/24", i))
 	}
 	rec := e.do(t, "PATCH", "/v1/apps/pro-extra-one", api.UpdateAppRequest{
 		EgressAllowlist: &seventeen,
@@ -6005,7 +6005,7 @@ func TestUpdateAppEgressAllowlist_ExtraBudgetBoundaryRejected(t *testing.T) {
 	}
 	eighteen := make([]string, 0, 18)
 	for i := 1; i <= 18; i++ {
-		eighteen = append(eighteen, fmt.Sprintf("10.0.%d.0/24", i))
+		eighteen = append(eighteen, fmt.Sprintf("203.0.%d.0/24", i))
 	}
 	rec := e.do(t, "PATCH", "/v1/apps/pro-extra-one-too-many", api.UpdateAppRequest{
 		EgressAllowlist: &eighteen,
@@ -6021,7 +6021,7 @@ func TestUpdateAppEgressAllowlist_ScaleAtPlanCap(t *testing.T) {
 	mustSeedApp(t, e, "scale-at-cap")
 	cap64 := make([]string, 0, 64)
 	for i := 1; i <= 64; i++ {
-		cap64 = append(cap64, fmt.Sprintf("10.0.%d.0/24", i))
+		cap64 = append(cap64, fmt.Sprintf("203.0.%d.0/24", i))
 	}
 	rec := e.do(t, "PATCH", "/v1/apps/scale-at-cap", api.UpdateAppRequest{
 		EgressAllowlist: &cap64,
@@ -6040,7 +6040,7 @@ func TestUpdateAppEgressAllowlist_ScaleOverPlanCap(t *testing.T) {
 	mustSeedApp(t, e, "scale-over-cap")
 	overCap := make([]string, 0, 65)
 	for i := 1; i <= 65; i++ {
-		overCap = append(overCap, fmt.Sprintf("10.0.%d.0/24", i))
+		overCap = append(overCap, fmt.Sprintf("203.0.%d.0/24", i))
 	}
 	rec := e.do(t, "PATCH", "/v1/apps/scale-over-cap", api.UpdateAppRequest{
 		EgressAllowlist: &overCap,
@@ -6065,7 +6065,7 @@ func TestUpdateAppEgressAllowlist_ExtraAppliedToValidatorMessage(t *testing.T) {
 	// reject with 400 and the limit field must read 20.
 	beyond := make([]string, 0, 21)
 	for i := 1; i <= 21; i++ {
-		beyond = append(beyond, fmt.Sprintf("10.0.%d.0/24", i))
+		beyond = append(beyond, fmt.Sprintf("203.0.%d.0/24", i))
 	}
 	rec := e.do(t, "PATCH", "/v1/apps/pro-cap-message", api.UpdateAppRequest{
 		EgressAllowlist: &beyond,

@@ -111,6 +111,9 @@ type Handler struct {
 	// verifiedBases remembers the base artifacts this process verified
 	// from its node cache (ADR-595 amendment 2026-11-17).
 	verifiedBases *verifiedBaseFiles
+	// runtimeBaseRetries defers a preparation whose runtime-base staging
+	// lost to another node's base to the recovery loop; nil defers nothing.
+	runtimeBaseRetries *runtimeBaseRetries
 	// deferredScans runs the deploy scan after the snapshot handoff when
 	// the app does not gate on it (ADR-075 amendment 2026-11-17); nil
 	// scans every deploy before the handoff.
@@ -388,6 +391,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 	return &Handler{
 		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{}, verifiedBases: &verifiedBaseFiles{},
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log, servingSince: time.Now().UTC(),
+		runtimeBaseRetries: newRuntimeBaseRetries(),
 	}
 }
 
@@ -4754,14 +4758,23 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 	}
 	if app.Runtime == "" {
 		if _, err := h.EnsureMinimalBase(ctx, oci.ImageArchitecture, os.Getenv); err != nil {
-			return fmt.Errorf("imaged: ensure minimal base: %w", err)
+			return fmt.Errorf("imaged: ensure minimal base: %w", runtimeBaseStagingError(err))
 		}
 		return nil
 	}
 	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, oci.ImageArchitecture, os.Getenv); err != nil {
-		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, err)
+		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, runtimeBaseStagingError(err))
 	}
 	return nil
+}
+
+// runtimeBaseStagingError marks a staging failure that another node's base
+// publication caused with errRuntimeBaseStale.
+func runtimeBaseStagingError(err error) error {
+	if errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+		return fmt.Errorf("%w: %w", errRuntimeBaseStale, err)
+	}
+	return err
 }
 
 // transition is the only place imaged writes to deployments.status. Keeps

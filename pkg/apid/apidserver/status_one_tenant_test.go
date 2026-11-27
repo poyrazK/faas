@@ -45,8 +45,10 @@ func TestOneTenantsDeploymentFailuresDoNotDegradePublicStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Failures inside the last hour: a breach also needs a recent one
+	// (ADR-20261127103000).
 	fail := func(app state.App) {
-		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, CreatedAt: time.Now().Add(-time.Hour)})
+		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, CreatedAt: time.Now().Add(-30 * time.Minute)})
 		if err != nil {
 			t.Fatal(err)
 		}
