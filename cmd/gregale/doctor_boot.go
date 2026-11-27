@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // `gregale doctor --image REF --boot` runs the image with the local Docker
@@ -39,11 +41,14 @@ type doctorBootOptions struct {
 	// app would get on Gregale; memorySource says where the number came from.
 	memoryMB     int
 	memorySource string
-	// healthPath is probed instead of / and must answer 200-399, as for
-	// Gregale's readiness; imageHealthcheck says the image declares an
-	// enabled HEALTHCHECK, which Docker runs (doctor_boot_health.go).
-	healthPath       string
-	imageHealthcheck bool
+	// healthPath is probed instead of / and must answer 2xx, as Gregale's
+	// startup readiness requires; probeHost is the app's public host, sent
+	// with X-Forwarded-Proto as that probe sends them.
+	healthPath string
+	probeHost  string
+	// imageHealthcheck is the image's enabled HEALTHCHECK, which Docker runs
+	// (doctor_boot_health.go); nil when it has none.
+	imageHealthcheck *api.AppManifestHealthcheck
 }
 
 // doctorDocker runs the local Docker client. GREGALE_DOCKER selects a
@@ -128,11 +133,8 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 		limit := strconv.Itoa(opts.memoryMB) + "m"
 		args = append(args, "--memory", limit, "--memory-swap", limit)
 	}
-	if opts.imageHealthcheck {
-		// Docker runs the image HEALTHCHECK; check every second instead of
-		// its interval so a result arrives within the boot. Its start period
-		// and retries still apply.
-		args = append(args, "--health-interval", "1s")
+	if opts.imageHealthcheck != nil {
+		args = append(args, doctorBootHealthArgs(opts.imageHealthcheck)...)
 	}
 	if opts.envFile != "" {
 		args = append(args, "--env-file", opts.envFile)
@@ -178,7 +180,7 @@ func (b doctorBoot) check(ctx context.Context) []doctorCheck {
 		{Name: "boot-listener", Status: "ok", Detail: fmt.Sprintf("listening on 0.0.0.0:%d ($PORT)", b.opts.port)},
 		b.httpCheck(status),
 	}
-	if b.opts.imageHealthcheck {
+	if b.opts.imageHealthcheck != nil {
 		checks = append(checks, b.imageHealth(ctx))
 	}
 	return append(checks, b.stayUp(ctx))
@@ -193,9 +195,10 @@ func (b doctorBoot) probePath() string {
 	return "/"
 }
 
-// doctorBootHealthy is guest-init's HTTP probe rule: 2xx and 3xx pass.
+// doctorBootHealthy is Gregale's startup readiness rule for a health path
+// (pkg/fcvm healthcheckProbe): only 2xx passes, after redirects.
 func doctorBootHealthy(status int) bool {
-	return status >= http.StatusOK && status < http.StatusBadRequest
+	return status/100 == 2
 }
 
 func (b doctorBoot) httpCheck(status int) doctorCheck {
@@ -204,9 +207,15 @@ func (b doctorBoot) httpCheck(status int) doctorCheck {
 		if doctorBootHealthy(status) {
 			return doctorCheck{Name: "boot-http", Status: "ok", Detail: detail}
 		}
+		if status == http.StatusBadRequest && b.opts.probeHost == "" {
+			// Gregale's probe sends the app's public host; this one could not.
+			return doctorCheck{Name: "boot-http", Status: "warn", Detail: detail,
+				Hint: fmt.Sprintf("GET %s answered 400 to a request for host %s. An app that allow-lists its host names (Django ALLOWED_HOSTS, Rails config.hosts) refuses it, but Gregale's probe sends the app's public host.", b.opts.healthPath, "127.0.0.1"),
+				Fix:  "Pass --app SLUG so the probe sends that app's public host, as Gregale does."}
+		}
 		return doctorCheck{Name: "boot-http", Status: "error", Code: "boot_health_failed", Detail: detail,
-			Hint: fmt.Sprintf("GET %s still answered %d after %s. Gregale marks an instance ready only once its health path answers 200-399, so the deploy would fail.", b.opts.healthPath, status, bootSeconds(doctorBootStartupTimeout)),
-			Fix:  "Make the health path answer 2xx once the app can serve, check that the path is right, and set env vars the app needs with --env-file."}
+			Hint: fmt.Sprintf("GET %s last answered %d, and no answer within %s was 2xx. Gregale marks an instance ready only once its health path answers 2xx, so the deploy would fail.", b.opts.healthPath, status, bootSeconds(doctorBootStartupTimeout)),
+			Fix:  "Make the health path answer 2xx once the app can serve (a redirect counts only if it ends in 2xx), check that the path is right, and set env vars the app needs with --env-file."}
 	}
 	if status >= 500 {
 		return doctorCheck{Name: "boot-http", Status: "warn", Detail: detail, Hint: fmt.Sprintf("GET / answered %d. The platform marks an instance ready once the port accepts connections (or its health check passes), but every request may fail the same way.", status), Fix: "Check the container logs (`docker logs`) for the error; set env vars the app needs with --env-file, or pass --healthcheck-path to probe the app's health route."}
@@ -218,7 +227,7 @@ func (b doctorBoot) httpCheck(status int) doctorCheck {
 // passing status), the container exits or the startup timeout passes. It
 // returns the last status, 0 when nothing answered.
 func (b doctorBoot) waitForHTTP(ctx context.Context) (int, *doctorBootState, error) {
-	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := b.probeClient()
 	deadline := time.Now().Add(doctorBootStartupTimeout)
 	hostPort := ""
 	last := 0
@@ -234,7 +243,7 @@ func (b doctorBoot) waitForHTTP(ctx context.Context) (int, *doctorBootState, err
 			hostPort = b.publishedAddr(ctx)
 		}
 		if hostPort != "" {
-			if status := doctorBootGet(ctx, client, hostPort, b.probePath()); status != 0 {
+			if status := doctorBootGet(ctx, client, hostPort, b.probePath(), b.opts.probeHost); status != 0 {
 				last = status
 				if b.opts.healthPath == "" || doctorBootHealthy(status) {
 					return status, nil, nil
@@ -266,10 +275,31 @@ func (b doctorBoot) publishedAddr(ctx context.Context) string {
 	return ""
 }
 
-func doctorBootGet(ctx context.Context, client *http.Client, hostPort, path string) int {
+// probeClient follows a health path's redirects as Gregale's probe does,
+// but only within the container: a redirect elsewhere (often the public
+// https URL) would reach the live site from this machine, and on Gregale
+// it leaves the guest network and fails, so it stops there and its 3xx
+// fails the check. Without a health path any answer counts, unfollowed.
+func (b doctorBoot) probeClient() *http.Client {
+	return &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if b.opts.healthPath == "" || len(via) >= 10 || req.URL.Host != via[0].URL.Host {
+			return http.ErrUseLastResponse
+		}
+		req.Host = via[0].Host
+		return nil
+	}}
+}
+
+// doctorBootGet makes one probe GET. A probeHost is sent as the Host with
+// X-Forwarded-Proto: https, as Gregale's readiness probe sends them.
+func doctorBootGet(ctx context.Context, client *http.Client, hostPort, path, probeHost string) int {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+hostPort+path, nil)
 	if err != nil {
 		return 0
+	}
+	if probeHost != "" {
+		req.Host = probeHost
+		req.Header.Set("X-Forwarded-Proto", "https")
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -340,7 +370,7 @@ func (b doctorBoot) listenerProblem(ctx context.Context) doctorCheck {
 	}
 	switch {
 	case len(onPort) > 0:
-		c.Hint = fmt.Sprintf("The app accepts connections on %s but did not answer GET / with HTTP within %s.", onPort[0], bootSeconds(doctorBootStartupTimeout))
+		c.Hint = fmt.Sprintf("The app accepts connections on %s but did not answer GET %s with HTTP within %s.", onPort[0], b.probePath(), bootSeconds(doctorBootStartupTimeout))
 		c.Fix = "Serve HTTP on $PORT. A non-HTTP TCP service needs an explicit TCP route; a worker deploys in worker mode."
 	case len(loopback) > 0:
 		c.Hint = fmt.Sprintf("Listening on %s, not 0.0.0.0:%d; the platform cannot reach a loopback listener.", loopback[0], port)

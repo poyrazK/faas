@@ -21,11 +21,11 @@ func signedInAs(plan api.Plan) func(context.Context) (api.Limits, bool) {
 func signedOut(context.Context) (api.Limits, bool) { return api.Limits{}, false }
 
 func TestDoctorBootMemoryLimit(t *testing.T) {
-	appRAM := func(_ context.Context, slug string) (int, error) {
+	appRAM := func(_ context.Context, slug string) (int, string, error) {
 		if slug == "api" {
-			return 1024, nil
+			return 1024, "api.gregale.app", nil
 		}
-		return 0, errors.New("app not found")
+		return 0, "", errors.New("app not found")
 	}
 	free, _ := api.LimitsFor(api.PlanFree)
 	for _, tc := range []struct {

@@ -54,12 +54,22 @@ app needs to start with `--env-file` (docker env-file format).
 
 Pass `--healthcheck-path /healthz` (the path you deploy with) to probe the
 app's readiness route instead of `/`. Gregale routes to an instance only once
-that path answers 200-399, so `--boot` keeps polling it through the startup
-window and fails with `boot_health_failed` if it never passes. Without a health
-path, any answer on `/` counts, as it does for readiness by connection. An image
-with a `HEALTHCHECK` also gets it run by Docker, checked every second with the
-image's start period and retries; `boot-healthcheck` reports healthy, unhealthy
-with the check's last output, or still starting after the startup window.
+that path answers 2xx (after redirects), so `--boot` keeps polling it through
+the startup window and fails with `boot_health_failed` if it never passes. A
+redirect within the container is followed; one elsewhere, such as to the public
+`https://` URL, fails the check, as it does on Gregale. Gregale's probe sends the
+app's public host and `X-Forwarded-Proto: https`; with `--app SLUG` the boot
+sends that app's host too. Without it, a 400 is only a warning, because an app
+that allow-lists its host names (Django `ALLOWED_HOSTS`, Rails `config.hosts`)
+refuses the local address. Without a health path, any answer on `/` counts, as
+it does for readiness by connection.
+
+An image with a `HEALTHCHECK` also gets it run by Docker, every second, with the
+retries scaled so the failure budget (retries × interval) stays the image's:
+an image checked every 30 s with 3 retries can fail for 90 s before it is
+unhealthy, as on Gregale. The start period is unchanged. `boot-healthcheck`
+reports healthy as soon as a check passes; after the startup window it reports
+unhealthy, or still within its retries, with the last check's output.
 
 The container gets the memory the app would get on Gregale, with no swap: the
 RAM of the app named with `--app`, otherwise your plan's default for a new app
