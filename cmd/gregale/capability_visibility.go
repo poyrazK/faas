@@ -374,7 +374,7 @@ func discoverableCliCommands() []cliCommand {
 // with a request context, which bounds the capability read.
 func discoverableCliCommandsContext(ctx context.Context) []cliCommand {
 	view := discoveryCapabilityViewContext(ctx)
-	return view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view)))
+	return view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view), monetizationInView(view)))
 }
 
 // publicReferenceCommands is the manifest the public reference documents:
