@@ -53,7 +53,7 @@ func TestDockerConfigRegistryAuth(t *testing.T) {
 			want:   &api.ImageRunRegistryAuth{Username: "acme", Password: "dckr_pat"}, wantCall: &call{"desktop", "https://index.docker.io/v1/"}},
 		{name: "helper has nothing", image: "ghcr.io/acme/tool:1.4", config: `{"credsStore":"desktop"}`,
 			helper:  func(string, string) (string, string, bool, error) { return "", "", false, nil },
-			wantErr: "has no credentials for ghcr.io; run `docker login ghcr.io` or use --registry-username"},
+			wantErr: "has no credentials for ghcr.io; run `docker login ghcr.io` or pass a username and password instead"},
 		{name: "no entry", image: "ghcr.io/acme/tool:1.4", config: `{"auths":{"quay.io":{"auth":"` + basic + `"}}}`,
 			wantErr: "has no credentials for ghcr.io"},
 		{name: "identity token", image: "myacr.azurecr.io/app", config: `{"auths":{"myacr.azurecr.io":{"identitytoken":"eyJ"}}}`,

@@ -28,6 +28,21 @@ type SnapshotPrimeHandoffStore interface {
 // snapshot and its first request cold boots (ADR-005).
 const SnapshotPrimeCaptureFailedReason = "snapshot_failed"
 
+// DeveloperPrimeActivationReason is the deployment_ready no_snapshot_reason
+// for a `gregale dev` deployment whose healthy prime instance keeps running
+// and serves (ADR-20261122200000). Its first capture happens at its first
+// idle park; until then a new instance cold boots (ADR-005).
+const DeveloperPrimeActivationReason = "developer_prime"
+
+// DeveloperPrimeEligible reports whether a deployment may go live from its
+// prime (ADR-20261122200000): a `gregale dev` environment's own deployment.
+// Environment-branch deployments share the developer app shape and keep
+// the snapshot prime.
+func DeveloperPrimeEligible(app App, dep Deployment) bool {
+	return IsDeveloperApp(app) && dep.AppID == app.ID &&
+		dep.Reason != EnvironmentBranchSeedReason && dep.Reason != EnvironmentBranchDeploymentReason
+}
+
 type SnapshotPrimeHandoff struct {
 	Channel string
 	Payload json.RawMessage

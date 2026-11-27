@@ -2230,6 +2230,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	localImageName := fs.String("local-image", "", "deploy a linux/amd64 image from this machine's Docker without a registry")
+	dockerConfigPath := fs.String("docker-config", "", "with --image, save the credential `docker login` stored for the image's registry to the app")
 	imageArchivePath := fs.String("image-archive", "", "deploy a linux/amd64 image from a `docker save` archive without a registry")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
@@ -2520,6 +2521,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if localImage != nil {
 		*image = localImage.displayName
+	}
+	// Read the registry credential before any network call, so a missing
+	// `docker login` fails before the deploy changes anything.
+	registryCredential, credentialErr := resolveDeployDockerConfig(ctx, *dockerConfigPath, *image, runDockerCredentialHelper)
+	if credentialErr != nil {
+		return printErr("Could not read registry credentials", credentialErr)
 	}
 	if explicit["resume-upload-id"] {
 		if *resumeUploadID == "" || *idempotencyKey == "" || *sourcePath == "" || *createOnly ||
@@ -4926,6 +4933,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		dep, err = submitLocalImage(uploadCtx, client, slug, localImage,
 			localImageUploadOptions(localImage, imageReq, healthcheck, *noTriggers), execution.onUploadSession)
 	} else {
+		if err := registryCredential.save(ctx, client, slug); err != nil {
+			return printErr("Could not save registry credentials", err)
+		}
 		dep, err = client.Deploy(deployCtx, slug, imageReq)
 	}
 	if err != nil {
