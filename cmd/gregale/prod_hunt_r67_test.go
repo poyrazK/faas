@@ -108,6 +108,19 @@ func TestOrgMembersUnknownVerbListsTheVerbs(t *testing.T) {
 	}
 }
 
+// Prod hunt r75: `redis get nope` answered "no such app".
+func TestRedisGetNamesTheMissingCache(t *testing.T) {
+	r63Server(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"status":404,"code":"not_found","title":"Not found","detail":"no such app"}`))
+	})
+	code, out := r63Run(t, "redis", "get", "nope")
+	if code != 4 || !strings.Contains(out, `no Redis cache named "nope"`) || strings.Contains(out, "no such app") {
+		t.Fatalf("exit=%d out=%s", code, out)
+	}
+}
+
 // Prod hunt r68: `cron get nope` printed only its usage line, never that the
 // ID was malformed or where cron IDs come from.
 func TestCronGetNamesTheMalformedID(t *testing.T) {
