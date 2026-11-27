@@ -28,6 +28,10 @@ class ReleaseApprovalStatus:
     approvals: int
     """Approvals that count toward the policy."""
     decisions: list[ReleaseApprovalDecision]
+    before_release_command: bool | Unset = UNSET
+    """The release approval applies before its release command."""
+    require_passing_sandbox_suite: bool | Unset = UNSET
+    """The release requires current passing sandbox evidence in addition to human approval."""
     required_approvals: int | Unset = UNSET
     after_stage: int | Unset = UNSET
     deployed_by: str | Unset = UNSET
@@ -50,6 +54,10 @@ class ReleaseApprovalStatus:
         for decisions_item_data in self.decisions:
             decisions_item = decisions_item_data.to_dict()
             decisions.append(decisions_item)
+
+        before_release_command = self.before_release_command
+
+        require_passing_sandbox_suite = self.require_passing_sandbox_suite
 
         required_approvals = self.required_approvals
 
@@ -76,6 +84,10 @@ class ReleaseApprovalStatus:
                 "decisions": decisions,
             }
         )
+        if before_release_command is not UNSET:
+            field_dict["before_release_command"] = before_release_command
+        if require_passing_sandbox_suite is not UNSET:
+            field_dict["require_passing_sandbox_suite"] = require_passing_sandbox_suite
         if required_approvals is not UNSET:
             field_dict["required_approvals"] = required_approvals
         if after_stage is not UNSET:
@@ -109,6 +121,10 @@ class ReleaseApprovalStatus:
 
             decisions.append(decisions_item)
 
+        before_release_command = d.pop("before_release_command", UNSET)
+
+        require_passing_sandbox_suite = d.pop("require_passing_sandbox_suite", UNSET)
+
         required_approvals = d.pop("required_approvals", UNSET)
 
         after_stage = d.pop("after_stage", UNSET)
@@ -135,6 +151,8 @@ class ReleaseApprovalStatus:
             state=state,
             approvals=approvals,
             decisions=decisions,
+            before_release_command=before_release_command,
+            require_passing_sandbox_suite=require_passing_sandbox_suite,
             required_approvals=required_approvals,
             after_stage=after_stage,
             deployed_by=deployed_by,

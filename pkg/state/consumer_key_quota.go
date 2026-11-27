@@ -60,23 +60,7 @@ func (s *PgStore) CreateConsumerKeyForConsumerIfUnderQuota(ctx context.Context, 
 	if err != nil {
 		return ConsumerKey{}, fmt.Errorf("state: read consumer %s app: %w", consumerID, err)
 	}
-	// The billing subject's lock serializes every issue that spends its
-	// allowance, so the counts below hold until the insert commits.
-	subject, _, err := lockQuotaSubjectTx(ctx, tx, appID)
-	if err != nil {
-		return ConsumerKey{}, err
-	}
-	var appKeys, subjectKeys int
-	err = tx.QueryRow(ctx, `select count(*) filter (where k.app_id = $2::uuid), count(*)
-		from consumer_keys k
-		join apps a on a.id = k.app_id
-		left join orgs o on o.id = a.org_id
-		where k.revoked_at is null and (a.account_id = $1::uuid or a.org_id = $1::uuid)
-		  and `+quotaSubjectSQL+` = $1::uuid and a.status <> 'deleted'`, subject, appID).Scan(&appKeys, &subjectKeys)
-	if err != nil {
-		return ConsumerKey{}, fmt.Errorf("state: count consumer keys of billing subject %s: %w", subject, err)
-	}
-	if err := quota.check(appKeys, subjectKeys); err != nil {
+	if err := checkConsumerKeyQuotaTx(ctx, tx, appID, quota); err != nil {
 		return ConsumerKey{}, err
 	}
 	k, err := insertConsumerKeyForConsumer(ctx, tx, accountID, consumerID, name, prefix, hash, scopes, expiresAt)
@@ -89,6 +73,33 @@ func (s *PgStore) CreateConsumerKeyForConsumerIfUnderQuota(ctx context.Context, 
 	return k, nil
 }
 
+func checkConsumerKeyQuotaTx(ctx context.Context, tx pgx.Tx, appID string, quota ConsumerKeyQuota) error {
+	// The billing subject's lock serializes every issue that spends its
+	// allowance, so the counts below hold until the insert commits.
+	subject, _, err := lockQuotaSubjectTx(ctx, tx, appID)
+	if err != nil {
+		return err
+	}
+	return checkConsumerKeyCounts(ctx, tx, appID, subject, quota)
+}
+
+func checkConsumerKeyCounts(ctx context.Context, tx pgx.Tx, appID, subject string, quota ConsumerKeyQuota) error {
+	var appKeys, subjectKeys int
+	err := tx.QueryRow(ctx, `select count(*) filter (where k.app_id = $2::uuid), count(*)
+		from consumer_keys k
+		join apps a on a.id = k.app_id
+		left join orgs o on o.id = a.org_id
+		where k.revoked_at is null and (a.account_id = $1::uuid or a.org_id = $1::uuid)
+		  and `+quotaSubjectSQL+` = $1::uuid and a.status <> 'deleted'`, subject, appID).Scan(&appKeys, &subjectKeys)
+	if err != nil {
+		return fmt.Errorf("state: count consumer keys of billing subject %s: %w", subject, err)
+	}
+	if err := quota.check(appKeys, subjectKeys); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (m *MemStore) CreateConsumerKeyForConsumerIfUnderQuota(_ context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string,
 	expiresAt *time.Time, quota ConsumerKeyQuota) (ConsumerKey, error) {
 	if err := validateConsumerKeyForConsumer("CreateConsumerKeyForConsumerIfUnderQuota", accountID, consumerID, name, prefix, hash, scopes, expiresAt); err != nil {
@@ -96,6 +107,11 @@ func (m *MemStore) CreateConsumerKeyForConsumerIfUnderQuota(_ context.Context, a
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createConsumerKeyUnderQuotaLocked(accountID, consumerID, name, prefix, hash, scopes, expiresAt, quota)
+}
+
+func (m *MemStore) createConsumerKeyUnderQuotaLocked(accountID, consumerID, name, prefix string, hash []byte, scopes []string,
+	expiresAt *time.Time, quota ConsumerKeyQuota) (ConsumerKey, error) {
 	c, ok := m.apiConsumers[consumerID]
 	if !ok || c.AccountID != accountID {
 		return ConsumerKey{}, ErrNotFound

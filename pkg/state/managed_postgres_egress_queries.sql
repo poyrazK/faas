@@ -10,6 +10,13 @@ ON CONFLICT (database_id, host, port) DO UPDATE SET updated_at = now();
 SELECT DISTINCT b.app_id, e.host, e.port
 FROM managed_postgres_bindings b
 JOIN managed_postgres_database_endpoints e ON e.database_id = b.database_id
+JOIN apps a ON a.id = b.app_id
 WHERE b.state IN ('ready', 'retiring') AND b.deleted_at IS NULL
+  AND (NOT coalesce(starts_with(a.preview_of_slug, 'api-sandbox:'), false) OR b.database_id = b.app_id)
+  AND NOT EXISTS (
+      SELECT 1 FROM apps owner
+      WHERE owner.id = b.database_id AND owner.id <> b.app_id
+        AND starts_with(owner.preview_of_slug, 'api-sandbox:')
+  )
 ORDER BY e.host, b.app_id, e.port
 LIMIT 100000;

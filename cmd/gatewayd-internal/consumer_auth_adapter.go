@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -69,6 +71,7 @@ func (s *consumerAuthStore) GetAPIConsumerByID(ctx context.Context, accountID, c
 		AccountID:        consumer.AccountID,
 		AppID:            consumer.AppID,
 		PlatformTenantID: consumer.PlatformTenantID,
+		ExternalRef:      consumer.ExternalRef,
 		Status:           string(consumer.Status),
 		RevokedAt:        consumer.RevokedAt,
 	}, nil
@@ -82,3 +85,23 @@ var (
 	_ gateway.ConsumerAuthStore            = (*consumerAuthStore)(nil)
 	_ gateway.ConsumerAuthEnvironmentStore = (*consumerAuthStore)(nil)
 )
+
+func (s *consumerAuthStore) APISandboxPartnerKeyActive(ctx context.Context, appID, keyID string) (bool, error) {
+	return s.store.APISandboxPartnerKeyActive(ctx, appID, keyID)
+}
+
+func (s *consumerAuthStore) RecordAPISandboxPartnerSuccess(ctx context.Context, appID, keyID string, at time.Time) error {
+	return s.store.RecordAPISandboxPartnerSuccess(ctx, appID, keyID, at)
+}
+
+func (s *consumerAuthStore) ClaimAPISandboxPartnerStep(ctx context.Context, appID, deploymentID, keyID, method, target string, at time.Time) (api.APISandboxPartnerStep, error) {
+	step, err := s.store.ClaimAPISandboxPartnerStep(ctx, appID, deploymentID, keyID, method, target, at)
+	if errors.Is(err, state.ErrNotFound) {
+		return api.APISandboxPartnerStep{}, gateway.ErrConsumerAuthNotFound
+	}
+	return step, err
+}
+
+func (s *consumerAuthStore) CompleteAPISandboxPartnerStep(ctx context.Context, permit api.APISandboxPartnerStep, at time.Time) error {
+	return s.store.CompleteAPISandboxPartnerStep(ctx, permit, at)
+}

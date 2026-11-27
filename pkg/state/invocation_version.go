@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -125,7 +126,9 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 }
 
 func resolveInvocationVersionForApp(ctx context.Context, store invocationAppReader, inv Invocation, app App, environment string, ingress bool) (Invocation, InvocationVersion, error) {
-	if app.Status == AppDeleted || app.DeletedAt != nil || inv.AccountID != "" && inv.AccountID != app.AccountID {
+	sandbox := IsAPISandbox(app)
+	if app.Status == AppDeleted || app.DeletedAt != nil || inv.AccountID != "" && inv.AccountID != app.AccountID ||
+		(sandbox && !APISandboxAcceptsRequests(app, time.Now())) {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
 	// PgStore and MemStore combine persisted canary membership with the owner
@@ -319,7 +322,19 @@ func resolveInvocationVersionForApp(ctx context.Context, store invocationAppRead
 	if jobPinned {
 		// Durable lineage authority has already resolved and validated the graph.
 	} else if revision != "" {
-		dep, err := resolver.ResolveRevisionPin(ctx, app.ID, scope, revision)
+		var dep Deployment
+		if sandbox && app.Manifest.APISandboxRun && !ingress &&
+			(inv.Source == InvocationInboundWebhook || inv.Source == InvocationAsyncInvoke) {
+			// Sandbox scenario workers enqueue an internal pin to their one
+			// deployment, without opting the app into public revision pins.
+			dep, err = resolver.DeploymentByID(ctx, revision)
+			if err == nil && (dep.AppID != app.ID || dep.Status != DeployLive || dep.DeletedAt != nil ||
+				normalizedDeploymentScope(dep.Scope) != scope) {
+				err = ErrNotFound
+			}
+		} else {
+			dep, err = resolver.ResolveRevisionPin(ctx, app.ID, scope, revision)
+		}
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}

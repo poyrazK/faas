@@ -188,6 +188,7 @@ func PolicyView(p state.ReleaseApprovalPolicy, app string, channelNames []string
 		App: app, RequiredApprovals: p.RequiredApprovals, AfterStage: p.AfterStage, TimeoutMinutes: p.TimeoutMinutes,
 		Approvers: p.Approvers, AllowSelfApproval: p.AllowSelfApproval, NotifyChannels: channelNames, UpdatedBy: p.UpdatedBy,
 		CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339),
+		RequirePassingSandboxSuite: p.RequiresSandboxSuite(),
 	}
 }
 
@@ -305,31 +306,22 @@ func WaitsBeforeReleaseCommand(ctx context.Context, store any, policy *state.Rel
 // for the policy's timeout, like a canary waits in its stage.
 func ReleaseCommandStatus(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment, decisions []state.ReleaseApproval, since, now time.Time) api.ReleaseApprovalStatus {
 	status := Status(policy, app, d, decisions, now)
-	if policy == nil || status.State != api.ReleaseApprovalStateWaiting {
+	status.BeforeReleaseCommand = true
+	if policy == nil {
+		return status
+	}
+	status.RequirePassingSandboxSuite = policy.RequiresSandboxSuite()
+	if status.State != api.ReleaseApprovalStateWaiting &&
+		(!status.RequirePassingSandboxSuite || status.State != api.ReleaseApprovalStateApproved) {
 		return status
 	}
 	expires := since.Add(time.Duration(policy.TimeoutMinutes) * time.Minute)
 	status.WaitingSince = since.UTC().Format(time.RFC3339)
 	status.ExpiresAt = expires.UTC().Format(time.RFC3339)
-	if !now.Before(expires) {
+	if status.State == api.ReleaseApprovalStateWaiting && !now.Before(expires) {
 		status.State = api.ReleaseApprovalStateExpired
 	}
 	return status
-}
-
-// ReleasePhaseStartedAt is when d entered its current pipeline stage (for a
-// release waiting before its release command, its release phase), or its
-// creation when the stage has no start.
-func ReleasePhaseStartedAt(d state.Deployment) time.Time {
-	started := d.CreatedAt
-	var stages state.StageState
-	if len(d.StageState) == 0 || json.Unmarshal(d.StageState, &stages) != nil || stages.CurrentStartedAt == nil {
-		return started
-	}
-	if stages.CurrentStartedAt.After(started) {
-		return *stages.CurrentStartedAt
-	}
-	return started
 }
 
 // releaseCommandReader is what LoadReleaseCommandWait reads.
@@ -350,6 +342,13 @@ type ReleaseCommandWait struct {
 // Pending reports whether the release still waits for its approvals.
 func (w ReleaseCommandWait) Pending() bool {
 	return w.Waits && w.Status.State == api.ReleaseApprovalStateWaiting
+}
+
+// SandboxSuiteWindowOpen also allows fresh evidence after human approval.
+func (w ReleaseCommandWait) SandboxSuiteWindowOpen(d state.Deployment, now time.Time) bool {
+	return w.Waits && w.Status.RequirePassingSandboxSuite &&
+		(w.Pending() || w.Status.State == api.ReleaseApprovalStateApproved) &&
+		now.Before(state.ReleasePhaseStartedAt(d).Add(time.Duration(w.Policy.TimeoutMinutes)*time.Minute))
 }
 
 // LoadReleaseCommandWait reads whether d waits for approval before its
@@ -379,6 +378,6 @@ func LoadReleaseCommandWait(ctx context.Context, store any, app state.App, d sta
 	if err != nil {
 		return ReleaseCommandWait{}, fmt.Errorf("list release approvals: %w", err)
 	}
-	status := ReleaseCommandStatus(&policy, app, d, decisions, ReleasePhaseStartedAt(d), now)
+	status := ReleaseCommandStatus(&policy, app, d, decisions, state.ReleasePhaseStartedAt(d), now)
 	return ReleaseCommandWait{Waits: true, Policy: &policy, Status: status}, nil
 }

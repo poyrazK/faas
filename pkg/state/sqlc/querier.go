@@ -19,6 +19,11 @@ type Querier interface {
 	// Used by handlers_auth.go so an operator investigating "who signed in
 	// as alice?" can identify the key that authenticated. See ADR-034 rev2.
 	APIKeyByHash(ctx context.Context, db DBTX, keySha256 []byte) (APIKeyByHashRow, error)
+	APISandboxPartnerKeyActive(ctx context.Context, db DBTX, arg APISandboxPartnerKeyActiveParams) (bool, error)
+	APISandboxSlugExists(ctx context.Context, db DBTX, slug string) (bool, error)
+	APISandboxSourceHasReleaseTask(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (bool, error)
+	APISandboxSuiteLibraryEntries(ctx context.Context, db DBTX, arg APISandboxSuiteLibraryEntriesParams) ([]APISandboxSuiteLibraryEntriesRow, error)
+	APISandboxSuiteRunPassed(ctx context.Context, db DBTX, arg APISandboxSuiteRunPassedParams) (pgtype.Bool, error)
 	AbandonEnvironmentWorkloadRecovery(ctx context.Context, db DBTX, arg AbandonEnvironmentWorkloadRecoveryParams) (int64, error)
 	AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error)
 	// Ends a move with the database parked where it was: by the lease holder,
@@ -243,6 +248,7 @@ type Querier interface {
 	// caller bounds an unfinished task by its lease and timeout. started_at is
 	// bounded below by the longest a task can run so the index stays selective.
 	AppTasksInBillingWindow(ctx context.Context, db DBTX, arg AppTasksInBillingWindowParams) ([]AppTasksInBillingWindowRow, error)
+	AppendAPISandboxRunStep(ctx context.Context, db DBTX, arg AppendAPISandboxRunStepParams) (int64, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
@@ -489,6 +495,8 @@ type Querier interface {
 	CheckedRollbackSourceForShare(ctx context.Context, db DBTX, arg CheckedRollbackSourceForShareParams) ([]byte, error)
 	CheckedRollbackTargetFacts(ctx context.Context, db DBTX, arg CheckedRollbackTargetFactsParams) ([]byte, error)
 	CheckedRollbackWorkerInstances(ctx context.Context, db DBTX, arg CheckedRollbackWorkerInstancesParams) ([]CheckedRollbackWorkerInstancesRow, error)
+	CheckpointAPISandboxSuiteAutomatic(ctx context.Context, db DBTX, arg CheckpointAPISandboxSuiteAutomaticParams) (int64, error)
+	CheckpointAPISandboxSuiteRun(ctx context.Context, db DBTX, arg CheckpointAPISandboxSuiteRunParams) (int64, error)
 	// Requires the live worker generation and exact enrollment in the locked read.
 	CheckpointApplicationStandardObservation(ctx context.Context, db DBTX, arg CheckpointApplicationStandardObservationParams) (int64, error)
 	CheckpointApplicationStandardTarget(ctx context.Context, db DBTX, arg CheckpointApplicationStandardTargetParams) error
@@ -499,6 +507,11 @@ type Querier interface {
 	CheckpointRuntimeUpgradeOperationControl(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeOperationControlParams) (RuntimeUpgradeOperation, error)
 	CheckpointRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg CheckpointRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
 	ClaimAPIConsumerCreditPurchases(ctx context.Context, db DBTX, arg ClaimAPIConsumerCreditPurchasesParams) ([]ApiConsumerCreditPurchase, error)
+	ClaimAPISandboxOperation(ctx context.Context, db DBTX, arg ClaimAPISandboxOperationParams) (ApiSandboxProvisioning, error)
+	ClaimAPISandboxPartnerStep(ctx context.Context, db DBTX, arg ClaimAPISandboxPartnerStepParams) (ClaimAPISandboxPartnerStepRow, error)
+	ClaimAPISandboxRun(ctx context.Context, db DBTX, arg ClaimAPISandboxRunParams) (ClaimAPISandboxRunRow, error)
+	ClaimAPISandboxSuiteAutomatic(ctx context.Context, db DBTX, arg ClaimAPISandboxSuiteAutomaticParams) (ClaimAPISandboxSuiteAutomaticRow, error)
+	ClaimAPISandboxSuiteRun(ctx context.Context, db DBTX, arg ClaimAPISandboxSuiteRunParams) (ApiSandboxSuiteRun, error)
 	// meterd leases due notifications; a lapsed lease makes a row due again.
 	ClaimAgentApprovalNotifications(ctx context.Context, db DBTX, arg ClaimAgentApprovalNotificationsParams) ([]ClaimAgentApprovalNotificationsRow, error)
 	// Lock order matches ApplyProjectPlan (resource namespace, then its apps).
@@ -800,6 +813,7 @@ type Querier interface {
 	CompensateCloneCheckpointConfiguration(ctx context.Context, db DBTX, arg CompensateCloneCheckpointConfigurationParams) (int64, error)
 	CompensateCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg CompensateCloneCheckpointObjectFenceParams) (int64, error)
 	CompensateCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg CompensateCloneCheckpointPostgresFenceParams) (int64, error)
+	CompleteAPISandboxPartnerStep(ctx context.Context, db DBTX, arg CompleteAPISandboxPartnerStepParams) (bool, error)
 	CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg CompleteAutomaticRouteCheckParams) (int64, error)
 	CompleteCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg CompleteCloneCheckpointUnusedObjectReservationParams) (int64, error)
 	CompleteCloneTerminalCompensation(ctx context.Context, db DBTX, arg CompleteCloneTerminalCompensationParams) (int64, error)
@@ -885,6 +899,7 @@ type Querier interface {
 	CopyProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretsParams) (int64, error)
 	CopyRetryDeploymentEnvironmentOwner(ctx context.Context, db DBTX, arg CopyRetryDeploymentEnvironmentOwnerParams) error
 	CopyRetryDeploymentWorkloadSpec(ctx context.Context, db DBTX, arg CopyRetryDeploymentWorkloadSpecParams) error
+	CountAPISandboxLibraryScenarios(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveAppForks(ctx context.Context, db DBTX, arg CountActiveAppForksParams) (CountActiveAppForksRow, error)
 	CountActiveBindingVerificationRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMigrationVerifications(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
@@ -1028,6 +1043,13 @@ type Querier interface {
 	// scopes is $4 (text[]). The handler is responsible for validating the
 	// scope vocabulary; the store does not. See ADR-034 rev2.
 	CreateAPIKey(ctx context.Context, db DBTX, arg CreateAPIKeyParams) (CreateAPIKeyRow, error)
+	CreateAPISandboxApprovalCheck(ctx context.Context, db DBTX, arg CreateAPISandboxApprovalCheckParams) error
+	CreateAPISandboxComparison(ctx context.Context, db DBTX, arg CreateAPISandboxComparisonParams) error
+	CreateAPISandboxPartner(ctx context.Context, db DBTX, arg CreateAPISandboxPartnerParams) error
+	CreateAPISandboxRun(ctx context.Context, db DBTX, arg CreateAPISandboxRunParams) error
+	CreateAPISandboxSuiteRun(ctx context.Context, db DBTX, arg CreateAPISandboxSuiteRunParams) (ApiSandboxSuiteRun, error)
+	CreateAPISandboxSuiteScenario(ctx context.Context, db DBTX, arg CreateAPISandboxSuiteScenarioParams) error
+	CreateAPISandboxWebhookPartner(ctx context.Context, db DBTX, arg CreateAPISandboxWebhookPartnerParams) (int64, error)
 	CreateAccount(ctx context.Context, db DBTX, arg CreateAccountParams) (CreateAccountRow, error)
 	// Analytics cohorts (ADR 20261119102741 §3–4).
 	// Creates a cohort while the environment holds fewer than max_cohorts.
@@ -1247,6 +1269,7 @@ type Querier interface {
 	// statement so the handler can emit `key.deleted` audit with the
 	// dismissed scopes. list_secrets-shaped variant of DeleteAPIKey.
 	DeleteAPIKeyReturning(ctx context.Context, db DBTX, arg DeleteAPIKeyReturningParams) (DeleteAPIKeyReturningRow, error)
+	DeleteAPISandboxLibraryScenario(ctx context.Context, db DBTX, arg DeleteAPISandboxLibraryScenarioParams) (int64, error)
 	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	// Removing a provider also records it, so signing in with it does not
 	// re-link it by matching email (ADR 20261107103000).
@@ -1338,6 +1361,7 @@ type Querier interface {
 	DeleteEnvironmentWorkKeyLanes(ctx context.Context, db DBTX, environmentID pgtype.UUID) error
 	DeleteEnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) error
 	DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error
+	DeleteExpiredAPISandboxWebhookPartners(ctx context.Context, db DBTX, atTime pgtype.Timestamptz) error
 	// Deletes up to max_rows of the oldest events of accounts on plan that are
 	// older than cutoff.
 	DeleteExpiredAnalyticsEventsForPlan(ctx context.Context, db DBTX, arg DeleteExpiredAnalyticsEventsForPlanParams) (int64, error)
@@ -1499,6 +1523,8 @@ type Querier interface {
 	EndAccountPendingInvitations(ctx context.Context, db DBTX, invitedByAccountID pgtype.UUID) (int64, error)
 	// Never earlier than just after creation (the table's CHECK).
 	EndUnclaimedAccountWindow(ctx context.Context, db DBTX, arg EndUnclaimedAccountWindowParams) (int64, error)
+	EnqueueAPISandboxOperation(ctx context.Context, db DBTX, arg EnqueueAPISandboxOperationParams) error
+	EnqueueAPISandboxSuiteAutomatic(ctx context.Context, db DBTX, arg EnqueueAPISandboxSuiteAutomaticParams) error
 	EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error
 	// A company project keeps its creator's account; the account's webhooks get
 	// its notifications only while the account may still see the project's
@@ -2393,6 +2419,7 @@ type Querier interface {
 	FindProjectReleaseSecretVersions(ctx context.Context, db DBTX, arg FindProjectReleaseSecretVersionsParams) ([][]byte, error)
 	FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRuntimeReleaseParams) (RuntimeRelease, error)
 	FindTenantHostnameWildcardOverlap(ctx context.Context, db DBTX, names []string) (string, error)
+	FinishAPISandboxRun(ctx context.Context, db DBTX, arg FinishAPISandboxRunParams) (bool, error)
 	FinishAgentApprovalNotifications(ctx context.Context, db DBTX, arg FinishAgentApprovalNotificationsParams) error
 	FinishAnalyticsCohortRefresh(ctx context.Context, db DBTX, arg FinishAnalyticsCohortRefreshParams) error
 	FinishAppFork(ctx context.Context, db DBTX, arg FinishAppForkParams) (AppFork, error)
@@ -2542,6 +2569,21 @@ type Querier interface {
 	GetAPIConsumerCreditPurchase(ctx context.Context, db DBTX, arg GetAPIConsumerCreditPurchaseParams) (ApiConsumerCreditPurchase, error)
 	GetAPIKeyApprovalCategories(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]string, error)
 	GetAPIKeyProjectLimit(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]pgtype.UUID, error)
+	GetAPISandboxApprovalCheck(ctx context.Context, db DBTX, comparisonID pgtype.UUID) (GetAPISandboxApprovalCheckRow, error)
+	GetAPISandboxApprovalPinForApp(ctx context.Context, db DBTX, sandboxAppID pgtype.UUID) (GetAPISandboxApprovalPinForAppRow, error)
+	GetAPISandboxComparison(ctx context.Context, db DBTX, id pgtype.UUID) (GetAPISandboxComparisonRow, error)
+	GetAPISandboxLibraryScenario(ctx context.Context, db DBTX, arg GetAPISandboxLibraryScenarioParams) (AppApiSandboxScenario, error)
+	GetAPISandboxLibraryScenarioByRevision(ctx context.Context, db DBTX, arg GetAPISandboxLibraryScenarioByRevisionParams) (AppApiSandboxScenario, error)
+	GetAPISandboxOperation(ctx context.Context, db DBTX, appID pgtype.UUID) (ApiSandboxProvisioning, error)
+	GetAPISandboxPartner(ctx context.Context, db DBTX, appID pgtype.UUID) (ApiSandboxPartner, error)
+	GetAPISandboxReleaseAdmission(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
+	GetAPISandboxRun(ctx context.Context, db DBTX, id pgtype.UUID) (ApiSandboxRun, error)
+	GetAPISandboxScenario(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetAPISandboxScenarioRow, error)
+	GetAPISandboxSuite(ctx context.Context, db DBTX, appID pgtype.UUID) (GetAPISandboxSuiteRow, error)
+	GetAPISandboxSuiteAutomaticStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
+	GetAPISandboxSuiteRun(ctx context.Context, db DBTX, id pgtype.UUID) (ApiSandboxSuiteRun, error)
+	GetAPISandboxSuiteScenario(ctx context.Context, db DBTX, arg GetAPISandboxSuiteScenarioParams) (ApiSandboxSuiteScenario, error)
+	GetAPISandboxWebhookPartner(ctx context.Context, db DBTX, runID pgtype.UUID) (ApiSandboxWebhookPartner, error)
 	GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, arg GetActiveManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetAgentApproval(ctx context.Context, db DBTX, id pgtype.UUID) (AgentApprovalRequest, error)
 	GetAgentApprovalEmailLastSent(ctx context.Context, db DBTX, arg GetAgentApprovalEmailLastSentParams) (pgtype.Timestamptz, error)
@@ -2704,6 +2746,7 @@ type Querier interface {
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
 	GetInvocationSend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (GetInvocationSendRow, error)
 	GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error)
+	GetLatestAPISandboxSuiteRun(ctx context.Context, db DBTX, candidateDeploymentID pgtype.UUID) (ApiSandboxSuiteRun, error)
 	GetLatestDeploymentRegistryVerification(ctx context.Context, db DBTX, arg GetLatestDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
 	GetLatestOwnedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestOwnedBuildExportPublicationParams) (BuildExportPublication, error)
 	GetLatestScheduledReleaseForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetLatestScheduledReleaseForDeploymentRow, error)
@@ -3943,6 +3986,14 @@ type Querier interface {
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.
 	ListAPIKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAPIKeysRow, error)
+	ListAPISandboxApprovalChecks(ctx context.Context, db DBTX, sourceDeploymentID pgtype.UUID) ([]ListAPISandboxApprovalChecksRow, error)
+	ListAPISandboxComparisonBaselines(ctx context.Context, db DBTX, arg ListAPISandboxComparisonBaselinesParams) ([]ListAPISandboxComparisonBaselinesRow, error)
+	ListAPISandboxComparisons(ctx context.Context, db DBTX, sourceDeploymentID pgtype.UUID) ([]ListAPISandboxComparisonsRow, error)
+	ListAPISandboxLibraryScenarios(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListAPISandboxLibraryScenariosRow, error)
+	ListAPISandboxRuns(ctx context.Context, db DBTX, sourceDeploymentID pgtype.UUID) ([]ApiSandboxRun, error)
+	ListAPISandboxSuiteRuns(ctx context.Context, db DBTX, candidateDeploymentID pgtype.UUID) ([]ApiSandboxSuiteRun, error)
+	ListAPISandboxSuiteScenarios(ctx context.Context, db DBTX, suiteRunID pgtype.UUID) ([]ListAPISandboxSuiteScenariosRow, error)
+	ListAPISandboxWebhookPartnerSetups(ctx context.Context, db DBTX, arg ListAPISandboxWebhookPartnerSetupsParams) ([]ListAPISandboxWebhookPartnerSetupsRow, error)
 	ListAccountCustomerOperationExecutions(ctx context.Context, db DBTX, arg ListAccountCustomerOperationExecutionsParams) ([]ListAccountCustomerOperationExecutionsRow, error)
 	ListAccountCustomerOperationMilestones(ctx context.Context, db DBTX, arg ListAccountCustomerOperationMilestonesParams) ([][]byte, error)
 	ListAccountCustomerOperationMilestonesBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationMilestonesBySubjectParams) ([][]byte, error)
@@ -4812,6 +4863,11 @@ type Querier interface {
 	// (ADR-20261019180000), and owner is checked against the plan.
 	LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error)
 	LockAPIConsumerCreditBuyer(ctx context.Context, db DBTX, arg LockAPIConsumerCreditBuyerParams) (pgtype.UUID, error)
+	LockAPISandboxPartner(ctx context.Context, db DBTX, arg LockAPISandboxPartnerParams) (ApiSandboxPartner, error)
+	LockAPISandboxReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (LockAPISandboxReleaseApprovalPolicyRow, error)
+	LockAPISandboxReleaseDeployments(ctx context.Context, db DBTX, arg LockAPISandboxReleaseDeploymentsParams) ([]pgtype.UUID, error)
+	LockAPISandboxReleaseProject(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	LockAPISandboxScenarioLibrary(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	// ADR-732: production fork intent (app_forks). apid admits forks under a
 	// per-account advisory lock so the active-fork limits hold under concurrent
 	// requests; expired-but-unswept rows do not count against the limits.
@@ -6067,6 +6123,7 @@ type Querier interface {
 	// app served at or after since, so saving a route guard or monitor can warn
 	// about selectors no request matched.
 	ObservedRouteLabels(ctx context.Context, db DBTX, arg ObservedRouteLabelsParams) ([]string, error)
+	OpenAPISandboxPartnerRun(ctx context.Context, db DBTX, arg OpenAPISandboxPartnerRunParams) (int64, error)
 	OpenAppConfigGuardWindow(ctx context.Context, db DBTX, arg OpenAppConfigGuardWindowParams) (int64, error)
 	// Starts a rate interval unless one is open for the meter.
 	OpenDatabaseUsage(ctx context.Context, db DBTX, arg OpenDatabaseUsageParams) error
@@ -6229,6 +6286,7 @@ type Querier interface {
 	OrgSecurityPolicy(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgSecurityPolicy, error)
 	OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg OwnEnvironmentGitOpsFieldParams) (int64, error)
 	OwnsPrivateNetworkService(ctx context.Context, db DBTX, arg OwnsPrivateNetworkServiceParams) (bool, error)
+	ParkAPISandboxWebhookPartnerRun(ctx context.Context, db DBTX, arg ParkAPISandboxWebhookPartnerRunParams) (int64, error)
 	// A callback may have made this run due while its coordinator still held the
 	// fence. Preserve that earlier wake when the coordinator parks afterwards.
 	ParkCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg ParkCustomerOperationWorkflowRunParams) error
@@ -6662,6 +6720,9 @@ type Querier interface {
 	PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PutAPIConsumerCreditPackSettings(ctx context.Context, db DBTX, arg PutAPIConsumerCreditPackSettingsParams) error
+	PutAPISandboxLibraryScenario(ctx context.Context, db DBTX, arg PutAPISandboxLibraryScenarioParams) (AppApiSandboxScenario, error)
+	PutAPISandboxScenario(ctx context.Context, db DBTX, arg PutAPISandboxScenarioParams) (PutAPISandboxScenarioRow, error)
+	PutAPISandboxSuite(ctx context.Context, db DBTX, arg PutAPISandboxSuiteParams) error
 	// ADR-20261110210000 slice 3h: verify-only basic auth, keyed by the SHA-256
 	// of the sealed credential in apps.public_auth_basic.
 	// A key names one sealed blob, so its verifier never changes: a repeat
@@ -7479,6 +7540,7 @@ type Querier interface {
 	// Management callers retain the complete row; request snapshots omit secrets.
 	ReadWildcardCustomDomain(ctx context.Context, db DBTX, arg ReadWildcardCustomDomainParams) ([]byte, error)
 	ReadWorkerRolloutObservation(ctx context.Context, db DBTX, arg ReadWorkerRolloutObservationParams) (ReadWorkerRolloutObservationRow, error)
+	ReadyAPISandboxWebhookPartner(ctx context.Context, db DBTX, arg ReadyAPISandboxWebhookPartnerParams) (int64, error)
 	ReadyScenarioWorkerFault(ctx context.Context, db DBTX, arg ReadyScenarioWorkerFaultParams) (int64, error)
 	// The reaper's scan query (cmd/apid/upload_session_reaper.go).
 	// Returns at most 100 rows per invocation to bound memory; the
@@ -7543,6 +7605,9 @@ type Querier interface {
 	ReclaimOperatorIntentAttempts(ctx context.Context, db DBTX, threshold pgtype.Timestamptz) (int64, error)
 	RecomputeCustomerOperationJobRun(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error)
+	RecordAPISandboxPartnerSuccess(ctx context.Context, db DBTX, arg RecordAPISandboxPartnerSuccessParams) error
+	RecordAPISandboxReleaseAdmission(ctx context.Context, db DBTX, arg RecordAPISandboxReleaseAdmissionParams) error
+	RecordAPISandboxWebhookPartnerOutcome(ctx context.Context, db DBTX, arg RecordAPISandboxWebhookPartnerOutcomeParams) (int64, error)
 	RecordAgentApprovalEmailSent(ctx context.Context, db DBTX, arg RecordAgentApprovalEmailSentParams) error
 	// A failed recovery notice for one channel (ADR-20261031144636). The first
 	// failure keeps the observation and time it reports; each later one counts
@@ -7764,6 +7829,8 @@ type Querier interface {
 	RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error
 	RecoverLegacyWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) error
 	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	RedeemAPISandboxPartnerInvite(ctx context.Context, db DBTX, arg RedeemAPISandboxPartnerInviteParams) error
+	RedeemAPISandboxWebhookPartner(ctx context.Context, db DBTX, arg RedeemAPISandboxWebhookPartnerParams) (int64, error)
 	// An order carried the discount. A discount is redeemed once; a replay of the
 	// same order changes nothing.
 	RedeemCreditDiscount(ctx context.Context, db DBTX, arg RedeemCreditDiscountParams) (int64, error)
@@ -8267,6 +8334,8 @@ type Querier interface {
 	// A unique violation (the old address now belongs to another account) rolls
 	// the statement back.
 	RevertLastAccountEmailChange(ctx context.Context, db DBTX, arg RevertLastAccountEmailChangeParams) (RevertLastAccountEmailChangeRow, error)
+	RevokeAPISandboxPartner(ctx context.Context, db DBTX, arg RevokeAPISandboxPartnerParams) (ApiSandboxPartner, error)
+	RevokeAPISandboxPartnerKey(ctx context.Context, db DBTX, arg RevokeAPISandboxPartnerKeyParams) error
 	RevokeAllMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
@@ -8482,6 +8551,7 @@ type Querier interface {
 	RuntimeUpgradeNativePublicStartupEligible(ctx context.Context, db DBTX, arg RuntimeUpgradeNativePublicStartupEligibleParams) (bool, error)
 	RuntimeUpgradePublicEdgeSessionWithdrawn(ctx context.Context, db DBTX, publicSessionID pgtype.UUID) (bool, error)
 	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
+	SaveAPISandboxOperation(ctx context.Context, db DBTX, arg SaveAPISandboxOperationParams) (int64, error)
 	SaveAlertRollback(ctx context.Context, db DBTX, arg SaveAlertRollbackParams) error
 	SaveApplicationStandardControlBackup(ctx context.Context, db DBTX, arg SaveApplicationStandardControlBackupParams) error
 	SaveApplicationStandardLocalIntent(ctx context.Context, db DBTX, arg SaveApplicationStandardLocalIntentParams) (int64, error)
@@ -8656,6 +8726,7 @@ type Querier interface {
 	// ADR-20261030133644: names the agent client of one of the account's keys.
 	// The first write wins; another account's key is left alone.
 	SetAPIKeyAgentClient(ctx context.Context, db DBTX, arg SetAPIKeyAgentClientParams) error
+	SetAPISandboxPartnerInvite(ctx context.Context, db DBTX, arg SetAPISandboxPartnerInviteParams) (ApiSandboxPartner, error)
 	SetAccountDisplayName(ctx context.Context, db DBTX, arg SetAccountDisplayNameParams) (int64, error)
 	// Password writers lock/update the account before its credential row, matching
 	// reset redemption, producer handoff and account erasure. The revision survives
@@ -8813,6 +8884,7 @@ type Querier interface {
 	SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) (int64, error)
 	SettleSpendCapNotice(ctx context.Context, db DBTX, arg SettleSpendCapNoticeParams) (pgtype.UUID, error)
 	SettleWorkflowCallOp(ctx context.Context, db DBTX, arg SettleWorkflowCallOpParams) (int64, error)
+	ShareAPISandboxRun(ctx context.Context, db DBTX, arg ShareAPISandboxRunParams) (int64, error)
 	ShareProjectBindingVerificationRun(ctx context.Context, db DBTX, arg ShareProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
 	ShareRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error)
 	ShareRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error)

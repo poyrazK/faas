@@ -1489,6 +1489,184 @@
     "kind": "account_identity"
   },
   {
+    "table": "api_sandbox_approval_checks",
+    "columns": [
+      "baseline_artifact_pin",
+      "candidate_artifact_pin",
+      "comparison_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_comparisons",
+    "columns": [
+      "baseline_run_id",
+      "candidate_run_id",
+      "created_at",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_partners",
+    "columns": [
+      "app_id",
+      "consumer_key_id",
+      "first_success_at",
+      "invite_hash",
+      "invited_at",
+      "label",
+      "redeemed_at",
+      "revoked_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_provisioning",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "failure",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "phase",
+      "scenario",
+      "smoke_path",
+      "started_at",
+      "verification"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_release_admissions",
+    "columns": [
+      "deployment_id",
+      "suite_run_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_runs",
+    "columns": [
+      "created_at",
+      "failure_code",
+      "finished_at",
+      "id",
+      "lease_token",
+      "lease_until",
+      "partner_claim",
+      "partner_claim_until",
+      "partner_outcome_until",
+      "partner_step_count",
+      "partner_webhook",
+      "sandbox_app_id",
+      "sandbox_deployment_id",
+      "scenario_name",
+      "scenario_revision",
+      "share_expires_at",
+      "share_hash",
+      "source_deployment_id",
+      "started_at",
+      "status",
+      "steps"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_scenarios",
+    "columns": [
+      "definition",
+      "deployment_id",
+      "revision",
+      "source_request_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
+  },
+  {
+    "table": "api_sandbox_suite_auto_requests",
+    "columns": [
+      "deployment_id",
+      "next_attempt_at",
+      "run_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_suite_runs",
+    "columns": [
+      "app_id",
+      "automatic",
+      "baseline_artifact_pin",
+      "baseline_deployment_id",
+      "candidate_artifact_pin",
+      "candidate_deployment_id",
+      "completed_count",
+      "created_at",
+      "deadline_at",
+      "failure_code",
+      "finished_at",
+      "id",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "scenario_count",
+      "suite_revision",
+      "waiting_for_capacity"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_suite_scenarios",
+    "columns": [
+      "comparison_id",
+      "definition",
+      "position",
+      "scenario_id",
+      "scenario_name",
+      "scenario_revision",
+      "suite_run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_sandbox_suites",
+    "columns": [
+      "app_id",
+      "revision",
+      "run_before_approval",
+      "scenario_ids"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "api_sandbox_webhook_partners",
+    "columns": [
+      "expires_at",
+      "invite_hash",
+      "outcome_at",
+      "outcome_count",
+      "outcome_token_hash",
+      "ready_at",
+      "run_id",
+      "scenario_revision",
+      "signing_secret_sealed",
+      "source_deployment_id",
+      "target_url"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_api_routes",
     "columns": [
       "account_id",
@@ -1512,6 +1690,22 @@
       "route_template"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_api_sandbox_scenarios",
+    "columns": [
+      "app_id",
+      "definition",
+      "id",
+      "name",
+      "revision",
+      "source_request_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_application_standards",
@@ -21672,6 +21866,7 @@
       "approvers",
       "created_at",
       "notify_channel_ids",
+      "require_passing_sandbox_suite",
       "required_approvals",
       "timeout_minutes",
       "updated_at",

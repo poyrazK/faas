@@ -29,6 +29,11 @@ func seedReleaseGate(t *testing.T, enabled bool) releaseGateFixture {
 
 func seedReleaseGateWithIntent(t *testing.T, enabled, hasReleaseCommand bool) releaseGateFixture {
 	t.Helper()
+	return seedReleaseGateInScope(t, enabled, hasReleaseCommand, "")
+}
+
+func seedReleaseGateInScope(t *testing.T, enabled, hasReleaseCommand bool, scope string) releaseGateFixture {
+	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "release-gate@example.com", api.PlanPro)
@@ -53,7 +58,7 @@ func seedReleaseGateWithIntent(t *testing.T, enabled, hasReleaseCommand bool) re
 	}
 	candidateParams := state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate",
-		Status: state.DeploySnapshotting,
+		Status: state.DeploySnapshotting, Scope: scope,
 	}
 	if hasReleaseCommand {
 		candidateParams.ReleaseCommand = []string{"bin/migrate", "--safe"}

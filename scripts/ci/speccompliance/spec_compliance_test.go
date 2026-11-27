@@ -867,6 +867,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"APISandboxPartnerStep": true, // internal permit for an in-flight guest request
 	// ADR-20261124094745: bodies of the consumer link path the gateway
 	// serves on an app's own host, not an apid route.
 	"LinkConsumerRequest":  true,
@@ -1822,6 +1823,13 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
+		filepath.Join(root, "pkg", "api", "api_sandbox.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_approval.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_comparison.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_run.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_scenario.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_suite.go"),
+		filepath.Join(root, "pkg", "api", "api_sandbox_webhook_partner.go"),
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
@@ -2348,6 +2356,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
 	}
+	// Both scenario save handlers decode the same DTO, while the library
+	// endpoint always requires expected_revision and has a separate schema.
+	dtos["APISandboxLibraryScenarioSaveRequest"] = dtos["APISandboxScenarioSaveRequest"]
 	// The preview response embeds the stable database switch's fields.
 	for field := range dtos["DatabaseSwitch"] {
 		dtos["MigrationDatabaseSwitch"][field] = true

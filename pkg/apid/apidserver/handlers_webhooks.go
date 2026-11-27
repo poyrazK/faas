@@ -193,6 +193,9 @@ func validateUpdatedDatadogAppWebhook(existing state.AppWebhook, params state.Up
 // SSRF guard (resolveAndCheckEgress) runs after this. Mirrors
 // the alert handler's two-stage check.
 func validateWebhookURL(rawURL string) *api.Problem {
+	if strings.HasPrefix(rawURL, api.APISandboxWebhookReceiverPrefix) {
+		return api.ErrAppWebhookInvalid("this receiver is reserved for sandbox scenario runs")
+	}
 	if rawURL == "" {
 		return api.ErrAppWebhookInvalid("target_url is required")
 	}
