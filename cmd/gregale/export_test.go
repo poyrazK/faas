@@ -3233,3 +3233,19 @@ var WarnShellLineCommand = warnShellLineCommand
 
 // MCPListingKeep exposes mcpListingKeep.
 var MCPListingKeep = mcpListingKeep
+
+// SetDoctorBootTimings shortens `doctor --boot` waits for the test.
+func SetDoctorBootTimings(cleanup func(func()), startup, stayUp, poll time.Duration) {
+	oldStartup, oldStay, oldPoll := doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll
+	doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll = startup, stayUp, poll
+	cleanup(func() { doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll = oldStartup, oldStay, oldPoll })
+}
+
+// ProcNetListeners renders parseProcNetListeners' result as host:port strings.
+func ProcNetListeners(text string) []string {
+	var out []string
+	for _, l := range parseProcNetListeners(text) {
+		out = append(out, l.String())
+	}
+	return out
+}

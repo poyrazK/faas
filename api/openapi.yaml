@@ -25673,7 +25673,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Stripe is not connected.
+          description: A paid plan is offered and Stripe is not connected.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
