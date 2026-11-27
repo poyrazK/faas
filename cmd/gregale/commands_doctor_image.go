@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
-const doctorUsage = "usage: gregale doctor [--strict] [--json] [--app SLUG] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin]"
+const doctorUsage = "usage: gregale doctor [--strict] [--json] [--app SLUG] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin | --docker-config PATH]"
 
 type doctorImageInspector interface {
 	InspectImage(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error)
@@ -25,6 +25,9 @@ type doctorImageInspector interface {
 type doctorImageFlags struct {
 	image, user   string
 	passwordStdin bool
+	// dockerConfig names a Docker config whose credentials for the image's
+	// registry the inspection uses, credential helpers included.
+	dockerConfig string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -32,6 +35,7 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.image, "image", "", "inspect OCI image metadata without downloading layers")
 	fs.StringVar(&f.user, "registry-user", "", "registry username (requires --registry-password-stdin)")
 	fs.BoolVar(&f.passwordStdin, "registry-password-stdin", false, "read registry password or token from stdin")
+	fs.StringVar(&f.dockerConfig, "docker-config", "", "use the image registry's credentials from this Docker config.json or its directory")
 	return f
 }
 
@@ -44,6 +48,14 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	if visited["image"] {
 		if _, err := reference.ParseNormalizedNamed(f.image); err != nil {
 			return errors.New("invalid image reference; use registry/repository:tag or registry/repository@sha256:digest")
+		}
+	}
+	if visited["docker-config"] {
+		if f.image == "" || strings.TrimSpace(f.dockerConfig) == "" {
+			return errors.New("--docker-config requires --image and a Docker config path")
+		}
+		if visited["registry-user"] || visited["registry-password-stdin"] {
+			return errors.New("--docker-config cannot be combined with --registry-user: choose one source of registry credentials")
 		}
 	}
 	if visited["registry-user"] || visited["registry-password-stdin"] {
@@ -93,6 +105,13 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(api.OCIPullTimeoutSeconds)*time.Second)
 	defer cancel()
+	if flags.dockerConfig != "" {
+		cred, err := dockerConfigRegistryAuth(ctx, flags.dockerConfig, flags.image, runDockerCredentialHelper)
+		if err != nil {
+			return printErr("Could not read registry credentials", err)
+		}
+		auth = &oci.BasicAuth{Username: cred.Username, Password: cred.Password}
+	}
 	report := runDoctorImageChecks(ctx, flags.image, auth, inspector)
 	if asJSON {
 		if err := writeJSON(report); err != nil {
@@ -139,7 +158,7 @@ func runDoctorImageChecks(ctx context.Context, ref string, auth *oci.BasicAuth, 
 }
 
 func doctorImageAccessError(err error) doctorCheck {
-	c := doctorCheck{Name: "registry-metadata", Status: "error", Code: "image_inspection_failed", Hint: "Could not read image metadata from this machine.", Fix: "Check the image reference, registry connectivity and pull permissions; supply private-registry credentials with --registry-user and --registry-password-stdin."}
+	c := doctorCheck{Name: "registry-metadata", Status: "error", Code: "image_inspection_failed", Hint: "Could not read image metadata from this machine.", Fix: "Check the image reference, registry connectivity and pull permissions; supply private-registry credentials with --docker-config ~/.docker, or --registry-user and --registry-password-stdin."}
 	// Never print arbitrary registry response bodies: they can echo credentials.
 	var selection *oci.PlatformSelectionError
 	if errors.As(err, &selection) {

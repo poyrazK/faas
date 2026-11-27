@@ -3,6 +3,7 @@ package main_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,12 +117,18 @@ func TestDoctorImageCommand(t *testing.T) {
 	t.Cleanup(func() {
 		(*main.OsStdout), (*main.OsStderr), (*main.OsStdin), (*main.JsonOutput) = oldOut, oldErr, oldIn, oldJSON
 	})
+	// adr: 20261025110000 — doctor reads `docker login` credentials too.
+	dockerConfig := writeDockerConfig(t, `{"auths":{"example.com":{"auth":"`+base64.StdEncoding.EncodeToString([]byte("dock:secret-token"))+`"}}}`)
 	for _, tc := range []struct {
 		name    string
 		args    []string
 		warning bool
 		want    int
 	}{
+		{"docker config", []string{"--image", "example.com/app", "--json", "--docker-config", dockerConfig}, false, 0},
+		{"docker config and user", []string{"--image", "example.com/app", "--docker-config", dockerConfig, "--registry-user", "u", "--registry-password-stdin"}, false, 1},
+		{"docker config without image", []string{"--docker-config", dockerConfig}, false, 1},
+		{"docker config without login", []string{"--image", "other.example/app", "--docker-config", dockerConfig}, false, 1},
 		{"json", []string{"--image", "example.com/app", "--json"}, false, 0},
 		{"warnings", []string{"--image", "example.com/app", "--json"}, true, 0},
 		{"strict", []string{"--image", "example.com/app", "--json", "--strict"}, true, 1},
@@ -143,6 +150,9 @@ func TestDoctorImageCommand(t *testing.T) {
 				}
 				if tc.name == "authenticated" && (auth == nil || auth.Username != "user" || auth.Password != "secret-token") {
 					t.Error("credential input not passed correctly")
+				}
+				if tc.name == "docker config" && (auth == nil || auth.Username != "dock" || auth.Password != "secret-token") {
+					t.Errorf("docker config credential not passed: %+v", auth)
 				}
 				cfg := oci.ImageConfig{OS: "linux", Architecture: "amd64", Entrypoint: []string{"node"}, Cmd: []string{"app.js"}, User: "1000:1000"}
 				if tc.warning {
