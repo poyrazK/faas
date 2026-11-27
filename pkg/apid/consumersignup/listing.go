@@ -62,11 +62,7 @@ func (s *Service) Listing(w http.ResponseWriter, r *http.Request) {
 	if set.Enabled {
 		out.SignupURL = strings.TrimRight(s.Host.PublicOrigin(), "/") + "/v1/consumer-signup/" + url.PathEscape(app.Slug) + "/page"
 	}
-	if connections, ok := s.Host.Store().(state.StatementInvoiceExportStore); ok {
-		if conn, err := connections.GetBillingConnection(r.Context(), app.AccountID, state.BillingProviderStripe); err == nil {
-			out.Livemode = conn.Livemode
-		}
-	}
+	out.Livemode = s.liveMode(r.Context(), app.AccountID)
 	plans, err := s.OfferedPlans(r.Context(), app, set)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not read the plans"))
