@@ -4014,6 +4014,15 @@ const (
 	// running out of memory within the window (Observe audit 2026-11-21,
 	// finding 18).
 	AlertMetricOOMKills AlertMetric = "oom_kills"
+	// AlertMetricBootFailures counts the app's failed boots (wake.boot_failed
+	// events) within the window: an app that crashes on start and scales to
+	// zero between wakes.
+	AlertMetricBootFailures AlertMetric = "boot_failures"
+	// AlertMetricJobFailures counts the account's job runs that finished
+	// failed or dead-lettered within the window. Jobs belong to the account,
+	// not an app, so a rule on any app counts every job, like
+	// account_spend_eur.
+	AlertMetricJobFailures AlertMetric = "job_failures"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.

@@ -110,8 +110,8 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 	// security and edge WAF seeds plus MCP readiness, route insight
 	// (ADR-20261020161310) and route alert (ADR-20261028110044) seeds ship 35
 	// rows. This test pins the count and (category, name) ordering shape.
-	if len(got) != 36 {
-		t.Errorf("catalog row count = %d; want 36 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP readiness + route insight + route alert + AI budget alert seeds)", len(got))
+	if len(got) != 38 {
+		t.Errorf("catalog row count = %d; want 38 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP readiness + route insight + route alert + AI budget alert + boot/job failure seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {
@@ -314,6 +314,8 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		"route_monitor_incidents":            true,
 		"route_health_holds":                 true,
 		"ai_budget_alerts":                   true,
+		"boot_failing":                       true,
+		"job_failures":                       true,
 		"mcp_readiness_unhealthy":            true,
 		"mcp_oauth_issuance_unknown":         true,
 		"mcp_oauth_reauthorization_required": true,
