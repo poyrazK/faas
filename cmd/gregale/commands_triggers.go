@@ -248,6 +248,11 @@ func cmdTriggersGet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	trigger, err := client.GetTriggersId(context.Background(), pos[0])
 	if err != nil {
 		return printErr("Could not load trigger", err)
@@ -411,6 +416,11 @@ func cmdTriggersUpdate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	req := api.UpdateTriggerRequest{}
 	req.Enabled = triggerEnabledValue(explicit, *enabled, *disabled)
 	if explicit["config"] {
@@ -473,6 +483,11 @@ func cmdTriggersDelete(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	if err := client.DeleteTriggersId(context.Background(), pos[0]); err != nil {
 		return printErr("Could not delete trigger", err)
 	}
@@ -501,6 +516,11 @@ func cmdTriggersToggle(args []string, resume bool) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	ctx := context.Background()
 	if resume {
 		err = client.PostTriggersIdResume(ctx, pos[0])
@@ -535,6 +555,11 @@ func cmdTriggersRecords(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	resp, err := client.GetTriggersIdRecords(context.Background(), pos[0], *state)
 	if err != nil {
 		return printErr("Could not list trigger records", err)
@@ -578,6 +603,11 @@ func cmdTriggersRecordAction(args []string, retry bool) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	ctx := context.Background()
 	if retry {
 		err = client.PostTriggersIdRecordsRidRetry(ctx, pos[0], pos[1])
@@ -609,6 +639,11 @@ func cmdTriggersDLQ(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	resp, err := client.GetTriggersIdDlq(context.Background(), pos[0], *reason)
 	if err != nil {
 		return printErr("Could not list trigger dead letter", err)
@@ -640,6 +675,11 @@ func cmdTriggersMetrics(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	triggerID, err := resolveTriggerRef(context.Background(), client, pos[0])
+	if err != nil {
+		return printErr("Could not find trigger", err)
+	}
+	pos[0] = triggerID
 	metrics, err := client.GetTriggersIdMetrics(context.Background(), pos[0])
 	if err != nil {
 		return printErr("Could not load trigger metrics", err)

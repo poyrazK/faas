@@ -174,6 +174,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}
+	app = app.WithAPISandboxEgress()
 	spec := AppSpec{
 		RehearsalRunID: runID,
 		BaseKey:        pinnedBase, LayerKey: request.ArtifactKey,

@@ -26,7 +26,12 @@ func (s *server) consumerFeatureAllowed(w http.ResponseWriter, acct state.Accoun
 }
 
 func (s *server) consumerApp(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool) {
-	return s.loadApp(w, r, acct, r.PathValue("slug"))
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if ok && (app.Manifest.APISandboxPartner || app.Manifest.APISandboxRun) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Private API sandbox", "manage access in the release sandbox panel"))
+		return state.App{}, false
+	}
+	return app, ok
 }
 
 func consumerResponse(c state.APIConsumer) api.APIConsumerResponse {

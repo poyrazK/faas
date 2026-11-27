@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/taskrehearsal"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -17,6 +19,22 @@ import (
 // an app row that cannot pass the permanent-purge bucket guard. A PR
 // preview's databases go the same way (ADR-20261102123523).
 func (s *server) cleanupDevSessionResources(ctx context.Context, app state.App) error {
+	if err := s.checkAPISandboxCleanup(ctx, app); err != nil {
+		return err
+	}
+	if app.Manifest.APISandboxRun && state.IsAPISandbox(app) {
+		hooks, err := s.store.ListAppWebhooksForApp(ctx, app.ID)
+		if err != nil {
+			return fmt.Errorf("list sandbox callback receivers: %w", err)
+		}
+		for _, hook := range hooks {
+			if strings.HasPrefix(hook.TargetURL, api.APISandboxWebhookReceiverPrefix) {
+				if err := s.store.DeleteAppWebhook(ctx, hook.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+					return fmt.Errorf("delete sandbox callback receiver: %w", err)
+				}
+			}
+		}
+	}
 	if err := s.taskRehearsalRunner().CleanupExpiredApp(ctx, &taskrehearsal.Provisioner{Store: s.store}, app); err != nil {
 		return err
 	}

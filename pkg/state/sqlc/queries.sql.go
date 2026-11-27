@@ -75502,6 +75502,26 @@ func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg Objec
 	return id, err
 }
 
+const objectS3BindingLockBorrower = `-- name: ObjectS3BindingLockBorrower :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.account_id=a.account_id
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid
+  AND b.id=$3::uuid AND b.app_id<>a.id
+FOR UPDATE OF a
+`
+
+type ObjectS3BindingLockBorrowerParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingLockBorrower(ctx context.Context, db DBTX, arg ObjectS3BindingLockBorrowerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectS3BindingLockBorrower, arg.AppID, arg.AccountID, arg.BucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const objectS3BindingRevokeLock = `-- name: ObjectS3BindingRevokeLock :one
 SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id, issuer_account_id, issuer_access_revision, key_prefix FROM object_storage_s3_credentials
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3
@@ -75616,6 +75636,72 @@ ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at
 func (q *Queries) ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectS3BindingStampRuntime, appID)
 	return err
+}
+
+const objectS3ComputeBindingsHeldBy = `-- name: ObjectS3ComputeBindingsHeldBy :many
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, c.url_request, c.url_api_key_id, c.url_expires_at, c.url_receipt_id, c.issuer_account_id, c.issuer_access_revision, c.key_prefix, b.app_id AS bucket_app_id
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
+WHERE c.account_id=$1::uuid AND c.managed_app_id=$2::uuid
+  AND c.status='active' AND c.rotation_parent_id IS NULL AND c.url_request IS NULL
+ORDER BY c.created_at, c.id
+`
+
+type ObjectS3ComputeBindingsHeldByParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type ObjectS3ComputeBindingsHeldByRow struct {
+	ObjectStorageS3Credential ObjectStorageS3Credential
+	BucketAppID               pgtype.UUID
+}
+
+func (q *Queries) ObjectS3ComputeBindingsHeldBy(ctx context.Context, db DBTX, arg ObjectS3ComputeBindingsHeldByParams) ([]ObjectS3ComputeBindingsHeldByRow, error) {
+	rows, err := db.Query(ctx, objectS3ComputeBindingsHeldBy, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectS3ComputeBindingsHeldByRow{}
+	for rows.Next() {
+		var i ObjectS3ComputeBindingsHeldByRow
+		if err := rows.Scan(
+			&i.ObjectStorageS3Credential.ID,
+			&i.ObjectStorageS3Credential.AccountID,
+			&i.ObjectStorageS3Credential.BucketID,
+			&i.ObjectStorageS3Credential.AccessKeyID,
+			&i.ObjectStorageS3Credential.SecretSealed,
+			&i.ObjectStorageS3Credential.Kid,
+			&i.ObjectStorageS3Credential.Label,
+			&i.ObjectStorageS3Credential.Permission,
+			&i.ObjectStorageS3Credential.Status,
+			&i.ObjectStorageS3Credential.CreatedAt,
+			&i.ObjectStorageS3Credential.LastUsedAt,
+			&i.ObjectStorageS3Credential.RevokedAt,
+			&i.ObjectStorageS3Credential.ManagedAppID,
+			&i.ObjectStorageS3Credential.ManagedScope,
+			&i.ObjectStorageS3Credential.ManagedPrefix,
+			&i.ObjectStorageS3Credential.RotationParentID,
+			&i.ObjectStorageS3Credential.RotationWakeID,
+			&i.ObjectStorageS3Credential.RotationStampedAt,
+			&i.ObjectStorageS3Credential.UrlRequest,
+			&i.ObjectStorageS3Credential.UrlApiKeyID,
+			&i.ObjectStorageS3Credential.UrlExpiresAt,
+			&i.ObjectStorageS3Credential.UrlReceiptID,
+			&i.ObjectStorageS3Credential.IssuerAccountID,
+			&i.ObjectStorageS3Credential.IssuerAccessRevision,
+			&i.ObjectStorageS3Credential.KeyPrefix,
+			&i.BucketAppID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
@@ -87255,7 +87341,13 @@ SELECT (jsonb_build_object(
  -- (#7923) keep the id without a foreign key.
  'deployment_verification_queries.deployment_id', (SELECT count(*) FROM deployment_verification_queries WHERE deployment_id=$1::uuid),
  'instance_resource_minutes.deployment_id', (SELECT count(*) FROM instance_resource_minutes WHERE deployment_id=$1::uuid),
- 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=$1::uuid)
+ 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=$1::uuid),
+ -- Data API inspection admissions (#8068) pin the inspected deployment
+ -- without a foreign key.
+ 'data_api_inspection_admissions.deployment_id', (SELECT count(*) FROM data_api_inspection_admissions WHERE deployment_id=$1::uuid),
+ -- A route split (#8100) records its route app's deployment without a
+ -- foreign key.
+ 'route_splits.target_deployment_id', (SELECT count(*) FROM route_splits WHERE target_deployment_id=$1::uuid)
 ))::jsonb AS borrowers
 `
 
@@ -89169,19 +89261,26 @@ func (q *Queries) ReadInvocationPinScope(ctx context.Context, db DBTX, arg ReadI
 }
 
 const readInvocationVersionApp = `-- name: ReadInvocationVersionApp :one
-SELECT id, account_id, project_id, preview_of_slug, status, deleted_at,
-  coalesce(manifest->>'execution_mode', '')::text AS execution_mode
+SELECT id, account_id, project_id, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, status, deleted_at,
+  coalesce(manifest->>'execution_mode', '')::text AS execution_mode,
+  coalesce(manifest->>'api_sandbox_source_deployment_id', '')::text AS api_sandbox_source_deployment_id,
+  coalesce(manifest->>'api_sandbox_run' = 'true', false)::boolean AS api_sandbox_run
 FROM apps WHERE id = $1::uuid
 `
 
 type ReadInvocationVersionAppRow struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	ProjectID     pgtype.UUID
-	PreviewOfSlug pgtype.Text
-	Status        string
-	DeletedAt     pgtype.Timestamptz
-	ExecutionMode string
+	ID                           pgtype.UUID
+	AccountID                    pgtype.UUID
+	ProjectID                    pgtype.UUID
+	PreviewOfSlug                pgtype.Text
+	PreviewPrNumber              pgtype.Int4
+	PreviewPrState               pgtype.Text
+	PreviewExpiresAt             pgtype.Timestamptz
+	Status                       string
+	DeletedAt                    pgtype.Timestamptz
+	ExecutionMode                string
+	ApiSandboxSourceDeploymentID string
+	ApiSandboxRun                bool
 }
 
 // ADR-570: identity-only projection for a durable invocation version snapshot.
@@ -89193,9 +89292,14 @@ func (q *Queries) ReadInvocationVersionApp(ctx context.Context, db DBTX, id pgty
 		&i.AccountID,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
+		&i.PreviewPrNumber,
+		&i.PreviewPrState,
+		&i.PreviewExpiresAt,
 		&i.Status,
 		&i.DeletedAt,
 		&i.ExecutionMode,
+		&i.ApiSandboxSourceDeploymentID,
+		&i.ApiSandboxRun,
 	)
 	return i, err
 }

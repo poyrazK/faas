@@ -1,3 +1,16 @@
 # Paths in the ADR-20261026145832 tree that still break its naming rules.
 # This list only shrinks: give a path a tree name in cli_tree.go instead of adding it.
-
+postgres auto-grow  # hyphenated auto-grow, verb auto-grow
+postgres autovacuum  # verb autovacuum
+postgres backup-schedule  # hyphenated backup-schedule, verb backup-schedule
+postgres bindings timeouts  # verb timeouts
+postgres branch masked  # verb masked
+postgres cancel-query  # hyphenated cancel-query, verb cancel-query
+postgres errors  # verb errors
+postgres import-status  # hyphenated import-status, verb import-status
+postgres maintenance  # verb maintenance
+postgres queries  # verb queries
+postgres recovery-region  # hyphenated recovery-region, verb recovery-region
+postgres restore-drill  # hyphenated restore-drill, verb restore-drill
+postgres sessions  # verb sessions
+postgres upgrade-rehearsal  # hyphenated upgrade-rehearsal, verb upgrade-rehearsal

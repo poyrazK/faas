@@ -406,8 +406,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		dirty := false
 		for _, raw := range *req.EgressAllowlist {
 			prefix, err := netip.ParsePrefix(raw)
-			if err != nil || prefix.Bits() == 0 {
-				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
+			if err != nil {
+				return api.ErrInvalidEgressAllowlist(raw, err)
+			}
+			if prefix.Bits() == 0 {
+				// "parse failed" for a valid CIDR read as a typo (prod
+				// hunt r58). /0 is every address: no allowlist at all.
+				return api.ErrInvalidEgressAllowlist(raw, errors.New("a /0 entry allows every address; `gregale app <slug> egress-allowlist clear` removes the allowlist instead"))
 			}
 			// Allowlisted destinations skip the SMTP block, the port
 			// policy and the DNS gate, so 0.0.0.0/1 plus 128.0.0.0/1
@@ -438,6 +443,15 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				// silently produces `::/24` instead of `1.2.3.0/24`.
 				prefix = netip.PrefixFrom(prefix.Masked().Addr().Unmap(), v4Bits).Masked()
 				dirty = true
+			}
+			// A range apps can never reach (RFC1918, link-local and the
+			// rest of the platform denylist) was saved and reported as
+			// "updated", though no allowlist opens it (prod hunt r58:
+			// 10.0.0.0/8). Only new entries are refused, so an app that
+			// already holds one can still change its list. Held entries
+			// compare masked: 10.0.0.1/8 resubmits the stored 10.0.0.0/8.
+			if blocked, ok := egressAllowlistBlockedRange(prefix); ok && !slices.ContainsFunc(app.EgressAllowlist, func(h netip.Prefix) bool { return h.Masked() == prefix.Masked() }) {
+				return api.ErrInvalidEgressAllowlist(raw, fmt.Errorf("it is inside %s, which apps can never reach; an allowlist entry does not open it (see https://gregale.dev/docs/egress-denylist)", blocked))
 			}
 			key := prefix.String()
 			if _, ok := seen[key]; ok {
@@ -1030,6 +1044,18 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 	return nil
 }
 
+// egressAllowlistBlockedRange reports the platform deny range that holds
+// every address of p, if any.
+func egressAllowlistBlockedRange(p netip.Prefix) (netip.Prefix, bool) {
+	for _, cidr := range api.TenantEgressDenyCIDRs {
+		d := netip.MustParsePrefix(cidr)
+		if d.Addr().Is4() == p.Addr().Is4() && d.Bits() <= p.Bits() && d.Contains(p.Addr()) {
+			return d, true
+		}
+	}
+	return netip.Prefix{}, false
+}
+
 // errOrZero shapes the error message in api.ErrInvalidEgressAllowlist.
 // When ParsePrefix fails err is non-nil; the v4 / zero-bits branches
 // fire without one, so we synthesise a stable suffix instead of
@@ -1103,6 +1129,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	req, decodeErr := httpkit.DecodeUpdateAppRequest(r)
 	if decodeErr != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
+		return
+	}
+	if state.IsAPISandbox(app) && (req.EgressAllowlist != nil || req.EgressPorts != nil) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Sandbox egress is fixed", "API sandboxes restrict outbound traffic to their dedicated database binding"))
 		return
 	}
 	if problem := s.appUpdateSettingsProblem(r, acct, app, req); problem != nil {
@@ -2138,6 +2168,10 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 	}
 	if problem := s.appPostgresBindingsProblem(r.Context(), app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := s.appBorrowedBindingsProblem(r.Context(), app); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

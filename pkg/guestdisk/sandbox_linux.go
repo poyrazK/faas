@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -52,6 +53,17 @@ func SandboxMain(args []string) int {
 	// landlock_restrict_self fails with EPERM on a thread without
 	// no_new_privs). The process ends in execve, so the lock is never undone.
 	runtime.LockOSThread()
+	// No garbage collection either: a background GC worker that needs a new
+	// mapping between the address cap and execve would print the runtime's
+	// "cannot allocate memory" fatal error into the tool's stderr, which
+	// callers read as a tool failure. The helper does little before exec.
+	debug.SetGCPercent(-1)
+	// And one P. With several, a syscall in confine can hand its P to a
+	// new M that sysmon is still allocating (g0 stack, span metadata) while
+	// this thread, on another idle P, sets the cap; that allocation then
+	// fails the same way. With one P this thread cannot run again until the
+	// handoff M exists, and nothing else runs while it holds the P in exec.
+	runtime.GOMAXPROCS(1)
 	spec, err := parseHelperArgs(args)
 	var vec execVectors
 	if err == nil {

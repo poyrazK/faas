@@ -92,7 +92,7 @@ func cmdCustomerOperations(args []string) int {
 		return unknownSubcommandChoices(os.Stderr, "customer-operations", nestedCliCommand("customer-operations"), args[0])
 	}
 	if err != nil {
-		return printErr("Invalid customer-operations command", err)
+		return printErr("Invalid operation command", err)
 	}
 	client, err := authedClient()
 	if err != nil {

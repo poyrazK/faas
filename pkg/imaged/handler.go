@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/buildcache"
@@ -110,6 +111,9 @@ type Handler struct {
 	// verifiedBases remembers the base artifacts this process verified
 	// from its node cache (ADR-595 amendment 2026-11-17).
 	verifiedBases *verifiedBaseFiles
+	// runtimeBaseRetries defers a preparation whose runtime-base staging
+	// lost to another node's base to the recovery loop; nil defers nothing.
+	runtimeBaseRetries *runtimeBaseRetries
 	// deferredScans runs the deploy scan after the snapshot handoff when
 	// the app does not gate on it (ADR-075 amendment 2026-11-17); nil
 	// scans every deploy before the handoff.
@@ -387,6 +391,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 	return &Handler{
 		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{}, verifiedBases: &verifiedBaseFiles{},
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log, servingSince: time.Now().UTC(),
+		runtimeBaseRetries: newRuntimeBaseRetries(),
 	}
 }
 
@@ -2269,7 +2274,8 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 			return err
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
-		if errors.Is(err, errReleaseDeploymentClosed) {
+		if errors.Is(err, errReleaseDeploymentClosed) || errors.Is(err, errReleaseApprovalWait) ||
+			errors.Is(err, state.ErrPassingSandboxSuiteRequired) || errors.Is(err, state.ErrReleaseApprovalPolicyChanged) {
 			return nil
 		}
 		if err != nil {
@@ -2303,10 +2309,24 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	if !errors.Is(err, state.ErrNotFound) {
 		return state.AppTask{}, fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
+	current, err := h.store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		return state.AppTask{}, fmt.Errorf("imaged: read release before admission: %w", err)
+	}
+	wait, err := approval.LoadReleaseCommandWait(ctx, h.store, app, current, time.Now())
+	if err != nil {
+		return state.AppTask{}, err
+	}
+	if wait.Waits && wait.Status.State != api.ReleaseApprovalStateApproved {
+		return state.AppTask{}, errReleaseApprovalWait
+	}
 	params := state.CreateAppTaskParams{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
 		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
 		CommandShell: dep.ReleaseCommandShell,
+	}
+	if wait.Waits {
+		params.ReleaseApprovalPolicyUpdatedAt = &wait.Policy.UpdatedAt
 	}
 	contained, err := h.prepareContainedRelease(ctx, app, dep, &params)
 	if err != nil {
@@ -2332,6 +2352,8 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 // errReleaseDeploymentClosed reports that release admission already failed the
 // deployment durably; there is nothing left to wait for or prime.
 var errReleaseDeploymentClosed = errors.New("imaged: release admission closed the deployment")
+
+var errReleaseApprovalWait = errors.New("imaged: release approval is still required")
 
 // prepareContainedRelease pins the release of an app enrolled in a contained
 // rehearsal as that run's contained command (ADR-20261020150000): it executes
@@ -4736,14 +4758,23 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 	}
 	if app.Runtime == "" {
 		if _, err := h.EnsureMinimalBase(ctx, oci.ImageArchitecture, os.Getenv); err != nil {
-			return fmt.Errorf("imaged: ensure minimal base: %w", err)
+			return fmt.Errorf("imaged: ensure minimal base: %w", runtimeBaseStagingError(err))
 		}
 		return nil
 	}
 	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, oci.ImageArchitecture, os.Getenv); err != nil {
-		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, err)
+		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, runtimeBaseStagingError(err))
 	}
 	return nil
+}
+
+// runtimeBaseStagingError marks a staging failure that another node's base
+// publication caused with errRuntimeBaseStale.
+func runtimeBaseStagingError(err error) error {
+	if errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+		return fmt.Errorf("%w: %w", errRuntimeBaseStale, err)
+	}
+	return err
 }
 
 // transition is the only place imaged writes to deployments.status. Keeps

@@ -707,7 +707,7 @@ Set a weekly UTC window for planned base and VM launch refreshes on an
 always-on native PostgreSQL database.
 
 ```sh
-gregale postgres maintenance orders --day sunday --since 02:00 --duration 1h
+gregale postgres maintenance orders --day sunday --start 02:00 --duration 1h
 gregale postgres status orders
 gregale postgres maintenance orders --off
 ```

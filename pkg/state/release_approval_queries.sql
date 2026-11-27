@@ -3,13 +3,14 @@
 -- name: UpsertAppReleaseApprovalPolicy :one
 INSERT INTO app_release_approval_policies (
   app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers,
-  allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at
+  allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at, require_passing_sandbox_suite
 )
 VALUES (
   sqlc.arg(app_id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(required_approvals)::smallint,
   sqlc.arg(after_stage)::smallint, sqlc.arg(timeout_minutes)::integer, sqlc.arg(approvers)::text,
   sqlc.arg(allow_self_approval)::boolean, sqlc.arg(notify_channel_ids)::uuid[], sqlc.arg(updated_by)::text,
-  sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+  sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz,
+  coalesce(sqlc.narg(require_passing_sandbox_suite)::boolean, false)
 )
 ON CONFLICT (app_id) DO UPDATE SET
   required_approvals = EXCLUDED.required_approvals,
@@ -19,6 +20,7 @@ ON CONFLICT (app_id) DO UPDATE SET
   allow_self_approval = EXCLUDED.allow_self_approval,
   notify_channel_ids = EXCLUDED.notify_channel_ids,
   updated_by = EXCLUDED.updated_by,
+  require_passing_sandbox_suite = coalesce(sqlc.narg(require_passing_sandbox_suite)::boolean, app_release_approval_policies.require_passing_sandbox_suite),
   updated_at = EXCLUDED.updated_at
 RETURNING *;
 

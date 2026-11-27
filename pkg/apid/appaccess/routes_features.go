@@ -137,6 +137,10 @@ var featureRouteActions = map[string]authz.OrgAction{
 	// mcp-stats (ADR-20261126082046) names customers and revenue, like
 	// monetization-funnel.
 	"GET /v1/apps/{slug}/mcp-stats": authz.OrgActionManageAppSecurity,
+	// mcp-listing (ADR-20261126175800) publishes a public page for the app.
+	"GET /v1/apps/{slug}/mcp-listing":    authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/mcp-listing":    authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/mcp-listing": authz.OrgActionManageAppSecurity,
 	// consumers
 	"POST /v1/apps/{slug}/consumers":                                                        authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/credits":                                   authz.OrgActionManageAppSecurity,
@@ -210,6 +214,12 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/database-switches":              authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/database-switches/{id}":         authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/database-switches/{id}/cancel": authz.OrgActionDeployApp,
+	// A managed Postgres migration activation switches the app's database
+	// like a database switch.
+	"GET /v1/apps/{slug}/database-switches/migration":              authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/database-switches/migration/{id}":         authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/database-switches/migration":             authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/database-switches/migration/{id}/cancel": authz.OrgActionDeployApp,
 	// debug
 	"POST /v1/apps/{slug}/debug/compare":                   authz.OrgActionReadAppLogs, // read-only; POST only carries the body
 	"GET /v1/apps/{slug}/debug/coverage":                   authz.OrgActionReadAppLogs,
@@ -226,6 +236,9 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/debug/requests/{req_id}/replay":  authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}/debug/running":                    authz.OrgActionReadAppLogs,
 	"GET /v1/apps/{slug}/debug/status":                     authz.OrgActionReadAppLogs,
+
+	"GET /v1/apps/{slug}/debug/requests/{req_id}/sandbox-scenario-draft": authz.OrgActionReadAppLogs,
+
 	// delayed-tasks
 	"GET /v1/apps/{slug}/delayed-tasks":  authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/delayed-tasks": authz.OrgActionConfigureApp,
@@ -271,6 +284,37 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/deployments/{id}/runtime/upgrade-preview":                             authz.OrgActionReadApp,
 	"GET /v1/deployments/{id}/status":                                              authz.OrgActionReadApp,
 	"GET /v1/deployments/{id}/url":                                                 authz.OrgActionReadApp,
+	// api-sandboxes
+	"DELETE /v1/apps/{slug}/api-sandbox-scenarios/{scenario}":                              authz.OrgActionDeployApp,
+	"DELETE /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}":              authz.OrgActionDeployApp,
+	"DELETE /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner":      authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/api-sandbox-scenarios":                                            authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/api-sandbox-scenarios/{scenario}":                                 authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/api-sandbox-suite":                                                authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons":                 authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}":    authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs":                        authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}":                  authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite":  authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario":                    authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/deployments/{deployment}/api-sandboxes":                           authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals/sandbox-checks":                                    authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals/sandbox-checks/{check}":                            authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals/sandbox-suite-runs":                                authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals/sandbox-suite-runs/{run}":                          authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/invite":          authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite": authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/report-link":     authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/invites":        authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner/invite": authz.OrgActionDeployApp,
+	"PUT /v1/apps/{slug}/api-sandbox-scenarios/{scenario}":                                 authz.OrgActionDeployApp,
+	"PUT /v1/apps/{slug}/api-sandbox-suite":                                                authz.OrgActionDeployApp,
+	"PUT /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}":    authz.OrgActionDeployApp,
+	"PUT /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}":                  authz.OrgActionDeployApp,
+	"PUT /v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario":                    authz.OrgActionDeployApp,
+	"PUT /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}":                 authz.OrgActionDeployApp,
+	"PUT /v1/deployments/{id}/approvals/sandbox-checks/{check}":                            authz.OrgActionDeployApp,
+	"PUT /v1/deployments/{id}/approvals/sandbox-suite-runs/{run}":                          authz.OrgActionDeployApp,
 	// diff
 	"POST /v1/apps/{slug}/diff": authz.OrgActionConfigureApp,
 	// discovered-routes

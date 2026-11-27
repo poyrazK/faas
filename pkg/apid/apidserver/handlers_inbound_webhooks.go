@@ -319,6 +319,11 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	s.receiveInboundWebhookDelivery(w, r, endpoint, "")
+}
+
+// sandboxRevision is set only by the scenario worker for its private endpoint.
+func (s *server) receiveInboundWebhookDelivery(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, sandboxRevision string) {
 	body, problem := readInboundWebhookBody(w, r)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -333,15 +338,15 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, problem)
 		return
 	}
-	s.receiveVerifiedInboundWebhook(w, r, endpoint, providerEventID, eventType, body)
+	s.receiveVerifiedInboundWebhook(w, r, endpoint, providerEventID, eventType, body, sandboxRevision)
 }
 
-func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body []byte) {
-	if s.receiveWebhookWorkflow(w, r, endpoint, providerEventID, eventType, body) {
-		return
-	}
-	if s.receiveBoundWorkflowCallback(w, r, endpoint, body) {
-		return
+func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body []byte, sandboxRevision string) {
+	if sandboxRevision == "" {
+		if s.receiveWebhookWorkflow(w, r, endpoint, providerEventID, eventType, body) ||
+			s.receiveBoundWorkflowCallback(w, r, endpoint, body) {
+			return
+		}
 	}
 	app, err := s.store.AppByID(r.Context(), endpoint.AppID)
 	if err != nil {
@@ -359,7 +364,8 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 	// could never run, and a deleted app kept its endpoint. Refuse
 	// before the durable receipt; a provider retries a 402 and
 	// delivers once the account is back in good standing.
-	if app.Status == state.AppDeleted {
+	if app.Status == state.AppDeleted ||
+		(sandboxRevision != "" && (!app.Manifest.APISandboxRun || !state.APISandboxAcceptsRequests(app, time.Now()) || endpoint.AccountID != app.AccountID)) {
 		http.NotFound(w, r)
 		return
 	}
@@ -375,10 +381,10 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 		return
 	}
 	// ADR-1193: an operation binding takes over delivery for this endpoint.
-	if s.operation.ReceiveBoundWebhook(w, r, endpoint, providerEventID, eventType, body) {
+	if sandboxRevision == "" && s.operation.ReceiveBoundWebhook(w, r, endpoint, providerEventID, eventType, body) {
 		return
 	}
-	s.acceptInboundWebhook(w, r, endpoint, providerEventID, eventType, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts), limits)
+	s.acceptInboundWebhook(w, r, endpoint, providerEventID, eventType, body, effectiveInvocationRetryPolicy(app, nil, limits.MaxQueueAttempts), limits, sandboxRevision)
 }
 
 func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *api.Problem) {
@@ -503,16 +509,20 @@ func verifyGenericInboundWebhookSignature(timestampValue, signatureValue, eventI
 	return hmac.Equal(provided, mac.Sum(nil))
 }
 
-func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body, retryPolicy json.RawMessage, limits api.Limits) {
+func (s *server) acceptInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body, retryPolicy json.RawMessage, limits api.Limits, sandboxRevision string) {
 	now := time.Now().UTC()
 	receiptID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+providerEventID)).String()
 	bodyDigest := sha256.Sum256(body)
-	headers, _ := json.Marshal(map[string]string{
+	deliveryHeaders := map[string]string{
 		"content-type": r.Header.Get("Content-Type"), "x-gregale-webhook-endpoint-id": endpoint.ID,
 		"x-gregale-webhook-event-id": providerEventID, "x-gregale-webhook-event-type": eventType,
 		"x-gregale-webhook-provider": string(endpoint.Provider), "x-gregale-webhook-body-sha256": hex.EncodeToString(bodyDigest[:]),
-	})
-	if bindings, ok := s.store.(state.ExclusiveTriggerBindingStore); ok {
+	}
+	if sandboxRevision != "" {
+		deliveryHeaders[api.RevisionHeader] = sandboxRevision
+	}
+	headers, _ := json.Marshal(deliveryHeaders)
+	if bindings, ok := s.store.(state.ExclusiveTriggerBindingStore); sandboxRevision == "" && ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(r.Context(), endpoint.AccountID, "inbound_webhook", endpoint.ID)
 		if bindingErr == nil {
 			owners, ok := s.store.(state.ExclusiveWorkStore)

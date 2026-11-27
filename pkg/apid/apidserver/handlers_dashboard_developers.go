@@ -41,7 +41,7 @@ func (s *server) renderDeveloperEnvironments(w http.ResponseWriter, r *http.Requ
 	items := make([]dashboard.DeveloperEnvironmentItem, 0, len(rows))
 	historyStore, hasHistory := s.store.(state.DevSyncHistoryStore)
 	for _, app := range rows {
-		if !state.IsDeveloperApp(app) {
+		if !state.IsDeveloperApp(app) || state.IsAPISandbox(app) {
 			continue
 		}
 

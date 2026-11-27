@@ -248,6 +248,79 @@ from .api_key_response_approval_categories_item import APIKeyResponseApprovalCat
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
 from .api_monetization_funnel_response import APIMonetizationFunnelResponse
+from .api_sandbox_approval_check import APISandboxApprovalCheck
+from .api_sandbox_approval_check_stale_reason import APISandboxApprovalCheckStaleReason
+from .api_sandbox_approval_check_verdict import APISandboxApprovalCheckVerdict
+from .api_sandbox_approval_checks_response import APISandboxApprovalChecksResponse
+from .api_sandbox_approval_checks_response_availability import APISandboxApprovalChecksResponseAvailability
+from .api_sandbox_comparison_baseline import APISandboxComparisonBaseline
+from .api_sandbox_comparison_report import APISandboxComparisonReport
+from .api_sandbox_comparison_report_failure_side import APISandboxComparisonReportFailureSide
+from .api_sandbox_comparison_report_reason import APISandboxComparisonReportReason
+from .api_sandbox_comparison_report_verdict import APISandboxComparisonReportVerdict
+from .api_sandbox_comparison_request import APISandboxComparisonRequest
+from .api_sandbox_comparisons_response import APISandboxComparisonsResponse
+from .api_sandbox_create_request import APISandboxCreateRequest
+from .api_sandbox_example_request import APISandboxExampleRequest
+from .api_sandbox_example_request_method import APISandboxExampleRequestMethod
+from .api_sandbox_failure import APISandboxFailure
+from .api_sandbox_invite_response import APISandboxInviteResponse
+from .api_sandbox_json_assertion import APISandboxJSONAssertion
+from .api_sandbox_library_scenario import APISandboxLibraryScenario
+from .api_sandbox_library_scenario_save_request import APISandboxLibraryScenarioSaveRequest
+from .api_sandbox_library_scenario_summary import APISandboxLibraryScenarioSummary
+from .api_sandbox_list_response import APISandboxListResponse
+from .api_sandbox_outbound_webhook import APISandboxOutboundWebhook
+from .api_sandbox_partner_invite_response import APISandboxPartnerInviteResponse
+from .api_sandbox_partner_response import APISandboxPartnerResponse
+from .api_sandbox_receiver_credentials import APISandboxReceiverCredentials
+from .api_sandbox_receiver_invite import APISandboxReceiverInvite
+from .api_sandbox_receiver_invite_request import APISandboxReceiverInviteRequest
+from .api_sandbox_receiver_invite_status import APISandboxReceiverInviteStatus
+from .api_sandbox_receiver_outcome import APISandboxReceiverOutcome
+from .api_sandbox_receiver_proof import APISandboxReceiverProof
+from .api_sandbox_receiver_url import APISandboxReceiverURL
+from .api_sandbox_release_gate import APISandboxReleaseGate
+from .api_sandbox_release_gate_status import APISandboxReleaseGateStatus
+from .api_sandbox_response import APISandboxResponse
+from .api_sandbox_response_status import APISandboxResponseStatus
+from .api_sandbox_run_report import APISandboxRunReport
+from .api_sandbox_run_report_mode import APISandboxRunReportMode
+from .api_sandbox_run_report_status import APISandboxRunReportStatus
+from .api_sandbox_run_request import APISandboxRunRequest
+from .api_sandbox_run_request_mode import APISandboxRunRequestMode
+from .api_sandbox_run_share_response import APISandboxRunShareResponse
+from .api_sandbox_run_step import APISandboxRunStep
+from .api_sandbox_run_step_invocation_state import APISandboxRunStepInvocationState
+from .api_sandbox_run_step_kind import APISandboxRunStepKind
+from .api_sandbox_runs_response import APISandboxRunsResponse
+from .api_sandbox_scenario import APISandboxScenario
+from .api_sandbox_scenario_draft import APISandboxScenarioDraft
+from .api_sandbox_scenario_draft_method import APISandboxScenarioDraftMethod
+from .api_sandbox_scenario_guide import APISandboxScenarioGuide
+from .api_sandbox_scenario_guide_seeded_ids import APISandboxScenarioGuideSeededIds
+from .api_sandbox_scenario_input import APISandboxScenarioInput
+from .api_sandbox_scenario_input_seed import APISandboxScenarioInputSeed
+from .api_sandbox_scenario_library_response import APISandboxScenarioLibraryResponse
+from .api_sandbox_scenario_receipt import APISandboxScenarioReceipt
+from .api_sandbox_scenario_response import APISandboxScenarioResponse
+from .api_sandbox_scenario_save_request import APISandboxScenarioSaveRequest
+from .api_sandbox_stripe_webhook import APISandboxStripeWebhook
+from .api_sandbox_stripe_webhook_data_object import APISandboxStripeWebhookDataObject
+from .api_sandbox_suite import APISandboxSuite
+from .api_sandbox_suite_response import APISandboxSuiteResponse
+from .api_sandbox_suite_run_report import APISandboxSuiteRunReport
+from .api_sandbox_suite_run_report_failure_code import APISandboxSuiteRunReportFailureCode
+from .api_sandbox_suite_run_report_stale_reason import APISandboxSuiteRunReportStaleReason
+from .api_sandbox_suite_run_report_verdict import APISandboxSuiteRunReportVerdict
+from .api_sandbox_suite_run_request import APISandboxSuiteRunRequest
+from .api_sandbox_suite_run_summary import APISandboxSuiteRunSummary
+from .api_sandbox_suite_runs_response import APISandboxSuiteRunsResponse
+from .api_sandbox_suite_runs_response_automatic_status import APISandboxSuiteRunsResponseAutomaticStatus
+from .api_sandbox_suite_save_request import APISandboxSuiteSaveRequest
+from .api_sandbox_suite_scenario_result import APISandboxSuiteScenarioResult
+from .api_sandbox_suite_scenario_result_status import APISandboxSuiteScenarioResultStatus
+from .api_sandbox_verification import APISandboxVerification
 from .api_second_invoice_review import APISecondInvoiceReview
 from .api_second_invoice_review_status import APISecondInvoiceReviewStatus
 from .app_agent_binding import AppAgentBinding
@@ -2537,6 +2610,7 @@ from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_managed_postgres_table_health_sort import GetManagedPostgresTableHealthSort
+from .get_mcp_listing_server_json_response_200 import GetMCPListingServerJSONResponse200
 from .get_mcp_readiness_pager_duty_acknowledgements_destination import (
     GetMCPReadinessPagerDutyAcknowledgementsDestination,
 )
@@ -3394,6 +3468,10 @@ from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
 from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
 from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
 from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
+from .mcp_listing_install import MCPListingInstall
+from .mcp_listing_install_client_config import MCPListingInstallClientConfig
+from .mcp_listing_response import MCPListingResponse
+from .mcp_listing_tool import MCPListingTool
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
 from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
 from .mcp_probe_rpc_request import MCPProbeRPCRequest
@@ -5659,6 +5737,7 @@ from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
 from .public_auth_status_mode import PublicAuthStatusMode
+from .public_mcp_listing_response import PublicMCPListingResponse
 from .public_status_component import PublicStatusComponent
 from .public_status_component_id import PublicStatusComponentId
 from .public_status_component_status import PublicStatusComponentStatus
@@ -5723,6 +5802,7 @@ from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_managed_postgres_custom_role_request import PutManagedPostgresCustomRoleRequest
 from .put_managed_postgres_custom_role_request_default_for_item import PutManagedPostgresCustomRoleRequestDefaultForItem
 from .put_managed_postgres_custom_role_request_granted_to_item import PutManagedPostgresCustomRoleRequestGrantedToItem
+from .put_mcp_listing_request import PutMCPListingRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
@@ -7761,6 +7841,79 @@ __all__ = (
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
     "APIMonetizationFunnelResponse",
+    "APISandboxApprovalCheck",
+    "APISandboxApprovalChecksResponse",
+    "APISandboxApprovalChecksResponseAvailability",
+    "APISandboxApprovalCheckStaleReason",
+    "APISandboxApprovalCheckVerdict",
+    "APISandboxComparisonBaseline",
+    "APISandboxComparisonReport",
+    "APISandboxComparisonReportFailureSide",
+    "APISandboxComparisonReportReason",
+    "APISandboxComparisonReportVerdict",
+    "APISandboxComparisonRequest",
+    "APISandboxComparisonsResponse",
+    "APISandboxCreateRequest",
+    "APISandboxExampleRequest",
+    "APISandboxExampleRequestMethod",
+    "APISandboxFailure",
+    "APISandboxInviteResponse",
+    "APISandboxJSONAssertion",
+    "APISandboxLibraryScenario",
+    "APISandboxLibraryScenarioSaveRequest",
+    "APISandboxLibraryScenarioSummary",
+    "APISandboxListResponse",
+    "APISandboxOutboundWebhook",
+    "APISandboxPartnerInviteResponse",
+    "APISandboxPartnerResponse",
+    "APISandboxReceiverCredentials",
+    "APISandboxReceiverInvite",
+    "APISandboxReceiverInviteRequest",
+    "APISandboxReceiverInviteStatus",
+    "APISandboxReceiverOutcome",
+    "APISandboxReceiverProof",
+    "APISandboxReceiverURL",
+    "APISandboxReleaseGate",
+    "APISandboxReleaseGateStatus",
+    "APISandboxResponse",
+    "APISandboxResponseStatus",
+    "APISandboxRunReport",
+    "APISandboxRunReportMode",
+    "APISandboxRunReportStatus",
+    "APISandboxRunRequest",
+    "APISandboxRunRequestMode",
+    "APISandboxRunShareResponse",
+    "APISandboxRunsResponse",
+    "APISandboxRunStep",
+    "APISandboxRunStepInvocationState",
+    "APISandboxRunStepKind",
+    "APISandboxScenario",
+    "APISandboxScenarioDraft",
+    "APISandboxScenarioDraftMethod",
+    "APISandboxScenarioGuide",
+    "APISandboxScenarioGuideSeededIds",
+    "APISandboxScenarioInput",
+    "APISandboxScenarioInputSeed",
+    "APISandboxScenarioLibraryResponse",
+    "APISandboxScenarioReceipt",
+    "APISandboxScenarioResponse",
+    "APISandboxScenarioSaveRequest",
+    "APISandboxStripeWebhook",
+    "APISandboxStripeWebhookDataObject",
+    "APISandboxSuite",
+    "APISandboxSuiteResponse",
+    "APISandboxSuiteRunReport",
+    "APISandboxSuiteRunReportFailureCode",
+    "APISandboxSuiteRunReportStaleReason",
+    "APISandboxSuiteRunReportVerdict",
+    "APISandboxSuiteRunRequest",
+    "APISandboxSuiteRunsResponse",
+    "APISandboxSuiteRunsResponseAutomaticStatus",
+    "APISandboxSuiteRunSummary",
+    "APISandboxSuiteSaveRequest",
+    "APISandboxSuiteScenarioResult",
+    "APISandboxSuiteScenarioResultStatus",
+    "APISandboxVerification",
     "APISecondInvoiceReview",
     "APISecondInvoiceReviewStatus",
     "AppAgentBinding",
@@ -9976,6 +10129,7 @@ __all__ = (
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
     "GetManagedPostgresTableHealthSort",
+    "GetMCPListingServerJSONResponse200",
     "GetMCPReadinessPagerDutyAcknowledgementsDestination",
     "GetMirrorRuleSummaryWindow",
     "GetObsInputHealthExpectedRole",
@@ -10773,6 +10927,10 @@ __all__ = (
     "MCPInstanceProtocolProbeRequest",
     "MCPInstanceProtocolProbeRequestProtocolVersion",
     "MCPInstanceProtocolProbeResponse",
+    "MCPListingInstall",
+    "MCPListingInstallClientConfig",
+    "MCPListingResponse",
+    "MCPListingTool",
     "MCPOAuthRetirement",
     "MCPOAuthRetirementAction",
     "MCPOAuthRetirementActionAction",
@@ -12866,6 +13024,7 @@ __all__ = (
     "PublicAuthBlockMode",
     "PublicAuthStatus",
     "PublicAuthStatusMode",
+    "PublicMCPListingResponse",
     "PublicStatusComponent",
     "PublicStatusComponentId",
     "PublicStatusComponentStatus",
@@ -12930,6 +13089,7 @@ __all__ = (
     "PutManagedPostgresCustomRoleRequest",
     "PutManagedPostgresCustomRoleRequestDefaultForItem",
     "PutManagedPostgresCustomRoleRequestGrantedToItem",
+    "PutMCPListingRequest",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIFeedbackRequest",

@@ -52,6 +52,9 @@ type Host interface {
 	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 	// PublicOrigin is the https origin the sign-up page is served from.
 	PublicOrigin() string
+	// AppHosts are the hosts app answers on now: its platform URL and its
+	// default custom domain (ADR-20261126175800).
+	AppHosts(ctx context.Context, app state.App) []string
 	// ClientIP is the request's client address behind the trusted proxy.
 	ClientIP(r *http.Request) string
 }

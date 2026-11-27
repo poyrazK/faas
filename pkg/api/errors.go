@@ -824,7 +824,8 @@ const (
 	// CodeRouteSplitInFlight (409): the app already has a split in flight.
 	CodeRouteSplitInFlight = "route_split_in_flight"
 	// CodeRouteSplitUnsupported (422): the app has something a split does
-	// not carry yet (managed bindings, service bindings, a project).
+	// not carry (a project, a preview, a binding not ready, an app that admits
+	// it as a caller by name).
 	CodeRouteSplitUnsupported = "route_split_unsupported"
 	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
 	// project would detach services that still call each other by service
@@ -7020,7 +7021,7 @@ func ErrAccountEgressAllowlistExtraOutOfRange(got, maxExtra int) *Problem {
 func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
 		"Invalid egress allowlist entry",
-		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
+		fmt.Sprintf("entry %q is refused: %v.", entry, reason)).
 		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
