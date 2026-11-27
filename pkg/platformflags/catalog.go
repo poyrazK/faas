@@ -129,6 +129,10 @@ const (
 	// (ADR-20261126164847).
 	PublicSourceDeploys = "public_source_deploys"
 
+	// LocalImageDeploys releases uploaded image archives
+	// (`deploy --local-image`, ADR-20261127120000).
+	LocalImageDeploys = "local_image_deploys"
+
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
@@ -658,6 +662,17 @@ var catalog = []Spec{
 			"through githubd's public-read path, pinned to one commit and with no push-to-deploy binding. Decided by account and plan. " +
 			"Off, apid answers such a repository with the installation refusal it always gave.",
 		ADR:        "ADR-20261126164847",
+		Consumers:  []string{"apid"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-06-30",
+	},
+	{
+		Key:   LocalImageDeploys,
+		Label: "Local image deploys",
+		Description: "Accept resumable uploads with source_format oci_image_archive (`gregale deploy --local-image` and --image-archive), " +
+			"which builderd places without a builder VM. Turn it on only once every builderd runs a release that knows uploaded images: " +
+			"an older builderd would treat the archive as source. Decided by account and plan. Off, apid refuses the upload before any bytes move.",
+		ADR:        "ADR-20261127120000",
 		Consumers:  []string{"apid"},
 		Attributes: []Attribute{AttributePlan},
 		RetireBy:   "2027-06-30",

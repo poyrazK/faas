@@ -198,8 +198,11 @@ type EnqueueParams struct {
 	// (ADR-20261019142544), captured in the inferred profile beside the
 	// Dockerfile path.
 	DockerfileBuild *api.DockerfileBuildOptions
-	SourceURL       string
-	CommitSHA       string
+	// UploadedImage marks SourcePath as an already built single-image OCI
+	// archive (ADR-20261127120000); Kind must be DeploymentKindDockerfile.
+	UploadedImage *UploadedImage
+	SourceURL     string
+	CommitSHA     string
 	// GitHubSourceRef is populated when a GitHub deployment was resolved from
 	// a mutable branch (source-ref request or webhook push). Imaged rechecks
 	// it immediately before promotion.
@@ -574,7 +577,17 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source checksum changed")
 		}
 		profileStart := time.Now()
-		profile, profileErr := frameworkprofile.AnalyzeTarballAtRoot(p.SourcePath, p.SourceRoot)
+		var profile frameworkprofile.Profile
+		var profileErr error
+		if p.UploadedImage != nil {
+			// A prebuilt image has no source tree to analyze.
+			if p.Kind != state.DeploymentKindDockerfile || p.DockerfilePath != "" || p.SourceRoot != "" {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: uploaded image must be a rootless Dockerfile-kind deployment")
+			}
+			profile = frameworkprofile.ForUploadedImage(p.UploadedImage.ManifestDigest, p.UploadedImage.Name, p.UploadedImage.Port)
+		} else {
+			profile, profileErr = frameworkprofile.AnalyzeTarballAtRoot(p.SourcePath, p.SourceRoot)
+		}
 		if p.HostingObserver != nil {
 			outcome := "completed"
 			if profileErr != nil {

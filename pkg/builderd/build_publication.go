@@ -20,6 +20,14 @@ func (b *Builderd) WithBuildPublisher(p buildpublisher.Signer) *Builderd {
 
 func (b *Builderd) publishBuildExport(ctx context.Context, build state.Build, dep state.Deployment, app state.App, sourceHash string, result BuildResult) error {
 	required := app.RequireSigned || app.SecurityPolicy.RequiresSignedImage()
+	if uploadedImage(dep) != nil {
+		// builderd did not build an uploaded image, so it never signs one
+		// (ADR-20261127120000); apps that require signatures refuse them.
+		if required {
+			return fmt.Errorf("uploaded images cannot satisfy a signed-image policy")
+		}
+		return nil
+	}
 	if b.buildPublisher == nil {
 		if required {
 			return fmt.Errorf("build publisher is not configured")
