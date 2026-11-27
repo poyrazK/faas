@@ -73,6 +73,13 @@ func TestWorker_OutageEmailsOnceAndSkipsCoveredApps(t *testing.T) {
 		WindowSpec: state.AlertWindow5m, WebhookURL: "https://example.com/hook", WebhookSecretSealed: []byte("x"), CooldownMinutes: 30}); err != nil {
 		t.Fatalf("CreateAlertRule: %v", err)
 	}
+	// A stage's error-rate rule watches the stage, not production
+	// (ADR-20261104120000): frontend still gets the email.
+	if _, err := store.CreateAlertRule(t.Context(), state.AlertRule{AccountID: acct.ID, AppID: down.ID, EnvironmentID: "env-staging", Name: "stage errors",
+		Enabled: true, Metric: "error_rate_pct", Comparison: state.AlertComparison("gt"), Threshold: 5,
+		WindowSpec: state.AlertWindow5m, WebhookURL: "https://example.com/hook", WebhookSecretSealed: []byte("x"), CooldownMinutes: 30}); err != nil {
+		t.Fatalf("CreateAlertRule (stage): %v", err)
+	}
 	metrics := fakeMetrics{
 		rates:    map[string]float64{down.ID: 100, quiet.ID: 100, healthy.ID: 2, owned.ID: 95, "unknown-app": 100},
 		requests: map[string]float64{down.ID: 340, quiet.ID: 3, healthy.ID: 900, owned.ID: 500, "unknown-app": 50},

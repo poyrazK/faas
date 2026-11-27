@@ -95,6 +95,8 @@ class AlertRuleResponse:
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
     notify_resolved: bool | Unset = UNSET
     """The webhook also receives a signed alert.resolved event when the rule recovers. Omitted when false."""
+    environment_id: UUID | Unset = UNSET
+    """The stage the rule belongs to. Omitted for production."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
     custom_metric_name: str | Unset = UNSET
@@ -183,6 +185,10 @@ class AlertRuleResponse:
 
         notify_resolved = self.notify_resolved
 
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
+
         failure_source: str | Unset = UNSET
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
@@ -267,6 +273,8 @@ class AlertRuleResponse:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if notify_resolved is not UNSET:
             field_dict["notify_resolved"] = notify_resolved
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
         if custom_metric_name is not UNSET:
@@ -374,6 +382,13 @@ class AlertRuleResponse:
 
         notify_resolved = d.pop("notify_resolved", UNSET)
 
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
+
         _failure_source = d.pop("failure_source", UNSET)
         failure_source: AlertRuleResponseFailureSource | Unset
         if isinstance(_failure_source, Unset):
@@ -464,6 +479,7 @@ class AlertRuleResponse:
             edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             notify_resolved=notify_resolved,
+            environment_id=environment_id,
             failure_source=failure_source,
             custom_metric_name=custom_metric_name,
             custom_metric_labels=custom_metric_labels,

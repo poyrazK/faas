@@ -186,22 +186,11 @@ func validateAlertMetricInput(fetcher PromQL, appID, rng string) string {
 
 func alertMetricQuery(appID, rng, metric string) (string, func(float64) float64) {
 	var query string
-	var normalize = SafeFloat
+	var normalize func(float64) float64
 	switch metric {
-	case "request_count":
-		query = fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng)
-		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
-	case "error_rate_pct":
-		query = ErrorRatePctQuery(appID, rng)
-		normalize = SafePercent
-	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
-		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
-		query = requestSeriesForScope(appID, "").latency(rng, quantile)
-	case "cold_start_pct":
-		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)))
-		normalize = SafePercent
+	case "request_count", "error_rate_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "cold_start_pct":
+		// Production's requests only: a stage's are its own rules'.
+		query, normalize, _ = productionAlertQuery(appID, rng, metric)
 	case "log_error_lines", "log_warn_lines":
 		// ADR-746: vmmd counts classified guest log lines per app on every
 		// node; sum folds the nodes and instances the app ran on.
