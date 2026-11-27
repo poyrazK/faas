@@ -102,7 +102,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		oauthError(w, 400, "access_denied", "Client registration expired; start a new connection")
 		return
 	}
-	view := consentView{MaximumToolsets: r.opts.Toolsets, ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Invocations: slices.Contains(flow.Scopes, scopeInvoke), Publishing: slices.Contains(flow.Scopes, scopePublish), PrivateInvocations: slices.Contains(flow.Scopes, scopePrivateInvoke), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
+	view := consentView{MaximumToolsets: r.opts.Toolsets, ConsentAction: r.issuer + "/oauth/consent", Capabilities: consentPermissions(flow.Capabilities, flow.ConnectGrant), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Invocations: slices.Contains(flow.Scopes, scopeInvoke), Publishing: slices.Contains(flow.Scopes, scopePublish), PrivateInvocations: slices.Contains(flow.Scopes, scopePrivateInvoke), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
 	if r.opts.Hosted {
 		view.APIBase = r.opts.ResourceURL
 	}
@@ -110,8 +110,8 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 	if g := r.grants[flow.GrantID]; g != nil {
 		// The connection's key may carry less than the client asked for: an
 		// organization's agent policy caps it (ADR-20261101225122).
-		view.Capabilities = describeCapabilities(g.capabilities)
 		view.Writes = slices.Contains(g.scopes, scopeWrite)
+		view.Capabilities = consentPermissions(g.capabilities, flow.ConnectGrant && view.Writes)
 		view.Invocations = slices.Contains(g.scopes, scopeInvoke)
 		view.Publishing = slices.Contains(g.scopes, scopePublish)
 		view.PrivateInvocations = slices.Contains(g.scopes, scopePrivateInvoke)

@@ -1060,6 +1060,8 @@ type Manager struct {
 	adoption atomic.Pointer[adoptionWriter]
 	// adoptAdmittedRuntimes: see WithAdoptAdmittedRuntimes.
 	adoptAdmittedRuntimes bool
+	// adoptionDriveBase: see WithAdoptionDriveBase.
+	adoptionDriveBase bool
 	// flatTenantCgroups: see WithFlatTenantCgroups.
 	flatTenantCgroups          bool
 	resourceLinks              map[string]ownedResourceLink

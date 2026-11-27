@@ -68,6 +68,10 @@ type authorizationRequest struct {
 	// Capabilities are the extra scopes chosen before sign-in; the browser
 	// code carries exactly these (ADR-20261026195952).
 	Capabilities []string
+	// ConnectGrant: the code carries the Connect grant, so the person's
+	// approval of the sign-in approves the connection's deploys
+	// (ADR-20261127160000).
+	ConnectGrant bool
 }
 
 type authorizationCode struct {

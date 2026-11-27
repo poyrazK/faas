@@ -233,3 +233,12 @@ WHERE (b.account_id = sqlc.arg(account_id)::uuid AND b.org_id IS NULL)
 -- name: MarkAgentApprovalChannelsNotified :exec
 UPDATE agent_approval_notifications SET channels_notified_at = now()
 WHERE approval_id = sqlc.arg(approval_id)::uuid AND channels_notified_at IS NULL;
+
+-- name: InsertAPIKeyConnectGrant :exec
+-- ADR-20261127160000: the Connect consent that approves a hosted MCP key's
+-- deploys; written once, when apid mints the key from the approved sign-in.
+INSERT INTO api_key_connect_grants (key_id, granted_by)
+VALUES (sqlc.arg(key_id)::uuid, sqlc.arg(granted_by)::uuid);
+
+-- name: GetAPIKeyConnectGrant :one
+SELECT granted_by, granted_at FROM api_key_connect_grants WHERE key_id = sqlc.arg(key_id)::uuid;
