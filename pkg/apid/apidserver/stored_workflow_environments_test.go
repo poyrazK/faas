@@ -56,6 +56,7 @@ func TestStoredWorkflowsInEnvironment(t *testing.T) {
 	if res := e.Do(t, http.MethodPut, base+"/nightly"+stage, spec("nightly"), nil); res.Code != http.StatusNotImplemented {
 		t.Fatalf("stage save before the key = %d %s, want 501", res.Code, res.Body)
 	}
+	tenantJSON[api.Problem](t, e, http.MethodPost, "/v1/apps/wf-env-api/workflows/nightly/runs?environment=staging", map[string]any{}, http.StatusNotImplemented)
 	(*e.S()).EnableStageStoredWorkflowsForTest(t)
 
 	tenantJSON[api.StoredWorkflowResponse](t, e, http.MethodPut, base+"/report", spec("report"), http.StatusOK)
@@ -113,4 +114,10 @@ func TestStoredWorkflowsInEnvironment(t *testing.T) {
 	if res := e.Do(t, http.MethodDelete, base+"/nightly?expected_version="+strconv.FormatInt(published.Version, 10)+"&environment=staging", nil, nil); res.Code != http.StatusNoContent {
 		t.Fatalf("stage delete = %d %s", res.Code, res.Body)
 	}
+	// Once the name is free, production never sees the stage's history.
+	history := tenantJSON[api.ListStoredWorkflowRevisionsResponse](t, e, http.MethodGet, base+"/nightly/revisions", nil, http.StatusOK)
+	if history.Total != 0 {
+		t.Fatalf("production history of a deleted stage workflow = %+v, want none", history)
+	}
+	tenantJSON[api.Problem](t, e, http.MethodGet, base+"/nightly/revisions/"+strconv.FormatInt(published.PublishedVersion, 10), nil, http.StatusNotFound)
 }

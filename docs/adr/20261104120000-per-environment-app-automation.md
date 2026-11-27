@@ -507,9 +507,15 @@ app-wide indexes and full clones copy consumers, keys and plan assignments.
 - A manual start takes `?environment=` on `POST
   /v1/apps/{slug}/workflows/{name}/runs` (`gregale workflow run
   --environment`): it pins the run to the stage's live deployment and
-  overlays the stage's runnable stored workflows on that deployment's
-  code workflows. Steps already reach the run's deployment through the
-  revision header.
+  overlays the stage's runnable stored workflows (never production's) on
+  that deployment's code workflows. Steps already reach the run's
+  deployment through the revision header. A stage's run start is a stage
+  write, so it waits for the runtime key too, and its idempotency
+  fingerprint includes the scope (production's stays as N-1 stored it), so
+  a key never replays another environment's run.
+- `WorkflowMaxPerApp` counts every environment's stored workflows of the
+  app. Revision reads filter by environment, so a name freed in one
+  environment never shows or restores the other's history.
 - schedd runs a second schedule pass over stage candidates (an enabled
   stage schedule workflow and a live stage deployment). Its cursors live
   in `stage_workflow_schedule_cursors`, keyed by (environment, name), so

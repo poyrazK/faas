@@ -34,8 +34,9 @@ type Request struct {
 // Check refuses a route that reaches a workflow through another environment
 // than its own, a route a stage's workflow does not support yet, and a stage
 // write while operators keep stage_stored_workflows_enabled off: the key
-// waits until every apid runs the release whose readers keep a stage's
-// workflows out of production. Production's routes are unchanged.
+// waits until every apid and schedd runs the release whose readers keep a
+// stage's workflows out of production and run them on the stage. A manual
+// run start in a stage is such a write. Production's routes are unchanged.
 func Check(req Request) *api.Problem {
 	if req.Found && req.Held != req.Requested {
 		if req.Write {

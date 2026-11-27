@@ -169,7 +169,7 @@ func (s *server) listStoredWorkflowRevisions(w http.ResponseWriter, r *http.Requ
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
-	revisions, total, err := store.ListStoredWorkflowRevisions(r.Context(), app.ID, r.PathValue("name"), state.StoredWorkflowRevisionListOptions{Limit: limit, Offset: offset})
+	revisions, total, err := store.ListStoredWorkflowRevisions(r.Context(), app.ID, r.PathValue("name"), state.StoredWorkflowRevisionListOptions{Limit: limit, Offset: offset, EnvironmentID: storedWorkflowEnvironment(r.Context())})
 	if err != nil {
 		writeStoredWorkflowError(w, err)
 		return
@@ -200,7 +200,7 @@ func (s *server) getStoredWorkflowRevision(w http.ResponseWriter, r *http.Reques
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
-	revision, err := store.GetStoredWorkflowRevision(r.Context(), app.ID, r.PathValue("name"), version)
+	revision, err := storedWorkflowRevisionInEnvironment(r.Context(), store, app.ID, r.PathValue("name"), version)
 	if err != nil {
 		writeStoredWorkflowError(w, err)
 		return
@@ -235,7 +235,7 @@ func (s *server) restoreStoredWorkflowRevision(w http.ResponseWriter, r *http.Re
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
-	revision, err := store.GetStoredWorkflowRevision(r.Context(), app.ID, r.PathValue("name"), version)
+	revision, err := storedWorkflowRevisionInEnvironment(r.Context(), store, app.ID, r.PathValue("name"), version)
 	if err != nil {
 		writeStoredWorkflowError(w, err)
 		return

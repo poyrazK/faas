@@ -523,11 +523,14 @@ func cmdStoredWorkflowsPublish(args []string) int {
 	if *requireCoverage && strings.TrimSpace(*scenarioPath) == "" {
 		return printErr("Missing coverage scenarios", errors.New("--require-coverage requires --scenarios"))
 	}
+	if scenariosProvided && strings.TrimSpace(*environment) != "" {
+		return printErr("Scenarios unavailable in a stage", errors.New("a stage's stored workflow cannot be tested yet; publish without --scenarios"))
+	}
 	if scenariosProvided && strings.TrimSpace(*scenarioPath) == "" {
 		return printErr("Invalid stored workflow scenarios", errors.New("--scenarios requires a nonempty suite path"))
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || *expectedVersion < 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflow stored publish --app <slug> --name <name> --expected-version <n> [--take-over-manifest] [--scenarios <path>] [--require-coverage]", "stored-workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow stored publish --app <slug> --name <name> --expected-version <n> [--environment <env>] [--take-over-manifest] [--scenarios <path>] [--require-coverage]", "stored-workflows")
 		return 1
 	}
 	var scenarios []loadedStoredWorkflowScenario

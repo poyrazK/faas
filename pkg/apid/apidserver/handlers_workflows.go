@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/stagealerts"
+	"github.com/onebox-faas/faas/pkg/apid/stageworkflows"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workflowstart"
@@ -195,10 +196,16 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// ?environment starts the run on that stage's live deployment, with the
-	// stage's own stored workflows (ADR-20261104120000).
+	// stage's own stored workflows (ADR-20261104120000), once operators turn
+	// stage stored workflows on.
 	scope := ""
 	if requested := strings.TrimSpace(r.URL.Query().Get("environment")); requested != "" && !state.IsProductionScope(requested) {
-		if _, prob := stagealerts.Environment(r.Context(), s.store, app, requested); prob != nil {
+		envID, prob := stagealerts.Environment(r.Context(), s.store, app, requested)
+		if prob == nil {
+			prob = stageworkflows.Check(stageworkflows.Request{Requested: envID, StageReady: true, Write: true,
+				Open: s.runtimeBool(runtimeConfigStageStoredWorkflows, false)})
+		}
+		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}

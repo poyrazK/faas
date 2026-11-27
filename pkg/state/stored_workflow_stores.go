@@ -43,9 +43,11 @@ func (m *MemStore) ListStoredWorkflowRevisions(_ context.Context, appID, name st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	all := m.storedWorkflowRevisions[appID+"/"+name]
-	items := make([]StoredWorkflowRevision, len(all))
-	for i := range all {
-		items[i] = copyStoredWorkflowRevision(all[len(all)-1-i])
+	items := make([]StoredWorkflowRevision, 0, len(all))
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].EnvironmentID == opts.EnvironmentID {
+			items = append(items, copyStoredWorkflowRevision(all[i]))
+		}
 	}
 	total := len(items)
 	if opts.Offset >= total {
@@ -115,11 +117,18 @@ func (m *MemStore) MutateStoredWorkflow(_ context.Context, appID, name string, m
 	dep, records := m.storedWorkflowDeploymentLocked(appID), m.storedWorkflowRecordsLocked(appID)
 	hasDeployment := dep.ID != ""
 	if mutation.EnvironmentID != "" {
-		// A stage's workflow does not run yet: production's manifest and
-		// workflows are not its, and its publication needs no deployment.
+		// A stage's workflow runs on the stage's own deployment: production's
+		// manifest and workflows are not its, and it may be published before
+		// the stage deploys.
 		dep, records, hasDeployment = Deployment{}, m.storedWorkflowStageRecordsLocked(appID, mutation.EnvironmentID), true
 	}
-	next, err := mutateStoredWorkflow(appID, name, mutation, previous, dep.Workflows, records, account.Plan, hasDeployment)
+	var otherNames []string
+	for _, record := range m.storedWorkflows {
+		if record.AppID == appID && record.EnvironmentID != mutation.EnvironmentID {
+			otherNames = append(otherNames, record.Name)
+		}
+	}
+	next, err := mutateStoredWorkflow(appID, name, mutation, previous, dep.Workflows, records, otherNames, account.Plan, hasDeployment)
 	if err != nil {
 		return StoredWorkflow{}, err
 	}
@@ -144,7 +153,7 @@ func (m *MemStore) MutateStoredWorkflow(_ context.Context, appID, name string, m
 			m.storedWorkflowRevisions = make(map[string][]StoredWorkflowRevision)
 		}
 		m.storedWorkflowRevisions[key] = append(m.storedWorkflowRevisions[key], StoredWorkflowRevision{
-			AppID: appID, Name: name, Version: next.PublishedVersion,
+			AppID: appID, EnvironmentID: next.EnvironmentID, Name: name, Version: next.PublishedVersion,
 			CheckEvidence: storedWorkflowCheckEvidenceJSON(mutation.CheckEvidence),
 			Definition:    cloneWorkflowJSON(next.Published), RecordedAt: next.UpdatedAt,
 			PublishedByAccountID: actorAccountID, PublishedByAPIKeyID: mutation.ActorAPIKeyID,
@@ -205,6 +214,9 @@ func storedWorkflowRevisionFromSQL(row sqlc.StoredWorkflowRevision) StoredWorkfl
 	if row.PublishedByApiKeyID.Valid {
 		revision.PublishedByAPIKeyID = uuidFromPgtype(row.PublishedByApiKeyID).String()
 	}
+	if row.EnvironmentID.Valid {
+		revision.EnvironmentID = uuidFromPgtype(row.EnvironmentID).String()
+	}
 	return revision
 }
 func (s *PgStore) ListStoredWorkflows(ctx context.Context, appID string) ([]StoredWorkflow, error) {
@@ -224,11 +236,12 @@ func (s *PgStore) ListStoredWorkflowRevisions(ctx context.Context, appID, name s
 	}
 	q := sqlc.New()
 	appUUID := mustPgUUID(appID)
-	total, err := q.CountStoredWorkflowRevisions(ctx, s.pool, sqlc.CountStoredWorkflowRevisionsParams{AppID: appUUID, Name: name})
+	environment := nullablePgUUID(opts.EnvironmentID)
+	total, err := q.CountStoredWorkflowRevisions(ctx, s.pool, sqlc.CountStoredWorkflowRevisionsParams{AppID: appUUID, Name: name, EnvironmentID: environment})
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := q.ListStoredWorkflowRevisions(ctx, s.pool, sqlc.ListStoredWorkflowRevisionsParams{AppID: appUUID, Name: name, Limit: int32(opts.Limit), Offset: int32(opts.Offset)})
+	rows, err := q.ListStoredWorkflowRevisions(ctx, s.pool, sqlc.ListStoredWorkflowRevisionsParams{AppID: appUUID, Name: name, EnvironmentID: environment, LimitCount: int32(opts.Limit), OffsetCount: int32(opts.Offset)})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -323,11 +336,17 @@ func mutateStoredWorkflowTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app
 		return StoredWorkflow{}, err
 	}
 	if stage {
-		// A stage's workflow does not run yet: production's manifest is not
-		// its, and its publication needs no deployment.
+		// A stage's workflow runs on the stage's own deployment: production's
+		// manifest is not its, and it may be published before the stage
+		// deploys.
 		dep, hasDeployment = sqlc.StoredWorkflowManifestRow{}, true
 	}
-	next, err := mutateStoredWorkflow(appID, name, mutation, previous, dep.Workflows, records, plan, hasDeployment)
+	otherNames, err := q.ListStoredWorkflowNamesOutsideEnvironment(ctx, tx, sqlc.ListStoredWorkflowNamesOutsideEnvironmentParams{
+		AppID: mustPgUUID(appID), EnvironmentID: nullablePgUUID(mutation.EnvironmentID)})
+	if err != nil {
+		return StoredWorkflow{}, err
+	}
+	next, err := mutateStoredWorkflow(appID, name, mutation, previous, dep.Workflows, records, otherNames, plan, hasDeployment)
 	if err != nil {
 		return StoredWorkflow{}, err
 	}

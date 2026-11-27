@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -103,9 +104,29 @@ func TestStoredWorkflowEnvironments(t *testing.T) {
 		if err != nil || !strings.Contains(string(effective), "prod-job") || strings.Contains(string(effective), "stage-job") {
 			t.Fatalf("production's runnable definitions = %s, %v; want prod-job without stage-job", effective, err)
 		}
-		revisions, total, err := author.ListStoredWorkflowRevisions(ctx, app.ID, "stage-job", state.StoredWorkflowRevisionListOptions{Limit: 10})
-		if err != nil || total != 1 || len(revisions) != 1 {
+		revisions, total, err := author.ListStoredWorkflowRevisions(ctx, app.ID, "stage-job", state.StoredWorkflowRevisionListOptions{Limit: 10, EnvironmentID: stage.ID})
+		if err != nil || total != 1 || len(revisions) != 1 || revisions[0].EnvironmentID != stage.ID {
 			t.Fatalf("stage revisions = %+v (%d), %v", revisions, total, err)
+		}
+		// Another environment never sees the stage's history.
+		if _, total, err := author.ListStoredWorkflowRevisions(ctx, app.ID, "stage-job", state.StoredWorkflowRevisionListOptions{Limit: 10}); err != nil || total != 0 {
+			t.Fatalf("production revisions of a stage's workflow = %d, %v; want none", total, err)
+		}
+
+		// The plan's per-app limit counts every environment's workflows.
+		limit := api.PlanPro.WorkflowMaxPerApp()
+		for i := 3; i < limit; i++ {
+			name := "fill-" + strconv.Itoa(i)
+			if _, err := mutate(name, "save", stage.ID, 0, state.StoredWorkflowDraft(name, "/fill", ""), false); err != nil {
+				t.Fatalf("save %s: %v", name, err)
+			}
+		}
+		var quota *state.StoredWorkflowQuotaError
+		if _, err := mutate("over-stage", "save", stage.ID, 0, state.StoredWorkflowDraft("over-stage", "/x", ""), false); !errors.As(err, &quota) {
+			t.Fatalf("stage save over the app's limit: %v, want StoredWorkflowQuotaError", err)
+		}
+		if _, err := mutate("over-prod", "save", "", 0, state.StoredWorkflowDraft("over-prod", "/x", ""), false); !errors.As(err, &quota) {
+			t.Fatalf("production save over the app's limit: %v, want StoredWorkflowQuotaError", err)
 		}
 
 		if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "staging"); err != nil {
@@ -114,7 +135,7 @@ func TestStoredWorkflowEnvironments(t *testing.T) {
 		if _, err := author.StoredWorkflowEnvironment(ctx, app.ID, "stage-job"); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("stage workflow after the stage's deletion: %v", err)
 		}
-		if _, total, err := author.ListStoredWorkflowRevisions(ctx, app.ID, "stage-job", state.StoredWorkflowRevisionListOptions{Limit: 10}); err != nil || total != 0 {
+		if _, total, err := author.ListStoredWorkflowRevisions(ctx, app.ID, "stage-job", state.StoredWorkflowRevisionListOptions{Limit: 10, EnvironmentID: stage.ID}); err != nil || total != 0 {
 			t.Fatalf("stage revisions after the stage's deletion: %d, %v", total, err)
 		}
 	})

@@ -20986,13 +20986,24 @@ SELECT * FROM stored_workflows WHERE app_id=$1 AND environment_id=$2 ORDER BY na
 SELECT environment_id FROM stored_workflows WHERE app_id=$1 AND name=$2;
 
 -- name: ListStoredWorkflowRevisions :many
+-- One environment's revisions (NULL is production): a name freed in one
+-- environment never shows the other's history (ADR-20261104120000).
 SELECT * FROM stored_workflow_revisions
-WHERE app_id=$1 AND name=$2
+WHERE app_id=sqlc.arg(app_id) AND name=sqlc.arg(name)
+  AND environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
 ORDER BY version DESC
-LIMIT $3 OFFSET $4;
+LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
 
 -- name: CountStoredWorkflowRevisions :one
-SELECT count(*) FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2;
+SELECT count(*) FROM stored_workflow_revisions
+WHERE app_id=sqlc.arg(app_id) AND name=sqlc.arg(name)
+  AND environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid;
+
+-- name: ListStoredWorkflowNamesOutsideEnvironment :many
+-- The app's stored workflow names in its other environments: the per-app
+-- plan limit counts them all (ADR-20261104120000).
+SELECT name FROM stored_workflows
+WHERE app_id=sqlc.arg(app_id) AND environment_id IS DISTINCT FROM sqlc.narg(environment_id)::uuid;
 
 -- name: GetStoredWorkflowHealthSummary :one
 SELECT count(*)::bigint AS run_count,

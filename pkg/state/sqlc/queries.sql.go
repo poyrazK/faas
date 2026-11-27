@@ -12311,16 +12311,19 @@ func (q *Queries) CountReadinessSubscriptions(ctx context.Context, db DBTX, arg 
 }
 
 const countStoredWorkflowRevisions = `-- name: CountStoredWorkflowRevisions :one
-SELECT count(*) FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2
+SELECT count(*) FROM stored_workflow_revisions
+WHERE app_id=$1 AND name=$2
+  AND environment_id IS NOT DISTINCT FROM $3::uuid
 `
 
 type CountStoredWorkflowRevisionsParams struct {
-	AppID pgtype.UUID
-	Name  string
+	AppID         pgtype.UUID
+	Name          string
+	EnvironmentID pgtype.UUID
 }
 
 func (q *Queries) CountStoredWorkflowRevisions(ctx context.Context, db DBTX, arg CountStoredWorkflowRevisionsParams) (int64, error) {
-	row := db.QueryRow(ctx, countStoredWorkflowRevisions, arg.AppID, arg.Name)
+	row := db.QueryRow(ctx, countStoredWorkflowRevisions, arg.AppID, arg.Name, arg.EnvironmentID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -59143,26 +59146,63 @@ func (q *Queries) ListStoredWorkflowHealthRecentRuns(ctx context.Context, db DBT
 	return items, nil
 }
 
+const listStoredWorkflowNamesOutsideEnvironment = `-- name: ListStoredWorkflowNamesOutsideEnvironment :many
+SELECT name FROM stored_workflows
+WHERE app_id=$1 AND environment_id IS DISTINCT FROM $2::uuid
+`
+
+type ListStoredWorkflowNamesOutsideEnvironmentParams struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+// The app's stored workflow names in its other environments: the per-app
+// plan limit counts them all (ADR-20261104120000).
+func (q *Queries) ListStoredWorkflowNamesOutsideEnvironment(ctx context.Context, db DBTX, arg ListStoredWorkflowNamesOutsideEnvironmentParams) ([]string, error) {
+	rows, err := db.Query(ctx, listStoredWorkflowNamesOutsideEnvironment, arg.AppID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStoredWorkflowRevisions = `-- name: ListStoredWorkflowRevisions :many
 SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence, environment_id FROM stored_workflow_revisions
 WHERE app_id=$1 AND name=$2
+  AND environment_id IS NOT DISTINCT FROM $3::uuid
 ORDER BY version DESC
-LIMIT $3 OFFSET $4
+LIMIT $5 OFFSET $4
 `
 
 type ListStoredWorkflowRevisionsParams struct {
-	AppID  pgtype.UUID
-	Name   string
-	Limit  int32
-	Offset int32
+	AppID         pgtype.UUID
+	Name          string
+	EnvironmentID pgtype.UUID
+	OffsetCount   int32
+	LimitCount    int32
 }
 
+// One environment's revisions (NULL is production): a name freed in one
+// environment never shows the other's history (ADR-20261104120000).
 func (q *Queries) ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg ListStoredWorkflowRevisionsParams) ([]StoredWorkflowRevision, error) {
 	rows, err := db.Query(ctx, listStoredWorkflowRevisions,
 		arg.AppID,
 		arg.Name,
-		arg.Limit,
-		arg.Offset,
+		arg.EnvironmentID,
+		arg.OffsetCount,
+		arg.LimitCount,
 	)
 	if err != nil {
 		return nil, err

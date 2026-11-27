@@ -84,6 +84,17 @@ func (s *server) storedWorkflowInEnvironment(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
+// storedWorkflowRevisionInEnvironment reads one revision of the
+// environment the route addresses: another environment's history under a
+// freed name is not found.
+func storedWorkflowRevisionInEnvironment(ctx context.Context, store state.StoredWorkflowStore, appID, name string, version int64) (state.StoredWorkflowRevision, error) {
+	revision, err := store.GetStoredWorkflowRevision(ctx, appID, name, version)
+	if err == nil && revision.EnvironmentID != storedWorkflowEnvironment(ctx) {
+		return state.StoredWorkflowRevision{}, state.ErrStoredWorkflowRevisionNotFound
+	}
+	return revision, err
+}
+
 // stageStoredWorkflowList lists one stage's workflows. A stage runs its
 // manual and schedule workflows on its own deployment.
 func (s *server) stageStoredWorkflowList(ctx context.Context, store state.StoredWorkflowStore, app state.App, account state.Account, envID string) (api.ListStoredWorkflowsResponse, error) {

@@ -271,7 +271,11 @@ gregale workflow stored delete --app billing --env staging --name nightly-report
   failure policies and restoring a revision are not available in a stage
   yet.
 - Production's schedules, events, webhooks and manual starts never see a
-  stage's workflows, and a stage's runs never see production's.
+  stage's workflows, and a stage's runs never see production's. Revision
+  history stays with its environment, and an idempotency key used in one
+  environment never replays a run from another.
+- The plan's workflows-per-app limit counts the workflows of every
+  environment together.
 - A workflow is reached only through its own environment. Until a later
   release, a name is unique across the app: a stage cannot use a name
   production uses, or the other way round.

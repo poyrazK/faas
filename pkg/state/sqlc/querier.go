@@ -4782,6 +4782,11 @@ type Querier interface {
 	ListStoredWorkflowLiveBaselineHeads(ctx context.Context, db DBTX, arg ListStoredWorkflowLiveBaselineHeadsParams) ([]StoredWorkflowLiveBaselinePromotion, error)
 	ListStoredWorkflowLiveSuites(ctx context.Context, db DBTX, arg ListStoredWorkflowLiveSuitesParams) ([]StoredWorkflowLiveSuite, error)
 	ListStoredWorkflowLiveVerifications(ctx context.Context, db DBTX, arg ListStoredWorkflowLiveVerificationsParams) ([]StoredWorkflowLiveVerification, error)
+	// The app's stored workflow names in its other environments: the per-app
+	// plan limit counts them all (ADR-20261104120000).
+	ListStoredWorkflowNamesOutsideEnvironment(ctx context.Context, db DBTX, arg ListStoredWorkflowNamesOutsideEnvironmentParams) ([]string, error)
+	// One environment's revisions (NULL is production): a name freed in one
+	// environment never shows the other's history (ADR-20261104120000).
 	ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg ListStoredWorkflowRevisionsParams) ([]StoredWorkflowRevision, error)
 	// Production's workflows; a stage's are read by ListStageStoredWorkflows
 	// (ADR-20261104120000).

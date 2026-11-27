@@ -32,8 +32,11 @@ type StoredWorkflow struct {
 // stored workflow is published. LegacySnapshot rows were seeded from the latest
 // publication present when revision history was introduced.
 type StoredWorkflowRevision struct {
-	CheckEvidence        json.RawMessage
-	AppID                string
+	CheckEvidence json.RawMessage
+	AppID         string
+	// EnvironmentID is the environment whose workflow published it ("" is
+	// production).
+	EnvironmentID        string
 	Name                 string
 	Version              int64
 	Definition           json.RawMessage
@@ -46,6 +49,8 @@ type StoredWorkflowRevision struct {
 type StoredWorkflowRevisionListOptions struct {
 	Limit  int
 	Offset int
+	// EnvironmentID lists that environment's revisions ("" is production).
+	EnvironmentID string
 }
 
 const maxStoredWorkflowRevisionOffset = int(^uint32(0) >> 1)
@@ -160,7 +165,9 @@ func mergeStoredWorkflowDefinitions(manifest json.RawMessage, records []StoredWo
 	return json.Marshal(definitions)
 }
 
-func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, previous *StoredWorkflow, manifest json.RawMessage, records []StoredWorkflow, plan api.Plan, hasDeployment bool) (StoredWorkflow, error) {
+// otherNames are the app's stored workflows in its other environments: the
+// plan's per-app limit counts every environment (ADR-20261104120000).
+func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, previous *StoredWorkflow, manifest json.RawMessage, records []StoredWorkflow, otherNames []string, plan api.Plan, hasDeployment bool) (StoredWorkflow, error) {
 	if name == "" || strings.TrimSpace(name) != name || strings.ContainsAny(name, "/\\\x00") || len(name) > api.StoredWorkflowNameMaxBytes || mutation.ExpectedVersion < 0 {
 		return StoredWorkflow{}, ErrStoredWorkflowInvalid
 	}
@@ -188,6 +195,9 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 	}
 	for _, record := range records {
 		names[record.Name] = true
+	}
+	for _, other := range otherNames {
+		names[other] = true
 	}
 	if mutation.Action == "save" && len(names) > plan.WorkflowMaxPerApp() {
 		return StoredWorkflow{}, &StoredWorkflowQuotaError{plan, plan.WorkflowMaxPerApp(), len(names)}
