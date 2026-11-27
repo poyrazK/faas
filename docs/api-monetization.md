@@ -894,6 +894,10 @@ gregale consumers signup-set my-api --display-name "Weather API" --plans free,pr
   scheduled, has no unit price, priced tier, base fee or minimum, and the
   plan has at least one. Gregale refuses `--free-plan` otherwise, and
   refuses a charging rate card on the free plan while it is the free plan.
+- **No Stripe needed yet.** When the free plan is the only plan you offer
+  (`--plans free --free-plan free`), sign-up works before you connect
+  Stripe, so you can open an MCP server to signed-in callers first.
+  Offering a paid plan asks you to connect Stripe.
 - **Joining.** `POST /v1/consumer-signup/my-api` with the free plan's
   `plan_id` returns an empty `checkout_url`; complete the sign-up at once
   with the claim token. The hosted page does this for you. No Stripe
