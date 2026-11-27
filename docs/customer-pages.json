@@ -78,6 +78,7 @@
     {"path": "deploy-go", "source": "docs/deploy-go.md"},
     {"path": "deploy-nextjs", "source": "docs/deploy-nextjs.md"},
     {"path": "deploy-overrides", "source": "docs/deploy-overrides.md"},
+    {"path": "deploy-rust", "source": "docs/deploy-rust.md"},
     {"path": "deployments", "source": "docs/deploys.md"},
     {"path": "deploys", "source": "docs/deploys.md"},
     {"path": "dev", "source": "docs/gregale-dev.md"},
