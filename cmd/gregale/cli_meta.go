@@ -5722,7 +5722,9 @@ var cliCommands = []cliCommand{
 					{Name: "description", Short: "version description", Value: "TEXT"},
 				}},
 			}},
-			{Name: "ls", Aliases: []string{"list"}, Short: "List orgs"},
+			{Name: "ls", Aliases: []string{"list"}, Short: "List orgs", Flags: []cliFlag{
+				{Name: "all", Short: "include deleted organizations (their slugs are released 30 days after deletion)"},
+			}},
 			{Name: "create", Short: "Create an org", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
 				{Name: "slug", Short: "org slug, or the first argument (lowercase alphanumeric + dashes)", Value: "SLUG"},
 				{Name: "name", Short: "display name", Value: "TEXT", Req: true},

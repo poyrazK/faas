@@ -169,6 +169,27 @@ func TestAccountWideCommandsNameTheExtraWord(t *testing.T) {
 	}
 }
 
+// Prod hunt r73: deleted organizations are hidden from `org list` by the
+// API; --all asks for them.
+func TestOrgListAllAsksForDeletedOrgs(t *testing.T) {
+	var queries []string
+	r63Server(t, func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"orgs":[{"slug":"audit-1001-org","plan":"free","status":"deleted_pending","name":"Audit"}]}`))
+	})
+	if code, out := r63Run(t, "org", "list"); code != 0 {
+		t.Fatalf("list: exit=%d out=%s", code, out)
+	}
+	code, out := r63Run(t, "org", "list", "--all")
+	if code != 0 || !strings.Contains(out, "audit-1001-org") {
+		t.Fatalf("list --all: exit=%d out=%s", code, out)
+	}
+	if len(queries) != 2 || queries[0] != "" || queries[1] != "include_deleted=true" {
+		t.Fatalf("queries = %q", queries)
+	}
+}
+
 // Prod hunt r68: `cron get nope` printed only its usage line, never that the
 // ID was malformed or where cron IDs come from.
 func TestCronGetNamesTheMalformedID(t *testing.T) {

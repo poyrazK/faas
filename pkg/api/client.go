@@ -6663,6 +6663,13 @@ func (c *Client) ListOrgs(ctx context.Context) (OrgListResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/orgs", nil, &out)
 }
 
+// ListOrgsIncludingDeleted is ListOrgs with deleted organizations, which
+// GET /v1/orgs leaves out by default (ADR-061 amendment 1).
+func (c *Client) ListOrgsIncludingDeleted(ctx context.Context) (OrgListResponse, error) {
+	var out OrgListResponse
+	return out, c.do(ctx, "GET", "/v1/orgs?include_deleted=true", nil, &out)
+}
+
 // CreateOrg creates a new shared (non-personal) org. The caller
 // becomes the first owner. Personal orgs are minted by the PR 3
 // backfill and cannot be re-created here.

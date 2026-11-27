@@ -11640,6 +11640,12 @@ Show seat usage
 
 List orgs
 
+`gregale org list [--all]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | include deleted organizations (their slugs are released 30 days after deletion) |  |
+
 ### org create
 
 Create an org

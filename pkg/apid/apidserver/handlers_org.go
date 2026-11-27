@@ -50,7 +50,13 @@ func (s *server) listOrgsForCaller(w http.ResponseWriter, r *http.Request, acct 
 	out := api.ListOrgsResponse{
 		Orgs: make([]api.OrgResponse, 0, len(orgs)),
 	}
+	// A deleted organization stayed in every member's list until its slug
+	// was purged, and after (prod hunt r73). ?include_deleted=true keeps it.
+	includeDeleted := r.URL.Query().Get("include_deleted") == "true"
 	for _, o := range orgs {
+		if o.DeletedPending && !includeDeleted {
+			continue
+		}
 		out.Orgs = append(out.Orgs, api.OrgResponseFromRow(orgToRow(o)))
 	}
 	writeJSON(w, http.StatusOK, out)

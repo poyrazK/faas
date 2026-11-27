@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
 	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
+	"github.com/onebox-faas/faas/pkg/apid/orgpurge"
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -865,6 +866,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// ADR 20261110120000: never-verified accounts that hold nothing
 		// are scheduled for deletion 60 days after signup.
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runUnverifiedAccountExpiry(ctx) })
+		// ADR-061 amendment 1: a deleted shared organization's slug is
+		// released 30 days after deletion.
+		if purge, ok := srv.store.(state.DeletedOrgPurgeStore); ok {
+			go background.Staggered(ctx, background.StartSpread, func() { orgpurge.Run(ctx, purge, srv.audit, srv.log) })
+		}
 		go background.Staggered(ctx, background.StartSpread, func() { srv.claim.RunExpiry(ctx) })
 		// ADR-20261111140000: complimentary accounts return to Free at
 		// their end date.
