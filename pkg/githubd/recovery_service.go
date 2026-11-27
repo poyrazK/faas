@@ -3,6 +3,7 @@ package githubd
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"google.golang.org/grpc/codes"
@@ -38,6 +39,17 @@ func (s *RecoveryService) GetCIChangedFiles(ctx context.Context, account string,
 		return githubdgrpc.CIChangedFiles{}, status.Error(codes.Unimplemented, "githubd: CI comparison is not configured")
 	}
 	return service.GetCIChangedFiles(ctx, account, installation, repository, base, head)
+}
+
+// StreamPublicSourceRef forwards the public-repository stream
+// (ADR-20261126164847). The gRPC server finds optional services by type
+// assertion, so the decorator must forward each one it should expose.
+func (s *RecoveryService) StreamPublicSourceRef(ctx context.Context, repoFullName, ref string, maxArchiveBytes int64) (io.ReadCloser, string, error) {
+	service, ok := s.Service.(githubdgrpc.PublicSourceRefService)
+	if !ok {
+		return nil, "", status.Error(codes.Unimplemented, "githubd: public source-ref streaming is not configured")
+	}
+	return service.StreamPublicSourceRef(ctx, repoFullName, ref, maxArchiveBytes)
 }
 
 // CheckRecoveryStore is the operator-facing subset of the Check Run outbox.

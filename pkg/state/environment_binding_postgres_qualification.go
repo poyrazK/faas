@@ -41,7 +41,7 @@ type EnvironmentQualificationPostgresStore interface {
 }
 
 func candidatePostgresAccessSupported(access string) bool {
-	return access == "read_write" || access == "read_only" || access == "migration" || access == "session"
+	return access == "read_write" || access == "read_only" || access == "migration" || access == "session" || access == "replica_only"
 }
 
 // candidatePostgresAccessSelfQualified reports the access modes whose

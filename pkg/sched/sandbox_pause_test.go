@@ -186,3 +186,37 @@ func TestSandboxRunnerResumeRequiresTheCapturesNode(t *testing.T) {
 		t.Fatalf("resume of a gone node's capture placed on %q with %+v", router.nodeID, router.spec.Snapshot)
 	}
 }
+
+// adr: 20261122132055 §4 — a cold resume prefers the node holding the
+// volume's newest copy; once that node left the pool, its copy and the
+// backups only it held are gone, so vmmd restores the newest stored backup.
+func TestSandboxRunnerColdResumeFollowsTheVolume(t *testing.T) {
+	runner, router, _, _, store := sandboxRunnerPoolStoreFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
+	run := func(a sched.SandboxAdmission) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		booted := func(context.Context, sched.SandboxBooted) error { cancel(); return nil }
+		_ = runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{Booted: booted}, nil)
+	}
+	for _, name := range []string{"agents-1", "agents-2"} {
+		node, err := store.ComputeNodeByName(context.Background(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := sandboxAdmission()
+		a.Persistent = true
+		a.Volume = sched.SandboxVolume{GB: 10, BackupID: "pause", StoredBackupID: "periodic", NodeID: node.ID}
+		run(a)
+		if router.nodeID != node.ID || router.spec.Volume.BackupID != "pause" {
+			t.Fatalf("cold resume of a volume on %s ran on %q with backup %q", name, router.nodeID, router.spec.Volume.BackupID)
+		}
+	}
+	a := sandboxAdmission()
+	a.Persistent = true
+	a.Volume = sched.SandboxVolume{GB: 10, BackupID: "pause", StoredBackupID: "periodic", NodeID: "a-node-that-is-gone"}
+	run(a)
+	if router.nodeID == "" || router.spec.Volume.BackupID != "periodic" {
+		t.Fatalf("cold resume of a gone node's volume ran on %q with backup %q", router.nodeID, router.spec.Volume.BackupID)
+	}
+}

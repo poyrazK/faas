@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/dbsched"
 )
@@ -158,6 +159,18 @@ func TestDatabaseRPCCallerIdentity(t *testing.T) {
 			_, err := s.TouchDatabase(c, &scheddpb.TouchDatabaseRequest{DatabaseId: testDBID})
 			return err
 		}, codes.OK},
+		{"pgproxyd cannot request a customer cancel", callerPgproxy, func(c context.Context) error {
+			_, err := s.CancelDatabaseQuery(c, &scheddpb.CancelDatabaseQueryRequest{DatabaseId: testDBID})
+			return err
+		}, codes.PermissionDenied},
+		{"apid cannot publish proxy targets", callerAPID, func(c context.Context) error {
+			_, err := s.ExchangeDatabaseQueryControls(c, &scheddpb.ExchangeDatabaseQueryControlsRequest{})
+			return err
+		}, codes.PermissionDenied},
+		{"apid cannot publish pooled database errors", callerAPID, func(c context.Context) error {
+			_, err := s.ExchangeDatabaseErrorHistory(c, &scheddpb.ExchangeDatabaseErrorHistoryRequest{})
+			return err
+		}, codes.PermissionDenied},
 		{"pgproxyd cannot resize", callerPgproxy, func(c context.Context) error {
 			_, err := s.ResizeDatabase(c, &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID})
 			return err
@@ -199,6 +212,29 @@ func TestDatabaseRPCCallerIdentity(t *testing.T) {
 				t.Fatalf("code = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+type databasesWithReplica struct {
+	*fakeDatabases
+}
+
+func (d databasesWithReplica) ReadReplica(context.Context, string) (dbsched.ReplicaStatus, error) {
+	zero := int64(0)
+	return dbsched.ReplicaStatus{Available: true, ReplayLagBytes: &zero, ObservedAt: time.Now(), StandbyNode: "db-b", ReplicaTarget: "replica"}, nil
+}
+
+func TestGetDatabaseReplicaPreservesZeroReplayBacklog(t *testing.T) {
+	s := New(nil, nil, nil).WithDatabases(databasesWithReplica{&fakeDatabases{}})
+	ref := &scheddpb.DatabaseRef{DatabaseId: testDBID}
+	for _, caller := range []string{callerAPID, callerPgproxy} {
+		got, err := s.GetDatabaseReplica(asCaller(caller), ref)
+		if err != nil || !got.GetAvailable() || got.ReplayLagBytes == nil || *got.ReplayLagBytes != 0 || got.GetObservedAt() == nil || got.GetStandbyNodeId() != "db-b" {
+			t.Fatalf("%s read replica = %v, %v", caller, got, err)
+		}
+	}
+	if _, err := s.GetDatabaseReplica(asCaller("gatewayd.faas"), ref); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("gateway replica status = %v", err)
 	}
 }
 
@@ -288,6 +324,13 @@ func TestRestoreDatabaseValidatesAndMapsLineage(t *testing.T) {
 	}
 	if _, err := s.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target), Snapshot: "../x"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad snapshot name = %v", err)
+	}
+	_, err = s.RestoreDatabaseFromRecovery(ctx, &scheddpb.RestoreDatabaseFromRecoveryRequest{
+		Restore:        &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target)},
+		RecoveryRegion: "us-west-2", RecoveryTimeline: 3,
+	})
+	if err != nil || f.restore.RecoveryRegion != "us-west-2" || f.restore.RecoveryTimeline != 3 {
+		t.Fatalf("regional restore = %v (%+v)", err, f.restore)
 	}
 }
 
@@ -419,5 +462,73 @@ func TestImportDatabaseValidatesAndMaps(t *testing.T) {
 	}
 	if got, err := s.DatabaseImportStatus(asCaller(callerAPID), &scheddpb.DatabaseRef{DatabaseId: testDBID}); err != nil || got.GetState() != "running" {
 		t.Fatalf("status = %+v, %v", got, err)
+	}
+}
+
+type fakeCustomerImport struct {
+	*fakeDatabases
+	checkOnly bool
+}
+
+func (f *fakeCustomerImport) CustomerImport(_ context.Context, _ string, spec dbsched.ImportSpec, checkOnly bool) (dbguest.ImportStatus, error) {
+	f.checkOnly = checkOnly
+	f.importSpec = spec
+	if checkOnly {
+		return dbguest.ImportStatus{State: dbguest.ImportChecked, SourceMajor: 16}, nil
+	}
+	return dbguest.ImportStatus{State: dbguest.ImportRunning, OperationID: spec.Source.OperationID}, nil
+}
+
+func TestCustomerImportDispatchesCheckSeparatelyFromCopy(t *testing.T) {
+	const operation = "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b"
+	f := &fakeCustomerImport{fakeDatabases: &fakeDatabases{}}
+	server := New(nil, nil, nil).WithDatabases(f)
+	request := &scheddpb.CustomerDatabaseImportRequest{
+		CheckOnly: true,
+		Source: &scheddpb.ImportDatabaseRequest{
+			DatabaseId: testDBID, Host: "source.example.com", Port: 5432, SourceDatabase: "upstream",
+			User: "upstream_user", Password: "fixture-secret", TargetDatabase: "target",
+			Owner: "target_owner", OperationId: operation,
+		},
+	}
+	if _, err := server.CustomerDatabaseImport(asCaller(callerPgproxy), request); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("unauthorized check error = %v", err)
+	}
+	check, err := server.CustomerDatabaseImport(asCaller(callerAPID), request)
+	if err != nil || !f.checkOnly || check.GetState() != "checked" || check.GetOperationId() != "" {
+		t.Fatalf("check = %v, %v", check, err)
+	}
+	request.CheckOnly = false
+	copy, err := server.CustomerDatabaseImport(asCaller(callerAPID), request)
+	if err != nil || f.checkOnly || copy.GetState() != "running" || copy.GetOperationId() != operation {
+		t.Fatalf("copy = %v, %v", copy, err)
+	}
+}
+
+type migrationCheckDatabases struct {
+	*fakeDatabases
+	checked bool
+}
+
+func (f *migrationCheckDatabases) CheckMigration(_ context.Context, _ string, spec dbsched.ImportSpec) (*vmmdpb.DatabaseMigrationCheck, error) {
+	f.checked = true
+	f.importSpec = spec
+	return &vmmdpb.DatabaseMigrationCheck{Outcome: "compatible", SourceMajor: 16}, nil
+}
+
+func TestMigrationCheckUsesDistinctSchedulerOperation(t *testing.T) {
+	f := &migrationCheckDatabases{fakeDatabases: &fakeDatabases{}}
+	server := New(nil, nil, nil).WithDatabases(f)
+	req := &scheddpb.ImportDatabaseRequest{
+		DatabaseId: testDBID, Host: "source.example.com", Port: 5432, SourceDatabase: "upstream",
+		User: "upstream_user", Password: "fixture-secret", TargetDatabase: "target", Owner: "target_owner",
+		OperationId: "0b0b8c1e-5f0a-4d36-9a7e-1c2d3e4f5a6b",
+	}
+	if _, err := server.CheckDatabaseMigration(asCaller(callerPgproxy), req); status.Code(err) != codes.PermissionDenied || f.checked {
+		t.Fatalf("unauthorized check = %v", err)
+	}
+	check, err := server.CheckDatabaseMigration(asCaller(callerAPID), req)
+	if err != nil || !f.checked || check.GetOutcome() != "compatible" || f.importSpec.Host != req.GetHost() {
+		t.Fatalf("migration check = %v, %v", check, err)
 	}
 }

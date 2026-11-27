@@ -17302,7 +17302,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 // regression used returning col = $2; that's always true post-update
 // and silently breaks the entire dedupe gate. The two-return form
 // (old + won) is the load-bearing detail.
-func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error) {
+func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, recipients AlertFireRecipients, err error) {
 	// The bucket-level dedupe primitive is
 	// `alert_deliveries.idempotency_key` UNIQUE: the FIRST claim
 	// inside a cool-down bucket inserts the delivery row with
@@ -17338,22 +17338,31 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 	// pkg-state-usage-monthly-tz-compare.md).
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return "", false, fmt.Errorf("state: begin tx: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	if _, err := sqlc.New().LockAlertRollbackFireApp(ctx, tx, mustPgUUID(ruleID)); err != nil {
-		return "", false, fmt.Errorf("state: lock alert rollback app: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: lock alert rollback app: %w", err)
 	}
 
-	var exists bool
-	if err := tx.QueryRow(ctx,
-		`select true from alert_rules where id = $1`, ruleID,
-	).Scan(&exists); err != nil {
+	mode, err := sqlc.New().LockAlertRuleObservationMode(ctx, tx, mustPgUUID(ruleID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", false, ErrNotFound
+			return "", false, AlertFireRecipients{}, ErrNotFound
 		}
-		return "", false, fmt.Errorf("state: claim alert fire lookup %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire lookup %s: %w", ruleID, err)
+	}
+	if mode.ObserveOnly {
+		return "", false, AlertFireRecipients{}, nil
+	}
+	if !alertFireMatchesScope(payload, mode.EnvironmentScope) {
+		return "", false, AlertFireRecipients{}, ErrConflict
+	}
+
+	// Older evaluators cannot defer notifications during an observation handoff.
+	if _, err := tx.Exec(ctx, "SELECT set_config('faas.alert_handoff_claim', 'on', true)"); err != nil {
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: enable alert fire handoff: %w", err)
 	}
 
 	// Insert pending delivery as the dedupe gate. UNIQUE on
@@ -17377,13 +17386,13 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 		// 23505 = unique_violation; the per-bucket dedupe hit.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return "", false, nil
+			return "", false, AlertFireRecipients{}, nil
 		}
-		return "", false, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
 	}
 
 	if err := s.captureAlertRollbackTx(ctx, tx, ruleID, deliveryID, observed, at); err != nil {
-		return "", false, fmt.Errorf("state: capture alert rollback: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: capture alert rollback: %w", err)
 	}
 
 	// Stamp last_fired_at alongside the INSERT. The stamp is a
@@ -17393,20 +17402,34 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 		`update alert_rules set last_fired_at = $2 where id = $1`,
 		ruleID, at.UTC(),
 	); err != nil {
-		return "", false, fmt.Errorf("state: claim alert fire stamp write %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire stamp write %s: %w", ruleID, err)
 	}
-	won = true
+	// The mode edit locks the same row. It either sees this open episode
+	// and queues its terminal events, or it wins before this fire is claimed.
+	var changed int
+	if err := tx.QueryRow(ctx, setAlertRuleStateSQL, ruleID, string(AlertStateFiring), at.UTC(),
+		uuid.NewString(), alertEpisodeKeep, nil).Scan(&changed); err != nil {
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: open claimed alert episode: %w", err)
+	}
+	recipients, err = claimAlertFireRecipients(ctx, tx, ruleID, deliveryID)
+	if err != nil {
+		return "", false, AlertFireRecipients{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return "", false, fmt.Errorf("state: claim alert fire commit: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire commit: %w", err)
 	}
-	return deliveryID, won, nil
+	return deliveryID, true, recipients, nil
 }
 
 func (s *PgStore) SetAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
+	return s.setAlertRuleState(ctx, ruleID, to, at, nil)
+}
+
+func (s *PgStore) setAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time, confirmedAt *time.Time) (bool, error) {
 	var changed int
 	err := s.pool.QueryRow(ctx, setAlertRuleStateSQL,
-		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep).Scan(&changed)
+		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep, confirmedAt).Scan(&changed)
 	if err != nil {
 		return false, err
 	}
@@ -28348,6 +28371,8 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "alert_rules_environment_scope_chk", "alert_rules_recovery_confirmation_chk":
+				return ErrInvalidArgument
 			case "release_secret_snapshot_owned", "release_secret_key_retired", "release_secret_version_immutable":
 				return ErrConflict
 			case "application_standards_pending":

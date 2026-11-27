@@ -14,6 +14,9 @@ var _ PreviewDatabaseStore = (*MemoryStore)(nil)
 
 // SetPreviews implements PreviewDatabaseStore.
 func (s *MemoryStore) SetPreviews(_ context.Context, accountID, databaseID string, mode PreviewMode, at time.Time) (Database, error) {
+	if mode == PreviewsMasked {
+		return Database{}, ErrMaskedPreviewUnsupported
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	database, ok := s.databases[databaseID]
@@ -53,6 +56,9 @@ func (s *MemoryStore) previewDatabase(owner PreviewOwner) (Database, error) {
 
 // ReservePreview implements PreviewDatabaseStore.
 func (s *MemoryStore) ReservePreview(ctx context.Context, database Database, limit int) (Database, bool, error) {
+	if database.IsMaskedBranch() {
+		return Database{}, false, ErrMaskedPreviewUnsupported
+	}
 	// The owner and a copy's restore are checked apart: a copy restores its
 	// own source.
 	plain := database

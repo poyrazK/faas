@@ -90,6 +90,13 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	m := newMetrics(reg)
+	var recovery *dbarchive.TieredStore
+	if cfg.Recovery != nil {
+		recovery, err = openRecoveryArchive(cfg)
+		if err != nil {
+			return err
+		}
+	}
 	var uploader *dbarchive.Uploader
 	if cfg.Remote != nil {
 		s3cfg, err := cfg.Remote.s3Config()
@@ -136,11 +143,29 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	stopWatchdog := daemonunit.WatchdogFromEnv(ctx, func() bool { return true })
 	defer stopWatchdog()
 	log.Info("dbbackupd: serving", "socket", cfg.SocketPath, "store_dir", cfg.StoreDir, "remote", cfg.Remote != nil, "offsite", cfg.Offsite != nil)
-	srv := &dbarchive.Server{Store: store, Backups: store, Retention: store, Log: log}
+	srv := &dbarchive.Server{Store: store, Backups: store, Retention: store, Recovery: recovery, Log: log}
 	if uploader != nil {
 		srv.Handoff = uploader
 	}
 	return srv.Serve(ctx, ln)
+}
+
+// openRecoveryArchive gives the incoming bucket a separate scratch space and
+// no upload or retention worker.
+func openRecoveryArchive(cfg *Config) (*dbarchive.TieredStore, error) {
+	s3cfg, err := cfg.Recovery.s3Config()
+	if err != nil {
+		return nil, err
+	}
+	remote, err := dbarchive.NewS3Remote(s3cfg)
+	if err != nil {
+		return nil, err
+	}
+	scratch, err := dbarchive.NewLocalStore(filepath.Join(cfg.StoreDir, ".recovery"))
+	if err != nil {
+		return nil, err
+	}
+	return &dbarchive.TieredStore{LocalStore: scratch, Remote: remote, Prefix: cfg.Recovery.Prefix}, nil
 }
 
 // startOffsite starts the off-site mirror, if one is configured, and makes

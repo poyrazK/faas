@@ -29,6 +29,7 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/alert-presets/{name}/enable": authz.OrgActionConfigureApp,
 	"POST /v1/apps/{slug}/alert-presets/{name}/test":   authz.OrgActionDeployApp,
 	// alerts
+	"GET /v1/apps/{slug}/alerts/anomaly-preview":                                      authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback":                          authz.OrgActionReadApp,
 	"PUT /v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback":                          authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty":                         authz.OrgActionReadApp,
@@ -210,6 +211,11 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/database-switches":              authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/database-switches/{id}":         authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/database-switches/{id}/cancel": authz.OrgActionDeployApp,
+	// migration database switches
+	"GET /v1/apps/{slug}/database-switches/migration":              authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/database-switches/migration/{id}":         authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/database-switches/migration":             authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/database-switches/migration/{id}/cancel": authz.OrgActionDeployApp,
 	// debug
 	"POST /v1/apps/{slug}/debug/compare":                   authz.OrgActionReadAppLogs, // read-only; POST only carries the body
 	"GET /v1/apps/{slug}/debug/coverage":                   authz.OrgActionReadAppLogs,

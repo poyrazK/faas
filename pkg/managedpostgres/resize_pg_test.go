@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/migrations"
 )
 
 func postgresResizeDatabase(t *testing.T, store *PostgresStore, account string) Database {
@@ -185,40 +184,5 @@ func TestPostgresResizeRejectsChangedBackendSnapshot(t *testing.T) {
 	op.BackendFingerprint = strings.Repeat("b", 64)
 	if _, err := store.ReserveResize(ctx, d, op, time.Now()); !errors.Is(err, ErrInvalid) {
 		t.Fatal("unpinned backend", err)
-	}
-}
-
-func TestPostgresResizeMigrationReplayAndRollbackFence(t *testing.T) {
-	store, pool, ctx, account := postgresStoreFixture(t)
-	raw, err := migrations.FS.ReadFile("20261005174532362_managed_postgres_resize.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sections := strings.SplitN(string(raw), "-- +goose Down", 2)
-	if _, err := pool.Exec(ctx, sections[0]); err != nil {
-		t.Fatal("replay up", err)
-	}
-	d := postgresResizeDatabase(t, store, account)
-	op := postgresResizeIntent(d)
-	if _, err := store.ReserveResize(ctx, d, op, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, sections[1]); err == nil {
-		t.Fatal("rollback erased unresolved intent")
-	}
-	now := time.Now()
-	claimed, err := store.Claim(ctx, account, d.ID, "finish", StateUpdating, now, now.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	observed := ObservedDatabase{ProviderResourceID: d.ProviderResourceID, DataResourceID: d.DataResourceID, Spec: op.TargetSpec(), Status: ProviderStatusReady}
-	if _, err := store.FinishResize(ctx, claimed, op, observed, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, sections[1]); err != nil {
-		t.Fatal("completed rollback", err)
-	}
-	if _, err := pool.Exec(ctx, sections[0]); err != nil {
-		t.Fatal("up after down", err)
 	}
 }

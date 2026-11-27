@@ -77,10 +77,23 @@ from .agent_undo_item_status import AgentUndoItemStatus
 from .agent_undo_plan import AgentUndoPlan
 from .agent_undo_request import AgentUndoRequest
 from .agent_undo_result import AgentUndoResult
+from .alert_anomaly_evaluation import AlertAnomalyEvaluation
+from .alert_anomaly_evaluation_reason import AlertAnomalyEvaluationReason
+from .alert_delivery_anomaly_evidence import AlertDeliveryAnomalyEvidence
+from .alert_delivery_anomaly_evidence_comparison import AlertDeliveryAnomalyEvidenceComparison
+from .alert_delivery_anomaly_evidence_metric import AlertDeliveryAnomalyEvidenceMetric
+from .alert_delivery_anomaly_evidence_window import AlertDeliveryAnomalyEvidenceWindow
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
 from .alert_delivery_response_status import AlertDeliveryResponseStatus
+from .alert_observation_coverage import AlertObservationCoverage
+from .alert_observation_skip_count import AlertObservationSkipCount
+from .alert_observation_skip_count_reason import AlertObservationSkipCountReason
+from .alert_observed_incident import AlertObservedIncident
+from .alert_observed_incident_opening_evidence import AlertObservedIncidentOpeningEvidence
+from .alert_observed_incident_opening_evidence_comparison import AlertObservedIncidentOpeningEvidenceComparison
+from .alert_observed_incident_outcome import AlertObservedIncidentOutcome
 from .alert_preset_response import AlertPresetResponse
 from .alert_preset_response_category import AlertPresetResponseCategory
 from .alert_preset_response_comparison import AlertPresetResponseComparison
@@ -3372,10 +3385,23 @@ __all__ = (
     "AgentUndoPlan",
     "AgentUndoRequest",
     "AgentUndoResult",
+    "AlertAnomalyEvaluation",
+    "AlertAnomalyEvaluationReason",
+    "AlertDeliveryAnomalyEvidence",
+    "AlertDeliveryAnomalyEvidenceComparison",
+    "AlertDeliveryAnomalyEvidenceMetric",
+    "AlertDeliveryAnomalyEvidenceWindow",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
     "AlertDeliveryResponseStatus",
+    "AlertObservationCoverage",
+    "AlertObservationSkipCount",
+    "AlertObservationSkipCountReason",
+    "AlertObservedIncident",
+    "AlertObservedIncidentOpeningEvidence",
+    "AlertObservedIncidentOpeningEvidenceComparison",
+    "AlertObservedIncidentOutcome",
     "AlertPresetResponse",
     "AlertPresetResponseCategory",
     "AlertPresetResponseComparison",

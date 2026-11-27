@@ -25,8 +25,8 @@ import (
 // parked, the drill wakes it and looks for the mark, so a copy that came
 // back without the source's last commits fails. The drill records the
 // outcome and how far recovery got, then deletes the throwaway database
-// and its archive. Customers never see a drill: its database is in no
-// account's catalog. A drill database is never a source: its record stays
+// and its archive. The temporary database is outside the customer's
+// resource catalog. A drill database is never a source: its record stays
 // running until the database is gone.
 
 // DrillResult is a drill's outcome.
@@ -43,10 +43,11 @@ const (
 
 // Drill is one restore drill. ID is the throwaway database's id.
 type Drill struct {
-	ID, NodeID, SourceID                         string
+	ID, NodeID, SourceID, RequestID              string
 	TargetAt, StartedAt, FinishedAt, RecoveredTo time.Time
-	Result                                       DrillResult
+	Result, PendingOutcome                       DrillResult
 	ErrorCode                                    string
+	Rehearsal                                    *UpgradeRehearsal
 }
 
 // DrillSummary is a node's drill history: its last drill's start and its
@@ -107,6 +108,15 @@ func (s *Scheduler) RunDrills(ctx context.Context) (DrillSample, error) {
 		}
 		busy[d.NodeID], drills[d.ID] = true, true
 		sample.Running++
+	}
+	if store, ok := s.store.(*PgStore); ok {
+		requested, err := store.activeRequestedDrills(ctx)
+		if err != nil {
+			return sample, err
+		}
+		for _, d := range requested {
+			busy[d.NodeID], drills[d.ID] = true, true
+		}
 	}
 	if err := s.startDrills(ctx, busy, drills, &sample); err != nil {
 		return sample, err
@@ -210,7 +220,11 @@ func (s *Scheduler) readDrillMark(ctx context.Context, d Drill) (dbguest.Respons
 // the commit, so a restore that replays the archive that far holds the
 // mark. The restore's own flush then commits past it.
 func (s *Scheduler) markDrill(ctx context.Context, d Drill) (time.Time, error) {
-	source, err := s.Wake(ctx, d.SourceID)
+	return s.markDrillOn(ctx, d, d.SourceID)
+}
+
+func (s *Scheduler) markDrillOn(ctx context.Context, d Drill, id string) (time.Time, error) {
+	source, err := s.Wake(ctx, id)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -268,6 +282,9 @@ func (s *Scheduler) discardDrill(ctx context.Context, d Drill) error {
 	if node, err := s.node(ctx, d.NodeID); err == nil {
 		if err := s.vmm.DropArchive(ctx, node, d.ID); err != nil {
 			s.log.Warn("dbsched: drop a restore drill's archive", "drill_id", d.ID, "err", err)
+			if d.RequestID != "" {
+				return err
+			}
 		}
 	}
 	return nil
@@ -303,45 +320,75 @@ func (s *Scheduler) startDrills(ctx context.Context, busy, drills map[string]boo
 		}
 		drill := Drill{ID: uuid.NewSHA1(drillNamespace, []byte(source.DatabaseID+"/"+day)).String(), NodeID: node.ID,
 			SourceID: source.DatabaseID, TargetAt: now.UTC().Truncate(time.Microsecond)}
-		// Every replica derives the same drill id, so a replica that loses
-		// the race below rewrote the same mark.
-		target, err := s.markDrill(ctx, drill)
-		if err == nil {
-			drill.TargetAt = target
+		if err := s.startScheduledDrill(ctx, source, drill, sample); err != nil {
+			return err
 		}
-		started, serr := s.store.StartDrill(ctx, drill)
-		if serr != nil {
-			s.log.Warn("dbsched: record a restore drill", "node", node.ID, "err", serr)
-			continue
-		}
-		if !started {
-			// Another replica started it.
-			continue
-		}
-		if err == nil {
-			_, err = s.Restore(ctx, RestoreRequest{
-				ProvisionRequest: ProvisionRequest{DatabaseID: drill.ID, Major: source.MajorAt(drill.TargetAt), VcpuCount: 1, MemMiB: min(source.MemMiB, drillMemMiB),
-					VolumeBytes: source.VolumeBytes, RestoreWindowSeconds: drillRestoreWindowSeconds},
-				Source: source.DatabaseID, Target: drill.TargetAt,
-			})
-		}
-		if err == nil {
-			sample.Started++
-			s.log.Info("dbsched: restore drill started", "node", node.ID, "source", source.DatabaseID, "drill_id", drill.ID, "target", drill.TargetAt)
-			continue
-		}
-		result, code := drillStartFailure(err)
-		s.log.Warn("dbsched: restore drill did not start", "node", node.ID, "source", source.DatabaseID, "err", err)
-		if derr := s.discardDrill(ctx, drill); derr != nil {
-			s.log.Warn("dbsched: delete a restore drill's database", "drill_id", drill.ID, "err", derr)
-		}
-		if ferr := s.store.FinishDrill(ctx, drill.ID, result, time.Time{}, code); ferr != nil {
-			s.log.Warn("dbsched: record a restore drill", "drill_id", drill.ID, "err", ferr)
-		}
-		s.countDrill(result, sample)
-		s.cfg.Metrics.drilled(result)
 	}
 	return nil
+}
+
+func (s *Scheduler) startScheduledDrill(ctx context.Context, source VM, drill Drill, sample *DrillSample) error {
+	unlock, locked, err := s.lockDrill(ctx, drill)
+	if err != nil || !locked {
+		return err
+	}
+	defer unlock()
+	if store, ok := s.store.(*PgStore); ok {
+		busy, err := store.otherActiveDrill(ctx, drill, true)
+		if err != nil || busy {
+			return err
+		}
+		if err := store.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM database_restore_drills WHERE drill_id=$1)`,
+			mustUUID(drill.ID)).Scan(&busy); err != nil || busy {
+			return err
+		}
+		current, err := store.Get(ctx, source.DatabaseID)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if current.NodeID != drill.NodeID || (current.State != StateRunning && current.State != StateParked) {
+			return nil
+		}
+		source = current
+	}
+	target, err := s.markDrill(ctx, drill)
+	if err == nil {
+		drill.TargetAt = target
+	}
+	started, serr := s.store.StartDrill(ctx, drill)
+	if serr != nil || !started {
+		return serr
+	}
+	if err == nil {
+		_, err = s.Restore(ctx, drillRestoreRequest(drill, source))
+	}
+	if err == nil {
+		sample.Started++
+		s.log.Info("dbsched: restore drill started", "node", drill.NodeID, "source", source.DatabaseID, "drill_id", drill.ID, "target", drill.TargetAt)
+		return nil
+	}
+	result, code := drillStartFailure(err)
+	s.log.Warn("dbsched: restore drill did not start", "node", drill.NodeID, "source", source.DatabaseID, "err", err)
+	if derr := s.discardDrill(ctx, drill); derr != nil {
+		s.log.Warn("dbsched: delete a restore drill's database", "drill_id", drill.ID, "err", derr)
+	}
+	if ferr := s.store.FinishDrill(ctx, drill.ID, result, time.Time{}, code); ferr != nil {
+		s.log.Warn("dbsched: record a restore drill", "drill_id", drill.ID, "err", ferr)
+	}
+	s.countDrill(result, sample)
+	s.cfg.Metrics.drilled(result)
+	return nil
+}
+
+func drillRestoreRequest(drill Drill, source VM) RestoreRequest {
+	return RestoreRequest{
+		ProvisionRequest: ProvisionRequest{DatabaseID: drill.ID, Major: source.MajorAt(drill.TargetAt), VcpuCount: 1, MemMiB: min(source.MemMiB, drillMemMiB),
+			VolumeBytes: source.VolumeBytes, RestoreWindowSeconds: drillRestoreWindowSeconds},
+		Source: source.DatabaseID, Target: drill.TargetAt,
+	}
 }
 
 // pickDrillSource picks the day's source on node: a database that is not a

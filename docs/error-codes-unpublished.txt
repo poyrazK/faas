@@ -190,3 +190,7 @@ unknown_plan
 # Verification contracts (ADR-20261122220000): preview, docs/verification-contracts.md unpublished.
 deployment_verification_contract_failed
 verification_contract_changed
+
+# Public repository deploys (ADR-20261126164847): behind the public_source_deploys
+# platform flag, unpublished until the owner has tested it on production.
+public_source_fetch_rate_limited

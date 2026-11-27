@@ -81,7 +81,7 @@ func (s *server) updatedRuleChannels(ctx context.Context, accountID string, exis
 		}
 		count = len(current)
 	}
-	if merged.WebhookURL == "" && count == 0 {
+	if !merged.ObserveOnly && merged.WebhookURL == "" && count == 0 {
 		return nil, api.ErrAlertRuleInvalid("an alert rule needs a webhook_url or at least one notification channel")
 	}
 	if merged.NotifyResolved && merged.WebhookURL == "" {

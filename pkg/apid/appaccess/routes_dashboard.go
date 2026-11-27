@@ -74,6 +74,19 @@ var dashboardRouteActions = map[string]authz.OrgAction{
 	"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/delete":                      authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames":                   authz.OrgActionManageAppSecurity,
 	"POST /dashboard/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}/delete": authz.OrgActionManageAppSecurity,
+
+	// Product Control billing actions.
+	"POST /dashboard/apps/{slug}/product-control/billing-batch/confirm":              authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/billing-batch/review":               authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/bulk-plans/confirm":                 authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/bulk-plans/review":                  authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/invoice-batch/confirm":              authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/invoice-batch/review":               authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/payments/check-stripe-send":         authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/payments/refresh":                   authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/payments/refresh-selected":          authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/payments/stripe-send-batch/confirm": authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/product-control/payments/stripe-send-batch/review":  authz.OrgActionManageAppSecurity,
 }
 
 func init() {

@@ -4195,10 +4195,13 @@ func IsValidAlertAction(v string) bool {
 // ignore a FailureSource change, which is a footgun — the field
 // exists nowhere on this struct on purpose.
 type UpdateAlertRuleParams struct {
+	PromotionChannelIDs             *[]string // bound atomically when switching an observation to notifications
 	MCPMinCalls, MCPForMinutes      *int
 	PostDeployRollbackWindowSeconds *int
 	Name                            *string
 	Enabled                         *bool
+	ObserveOnly                     *bool
+	EnvironmentScope                *string
 	Metric                          *AlertMetric
 	Comparison                      *AlertComparison
 	Threshold                       *float64
@@ -4208,11 +4211,12 @@ type UpdateAlertRuleParams struct {
 	// Validated against pkg/api.AllowedAlertRuleActions at the
 	// handler boundary (cmd/apid/handlers_alerts.go). Storage shape
 	// is a plain string in migrations/00481.
-	Action              *string
-	WebhookURL          *string
-	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
-	CooldownMinutes     *int
-	NotifyResolved      *bool
+	Action                     *string
+	WebhookURL                 *string
+	WebhookSecretSealed        *[]byte // nil = don't reseal; non-nil replaces
+	CooldownMinutes            *int
+	RecoveryConfirmationChecks *int
+	NotifyResolved             *bool
 }
 
 // AlertRule is one customer-configurable rule (issue #396, ADR-045).
@@ -4239,6 +4243,8 @@ type AlertRule struct {
 	CreatedByAccountID string
 	Name               string
 	Enabled            bool
+	ObserveOnly        bool
+	EnvironmentScope   string
 	Metric             AlertMetric
 	Comparison         AlertComparison
 	Threshold          float64
@@ -4256,13 +4262,17 @@ type AlertRule struct {
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
 	// NotifyResolved also sends the webhook a signed resolve event when the
 	// rule recovers (ADR-20261029203000); channels always get one.
-	NotifyResolved  bool
-	CooldownMinutes int
-	State           AlertState
-	LastFiredAt     time.Time // zero until first fire
-	LastEvaluatedAt time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	NotifyResolved             bool
+	CooldownMinutes            int
+	RecoveryConfirmationChecks int
+	State                      AlertState
+	LastFiredAt                time.Time // zero until first fire
+	LastEvaluatedAt            time.Time
+	AnomalyEvaluation          api.AlertAnomalyEvaluation
+	ObservedIncidents          []api.AlertObservedIncident
+	observationChecks          []alertObservationCheck
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is

@@ -11,6 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/dbmigration"
+	"github.com/onebox-faas/faas/pkg/dbqueryinsights"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 )
 
 const (
@@ -34,11 +38,13 @@ const (
 	// ArchiveArg on the kernel command line turns WAL archiving on. vmmd
 	// sets it only when it relays archive streams: archiving into nothing
 	// would grow pg_wal without bound.
-	ArchiveArg = "gregale.archive=1"
+	ArchiveArg       = "gregale.archive=1"
+	QueryInsightsArg = "gregale.query_insights=1"
 	// RestoreTargetArgKey boots an empty volume as a point-in-time restore:
 	// guest-init pulls the restore source's base backup and recovers to the
 	// target (RFC 3339, UTC), then promotes.
-	RestoreTargetArgKey = "gregale.restore_target"
+	RestoreTargetArgKey   = "gregale.restore_target"
+	RestoreTimelineArgKey = "gregale.restore_timeline"
 	// RestoreUntilEndArg lets a restore whose archive ends before its
 	// target recover to the end of the archive instead of failing. schedd
 	// sets it only when the source's node is lost, so the source could not
@@ -66,7 +72,14 @@ const (
 	// reach (OpImport). The host relays each to the one source endpoint
 	// the control plane named, over TLS it verifies itself; the guest
 	// speaks plaintext to it.
-	ImportPort uint32 = 5436
+	ImportPort    uint32 = 5436
+	MigrationPort uint32 = 5437
+	// ExportPort carries a completed logical dump from the guest to vmmd.
+	ExportPort uint32 = 5438
+	// ArchiveImportPort receives authenticated control-plane backup uploads.
+	ArchiveImportPort uint32 = 5439
+	// ReplicaDataPort admits SQL sessions only while the guest is a standby.
+	ReplicaDataPort uint32 = 5440
 	// UpgradeFromArgKey boots a cluster of an older major for an in-place
 	// major upgrade (pg_upgrade --link) to the major MajorArgKey names.
 	// The old major's base is the VM's third drive (UpgradeBaseDevice),
@@ -94,7 +107,12 @@ type Op string
 
 const (
 	// OpStatus reports the database state without side effects.
-	OpStatus Op = "status"
+	OpStatus        Op = "status"
+	OpDiagnostics   Op = "diagnostics"
+	OpQueryInsights Op = "query_insights"
+	OpAutovacuum    Op = "autovacuum"
+	OpSessions      Op = "sessions"
+	OpExtensions    Op = "extensions"
 	// OpBootstrap initializes an empty volume. It is accepted once, while
 	// the state is StateNeedsBootstrap, and carries no secret: the
 	// superuser authenticates only by peer inside the guest.
@@ -135,6 +153,20 @@ const (
 	// as the target's owner role. A running or finished import is
 	// reported, not restarted. Accepted in StateReady.
 	OpImport Op = "import"
+	// OpCustomerImport requires the guarded customer import path on all daemons.
+	OpCustomerImport Op = "customer_import"
+	// OpImportCheck runs the copy checks without starting an import.
+	OpImportCheck Op = "import_check"
+	// OpMigrationCheck inspects logical migration prerequisites.
+	OpMigrationCheck           Op = "migration_check"
+	OpMigrationStart           Op = "migration_start"
+	OpMigrationStatus          Op = "migration_status"
+	OpMigrationStop            Op = "migration_stop"
+	OpMigrationPrepare         Op = "migration_prepare"
+	OpMigrationVerify          Op = "migration_verify"
+	OpMigrationSeal            Op = "migration_seal"
+	OpMigrationOpen            Op = "migration_open"
+	OpMigrationAbortActivation Op = "migration_abort_activation"
 	// OpImportStatus reports the import, if any.
 	OpImportStatus Op = "import_status"
 	// OpMarkDrill commits a restore drill's mark (Request.Drill) on a
@@ -148,6 +180,15 @@ const (
 	// recovery replayed the source's WAL up to the mark's commit.
 	OpCheckDrill Op = "check_drill"
 )
+
+// IsMigrationMutation identifies operations using the pinned migration relay.
+func (op Op) IsMigrationActivation() bool {
+	return op == OpMigrationSeal || op == OpMigrationOpen || op == OpMigrationAbortActivation
+}
+
+func (op Op) IsMigrationMutation() bool {
+	return op == OpMigrationStart || op == OpMigrationStop || op == OpMigrationPrepare || op == OpMigrationVerify
+}
 
 // ImportSource names the database to copy and how to log in to it. The
 // host relay reaches the source's network endpoint; the guest never learns
@@ -177,6 +218,7 @@ type ImportState string
 
 const (
 	ImportNone    ImportState = "none"
+	ImportChecked ImportState = "checked"
 	ImportRunning ImportState = "running"
 	ImportDone    ImportState = "done"
 	ImportFailed  ImportState = "failed"
@@ -194,7 +236,8 @@ type ImportStatus struct {
 	OperationID string `json:"operation_id,omitempty"`
 	// MissingExtensions names the source extensions the target cannot
 	// create, for extension_unavailable (ReportableExtensions).
-	MissingExtensions []string `json:"missing_extensions,omitempty"`
+	MissingExtensions      []string                `json:"missing_extensions,omitempty"`
+	IncompatibleExtensions []pgextension.Installed `json:"incompatible_extensions,omitempty"`
 	// RequiredVolumeBytes is, for target_too_small, the volume size the
 	// import needs. Zero when free space ran out during the copy, which
 	// the estimate did not foresee.
@@ -224,6 +267,7 @@ func ReportableExtensions(names []string) []string {
 // Import error codes.
 const (
 	ErrCodeImportFailed   = "import_failed"
+	ErrCodeInvalidArchive = "invalid_archive"
 	ErrCodeSourceNewer    = "source_newer"
 	ErrCodeSourceDown     = "source_unreachable"
 	ErrCodeExtension      = "extension_unavailable"
@@ -262,6 +306,8 @@ type ReplicationStatus struct {
 	Synchronous bool `json:"synchronous,omitempty"`
 	// LagBytes is how far the standby's flushed WAL trails the primary's.
 	LagBytes int64 `json:"lag_bytes,omitempty"`
+	// ReplayLagBytes is the primary flush position minus the standby replay position.
+	ReplayLagBytes *int64 `json:"replay_lag_bytes,omitempty"`
 }
 
 // MaxFlushAhead bounds how far in the future OpFlushWAL's After may be.
@@ -322,7 +368,12 @@ const (
 
 // Request is one control request line.
 type Request struct {
-	Op Op `json:"op"`
+	Op                 Op                  `json:"op"`
+	DiagnosticDatabase string              `json:"diagnostic_database,omitempty"`
+	EnableExtension    string              `json:"enable_extension,omitempty"`
+	AutovacuumProfile  AutovacuumProfile   `json:"autovacuum_profile,omitempty"`
+	AutovacuumRevision int64               `json:"autovacuum_revision,omitempty"`
+	TableHealthOptions *TableHealthOptions `json:"table_health_options,omitempty"`
 	// SQL is the admin statement batch for OpAdminSQL. It can carry role
 	// passwords and is never logged or echoed.
 	SQL string `json:"sql,omitempty"`
@@ -331,7 +382,11 @@ type Request struct {
 	// Replication is the mode OpReplication sets; empty only reports.
 	Replication ReplicationMode `json:"replication,omitempty"`
 	// Import is OpImport's source.
-	Import *ImportSource `json:"import,omitempty"`
+	Import             *ImportSource           `json:"import,omitempty"`
+	MigrationPin       string                  `json:"migration_pin,omitempty"`
+	VerificationID     string                  `json:"verification_id,omitempty"`
+	SourceWritesPaused bool                    `json:"source_writes_paused,omitempty"`
+	Activation         *dbmigration.Activation `json:"activation,omitempty"`
 	// Drill is the restore drill OpMarkDrill marks and OpCheckDrill looks
 	// for: its id, a lowercase UUID.
 	Drill string `json:"drill,omitempty"`
@@ -349,18 +404,34 @@ type Response struct {
 	// RecoveredTo is a restored database's last replayed commit: at or
 	// before the target, and earlier when the archive ended first. Zero
 	// when recovery replayed none: the restore is its base backup.
-	RecoveredTo time.Time `json:"recovered_to,omitzero"`
+	RecoveredTo     time.Time `json:"recovered_to,omitzero"`
+	RestoreTimeline uint32    `json:"restore_timeline,omitempty"`
 	// Replication answers OpReplication.
 	Replication *ReplicationStatus `json:"replication,omitempty"`
-	// Import answers OpImport and OpImportStatus.
-	Import *ImportStatus `json:"import,omitempty"`
+	// Import answers OpImport, OpImportCheck and OpImportStatus.
+	Import            *ImportStatus         `json:"import,omitempty"`
+	Migration         *dbmigration.Check    `json:"migration,omitempty"`
+	MigrationProgress *dbmigration.Progress `json:"migration_progress,omitempty"`
+	MigrationRunning  bool                  `json:"migration_running,omitempty"`
+	MigrationFenced   bool                  `json:"migration_fenced,omitempty"`
 	// Storage is the volume's use, on a ready database or a standby.
-	Storage *StorageStatus `json:"storage,omitempty"`
+	Storage                 *StorageStatus          `json:"storage,omitempty"`
+	Activity                *ActivitySample         `json:"activity,omitempty"`
+	Autovacuum              *AutovacuumSettings     `json:"autovacuum,omitempty"`
+	Sessions                *SessionSample          `json:"sessions,omitempty"`
+	TableHealth             *TableHealthSample      `json:"table_health,omitempty"`
+	Extensions              *pgextension.Catalog    `json:"extensions,omitempty"`
+	QueryInsightsSupported  bool                    `json:"query_insights_supported,omitempty"`
+	QueryInsightsConfigured bool                    `json:"query_insights_configured,omitempty"`
+	QuerySample             *dbqueryinsights.Sample `json:"query_sample,omitempty"`
 	// MarkedAt answers OpMarkDrill.
 	MarkedAt time.Time `json:"marked_at,omitzero"`
 	// Stale is set by the host, never the guest: the VM runs an outdated
 	// base or launch, which a restart replaces.
 	Stale bool `json:"-"`
+	// Image identities are set by vmmd along with Stale.
+	RunningImage string `json:"-"`
+	DesiredImage string `json:"-"`
 }
 
 // StorageStatus reports a database's volume. ReadOnly is the storage
@@ -375,10 +446,65 @@ type StorageStatus struct {
 
 // Validate rejects malformed requests before the guest acts on them.
 func (r Request) Validate() error {
+	if r.Op == OpDiagnostics || r.Op == OpSessions || r.Op == OpQueryInsights || r.Op == OpExtensions {
+		if !identifierPattern.MatchString(r.DiagnosticDatabase) || r.DiagnosticDatabase == "postgres" {
+			return errors.New("diagnostics: invalid target database")
+		}
+	} else if r.DiagnosticDatabase != "" {
+		return errors.New("unexpected diagnostic database")
+	}
+	if r.AutovacuumProfile != "" || r.AutovacuumRevision != 0 {
+		if _, ok := r.AutovacuumProfile.Settings(); r.Op != OpAutovacuum || !ok || r.AutovacuumRevision <= 0 {
+			return errors.New("invalid autovacuum profile or revision")
+		}
+	}
+	if r.TableHealthOptions != nil {
+		if r.Op != OpDiagnostics {
+			return errors.New("unexpected table health options")
+		}
+		if err := r.TableHealthOptions.Validate(); err != nil {
+			return err
+		}
+	}
+	if r.EnableExtension != "" && (r.Op != OpExtensions || !pgextension.Managed(r.EnableExtension)) {
+		return errors.New("invalid managed extension")
+	}
+	mutation := r.Op.IsMigrationMutation()
+	if r.Op.IsMigrationActivation() != (r.Activation != nil) {
+		return errors.New("migration activation requires a switch")
+	}
+	if a := r.Activation; a != nil {
+		if !ValidOperationID(a.SwitchID) || !ValidOperationID(a.OperationID) {
+			return errors.New("invalid migration activation identity")
+		}
+		if r.Op == OpMigrationSeal {
+			if !migrationPinPattern.MatchString(a.SourcePin) || !identifierPattern.MatchString(a.SourceDatabase) ||
+				len(a.Roles) == 0 || len(a.Roles) > dbmigration.MaxActivationRoles {
+				return errors.New("invalid migration seal")
+			}
+			for _, role := range a.Roles {
+				if !activationRolePattern.MatchString(role) {
+					return errors.New("invalid migration activation role")
+				}
+			}
+		} else if a.SourcePin != "" || a.SourceDatabase != "" || len(a.Roles) != 0 {
+			return errors.New("unexpected migration seal arguments")
+		}
+	}
+	if r.Op == OpMigrationVerify {
+		if !ValidOperationID(r.VerificationID) || !r.SourceWritesPaused {
+			return errors.New("migration verification requires an ID and acknowledgement of paused source writes")
+		}
+	} else if r.VerificationID != "" || r.SourceWritesPaused {
+		return errors.New("unexpected migration verification arguments")
+	}
+	if r.MigrationPin != "" && (!mutation || !migrationPinPattern.MatchString(r.MigrationPin)) {
+		return errors.New("migration: invalid relay binding")
+	}
 	if r.Replication != "" && r.Op != OpReplication {
 		return fmt.Errorf("%s: unexpected replication mode", r.Op)
 	}
-	if (r.Import != nil) != (r.Op == OpImport) {
+	if (r.Import != nil) != (r.Op == OpImport || r.Op == OpCustomerImport || r.Op == OpImportCheck || r.Op == OpMigrationCheck || mutation) {
 		return fmt.Errorf("%s: an import source goes with import only", r.Op)
 	}
 	if drill := r.Op == OpMarkDrill || r.Op == OpCheckDrill; drill != (r.Drill != "") {
@@ -390,7 +516,7 @@ func (r Request) Validate() error {
 			return fmt.Errorf("%s: needs only a drill id", r.Op)
 		}
 		return nil
-	case OpImport:
+	case OpImport, OpCustomerImport, OpImportCheck, OpMigrationCheck, OpMigrationStart, OpMigrationStop, OpMigrationPrepare, OpMigrationVerify:
 		if r.SQL != "" || !r.After.IsZero() {
 			return errors.New("import: unexpected arguments")
 		}
@@ -405,7 +531,7 @@ func (r Request) Validate() error {
 			return errors.New("replication: unexpected arguments")
 		}
 		return nil
-	case OpStatus, OpStop, OpBootstrap, OpBaseBackup, OpAdopt, OpPromote, OpImportStatus:
+	case OpStatus, OpDiagnostics, OpSessions, OpAutovacuum, OpQueryInsights, OpExtensions, OpStop, OpBootstrap, OpBaseBackup, OpAdopt, OpPromote, OpImportStatus, OpMigrationStatus, OpMigrationSeal, OpMigrationOpen, OpMigrationAbortActivation:
 		if r.SQL != "" || !r.After.IsZero() {
 			return fmt.Errorf("%s: unexpected arguments", r.Op)
 		}
@@ -482,6 +608,27 @@ func RestoreTarget(cmdline string) (time.Time, bool, error) {
 // archiving on.
 func ArchiveEnabled(cmdline string) bool { return hasField(cmdline, ArchiveArg) }
 
+func RestoreTimelineArg(timeline uint32) string {
+	return RestoreTimelineArgKey + "=" + strconv.FormatUint(uint64(timeline), 10)
+}
+
+// RestoreTimeline reports an explicit PostgreSQL timeline for recovery.
+func RestoreTimeline(cmdline string) (uint32, error) {
+	var timeline uint32
+	for _, field := range strings.Fields(cmdline) {
+		value, ok := strings.CutPrefix(field, RestoreTimelineArgKey+"=")
+		if !ok {
+			continue
+		}
+		id, err := strconv.ParseUint(value, 10, 32)
+		if err != nil || id == 0 || timeline != 0 {
+			return 0, fmt.Errorf("invalid %s %q", RestoreTimelineArgKey, value)
+		}
+		timeline = uint32(id)
+	}
+	return timeline, nil
+}
+
 // RestoreUntilEnd reports whether a restore may end at the end of the
 // archive.
 func RestoreUntilEnd(cmdline string) bool { return hasField(cmdline, RestoreUntilEndArg) }
@@ -504,6 +651,9 @@ func hasField(cmdline, want string) bool {
 	}
 	return false
 }
+
+// QueryInsightsEnabled reports whether the primary should preload statement statistics.
+func QueryInsightsEnabled(cmdline string) bool { return hasField(cmdline, QueryInsightsArg) }
 
 // ParseCmdline reports whether the kernel command line selects database
 // mode and, if so, the PostgreSQL major it names. A database-mode line
@@ -557,3 +707,7 @@ func (s *ImportSource) Validate() error {
 	}
 	return nil
 }
+
+var migrationPinPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+var activationRolePattern = regexp.MustCompile(`^gregale_(rt|ro|mig|api)_[0-9a-f]{40}$`)

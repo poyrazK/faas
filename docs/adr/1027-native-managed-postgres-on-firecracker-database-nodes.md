@@ -201,9 +201,13 @@ on the old one stop, so a wake never adopts an outdated spare.
 
 schedd's 2-minute sample counts stale databases, a replicated one's
 standby node included (`schedd_database_stale_vms`). It restarts up to
-two always-on databases per sample, each idle for 2 minutes and not
-importing: a park, which stops a standby after its primary, then a wake
-on the current base. A scale-to-zero database picks the base up at its
+two always-on databases per sample. The default policy waits for two
+minutes of idleness and skips imports. An always-on single-node database
+can instead have a customer-selected weekly UTC window. For those
+databases schedd checks the stored window when it claims the VM and again
+before sending the stop. It stores the result after vmmd reports a
+ready guest on the current base. A park stops a standby after its
+primary, then the database wakes on the current base. A scale-to-zero database picks the base up at its
 next idle park. `FaasDatabaseStaleVMs` warns when some stayed stale for a
 day because they never went idle. An operator restarts those in place:
 `gregalectl database-nodes restart --database <id>` posts
@@ -211,7 +215,7 @@ day because they never went idle. An operator restarts those in place:
 `confirm=true`). apid records a `database_restart` operator intent, and
 schedd's dispatcher calls `dbsched.Restart`: a running database is parked
 and woken, a parked one is left for its next wake, and any other state is
-`ErrConflict`. The stale sweep uses the same `Restart`. On metal, an adopted VM turned stale when its major's base
+`ErrConflict`. On metal, an adopted VM turned stale when its major's base
 changed and was current again after a restart.
 
 A production-class database can also change nodes without a copy:
@@ -1961,6 +1965,17 @@ Not yet done:
   grant to a specific source role is not. Runtime credentials keep the
   native model: schema `public` plus whatever PUBLIC holds.
 
+#### Customer import
+
+Customers can run a compatibility check and start a snapshot copy through
+the managed PostgreSQL API. Both use the native import path and its verified
+TLS relay. The check runs the source and target checks with a bounded
+deadline and leaves no copy job. vmmd serializes relay setup with checks and
+starts, so requests observing an active copy cannot change its endpoint.
+The guest verifies committed copy lineage even when the request timed out.
+Customer requests use dedicated operation names so an older guest or daemon
+cannot mistake a check for a copy.
+
 ### Environment-clone snapshots (ADR-590, step 1)
 
 ADR-590's environment clones capture a checkpoint of each source database
@@ -2136,9 +2151,12 @@ free. The guard released the ballast (50 MiB free), and the database kept
 answering. After `TRUNCATE` it was writable again at 881 MiB free, with
 the ballast laid back.
 
-Not yet done: customers see the read-only mode only through `25006` and
-the docs. schedd keeps the sample in memory, so the health collector
-does not report it yet.
+schedd keeps the last primary and standby observations in the control-plane
+catalogue. `gregale postgres status` reports the allocated storage,
+observations and freshness without waking a parked VM. A fresh low-space
+sample is visible in the personal database dashboard. The
+`FaasDatabasePrimaryStorageLow` alert warns operators while affected primaries
+are still writable.
 
 ### Usage metering
 

@@ -2,9 +2,12 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"math"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -51,6 +54,19 @@ func alertOptionalInt(p *int) pgtype.Int4 {
 func customerAlertRule(row sqlc.AlertRule) AlertRule {
 	r := AlertRule{MCPReadinessScope: row.McpReadinessScope, MCPMinCalls: int(row.McpMinCalls), MCPForMinutes: int(row.McpForMinutes), ID: uuid.UUID(row.ID.Bytes).String(), AccountID: uuid.UUID(row.AccountID.Bytes).String(), Name: row.Name, Enabled: row.Enabled, Metric: AlertMetric(row.Metric), Comparison: AlertComparison(row.Comparison), Threshold: row.Threshold, WindowSpec: AlertWindowSpec(row.WindowSpec), Action: AlertAction(row.Action), WebhookURL: row.WebhookUrl, WebhookSecretSealed: row.WebhookSecretSealed, CooldownMinutes: int(row.CooldownMinutes), PostDeployRollbackWindowSeconds: int(row.PostDeployRollbackWindowSeconds), State: AlertState(row.State), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, LastFiredAt: row.LastFiredAt.Time, LastEvaluatedAt: row.LastEvaluatedAt.Time, FailureSource: AlertFailureSource(row.FailureSource.String), CustomMetricName: row.CustomMetricName.String, LogQuery: row.LogQuery.String, NotifyResolved: row.NotifyResolved}
 	r.CustomMetricLabels = customMetricLabelsFromJSON(row.CustomMetricLabels)
+	r.ObserveOnly = row.ObserveOnly
+	r.EnvironmentScope = row.EnvironmentScope
+	r.RecoveryConfirmationChecks = int(row.RecoveryConfirmationChecks)
+	r.Enabled = row.Enabled || row.ObservationEnabled
+	if len(row.ObservedIncidents) > 0 {
+		_ = json.Unmarshal(row.ObservedIncidents, &r.ObservedIncidents)
+	}
+	if len(row.LatestAnomalyEvaluation) > 0 {
+		var evidence api.AlertAnomalyEvaluation
+		if json.Unmarshal(row.LatestAnomalyEvaluation, &evidence) == nil {
+			r.AnomalyEvaluation = evidence
+		}
+	}
 	if row.SloID.Valid {
 		r.SLOID = uuid.UUID(row.SloID.Bytes).String()
 	}
@@ -89,7 +105,10 @@ func customerAlertRules(rows []sqlc.AlertRule, err error) ([]AlertRule, error) {
 }
 func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (AlertRule, error) {
 	in = defaultMCPProtocolAlert(in)
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || in.CooldownMinutes < api.AlertRuleCooldownMinMinutes || in.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
+	if in.RecoveryConfirmationChecks == 0 {
+		in.RecoveryConfirmationChecks = 1
+	}
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || in.CooldownMinutes < api.AlertRuleCooldownMinMinutes || in.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	acct, err := alertPgUUID(in.AccountID)
@@ -103,7 +122,7 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if in.Action == "" {
 		in.Action = AlertActionWebhook
 	}
-	if in.State == "" {
+	if in.State == "" || in.ObserveOnly {
 		in.State = AlertStateOk
 	}
 	sub, err := alertPgUUID(in.EventSubscriptionID)
@@ -138,9 +157,12 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if err != nil {
 		return AlertRule{}, err
 	}
-	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{CustomMetricLabels: customMetricLabelsJSON(in.CustomMetricLabels), CreatedByAccountID: createdBy, McpReadinessScope: in.MCPReadinessScope, McpMinCalls: int32(in.MCPMinCalls), McpForMinutes: int32(in.MCPForMinutes), EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled, Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID, LogQuery: logQuery, NotifyResolved: in.NotifyResolved}))
+	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{CustomMetricLabels: customMetricLabelsJSON(in.CustomMetricLabels), CreatedByAccountID: createdBy, McpReadinessScope: in.MCPReadinessScope, McpMinCalls: int32(in.MCPMinCalls), McpForMinutes: int32(in.MCPForMinutes), EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled && !in.ObserveOnly, ObserveOnly: in.ObserveOnly, ObservationEnabled: in.Enabled && in.ObserveOnly, EnvironmentScope: in.EnvironmentScope, RecoveryConfirmationChecks: int32(in.RecoveryConfirmationChecks), Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID, LogQuery: logQuery, NotifyResolved: in.NotifyResolved}))
 }
 func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
+	if p.RecoveryConfirmationChecks != nil && *p.RecoveryConfirmationChecks != 1 && *p.RecoveryConfirmationChecks != api.AnomalyReplayRecoveryChecks {
+		return AlertRule{}, ErrInvalidArgument
+	}
 	if p.MCPMinCalls != nil && (*p.MCPMinCalls < 0 || *p.MCPMinCalls > 1000000) || p.MCPForMinutes != nil && (*p.MCPForMinutes < 0 || *p.MCPForMinutes > 60) {
 		return AlertRule{}, ErrInvalidArgument
 	}
@@ -158,5 +180,86 @@ func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertR
 	if p.WebhookSecretSealed != nil {
 		secret = *p.WebhookSecretSealed
 	}
-	return customerAlertRuleResult(sqlc.New().UpdateCustomerAlertRule(ctx, s.pool, sqlc.UpdateCustomerAlertRuleParams{McpMinCalls: alertOptionalInt(p.MCPMinCalls), McpForMinutes: alertOptionalInt(p.MCPForMinutes), ID: rule, Name: alertOptionalText(p.Name), Enabled: alertOptionalBool(p.Enabled), Metric: alertOptionalText(p.Metric), Comparison: alertOptionalText(p.Comparison), Threshold: alertOptionalFloat(p.Threshold), WindowSpec: alertOptionalText(p.WindowSpec), Action: alertOptionalText(p.Action), WebhookUrl: alertOptionalText(p.WebhookURL), WebhookSecretSealed: secret, CooldownMinutes: alertOptionalInt(p.CooldownMinutes), PostDeployRollbackWindowSeconds: alertOptionalInt(p.PostDeployRollbackWindowSeconds), NotifyResolved: alertOptionalBool(p.NotifyResolved)}))
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return AlertRule{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := sqlc.New()
+	old, err := customerAlertRuleResult(queries.LockCustomerAlertRule(ctx, tx, rule))
+	if err != nil {
+		return AlertRule{}, err
+	}
+	enabled, observeOnly := old.Enabled, old.ObserveOnly
+	if p.Enabled != nil {
+		enabled = *p.Enabled
+	}
+	if p.ObserveOnly != nil {
+		observeOnly = *p.ObserveOnly
+	}
+	if !alertScopeEditAllowed(old, p, observeOnly) {
+		return AlertRule{}, ErrInvalidArgument
+	}
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	history := old.ObservedIncidents
+	if observationEndsOnEdit(old, p, observeOnly, enabled) {
+		history = endObservedIncident(history, at, api.AlertObservationEnded)
+	}
+	incidents, err := marshalObservedIncidents(history)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	updatedAt := pgtype.Timestamptz{Time: at, Valid: true}
+	if observeOnly && !old.ObserveOnly {
+		if _, err := queries.QueueAlertChannelStandDowns(ctx, tx, sqlc.QueueAlertChannelStandDownsParams{
+			RuleID: rule, Reason: StandDownDisabled, At: updatedAt, ObservationTransition: true,
+		}); err != nil {
+			return AlertRule{}, err
+		}
+		if err := queries.QueueAlertWebhookStandDown(ctx, tx, sqlc.QueueAlertWebhookStandDownParams{RuleID: rule, At: updatedAt}); err != nil {
+			return AlertRule{}, err
+		}
+	}
+	updated, err := queries.UpdateCustomerAlertRule(ctx, tx, sqlc.UpdateCustomerAlertRuleParams{
+		ID: rule, Enabled: enabled && !observeOnly, ObserveOnly: observeOnly, ObservationEnabled: enabled && observeOnly,
+		EnvironmentScope:           alertOptionalText(p.EnvironmentScope),
+		RecoveryConfirmationChecks: alertOptionalInt(p.RecoveryConfirmationChecks),
+		ObservedIncidents:          incidents, UpdatedAt: updatedAt,
+		McpMinCalls: alertOptionalInt(p.MCPMinCalls), McpForMinutes: alertOptionalInt(p.MCPForMinutes),
+		Name: alertOptionalText(p.Name), Metric: alertOptionalText(p.Metric), Comparison: alertOptionalText(p.Comparison),
+		Threshold: alertOptionalFloat(p.Threshold), WindowSpec: alertOptionalText(p.WindowSpec), Action: alertOptionalText(p.Action),
+		WebhookUrl: alertOptionalText(p.WebhookURL), WebhookSecretSealed: secret, CooldownMinutes: alertOptionalInt(p.CooldownMinutes),
+		PostDeployRollbackWindowSeconds: alertOptionalInt(p.PostDeployRollbackWindowSeconds), NotifyResolved: alertOptionalBool(p.NotifyResolved),
+	})
+	if err != nil {
+		return AlertRule{}, mapErr(err)
+	}
+	if old.ObserveOnly && (!observeOnly || observationConditionChanged(old, p)) {
+		if err := queries.DeleteCustomerAlertObservationChecks(ctx, tx, rule); err != nil {
+			return AlertRule{}, err
+		}
+	}
+	if old.ObserveOnly && !observeOnly && updated.WebhookUrl == "" {
+		if p.PromotionChannelIDs != nil {
+			if err := setAlertRuleChannelsTx(ctx, tx, rule, *p.PromotionChannelIDs); err != nil {
+				return AlertRule{}, err
+			}
+		}
+		channels, err := queries.ListAlertRuleChannels(ctx, tx, rule)
+		if err != nil {
+			return AlertRule{}, err
+		}
+		if len(channels) == 0 || p.PromotionChannelIDs != nil && len(channels) != len(*p.PromotionChannelIDs) {
+			return AlertRule{}, ErrInvalidArgument
+		}
+	}
+	if observeOnly != old.ObserveOnly {
+		if err := queries.CloseLiveAlertEpisodeForObservation(ctx, tx, sqlc.CloseLiveAlertEpisodeForObservationParams{ID: rule, EndedAt: updatedAt}); err != nil {
+			return AlertRule{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AlertRule{}, err
+	}
+	return customerAlertRule(updated), nil
 }

@@ -225,8 +225,8 @@ func (w *VolumeImport) Abort() {
 	w.release()
 }
 
-// hold marks a stopped database busy with a transfer: it cannot start, and
-// a second transfer of it is refused.
+// hold claims a stopped volume for an offline operation and blocks starts
+// until the operation releases it.
 func (r *Runtime) hold(id string) (func(), error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -247,7 +247,7 @@ func (r *Runtime) hold(id string) (func(), error) {
 	}, nil
 }
 
-// ErrTransferring: the database's volume is being exported or imported.
+// ErrTransferring: the database's volume has an offline operation in progress.
 var ErrTransferring = errors.New("dbvm: database volume is being transferred")
 
 // seekData returns the first offset at or after off holding data, or

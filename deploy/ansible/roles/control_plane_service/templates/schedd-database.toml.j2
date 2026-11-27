@@ -20,6 +20,9 @@ boot_slots = {{ node.boot_slots | int }}
 {% if node.lifecycle is defined %}
 lifecycle = "{{ node.lifecycle }}"
 {% endif %}
+{% if node.recovery_region is defined %}
+recovery_region = "{{ node.recovery_region }}"
+{% endif %}
 {% if node.postgres_majors is defined %}
 postgres_majors = [{{ node.postgres_majors | map('int') | join(', ') }}]
 {% endif %}

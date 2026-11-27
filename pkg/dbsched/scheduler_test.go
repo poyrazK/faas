@@ -33,13 +33,14 @@ type fakeVMM struct {
 	lastAdminSQL string
 	// restoreBoots are the targets of restore boots; restoreFail makes
 	// them fail, and restoreHold keeps them recovering until closed.
-	restoreBoots []time.Time
-	untilEnd     []bool
-	recoveredTo  time.Time
-	restoring    map[string]bool
-	restoreFail  bool
-	restoreHold  chan struct{}
-	flushes      map[string]time.Time
+	restoreBoots    []time.Time
+	restoreTimeline map[string]uint32
+	untilEnd        []bool
+	recoveredTo     time.Time
+	restoring       map[string]bool
+	restoreFail     bool
+	restoreHold     chan struct{}
+	flushes         map[string]time.Time
 	// marks are each database's restore drill mark, which a restore copies
 	// when the target is past it; markAt is the guest clock a mark reports
 	// (zero: now), and markErr the error a mark answers.
@@ -152,7 +153,7 @@ func (f *fakeVMM) DeleteHold(_ context.Context, node Node, id, name string) erro
 }
 
 func newFakeVMM() *fakeVMM {
-	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}, storage: map[string]*dbguest.StorageStatus{}, stale: map[string]bool{},
+	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, restoreTimeline: map[string]uint32{}, flushes: map[string]time.Time{}, volNode: map[string]string{}, storage: map[string]*dbguest.StorageStatus{}, stale: map[string]bool{},
 		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
 		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}, down: map[string]bool{},
 		majors: map[string]int{}, runMajor: map[string]int{}, upgrading: map[string]int{}, marks: map[string]fakeMark{}, standbyStorage: map[string]*dbguest.StorageStatus{}}
@@ -222,6 +223,7 @@ func (f *fakeVMM) Start(_ context.Context, node Node, vm VM) error {
 		f.restoreBoots = append(f.restoreBoots, vm.RestoreTarget)
 		f.untilEnd = append(f.untilEnd, vm.RestoreUntilEnd)
 		f.restoring[vm.DatabaseID] = true
+		f.restoreTimeline[vm.DatabaseID] = vm.RestoreTimeline
 		if mark, ok := f.marks[vm.RestoreSource]; ok && !mark.at.After(vm.RestoreTarget) {
 			f.marks[vm.DatabaseID] = mark
 		}
@@ -376,7 +378,7 @@ func (f *fakeVMM) Control(ctx context.Context, node Node, id string, req dbguest
 		}
 		at := f.markAt
 		if at.IsZero() {
-			at = time.Now()
+			at = time.Now().Truncate(time.Microsecond)
 		}
 		f.marks[id] = fakeMark{drill: req.Drill, at: at}
 		return dbguest.Response{State: dbguest.StateReady, MarkedAt: at}, nil
@@ -399,7 +401,7 @@ func (f *fakeVMM) Control(ctx context.Context, node Node, id string, req dbguest
 			}
 		}
 		f.volumes[id] = true
-		return dbguest.Response{State: dbguest.StateReady, RecoveredTo: f.recoveredTo}, nil
+		return dbguest.Response{State: dbguest.StateReady, RecoveredTo: f.recoveredTo, RestoreTimeline: f.restoreTimeline[id]}, nil
 	}
 	if !f.volumes[id] {
 		return dbguest.Response{State: dbguest.StateNeedsBootstrap}, nil
@@ -732,6 +734,7 @@ func (f *fakeVMM) standbyControl(node Node, id string, req dbguest.Request) dbgu
 		f.record("promote")
 		f.promoted[id] = node.ID
 		f.primaryOn[id], f.running[id] = node.ID, true
+		f.volNode[id], f.standbyVol[id] = node.ID, f.volNode[id]
 		delete(f.standbyOn, id)
 		delete(f.replMode, id)
 		return dbguest.Response{State: dbguest.StateReady}

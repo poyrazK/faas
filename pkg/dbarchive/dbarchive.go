@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 )
 
 // Ops a guest may request.
@@ -50,6 +51,11 @@ const (
 	OpGetHold = "get_hold"
 	// OpUnhold removes the hold Request.Name. Admin only.
 	OpUnhold = "unhold"
+	// OpCheckRestore inspects the archive for a requested recovery point.
+	// It is available on the host's admin stream.
+	OpCheckRestore = "check_restore"
+	// OpCheckRecovery inspects only the configured incoming recovery archive.
+	OpCheckRecovery = "check_recovery"
 )
 
 // Stable error codes in Response.Error.
@@ -113,8 +119,24 @@ type Header struct {
 }
 
 // Validate rejects a header naming anything but database ids.
+// RecoverySource marks a restore source that must be read from the incoming
+// mirror. Older daemons reject the reserved prefix as an invalid database ID.
+func RecoverySource(id string) string { return "recovery/" + id }
+
+func (h Header) restoreArchive() (string, bool) {
+	if h.RestoreSource == "" {
+		return h.DatabaseID, false
+	}
+	return ParseRecoverySource(h.RestoreSource)
+}
+
+func ParseRecoverySource(source string) (string, bool) {
+	return strings.CutPrefix(source, "recovery/")
+}
+
 func (h Header) Validate() error {
-	if !ValidDatabaseID(h.DatabaseID) || (h.RestoreSource != "" && !ValidDatabaseID(h.RestoreSource)) || h.RestoreWindowSeconds < 0 || h.QuotaBytes < 0 {
+	source, _ := h.restoreArchive()
+	if !ValidDatabaseID(h.DatabaseID) || !ValidDatabaseID(source) || h.RestoreWindowSeconds < 0 || h.QuotaBytes < 0 {
 		return errors.New("dbarchive: invalid header")
 	}
 	if h.Admin && (h.RestoreSource != "" || h.RestoreWindowSeconds != 0 || h.QuotaBytes != 0) {
@@ -128,9 +150,14 @@ type Request struct {
 	Op   string `json:"op"`
 	Name string `json:"name,omitempty"`
 	Size int64  `json:"size,omitempty"`
-	// Target is OpGetBackup's recovery target time and OpHold's point
-	// (RFC 3339).
+	// Target is the requested point in time (RFC 3339).
 	Target string `json:"target,omitempty"`
+	// Major is the source's PostgreSQL major at an OpCheckRestore target.
+	Major int `json:"major,omitempty"`
+	// Latest asks OpCheckRecovery for the newest proven point at or before Target.
+	Latest bool `json:"latest,omitempty"`
+	// Timeline limits OpCheckRecovery to an already reserved timeline.
+	Timeline uint32 `json:"timeline,omitempty"`
 	// WindowSeconds is OpPrune's restore window.
 	WindowSeconds int64 `json:"window_seconds,omitempty"`
 }
@@ -146,6 +173,8 @@ type Response struct {
 	Pruned *PruneResult `json:"pruned,omitempty"`
 	// Hold answers OpHold and OpGetHold.
 	Hold *Hold `json:"hold,omitempty"`
+	// RestoreCheck answers OpCheckRestore.
+	RestoreCheck *RestoreCheck `json:"restore_check,omitempty"`
 }
 
 // WriteLine writes v as one JSON line.

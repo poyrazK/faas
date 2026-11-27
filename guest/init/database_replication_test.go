@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -34,7 +35,7 @@ func TestStandbySettings(t *testing.T) {
 	got := strings.Join(standbySettings(true), " ")
 	for _, want := range []string{
 		"primary_conninfo=host=/run/gregale-replication user=gregale_replication application_name=gregale_standby",
-		"primary_slot_name=gregale_standby", "hot_standby=on", "restore_command=" + databaseRestoreCommand,
+		"primary_slot_name=gregale_standby", "hot_standby=on", "wal_receiver_status_interval=1s", "restore_command=" + databaseRestoreCommand,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("standby settings lack %q: %s", want, got)
@@ -77,18 +78,28 @@ func TestParseReplicationStatus(t *testing.T) {
 		err  bool
 	}{
 		{row: "|||-1|f", err: true},
-		{row: "||-1||f", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationOff}},
-		{row: "||-1||t", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationAsync}},
-		{row: "streaming|async|8192||t", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationAsync, Streaming: true, LagBytes: 8192}},
-		{row: "streaming|sync|0|gregale_standby|t\n", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationSync, Streaming: true, Synchronous: true}},
+		{row: "||-1||f|", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationOff}},
+		{row: "||-1||t|", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationAsync}},
+		{row: "streaming|async|8192||t|", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationAsync, Streaming: true, LagBytes: 8192}},
+		{row: "streaming|sync|0|gregale_standby|t|\n", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationSync, Streaming: true, Synchronous: true}},
 		// Sync configured but the standby still catching up is not synchronous.
-		{row: "catchup|potential|4096|gregale_standby|t", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationSync}},
-		{row: "streaming|sync|x|gregale_standby|t", err: true},
+		{row: "catchup|potential|4096|gregale_standby|t|", want: dbguest.ReplicationStatus{Mode: dbguest.ReplicationSync}},
+		{row: "streaming|sync|x|gregale_standby|t|", err: true},
 	}
 	for _, tc := range cases {
 		got, err := parseReplicationStatus(tc.row)
 		if (err != nil) != tc.err || (err == nil && got != tc.want) {
 			t.Errorf("parseReplicationStatus(%q) = %+v, %v; want %+v (err %v)", tc.row, got, err, tc.want, tc.err)
+		}
+	}
+}
+
+func TestParseReplicationStatusSeparatesReplayFromFlush(t *testing.T) {
+	for _, tc := range []struct{ input, want int64 }{{0, 0}, {16384, 16384}} {
+		row := fmt.Sprintf("streaming|sync|0|gregale_standby|t|%d", tc.input)
+		got, err := parseReplicationStatus(row)
+		if err != nil || !got.Synchronous || got.LagBytes != 0 || got.ReplayLagBytes == nil || *got.ReplayLagBytes != tc.want {
+			t.Fatalf("sample %q: %+v, %v", row, got, err)
 		}
 	}
 }

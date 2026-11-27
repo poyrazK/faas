@@ -241,9 +241,18 @@ func (g *databaseGuest) promote() dbguest.Response {
 	g.replicas.end()
 	ctx, cancel := context.WithTimeout(context.Background(), databasePromoteTimeout+databaseSettingWait+5*time.Second)
 	defer cancel()
-	out, err := g.query(ctx, fmt.Sprintf("SELECT pg_catalog.pg_promote(true, %d)", int(databasePromoteTimeout/time.Second)))
-	if err == nil && out != "t" {
-		err = errors.New("promotion did not finish")
+	// A prior promotion can have finished in PostgreSQL before reset or
+	// the control reply succeeded. Finish configuring that same primary.
+	recovery, err := g.query(ctx, "SELECT pg_catalog.pg_is_in_recovery()")
+	if err == nil && recovery != "t" && recovery != "f" {
+		err = errors.New("could not confirm recovery state")
+	}
+	if err == nil && recovery == "t" {
+		out, promoteErr := g.query(ctx, fmt.Sprintf("SELECT pg_catalog.pg_promote(true, %d)", int(databasePromoteTimeout/time.Second)))
+		err = promoteErr
+		if err == nil && out != "t" {
+			err = errors.New("promotion did not finish")
+		}
 	}
 	if err == nil {
 		err = g.resetSynchronous(ctx)

@@ -169,17 +169,30 @@ REVOKE EXECUTE ON FUNCTION hidden() FROM PUBLIC;
 CREATE MATERIALIZED VIEW restored_by AS SELECT session_user::text AS session_role;`)
 
 	port := tlsSourceShim(t, rt, source, cert)
-	if err := rt.SetImportSource(target, ImportSource{Host: "localhost", Port: port}); err != nil {
-		t.Fatal(err)
-	}
+	endpoint := ImportSource{Host: "localhost", Port: port}
 	const operation, otherOperation = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f", "4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a"
 	importAs := func(id string, skip ...string) dbguest.Request {
-		return dbguest.Request{Op: dbguest.OpImport, Import: &dbguest.ImportSource{Database: "gregale", User: "src_mig", Password: password,
+		return dbguest.Request{Op: dbguest.OpCustomerImport, Import: &dbguest.ImportSource{Database: "gregale", User: "src_mig", Password: password,
 			TargetDatabase: "gregale", Owner: "gregale_schema_owner", SkipExtensions: skip, OperationID: id}}
 	}
 	importReq := func(skip ...string) dbguest.Request { return importAs(operation, skip...) }
+	check := importReq()
+	check.Op = dbguest.OpImportCheck
+	result, err := rt.ControlImport(ctx, target, endpoint, check)
+	if err != nil || result.Import == nil || result.Import.State != dbguest.ImportFailed || result.Import.Error != dbguest.ErrCodeExtension {
+		t.Fatalf("incompatible check = %+v, %v", result, err)
+	}
+	check.Import.SkipExtensions = []string{"pg_stat_statements"}
+	result, err = rt.ControlImport(ctx, target, endpoint, check)
+	if err != nil || result.Import == nil || result.Import.State != dbguest.ImportChecked || result.Import.SourceMajor != 17 {
+		t.Fatalf("compatible check = %+v, %v", result, err)
+	}
+	if result, err := rt.Control(ctx, target, dbguest.Request{Op: dbguest.OpImportStatus}); err != nil ||
+		result.Import == nil || result.Import.State != dbguest.ImportNone {
+		t.Fatalf("compatibility checks started a copy = %+v, %v", result, err)
+	}
 	// pg_stat_statements is not trusted: the owner cannot create it.
-	if resp, err := rt.Control(ctx, target, importReq()); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
+	if resp, err := rt.ControlImport(ctx, target, endpoint, importReq()); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
 		t.Fatalf("import = %+v, %v", resp, err)
 	}
 	if status := awaitImport(ctx, t, rt, target); status.State != dbguest.ImportFailed || status.Error != dbguest.ErrCodeExtension ||
@@ -193,7 +206,7 @@ SET ROLE gregale_schema_owner;
 CREATE UNLOGGED TABLE bulk (b text);
 ALTER TABLE bulk ALTER b SET STORAGE PLAIN;
 INSERT INTO bulk SELECT repeat('x', 1800) FROM generate_series(1, 300000);`)
-	if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
+	if resp, err := rt.ControlImport(ctx, target, endpoint, importReq("pg_stat_statements")); err != nil || resp.Import == nil || resp.Import.State != dbguest.ImportRunning {
 		t.Fatalf("import of a large source = %+v, %v", resp, err)
 	}
 	if status := awaitImport(ctx, t, rt, target); status.State != dbguest.ImportFailed || status.Error != dbguest.ErrCodeTargetTooSmall ||
@@ -206,7 +219,7 @@ INSERT INTO bulk SELECT repeat('x', 1800) FROM generate_series(1, 300000);`)
 DROP TABLE bulk;`)
 
 	started := time.Now()
-	if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Import == nil {
+	if resp, err := rt.ControlImport(ctx, target, endpoint, importReq("pg_stat_statements")); err != nil || resp.Import == nil {
 		t.Fatalf("import = %+v, %v", resp, err)
 	}
 	status := awaitImport(ctx, t, rt, target)
@@ -219,11 +232,11 @@ DROP TABLE bulk;`)
 	// lineage committed with the copy.
 	expectLineage := func(when string) {
 		t.Helper()
-		if resp, err := rt.Control(ctx, target, importReq("pg_stat_statements")); err != nil || resp.Error != "" || resp.Import == nil ||
+		if resp, err := rt.ControlImport(ctx, target, endpoint, importReq("pg_stat_statements")); err != nil || resp.Error != "" || resp.Import == nil ||
 			resp.Import.State != dbguest.ImportDone || resp.Import.OperationID != operation {
 			t.Fatalf("%s: same operation = %+v, %v", when, resp, err)
 		}
-		if resp, err := rt.Control(ctx, target, importAs(otherOperation, "pg_stat_statements")); err != nil || resp.Error != dbguest.ErrCodeImportOperationMismatch ||
+		if resp, err := rt.ControlImport(ctx, target, endpoint, importAs(otherOperation, "pg_stat_statements")); err != nil || resp.Error != dbguest.ErrCodeImportOperationMismatch ||
 			resp.Import == nil || resp.Import.OperationID != operation {
 			t.Fatalf("%s: other operation = %+v, %v; want %s", when, resp, err, dbguest.ErrCodeImportOperationMismatch)
 		}

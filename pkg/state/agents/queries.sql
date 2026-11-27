@@ -606,9 +606,14 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(cap.id::text, '')::text AS capture_id, coalesce(cap.storage_key, '')::text AS capture_storage_key,
   coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
   coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id,
-  coalesce(sb.durability, '')::text AS durability
+  coalesce(sb.durability, '')::text AS durability,
+  coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id,
+  coalesce(vol.node_id, '')::text AS volume_node_id,
+  coalesce((SELECT b.id::text FROM sandbox_volume_backups b WHERE b.session_id=sb.id AND b.state='stored'
+    ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
+ LEFT JOIN sandbox_volumes vol ON vol.session_id=sb.id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
  LEFT JOIN jobs j ON j.id=sb.image_job_id AND j.account_id=sb.account_id
@@ -688,10 +693,10 @@ WITH session AS (
    WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='pausing'
 ), capture AS (
   INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
-    mem_bytes, vmstate_bytes, has_backing)
+    mem_bytes, vmstate_bytes, has_backing, volume_backup_id)
   SELECT sqlc.arg(capture_id)::text::uuid, id, account_id, sqlc.arg(node_id)::text, sqlc.arg(storage_key)::text,
     sqlc.arg(vmstate_storage_key)::text, sqlc.arg(fc_version)::text, sqlc.arg(mem_bytes)::bigint, sqlc.arg(vmstate_bytes)::bigint,
-    sqlc.arg(has_backing)::boolean
+    sqlc.arg(has_backing)::boolean, NULLIF(sqlc.arg(volume_backup_id)::text, '')::uuid
   FROM session
   RETURNING session_id
 )
@@ -790,6 +795,32 @@ UPDATE sandbox_sessions SET state=sqlc.arg(state)::text, outcome_code=sqlc.arg(o
 UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
  WHERE state='starting' AND lease_expires_at < now();
 
+-- name: PauseExpiredPersistentSandboxSessions :execrows
+-- A persistent session with a volume whose replica stopped renewing lost
+-- its VM, not its files: it goes back to paused without a capture and
+-- resumes cold from its volume (ADR-20261122132055 §4), kept for its plan's
+-- paused retention. Run before FailExpiredLiveSandboxSessions.
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
+  durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(days=>(sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)]),
+  updated_at=now()
+  FROM accounts a
+ WHERE a.id=sb.account_id
+   AND coalesce((sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)], 0) > 0
+   AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing') AND sb.lease_expires_at < now()
+   AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id);
+
+-- name: PauseLostSandboxSession :execrows
+-- A held persistent session with a volume whose VM ended unexpectedly goes
+-- back to paused without a capture; it resumes cold from its volume
+-- (ADR-20261122132055 §4).
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
+  durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(secs=>sqlc.arg(retention_seconds)::double precision), updated_at=now()
+ WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.lease_token=sqlc.arg(lease_token)::text
+   AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing')
+   AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id);
+
 -- name: FailExpiredLiveSandboxSessions :execrows
 -- A live session whose replica stopped renewing has lost its VM with the
 -- replica's stream; it is never booted again.
@@ -848,8 +879,11 @@ ON CONFLICT (id) DO NOTHING;
 -- Live captures of paused sessions the shared store may not hold yet
 -- (durability node): agentd checks each and marks it remote once it does
 -- (ADR-20261122132055 §2).
-SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.storage_key, cap.vmstate_storage_key, cap.has_backing
+SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.account_id::text AS account_id, cap.storage_key,
+  cap.vmstate_storage_key, cap.has_backing, coalesce(cap.volume_backup_id::text, '')::text AS volume_backup_id,
+  (vol.session_id IS NOT NULL)::boolean AS has_volume
   FROM sandbox_session_captures cap JOIN sandbox_sessions sb ON sb.id=cap.session_id
+  LEFT JOIN sandbox_volumes vol ON vol.session_id=cap.session_id
  WHERE cap.state='live' AND sb.state='paused' AND sb.durability='node'
  ORDER BY cap.checked_at NULLS FIRST, cap.created_at, cap.id LIMIT sqlc.arg(max_rows)::integer;
 
@@ -858,6 +892,94 @@ UPDATE sandbox_sessions sb SET durability='remote', updated_at=now()
  WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.state='paused' AND sb.durability='node'
  AND EXISTS (SELECT 1 FROM sandbox_session_captures cap
    WHERE cap.id=sqlc.arg(capture_id)::text::uuid AND cap.session_id=sb.id AND cap.state='live');
+
+-- name: MarkSandboxSessionVolumeNode :one
+-- ADR-20261122132055 §4: the session's VM booted on node_id with its volume
+-- at size_gb, so that node holds the newest copy; it returns the node that
+-- held it before, whose copy is now stale.
+WITH prev AS (
+  SELECT node_id FROM sandbox_volumes WHERE session_id=sqlc.arg(session_id)::text::uuid
+)
+INSERT INTO sandbox_volumes AS v (session_id, account_id, node_id, size_gb)
+SELECT sb.id, sb.account_id, sqlc.arg(node_id)::text, sqlc.arg(size_gb)::integer FROM sandbox_sessions sb
+ WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.lease_token=sqlc.arg(lease_token)::text
+ON CONFLICT (session_id) DO UPDATE SET node_id=excluded.node_id, size_gb=excluded.size_gb, updated_at=now()
+RETURNING coalesce((SELECT node_id FROM prev), '')::text AS previous_node_id;
+
+-- name: RecordSandboxVolumeBackup :one
+-- One backup vmmd reported for a session agentd holds; it becomes the
+-- session's newest. A replayed report changes nothing.
+WITH backup AS (
+  INSERT INTO sandbox_volume_backups (id, session_id, account_id, node_id, reason, state, size_bytes, data_chunks, uploaded_bytes)
+  SELECT sqlc.arg(backup_id)::text::uuid, sb.id, sb.account_id, sqlc.arg(node_id)::text, sqlc.arg(reason)::text,
+    sqlc.arg(state)::text, sqlc.arg(size_bytes)::bigint, sqlc.arg(data_chunks)::integer, sqlc.arg(uploaded_bytes)::bigint
+  FROM sandbox_sessions sb WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.lease_token=sqlc.arg(lease_token)::text
+  ON CONFLICT (id) DO NOTHING
+  RETURNING session_id, id
+), latest AS (
+  UPDATE sandbox_volumes v SET latest_backup_id=b.id, updated_at=now() FROM backup b WHERE v.session_id=b.session_id
+  RETURNING v.session_id
+)
+SELECT count(*)::bigint AS recorded FROM backup;
+
+-- name: MarkSandboxVolumeBackupStored :execrows
+UPDATE sandbox_volume_backups SET state='stored' WHERE id=sqlc.arg(backup_id)::text::uuid AND state='uploading';
+
+-- name: ListSupersededSandboxVolumeBackups :many
+-- Backups older than their session's newest that no live capture names: the
+-- sweep deletes their manifests. A pause's upload still running is left
+-- until vmmd would have given it up (upload_window_seconds, from
+-- api.SandboxCaptureUploadSec).
+SELECT b.id::text AS id, b.session_id::text AS session_id, b.account_id::text AS account_id
+  FROM sandbox_volume_backups b
+  JOIN sandbox_volumes v ON v.session_id=b.session_id
+  JOIN sandbox_volume_backups l ON l.id=v.latest_backup_id
+ WHERE b.state <> 'deleted' AND b.id <> l.id AND b.created_at < l.created_at
+   AND (b.state='stored' OR b.created_at < now() - make_interval(secs=>sqlc.arg(upload_window_seconds)::double precision))
+   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id AND c.state='live')
+ ORDER BY b.created_at, b.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: ListEndedSandboxVolumes :many
+-- Volumes of sessions that ended: the sweep deletes the node's copy and
+-- every backup, then the row.
+SELECT v.session_id::text AS session_id, v.account_id::text AS account_id, v.node_id
+  FROM sandbox_volumes v JOIN sandbox_sessions sb ON sb.id=v.session_id
+ WHERE sb.state IN ('closed','expired','failed')
+ ORDER BY v.updated_at, v.session_id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: ListSandboxVolumeBackupIDs :many
+SELECT id::text AS id FROM sandbox_volume_backups
+ WHERE session_id=sqlc.arg(session_id)::text::uuid AND state <> 'deleted' ORDER BY created_at, id;
+
+-- name: MarkSandboxVolumeBackupDeleted :execrows
+UPDATE sandbox_volume_backups SET state='deleted', deleted_at=now()
+ WHERE id=sqlc.arg(backup_id)::text::uuid AND state <> 'deleted';
+
+-- name: DeleteSandboxVolume :execrows
+DELETE FROM sandbox_volumes v USING sandbox_sessions sb
+ WHERE v.session_id=sqlc.arg(session_id)::text::uuid AND sb.id=v.session_id AND sb.state IN ('closed','expired','failed')
+   AND NOT EXISTS (SELECT 1 FROM sandbox_volume_backups b WHERE b.session_id=v.session_id AND b.state <> 'deleted');
+
+-- name: GrowPausedSandboxVolume :one
+-- PATCH {volume_gb} on a paused persistent session (ADR-20261122132055 §4):
+-- the volume grows when the session resumes, never shrinks. The capture's
+-- memory holds the filesystem at its old size, so a grow uses the capture
+-- up: the session resumes cold onto the grown volume, its files kept and
+-- its processes started again.
+WITH old AS (
+  SELECT id, coalesce(volume_gb, 0) AS volume_gb FROM sandbox_sessions
+   WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+     AND kind='persistent' AND state='paused' AND coalesce(volume_gb, 0) <= sqlc.arg(volume_gb)::integer
+   FOR UPDATE
+), grown AS (
+  UPDATE sandbox_sessions sb SET volume_gb=sqlc.arg(volume_gb)::integer, updated_at=now()
+    FROM old WHERE sb.id=old.id
+  RETURNING sb.id, old.volume_gb < sqlc.arg(volume_gb)::integer AS larger
+), used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id IN (SELECT id FROM grown WHERE larger) AND state='live'
+)
+SELECT id::text AS id FROM grown;
 
 -- name: DeleteSandboxSessionCapture :execrows
 DELETE FROM sandbox_session_captures WHERE id=sqlc.arg(capture_id)::text::uuid AND state='consumed';
