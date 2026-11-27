@@ -4374,6 +4374,7 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.unmountBindMounts(l.Instance); err != nil {
 		return err
 	}
+	v.setDriveBaseKey(l.Instance, "")
 	v.handBackBuildKitSeed(l.Instance)
 	if err := v.removeOwnedJail(l.Instance); err != nil {
 		return fmt.Errorf("vmm: remove chroot: %w", err)
@@ -6819,7 +6820,8 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 	}
 	v.mu.Lock()
 	delete(v.bindMounts, instance)
-	delete(v.driveBaseKeys, instance)
+	// The drive's layer key is not a bind: cold boot records it before the
+	// jail is made, and making the jail unmounts stale binds. Kill clears it.
 	v.mu.Unlock()
 	return nil
 }
