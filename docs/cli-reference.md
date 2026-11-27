@@ -4267,7 +4267,7 @@ Add an edge rule
 | `--app <slug>` | app slug | required |
 | `--kind <KIND>` | rule kind | required; one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` · `challenge` |
 | `--match-host <HOST>` | host to match; @app covers every host the app serves | required |
-| `--match-path <PATH>` | path glob to match (default / covers only the root; /** covers every path) |  |
+| `--match-path <PATH>` | path glob to match (default / covers only the root, except /** for waf and challenge; /** covers every path) |  |
 | `--match-method <METHOD>` | HTTP method to match (repeat for multiple) |  |
 | `--match-header <Name=Value>` | exact request header selector (repeat) |  |
 | `--priority <N>` | match priority; lower wins (default 100) |  |

@@ -30,7 +30,7 @@ A rule applies to a request when every selector it sets matches.
 | Field | Matches |
 |---|---|
 | `match_host` (required) | An exact host (`api.example.com`), `*` for any host, a glob such as `*.example.com` (subdomains, not the apex), or `@app` for every host the rule's app serves, including custom domains you add later. Hosts compare case-insensitively. |
-| `match_path` | A path glob; see below. Defaults to `/`, which matches only the root path. |
+| `match_path` | A path glob; see below. The CLI defaults it to `/`, which matches only the root path, except for `waf` and `challenge` rules, which default to `/**` (every path). The API requires it. |
 | `match_methods` | HTTP methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `CONNECT`, `TRACE`, in any letter case. Empty matches any method; `*` is rejected, so leave the field out instead. |
 | `match_headers` | Up to 10 request headers that must be present with an exact value. Names compare case-insensitively; any value of a repeated header can match. |
 | `match` | An optional condition over more request fields, ANDed with the selectors above. |

@@ -2206,6 +2206,7 @@ var WaitMCPAccessConvergence = waitMCPAccessConvergence
 var WakeRecommendationTier = wakeRecommendationTier
 var WarnClientScopedProtectiveRule = warnClientScopedProtectiveRule
 var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
+var DefaultEdgeRuleMatchPath = defaultEdgeRuleMatchPath
 var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
