@@ -70971,7 +70971,8 @@ func (q *Queries) ObjectBucketNativeGrants(ctx context.Context, db DBTX, bucketI
 }
 
 const objectBucketObjectLockDue = `-- name: ObjectBucketObjectLockDue :many
-SELECT bucket_id FROM object_bucket_object_lock WHERE state<>'ready' AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,bucket_id LIMIT $1
+SELECT l.bucket_id FROM object_bucket_object_lock l WHERE l.state<>'ready' AND l.retry_at<=now() AND (l.lease_until IS NULL OR l.lease_until<=now())
+AND NOT EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=l.bucket_id AND b.state='provisioning') ORDER BY l.retry_at,l.bucket_id LIMIT $1
 `
 
 func (q *Queries) ObjectBucketObjectLockDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error) {
