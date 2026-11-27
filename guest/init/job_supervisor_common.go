@@ -20,9 +20,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -258,6 +261,30 @@ func buildEnvForJobWithSecrets(m JobManifest, secrets map[string]string) []strin
 // POSIX exit code 128+N convention is what shells return for
 // signal death; if the supervisor captured a signal, that's the
 // authoritative story.
+// jobStartFailure classifies an entrypoint that never started. A command
+// that is missing or not executable is the customer's error, reported like a
+// shell does (127 not found, 126 not executable) and classed "failed" so the
+// task follows its own retry rules instead of dead-lettering as an
+// infrastructure fault (prod hunt r62). Anything else stays "infra".
+func jobStartFailure(err error) (int32, string) { //nolint:unused // called by the Linux guest supervisor.
+	switch {
+	case errors.Is(err, exec.ErrNotFound), errors.Is(err, os.ErrNotExist):
+		return 127, "failed"
+	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.ENOEXEC), errors.Is(err, syscall.EISDIR):
+		return 126, "failed"
+	}
+	return 126, "infra"
+}
+
+// jobStartHint explains the usual cause of a one-argument entrypoint that
+// holds a shell line: the whole string was taken as a program name.
+func jobStartHint(argv []string) string { //nolint:unused // called by the Linux guest supervisor.
+	if len(argv) == 1 && strings.ContainsAny(argv[0], " \t;|&$") {
+		return "the entrypoint is one argument holding a shell line; run it through a shell, e.g. --command '/bin/sh,-c,<line>'"
+	}
+	return ""
+}
+
 func mapExitToErrorClass(exitCode int32, signal int32) string { //nolint:unused // called by the Linux guest supervisor.
 	if exitCode == 0 {
 		return "succeeded"

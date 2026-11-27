@@ -3220,3 +3220,5 @@ var JobReplayCommandNote = jobReplayCommandNote
 
 // PublicCommandPath exposes publicCommandPath (prod hunt r59).
 var PublicCommandPath = publicCommandPath
+
+var WarnShellLineCommand = warnShellLineCommand
