@@ -1,0 +1,77 @@
+name: Analytics PostgreSQL qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/analytics-qualification.yml'
+      - '.github/analytics-qualification/**'
+
+permissions:
+  contents: read
+
+jobs:
+  analytics-pg:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'codex/analytics-qualification-20261127'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: '-c max_locks_per_transaction=512'
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: qualification
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: 70cf5973192a79210228cabf002c011c89bdb3d3
+          path: candidate
+      - name: Prepare exact analytics snapshot
+        working-directory: candidate
+        run: |
+          cat ../qualification/.github/analytics-qualification/patch-*.b64 | base64 --decode | gzip --decompress > "$RUNNER_TEMP/analytics.patch"
+          git apply --check "$RUNNER_TEMP/analytics.patch"
+          git apply "$RUNNER_TEMP/analytics.patch"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: candidate/go.mod
+          cache-dependency-path: candidate/go.sum
+      - name: Run the three migrated analytics checks
+        working-directory: candidate
+        env:
+          GOGC: '40'
+          GOMAXPROCS: '4'
+        run: |
+          tests='TestCanaryImpactMatchesProductionMinutesAndWeightsStableRates|TestExecutionPathHistoryUsesRetainedHourlyRollups|TestRegressionImpactRanksSettledHourlyRollups'
+          go test -p 2 -count=1 -json ./pkg/apid/analyticsrollup -run "^($tests)$" | tee "$RUNNER_TEMP/analytics-pg.json"
+          python3 - "$RUNNER_TEMP/analytics-pg.json" "$tests" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1]) as results:
+              passed = {
+                  event["Test"]
+                  for event in map(json.loads, results)
+                  if event.get("Action") == "pass" and "Test" in event
+              }
+          missing = sorted(set(sys.argv[2].split("|")) - passed)
+          if missing:
+              sys.exit("Missing passing tests: " + ", ".join(missing))
+          PY
