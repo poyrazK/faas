@@ -55,6 +55,13 @@ type UploadDeployOptions struct {
 	// the upload commits.
 	ReleaseAt     string   `json:"release_at,omitempty"`
 	ReleaseNotify []string `json:"release_notify,omitempty"`
+	// SourceFormat selects what the uploaded archive is. Empty is a source
+	// tarball; UploadSourceFormatOCIImageArchive is a single-image OCI layout
+	// the CLI made from a local Docker image (ADR-20261127120000).
+	SourceFormat string `json:"source_format,omitempty"`
+	// ImageName is the local image's repository tag: informational, and
+	// checked against the stateful-image denylist. Image archives only.
+	ImageName string `json:"image_name,omitempty"`
 }
 
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size

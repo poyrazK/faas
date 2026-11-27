@@ -114322,6 +114322,14 @@ components:
         handler: { type: string }
         dockerfile: { type: boolean }
         source_root: { type: string, description: "Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.' selects the archive root." }
+        source_format:
+          type: string
+          enum: [oci_image_archive]
+          description: "What the uploaded bytes are. Omitted means a source tarball. oci_image_archive is a single-image linux/amd64 OCI image layout tar that deploys without a build; it is capped at the plan's app layer size and refused for function apps and apps that require signed images."
+        image_name:
+          type: string
+          maxLength: 256
+          description: "Informational name of the uploaded image, such as its local tag. Only valid with source_format oci_image_archive."
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
         source_url:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by the API." }
