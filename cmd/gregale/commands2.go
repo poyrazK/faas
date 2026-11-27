@@ -5898,6 +5898,9 @@ func cmdDomains(args []string) int {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
 		}
+		if err := domainNotURL(*domain); err != nil {
+			return printErr("Invalid domain", err)
+		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
@@ -6535,6 +6538,11 @@ func cmdKeys(args []string) int {
 		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
 			PrintUsage(os.Stderr, "usage: gregale key create <label> [--agent] [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 1
+		}
+		if strings.TrimSpace(positional[0]) == "" {
+			// `key create ""` minted a key `key list` shows as "-", which
+			// nobody can tell apart later (prod hunt r64).
+			return printErr("Invalid label", errors.New("the key label cannot be blank; name what the key is for, e.g. gregale key create ci-deploy"))
 		}
 		projects := splitList(*projectsCSV)
 		if flagWasSet(fs, "projects") && len(projects) == 0 {
