@@ -34,6 +34,7 @@ func cmdMCPListing(args []string) int {
 	summary := fs.String("summary", "", "one or two sentences on what the server does (publish)")
 	registry := fs.String("registry-name", "", "MCP registry name, such as io.github.<user>/<server> (publish)")
 	showUsage := fs.Bool("show-usage", false, "show the open customer count on the page (publish)")
+	probeSecret := fs.String("probe-secret", "", "app secret holding a bearer token the deploy gate sends to list a candidate's tools, for a server that checks credentials itself (publish)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -50,7 +51,7 @@ func cmdMCPListing(args []string) int {
 	case "publish":
 		set := map[string]bool{}
 		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-		req := api.PutMCPListingRequest{Title: *title, Summary: *summary, RegistryName: *registry, ShowUsage: *showUsage}
+		req := api.PutMCPListingRequest{Title: *title, Summary: *summary, RegistryName: *registry, ShowUsage: *showUsage, ProbeSecret: *probeSecret}
 		// Republishing refreshes the tools and keeps what the flags leave out.
 		current, err := c.GetMCPListing(ctx, *slug)
 		switch {
@@ -122,6 +123,9 @@ func mcpListingPublish(ctx context.Context, c *Client, slug, path, tokenEnv stri
 		return printErr("Could not list the server's tools (gateway-auth servers need --token-env)", err)
 	}
 	req.Endpoint, req.Tools = endpoint, mcpListingTools(catalog.Tools)
+	if req.Contract, err = mcpListingContract(catalog); err != nil {
+		return printErr("MCP tool contract", err)
+	}
 	listing, err := c.PutMCPListing(ctx, slug, req)
 	if err != nil {
 		return printErr("Could not publish the listing", err)
@@ -148,6 +152,9 @@ func mcpListingKeep(req api.PutMCPListingRequest, current api.MCPListingResponse
 	}
 	if !set["show-usage"] {
 		req.ShowUsage = current.ShowUsage
+	}
+	if !set["probe-secret"] {
+		req.ProbeSecret = current.ProbeSecret
 	}
 	return req
 }
@@ -180,5 +187,11 @@ func renderMCPListing(w io.Writer, l api.MCPListingResponse) {
 	_, _ = fmt.Fprintf(w, "Tools:     %d (%s)\n", len(l.Tools), strings.Join(names, ", "))
 	if l.ShowUsage {
 		_, _ = fmt.Fprintln(w, "Usage:     the page shows the open customer count")
+	}
+	if l.ContractSHA256 != "" {
+		_, _ = fmt.Fprintf(w, "Contract:  %s; production deploys that break these tools need gregale mcp server deploy --allow-breaking\n", shortSHA(l.ContractSHA256))
+	}
+	if l.ProbeSecret != "" {
+		_, _ = fmt.Fprintf(w, "Probe:     bearer token from app secret %s\n", l.ProbeSecret)
 	}
 }

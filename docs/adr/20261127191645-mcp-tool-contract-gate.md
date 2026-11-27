@@ -70,8 +70,10 @@ webhook event and a public changelog on the listing page.
    most `api.MCPContractOverrideMaxTTL`, default 1 h). It admits exactly
    one breaking or unverified candidate. `mcp server deploy
    --allow-breaking --reason TEXT` creates one before deploying; for a git
-   push the seller runs `mcp server contract allow-breaking` first. Both
-   are audited (`mcp_contract.override_created`, `mcp_contract.override_used`).
+   push the seller runs `mcp server contract allow` first.
+   Creating one is audited (`mcp_contract.override_created`); its use is
+   recorded on the override (`used_by_deployment`, `used_at`) and on the
+   check (`override_id`), since imaged writes no apid audit events.
 5. **Visibility.** `GET /v1/apps/{slug}/mcp-contract` (owner) returns the
    effective baseline's SHA-256 and tool names, recent checks with their
    changes, and open overrides; `gregale mcp server contract show` renders
