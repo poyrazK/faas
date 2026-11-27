@@ -17,11 +17,13 @@ Gregale's and walks through a move.
 | `worker` dyno | A background worker service in a [project](multi-service-apps.md): a service without `ports:` runs all the time |
 | Config vars | [Secrets](secrets.md) (`gregale env set`) and [environment variables](env.md) |
 | Heroku Postgres | [Managed PostgreSQL](postgres.md), bound to the app as `DATABASE_URL` |
-| Heroku Scheduler | [Crons](crons.md), which call a path on your app on a schedule |
+| Heroku Redis and external add-ons | No managed Redis equivalent: keep external add-ons over HTTPS or open ports on Pro/Scale (`gregale app egress-ports add my-api <port>`, [Networking](networking.md#outbound-connections)) |
+| Heroku Scheduler | A [cron](crons.md) that calls a path on your app, or a scheduled [job](jobs.md) (`gregale job create --image ... --schedule`) |
 | Review apps | [Preview environments](preview-environments.md) |
 | Custom domains and ACM | [Custom domains](domains.md) |
 | `heroku logs --tail` | `gregale logs my-api` ([Logs](logs.md)) |
-| `heroku releases:rollback` | `gregale rollback my-api --to v41` ([Safe releases](releases.md)) |
+| Preboot and `heroku releases:rollback` | Automatic canary [rollouts](rollouts.md) (1% → 10% → 50% → 100% with automatic 5xx rollback) and database-synced rollback (`gregale rollback my-api --to v41 --restore-databases`, [Safe releases](releases.md#rollbacks-that-restore-the-database)) |
+| Spend limits / dyno bill surprises | Hard monthly spend caps enabled on every paid plan ([Cost controls](cost-controls.md)) |
 
 ## Before you start
 
@@ -46,7 +48,7 @@ Check what Gregale detects, from the repository root:
 gregale deploy --dry-run
 ```
 
-## 1. Copy the configuration
+## Copy the configuration
 
 Export the config vars as `KEY=VALUE` lines. `--secrets-file` takes each
 value exactly as written, so export JSON and convert it rather than using
@@ -61,7 +63,7 @@ Remove the lines you will not use on Gregale (for example `DATABASE_URL` if
 you move to managed PostgreSQL). Values that span several lines do not fit
 this format; set those with `gregale env set` after the first deploy.
 
-## 2. Deploy
+## Deploy
 
 ```bash
 gregale deploy --name my-api --secrets-file heroku.env
@@ -76,7 +78,7 @@ gregale app health my-api --errors
 gregale logs my-api
 ```
 
-## 3. The database
+## The database
 
 Gregale has no one-step import from Heroku Postgres. Two ways to move:
 
@@ -91,23 +93,24 @@ Gregale has no one-step import from Heroku Postgres. Two ways to move:
   gregale postgres attach my-api-postgres my-api --access migration --env MIGRATION_DATABASE_URL
   ```
 
-  Restore a `pg_dump` of the Heroku database with your usual PostgreSQL
-  tools through [Connect from your laptop](postgres.md#connect-from-your-laptop)
+  Take a `pg_dump` of your Heroku database (for example, `pg_dump "$(heroku config:get DATABASE_URL --app my-heroku-app)" --no-owner --no-acl -Fc -f heroku.dump`) and restore it
+  through [Connect from your laptop](postgres.md#connect-from-your-laptop)
   (it needs app tasks on your plan),
   then point the app's migrations at `MIGRATION_DATABASE_URL`, the
   credential that can change the schema. `DATABASE_URL` goes through a
   connection pooler in transaction mode; see
   [Managed PostgreSQL](postgres.md#connect-an-app) for what that changes.
 
-## 4. Workers and scheduled jobs
+## Workers and scheduled jobs
 
 - A `worker:` process becomes a background worker service. Describe the web
   and worker processes in a Compose file and deploy it as a
   [project](multi-service-apps.md); a service without `ports:` runs all the time.
-- Heroku Scheduler tasks become [crons](crons.md). A cron calls an HTTP path
-  on your app, so expose each task as a route your app protects.
+- Heroku Scheduler and one-off Rake, `manage.py`, or CLI tasks become HTTP
+  [crons](crons.md) (expose each task as a protected HTTP route) or scheduled
+  [jobs](jobs.md) (`gregale job create nightly --image registry.example/app:v1 --schedule "0 3 * * *"`).
 
-## 5. Switch traffic
+## Switch traffic
 
 Add your domain to the Gregale app and verify it as
 [Custom domains](domains.md) describes, then move DNS. When the

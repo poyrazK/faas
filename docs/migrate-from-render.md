@@ -17,11 +17,16 @@ its pieces to Gregale's and walks through a move.
 | Health check path | `hosting.health` in `gregale.yaml` |
 | Private service | A service in the same [project](multi-service-apps.md), called by name |
 | Background worker | A background worker service in a [project](multi-service-apps.md): a service without `ports:` runs all the time |
-| Cron job | [Crons](crons.md), which call a path on your app on a schedule |
+| Cron job | A [cron](crons.md) that calls a path on your app, or a scheduled [job](jobs.md) (`gregale job create --image ... --schedule`) |
 | Environment variables and secret files | [Secrets](secrets.md) (`gregale env set`) and [environment variables](env.md) |
 | Render Postgres | [Managed PostgreSQL](postgres.md), bound to the app as `DATABASE_URL` |
+| Persistent disks (`disk:` in `render.yaml`) | No persistent disk: keep state in [managed PostgreSQL](postgres.md) or [object storage](object-storage.md) |
+| WebSockets / SSE | `--websocket-enabled` on your app or [managed realtime](realtime.md) (beta) so connections stay open while instances scale to zero |
 | Preview environments | [Preview environments](preview-environments.md) |
 | Custom domains | [Custom domains](domains.md) |
+| Logs | `gregale logs my-api` ([Logs](logs.md)) |
+| Rollback | Automatic canary [rollouts](rollouts.md) (1% → 10% → 50% → 100% with automatic 5xx rollback) and `gregale rollback my-api --to v41 --restore-databases` ([Safe releases](releases.md#rollbacks-that-restore-the-database)) |
+| Spend limits | Hard monthly spend caps enabled on every paid plan ([Cost controls](cost-controls.md)) |
 | Blueprint (`render.yaml`) | `gregale.yaml`, or a Compose file for several services |
 
 ## Translate the service settings
@@ -102,7 +107,10 @@ transaction mode; see [Managed PostgreSQL](postgres.md#connect-an-app).
 A Blueprint with a web service, private services and background workers
 becomes one [project](multi-service-apps.md): describe the services in a Compose
 file and deploy it with `gregale deploy`. Services call each other by name,
-and a service without `ports:` runs all the time as a worker.
+a service without `ports:` runs all the time as a worker, shared
+`envVarGroups` move into project/app environment variables and
+[secrets](secrets.md), and persistent `disk:` mounts move to
+[managed PostgreSQL](postgres.md) or [object storage](object-storage.md).
 
 ## Switch traffic
 
