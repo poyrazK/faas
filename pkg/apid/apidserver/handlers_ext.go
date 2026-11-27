@@ -2145,6 +2145,10 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.appBorrowedBindingsProblem(r.Context(), app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if problem := s.appDependentsProblem(r.Context(), app); problem != nil {
 		api.WriteProblem(w, problem)
 		return

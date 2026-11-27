@@ -521,6 +521,7 @@ sql:
       - "pkg/state/api_consumer_credit_pack_queries.sql"
       - "pkg/state/database_upgrade_rehearsal_queries.sql"
       - "pkg/state/route_split_queries.sql"
+      - "pkg/state/mcp_listing_queries.sql"
       - "pkg/state/api_sandbox_provisioning_queries.sql"
       - "pkg/state/api_sandbox_scenario_library_queries.sql"
       - "pkg/state/api_sandbox_partner_queries.sql"

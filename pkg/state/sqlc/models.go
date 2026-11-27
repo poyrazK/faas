@@ -10812,6 +10812,20 @@ type McpCatalogMonitor struct {
 	Payload   []byte
 }
 
+type McpListing struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Title        string
+	Summary      string
+	Endpoint     string
+	Tools        []byte
+	RegistryName string
+	ShowUsage    bool
+	Version      int32
+	PublishedAt  pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type McpOauthRetirement struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID

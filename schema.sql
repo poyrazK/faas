@@ -51735,6 +51735,31 @@ CREATE TABLE public.mcp_catalog_monitors (
 
 
 --
+-- Name: mcp_listings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_listings (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    title text NOT NULL,
+    summary text DEFAULT ''::text NOT NULL,
+    endpoint text NOT NULL,
+    tools jsonb DEFAULT '[]'::jsonb NOT NULL,
+    registry_name text DEFAULT ''::text NOT NULL,
+    show_usage boolean DEFAULT false NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    published_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mcp_listings_endpoint_check CHECK (((endpoint ~~ 'https://%'::text) AND (char_length(endpoint) <= 2048))),
+    CONSTRAINT mcp_listings_registry_name_check CHECK (((registry_name = ''::text) OR (registry_name ~ '^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$'::text))),
+    CONSTRAINT mcp_listings_summary_check CHECK ((char_length(summary) <= 500)),
+    CONSTRAINT mcp_listings_title_check CHECK (((char_length(title) >= 1) AND (char_length(title) <= 80))),
+    CONSTRAINT mcp_listings_tools_check CHECK (((jsonb_typeof(tools) = 'array'::text) AND (octet_length((tools)::text) <= 262144))),
+    CONSTRAINT mcp_listings_version_check CHECK ((version > 0))
+);
+
+
+--
 -- Name: mcp_oauth_retirements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -75445,6 +75470,14 @@ ALTER TABLE ONLY public.mcp_bridge_state
 
 ALTER TABLE ONLY public.mcp_catalog_monitors
     ADD CONSTRAINT mcp_catalog_monitors_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: mcp_listings mcp_listings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_listings
+    ADD CONSTRAINT mcp_listings_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -113024,6 +113057,22 @@ ALTER TABLE ONLY public.mcp_catalog_monitors
 
 ALTER TABLE ONLY public.mcp_catalog_monitors
     ADD CONSTRAINT mcp_catalog_monitors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_listings mcp_listings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_listings
+    ADD CONSTRAINT mcp_listings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_listings mcp_listings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_listings
+    ADD CONSTRAINT mcp_listings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

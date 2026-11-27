@@ -75502,6 +75502,26 @@ func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg Objec
 	return id, err
 }
 
+const objectS3BindingLockBorrower = `-- name: ObjectS3BindingLockBorrower :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.account_id=a.account_id
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid
+  AND b.id=$3::uuid AND b.app_id<>a.id
+FOR UPDATE OF a
+`
+
+type ObjectS3BindingLockBorrowerParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingLockBorrower(ctx context.Context, db DBTX, arg ObjectS3BindingLockBorrowerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectS3BindingLockBorrower, arg.AppID, arg.AccountID, arg.BucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const objectS3BindingRevokeLock = `-- name: ObjectS3BindingRevokeLock :one
 SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id, issuer_account_id, issuer_access_revision, key_prefix FROM object_storage_s3_credentials
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3
@@ -75616,6 +75636,72 @@ ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at
 func (q *Queries) ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectS3BindingStampRuntime, appID)
 	return err
+}
+
+const objectS3ComputeBindingsHeldBy = `-- name: ObjectS3ComputeBindingsHeldBy :many
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, c.url_request, c.url_api_key_id, c.url_expires_at, c.url_receipt_id, c.issuer_account_id, c.issuer_access_revision, c.key_prefix, b.app_id AS bucket_app_id
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
+WHERE c.account_id=$1::uuid AND c.managed_app_id=$2::uuid
+  AND c.status='active' AND c.rotation_parent_id IS NULL AND c.url_request IS NULL
+ORDER BY c.created_at, c.id
+`
+
+type ObjectS3ComputeBindingsHeldByParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type ObjectS3ComputeBindingsHeldByRow struct {
+	ObjectStorageS3Credential ObjectStorageS3Credential
+	BucketAppID               pgtype.UUID
+}
+
+func (q *Queries) ObjectS3ComputeBindingsHeldBy(ctx context.Context, db DBTX, arg ObjectS3ComputeBindingsHeldByParams) ([]ObjectS3ComputeBindingsHeldByRow, error) {
+	rows, err := db.Query(ctx, objectS3ComputeBindingsHeldBy, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectS3ComputeBindingsHeldByRow{}
+	for rows.Next() {
+		var i ObjectS3ComputeBindingsHeldByRow
+		if err := rows.Scan(
+			&i.ObjectStorageS3Credential.ID,
+			&i.ObjectStorageS3Credential.AccountID,
+			&i.ObjectStorageS3Credential.BucketID,
+			&i.ObjectStorageS3Credential.AccessKeyID,
+			&i.ObjectStorageS3Credential.SecretSealed,
+			&i.ObjectStorageS3Credential.Kid,
+			&i.ObjectStorageS3Credential.Label,
+			&i.ObjectStorageS3Credential.Permission,
+			&i.ObjectStorageS3Credential.Status,
+			&i.ObjectStorageS3Credential.CreatedAt,
+			&i.ObjectStorageS3Credential.LastUsedAt,
+			&i.ObjectStorageS3Credential.RevokedAt,
+			&i.ObjectStorageS3Credential.ManagedAppID,
+			&i.ObjectStorageS3Credential.ManagedScope,
+			&i.ObjectStorageS3Credential.ManagedPrefix,
+			&i.ObjectStorageS3Credential.RotationParentID,
+			&i.ObjectStorageS3Credential.RotationWakeID,
+			&i.ObjectStorageS3Credential.RotationStampedAt,
+			&i.ObjectStorageS3Credential.UrlRequest,
+			&i.ObjectStorageS3Credential.UrlApiKeyID,
+			&i.ObjectStorageS3Credential.UrlExpiresAt,
+			&i.ObjectStorageS3Credential.UrlReceiptID,
+			&i.ObjectStorageS3Credential.IssuerAccountID,
+			&i.ObjectStorageS3Credential.IssuerAccessRevision,
+			&i.ObjectStorageS3Credential.KeyPrefix,
+			&i.BucketAppID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
