@@ -1,5 +1,10 @@
 [
   {
+    "step": "TestMCPSeller/signup_opened",
+    "bug": "api consumer signup-set refuses 'Stripe is not connected' even when only a free plan is offered, so a seller without a billing provider cannot open free sign-up (fix on branch fix/mcp-signup-free-plan-no-stripe)",
+    "since": "2026-11-27"
+  },
+  {
     "step": "TestPublicSurface/security_txt",
     "bug": "security.txt Canonical URL ends in 404; its Encryption URL serves an HTML page, not a PGP key",
     "since": "2026-10-26"

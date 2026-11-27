@@ -19,6 +19,25 @@ expiry, rotation, catalog drift and revocation. See the
 It does not certify external OAuth provider login/refresh or API/bridge restart
 recovery; local preparation checks do not establish deployed acceptance.
 
+Selling an MCP server (API monetization, dark behind the `api_monetization`
+flag) is not a GA row either. `TestMCPSeller` (full tier) skips while the
+account lacks the flag. It deploys its own OAuth issuer (a static app serving
+discovery and the JWKS of a key the journey generates) and a Node starter
+private to that issuer, then covers: a free plan with a monthly cap on one
+tool (`plan_created`), free-only sign-up with `--oauth-consumers
+--account-tools` (`signup_opened`), the listing (`listing_published`;
+`listing_public`: the JSON, the page with its CSP, `server.json`;
+`listing_republish_keeps_fields`), a customer's first sign-in becoming a
+consumer linked to the issuer and subject (`sign_in_becomes_customer`), the
+account tools in `tools/list` (`account_tools_listed`), the cap refused in MCP
+terms with `consumer_plan_limit_exceeded` while other tools still answer
+(`tool_cap_refuses`), seller stats showing the OAuth sign-up and the tool's
+units (`seller_stats`), a revoked customer refused (`revoked_customer_refused`)
+and unpublishing (`listing_unpublished`). Not covered: paid plans, card
+checkout and upgrades (need a connected Stripe test account), the URL
+elicitation form of the refusal, oauth-proxy sign-in through Gregale Auth, and
+the management MCP tool for seller stats.
+
 Flags, experiments and product analytics are not GA rows either: no
 capability registry entry lists them. `TestFlagsAndExperiments` skips when
 Flags answer anything but 404 for a missing project. It deploys a one-service
