@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
@@ -79,7 +80,7 @@ func TestEvaluatorBootFailures(t *testing.T) {
 // failedJobRunStore answers job_failures from a fixed count, so the test
 // does not drive a job run through the scheduler.
 type failedJobRunStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	n         int64
 	err       error
 	account   string
@@ -113,7 +114,7 @@ func TestEvaluatorJobFailures(t *testing.T) {
 			mem := state.NewMemStore()
 			rule, ident := seedRouteAlertRule(t, mem, state.AlertMetricJobFailures)
 			store := &failedJobRunStore{MemStore: mem, n: tc.n, err: tc.err}
-			stats, channels := runFailureCountEvaluator(t, store, ident, now)
+			stats, channels := runFailureCountEvaluator(t, statetest.NewMem(store), ident, now)
 			if fired := stats.Fired == 1; fired != tc.wantFire {
 				t.Fatalf("fired=%v want %v (stats=%+v)", fired, tc.wantFire, stats)
 			}

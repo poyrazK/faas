@@ -2309,7 +2309,7 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `Stripe is not connected.`,
+        409: `A paid plan is offered and Stripe is not connected.`,
         422: `A provider other than Stripe, an unknown plan, an invalid scope or URL, or a value out of range.`,
       },
     });
