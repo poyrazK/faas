@@ -24,6 +24,18 @@ func ValidateWatch(watch *api.DevWatch) (*api.DevWatch, *api.Problem) {
 	return &api.DevWatch{Command: command}, nil
 }
 
+// ReviveRAMMB is the RAM a developer environment comes back with when a
+// session revives its deleted app: at least what a new watch environment
+// gets (api.DevWatchRAMMB), so an environment made before that default does
+// not come back at 512 MB and swap through every first compile. A larger
+// size someone chose is kept, and without watch mode the size is unchanged.
+func ReviveRAMMB(current int, limits api.Limits, watch *api.DevWatch) int {
+	if watch == nil {
+		return current
+	}
+	return max(current, api.DevWatchRAMMB(limits))
+}
+
 // WatchUnsupported refuses watch mode for an environment it cannot serve: a
 // function, too little RAM, or an app reachable without authentication.
 // Development servers expose source maps, error overlays and reload

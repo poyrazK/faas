@@ -131,3 +131,40 @@ func TestDevSessionReviveRaisesWatchRAMPG(t *testing.T) {
 		})
 	}
 }
+
+// adr: 1170 — watch mode is checked against the session a revive would bring
+// back, before it is restored: an environment stopped without authentication
+// is refused watch mode and stays deleted.
+func TestDevSessionReviveRefusesUnauthenticatedWatchPG(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	path := "/v1/dev/sessions/gregale-open"
+	created := e.Do(t, "PUT", path, api.UpsertDevSessionRequest{}, nil)
+	if created.Code != 201 {
+		t.Fatalf("create status = %d, want 201: %s", created.Code, created.Body.String())
+	}
+	var first api.DevSessionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	falsy := false
+	if opened := e.Do(t, "PATCH", "/v1/apps/"+first.App.Slug, api.UpdateAppRequest{RequireAuthn: &falsy,
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}, nil); opened.Code != 200 {
+		t.Fatalf("open app auth: status %d: %s", opened.Code, opened.Body.String())
+	}
+	if stopped := e.Do(t, "DELETE", path, nil, nil); stopped.Code != 204 {
+		t.Fatalf("destroy status = %d, want 204: %s", stopped.Code, stopped.Body.String())
+	}
+	again := e.Do(t, "PUT", path, api.UpsertDevSessionRequest{Watch: &api.DevWatch{Command: "npm run dev"}}, nil)
+	var problem api.Problem
+	_ = json.Unmarshal(again.Body.Bytes(), &problem)
+	if again.Code != 422 || problem.Code != api.CodeDevWatchUnsupported {
+		t.Fatalf("restart status = %d problem %+v, want 422 dev_watch_unsupported", again.Code, problem)
+	}
+	tomb, err := (*e.Store()).AppBySlugIncludingDeleted(t.Context(), first.App.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tomb.DeletedAt == nil || tomb.PreviewPrState != state.PreviewPrStateTornDown {
+		t.Fatalf("tombstone deleted_at=%v state=%q, want it left deleted and %q", tomb.DeletedAt, tomb.PreviewPrState, state.PreviewPrStateTornDown)
+	}
+}

@@ -188,14 +188,19 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				api.WriteProblem(w, api.ErrPlanLimitApps(limits, quotaErr.Observed))
 			}
 		case errors.Is(err, state.ErrConflict):
-			if revived, ok := s.reviveDevSession(r, acct, slug, project, app, limits, watch != nil); ok {
+			revived, prob, ok := s.reviveDevSession(r, acct, slug, project, app, limits, watch)
+			if prob != nil {
+				api.WriteProblem(w, prob)
+				return
+			}
+			if ok {
 				refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), revived.ID, expiresAt)
 				if refreshErr != nil {
 					s.writeDevSessionRefreshError(w, revived, refreshErr)
 					return
 				}
 				s.audit.Emit(r.Context(), "dev_session.revived", &acct.ID, map[string]any{
-					"app_id": refreshed.ID, "slug": refreshed.Slug, "project": project, "workspace_id": req.WorkspaceID,
+					"app_id": refreshed.ID, "slug": refreshed.Slug, "project": project, "workspace_id": req.WorkspaceID, "ram_mb": refreshed.RAMMB,
 				})
 				s.writeDevSession(w, r, acct, refreshed, req, http.StatusOK)
 				return
@@ -266,24 +271,30 @@ func (s *server) writeDevSessionStoreError(w http.ResponseWriter, operation, slu
 // row, a different project or a changed shape; the caller then renews the
 // lease and syncs a fresh deployment as for a new session.
 //
-// A revived watch session gets at least the RAM a new one would
-// (api.DevWatchRAMMB): a tombstone made before that default, at 512 MB,
-// otherwise swaps through every first compile. A larger size someone chose
-// is kept.
-func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, project string, app state.App, limits api.Limits, watch bool) (state.App, bool) {
+// A revived watch session runs at devloop.ReviveRAMMB, and watch mode is
+// checked against the session as it will come back (devloop.WatchUnsupported)
+// before anything is restored: a refusal is returned as the problem and the
+// tombstone stays as it was.
+func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, project string, app state.App, limits api.Limits, watch *api.DevWatch) (state.App, *api.Problem, bool) {
 	tomb, err := s.store.AppBySlugIncludingDeleted(r.Context(), slug)
 	if err != nil || tomb.DeletedAt == nil || tomb.AccountID != acct.ID ||
 		tomb.PreviewOfSlug != project || tomb.PreviewPrNumber != 0 ||
 		tomb.PreviewPrState != state.PreviewPrStateTornDown ||
 		tomb.Type != app.Type || (app.Type == state.AppTypeFunction && tomb.Runtime != app.Runtime) {
-		return state.App{}, false
+		return state.App{}, nil, false
+	}
+	ram := devloop.ReviveRAMMB(tomb.RAMMB, limits, watch)
+	candidate := tomb
+	candidate.RAMMB = ram
+	if prob := devloop.WatchUnsupported(candidate, acct.Plan, watch); prob != nil {
+		return state.App{}, prob, false
 	}
 	// Restore refuses a torn-down preview (ADR-20261030070000), so the session
 	// reopens first; the restore's quota check then counts it as open. A failed
 	// restore puts the tombstone back, where the restore guard covers it again.
 	if _, err := s.store.SetPreviewPrState(r.Context(), tomb.ID, state.PreviewPrStateOpen); err != nil {
 		s.log.Warn("developer session reopen failed", "app", tomb.ID, "err", err)
-		return state.App{}, false
+		return state.App{}, nil, false
 	}
 	restored, err := s.store.RestoreApp(r.Context(), tomb.ID, limits)
 	if err != nil {
@@ -291,18 +302,26 @@ func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, pro
 		if _, err := s.store.SetPreviewPrState(context.WithoutCancel(r.Context()), tomb.ID, state.PreviewPrStateTornDown); err != nil {
 			s.log.Warn("developer session tombstone not put back", "app", tomb.ID, "err", err)
 		}
-		return state.App{}, false
+		return state.App{}, nil, false
 	}
-	if want := api.DevWatchRAMMB(limits); watch && restored.RAMMB < want {
-		if raised, err := s.store.UpdateApp(r.Context(), restored.ID, state.UpdateAppParams{RAMMB: &want}); err != nil {
-			s.log.Warn("developer session RAM not raised to the watch default", "app", restored.ID, "ram_mb", restored.RAMMB, "want_mb", want, "err", err)
-		} else {
-			restored = raised
+	notifyRestored := func() {
+		_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
+			fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
+	}
+	if ram != restored.RAMMB {
+		raised, err := s.store.UpdateApp(r.Context(), restored.ID, state.UpdateAppParams{RAMMB: &ram})
+		if err != nil {
+			// The session is back but too small for watch mode; the retry
+			// takes the existing-session path, which checks it again.
+			s.log.Warn("developer session RAM not raised for watch mode", "app", restored.ID, "ram_mb", restored.RAMMB, "want_mb", ram, "err", err)
+			notifyRestored()
+			return state.App{}, api.ErrCapacity("revive developer session"), false
 		}
+		s.log.Info("developer session RAM raised for watch mode", "app", restored.ID, "from_mb", restored.RAMMB, "to_mb", ram)
+		restored = raised
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
-	return restored, true
+	notifyRestored()
+	return restored, nil, true
 }
 
 func (s *server) destroyDevSession(w http.ResponseWriter, r *http.Request, acct state.Account) {
