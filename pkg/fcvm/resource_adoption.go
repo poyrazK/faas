@@ -437,7 +437,7 @@ func (r resourceJournalRecord) validateAdoption() error {
 	if b := a.Backing; b != nil && (!b.complete() || !adoptionString(b.Kernel) || !adoptionString(b.Base) || !adoptionString(b.Timer)) {
 		return errors.New("invalid adoption backing identity")
 	}
-	if !adoptionString(a.DriveBase) || strings.HasPrefix(a.DriveBase, "snap/") {
+	if !validAdoptionDriveBase(a.DriveBase) {
 		return errors.New("invalid adoption drive base")
 	}
 	if err := a.Bridge.validate(r.Lease); err != nil {
@@ -701,9 +701,17 @@ func (m *Manager) adoptionPolicyFor(instance, appID string, block *resourceAdopt
 		block.Backing = &b
 	}
 	m.backingMu.Unlock()
-	if k, ok := m.vmm.(driveBaseKeeper); ok {
-		block.DriveBase = k.driveBaseKey(instance)
+	if k, ok := m.vmm.(driveBaseKeeper); ok && m.adoptionDriveBase {
+		// The field is optional: a key the block cannot carry costs only a
+		// whole-drive upload at the adopted guest's park, never adoption.
+		if key := k.driveBaseKey(instance); validAdoptionDriveBase(key) {
+			block.DriveBase = key
+		}
 	}
+}
+
+func validAdoptionDriveBase(key string) bool {
+	return adoptionString(key) && !strings.HasPrefix(key, "snap/")
 }
 
 // driveBaseKeeper is a VMM that records the layer each guest's private
