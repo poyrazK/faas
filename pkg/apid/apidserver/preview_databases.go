@@ -60,6 +60,7 @@ func (s *server) preparePreviewDatabases(ctx context.Context, acct state.Account
 	if err != nil {
 		return err
 	}
+	manager.AllowMasked = s.capabilityEnabledFor(nativePostgresOperationsCapability, acct, parent)
 	return manager.Prepare(ctx, plan, parent, preview)
 }
 
@@ -154,11 +155,24 @@ func (s *server) setManagedPostgresPreviews(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req api.SetManagedPostgresPreviewsRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSONSized(r, &req, api.ManagedPostgresMaskedPolicyMaxBytes+1024); err != nil {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
-	database, err := s.managedPostgres.SetPreviews(r.Context(), acct.ID, r.PathValue("id"), managedpostgres.PreviewMode(req.Previews))
+	mode := managedpostgres.PreviewMode(req.Previews)
+	if mode == managedpostgres.PreviewsMasked && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
+	var database managedpostgres.Database
+	var err error
+	if mode == managedpostgres.PreviewsMasked && req.MaskingPolicy != nil {
+		database, err = s.managedPostgres.SetMaskedPreviews(r.Context(), acct.ID, r.PathValue("id"), req.MaskingPolicy.Tables)
+	} else if req.MaskingPolicy != nil {
+		err = fmt.Errorf("%w: masking_policy requires masked previews", managedpostgres.ErrInvalid)
+	} else {
+		database, err = s.managedPostgres.SetPreviews(r.Context(), acct.ID, r.PathValue("id"), mode)
+	}
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return

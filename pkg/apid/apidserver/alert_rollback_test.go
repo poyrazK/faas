@@ -32,7 +32,7 @@ func TestAlertRollbackRestartsAndRequiresExactPredecessorEvidence(t *testing.T) 
 	if _, err := (*e.Store()).SetBindingReleasePolicy(ctx, (*e.Acct()).ID, app.ID, "default", api.SetBindingReleasePolicyRequest{Mode: "enforce", ExpectedRevision: &zero}); err != nil {
 		t.Fatal(err)
 	}
-	fire, won, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now())
+	fire, won, _, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now())
 	if err != nil || !won {
 		t.Fatalf("fire %v %v", won, err)
 	}
@@ -117,7 +117,7 @@ func TestAlertRollbackChangedCanaryFailsBeforeBindingChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fire, _, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now())
+	fire, _, _, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

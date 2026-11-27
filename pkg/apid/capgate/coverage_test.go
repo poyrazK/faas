@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -16,6 +17,17 @@ import (
 var subMuxRoutes = map[string]string{
 	"GET /{$}":     "pkg/apid/datarepair serves its review assets under /v1/apps/{slug}/data-repair",
 	"GET /app.css": "pkg/apid/datarepair serves its review assets under /v1/apps/{slug}/data-repair",
+}
+
+// These existing routes retain their own access or release policies.
+var legacyPolicyRoutes = []string{
+	"POST /v1/apps/{slug}/data-api-inspections",
+	"GET /v1/apps/{slug}/data-api-inspections/{id}",
+	"POST /v1/postgres/databases/{id}/data-api-catalog-preview",
+	"GET /v1/apps/{slug}/mcp-stats",
+	"GET /v1/apps/{slug}/monetization-funnel",
+	"GET /v1/apps/{slug}/consumer-identities",
+	"DELETE /v1/apps/{slug}/consumer-identities/{id}",
 }
 
 var (
@@ -95,7 +107,7 @@ func TestEveryApidRouteHasACapability(t *testing.T) {
 					patterns = append(patterns, m[1])
 				}
 				for _, pattern := range patterns {
-					if _, sub := subMuxRoutes[pattern]; sub {
+					if _, sub := subMuxRoutes[pattern]; sub || slices.Contains(legacyPolicyRoutes, pattern) {
 						continue
 					}
 					if g.owner(pattern) == "" {

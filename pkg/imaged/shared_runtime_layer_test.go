@@ -81,7 +81,9 @@ func TestSharedRuntimeStart(t *testing.T) {
 		{name: "exec npm start", entrypoint: []string{"npm", "start"}, want: []string{"/bin/sh", "-c", "exec node worker.js"}},
 		{name: "direct exec", entrypoint: []string{"node", "server.js"}, want: []string{"node", "server.js"}},
 		{name: "customer start command", entrypoint: []string{"npm", "start"}, start: "npm run start", want: []string{"/bin/sh", "-c", "exec node worker.js"}},
-		{name: "other package manager", entrypoint: []string{"/bin/sh", "-c", "yarn start"}, wantReason: "package_manager_start"},
+		{name: "yarn start", entrypoint: []string{"/bin/sh", "-c", "yarn start"}, want: []string{"/bin/sh", "-c", "exec node worker.js"}},
+		{name: "exec pnpm start", entrypoint: []string{"pnpm", "start"}, want: []string{"/bin/sh", "-c", "exec node worker.js"}},
+		{name: "npx start", entrypoint: []string{"/bin/sh", "-c", "npx serve"}, wantReason: "package_manager_start"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -444,6 +446,13 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			wantNames: standaloneNames,
 		},
 		{
+			// ADR-20261124160000 amendment 2: the flag still overrides PORT.
+			name: "next start with a port flag", start: "npm run start",
+			files:    withPkg(standalone, strings.Replace(nextPkg, `"next start"`, `"next start -p 3000"`, 1)),
+			wantArgv: []string{"/bin/sh", "-c", "exec env PORT=3000 node /app/.next/standalone/server.js"}, wantPath: sharedruntime.RunnerPath, wantHost: "0.0.0.0",
+			wantNames: standaloneNames,
+		},
+		{
 			name: "next started through bun", files: withPkg(standalone, nextPkg), start: "bun run start",
 			wantArgv: sharedruntime.NextStandaloneStart, wantPath: sharedruntime.RunnerPath, wantHost: "0.0.0.0",
 			wantNames: standaloneNames,
@@ -458,9 +467,10 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			wantNames: []string{"app/.next/standalone/.next/static/a.css", "app/.next/standalone/node_modules/next/x.js", "app/.next/standalone/server.js", "app/node_modules/next/dist/server.js", "app/package.json"},
 		},
 		{
-			name: "next start with arguments keeps all of /app", start: "npm run start",
-			files:    withPkg(standalone, `{"scripts":{"start":"next start -p 3000"}}`),
-			wantArgv: []string{"/bin/sh", "-c", "exec next start -p 3000"}, wantPath: sharedruntime.RunnerPath,
+			// A project directory is not the standalone server's.
+			name: "next start with a directory keeps all of /app", start: "npm run start",
+			files:    withPkg(standalone, `{"scripts":{"start":"next start web"}}`),
+			wantArgv: []string{"/bin/sh", "-c", "exec next start web"}, wantPath: sharedruntime.RunnerPath,
 			wantNames: allNames,
 		},
 		{
@@ -484,6 +494,48 @@ func TestSharedRuntimeAppLayersNextAndBun(t *testing.T) {
 			wantArgv:  []string{"/bin/sh", "-c", "exec bun run start"},
 			wantPath:  sharedruntime.BunRunnerPath("/mise/installs/bun/1.3.5/bin"),
 			wantNames: []string{"app/index.ts", "app/package.json", "mise/installs/bun/1.3.5/bin/bun"},
+		},
+		{
+			// ADR-20261125170000: pnpm and yarn starts run the script body;
+			// the layer keeps /app only, and Node comes from the runner base.
+			name: "pnpm start runs its script on the runner base", start: "pnpm start",
+			files: map[string]string{
+				"app/package.json": `{"scripts":{"start":"node server.js"}}`, "app/server.js": "listen()",
+				"app/node_modules/.pnpm/ms@2.1.3/node_modules/ms/index.js": "ms",
+				"mise/installs/node/24.1.0/bin/node":                       "elf", "mise/installs/pnpm/9.15.0/bin/pnpm": "pnpm",
+			},
+			wantArgv:  []string{"/bin/sh", "-c", "exec node server.js"},
+			wantPath:  sharedruntime.RunnerPath,
+			wantNames: []string{"app/node_modules/.pnpm/ms@2.1.3/node_modules/ms/index.js", "app/package.json", "app/server.js"},
+		},
+		{
+			name: "yarn shorthand runs its script on the runner base", start: "yarn serve",
+			files: map[string]string{
+				"app/package.json": `{"scripts":{"serve":"node server.js"}}`, "app/server.js": "listen()",
+				"mise/installs/node/24.1.0/bin/node": "elf", "mise/installs/yarn/1.22.22/bin/yarn": "yarn",
+				// Railpack installs yarn through corepack for a packageManager field.
+				"opt/corepack/v1/yarn/1.22.22/bin/yarn.js": "yarn", "mise/shims/yarn": "shim",
+			},
+			wantArgv:  []string{"/bin/sh", "-c", "exec node server.js"},
+			wantPath:  sharedruntime.RunnerPath,
+			wantNames: []string{"app/package.json", "app/server.js"},
+		},
+		{
+			// Only yarn's loader resolves a Plug'n'Play install.
+			name: "yarn plug'n'play keeps the toolchain", start: "yarn start",
+			files: map[string]string{
+				"app/package.json": `{"scripts":{"start":"node server.js"}}`, "app/server.js": "listen()", "app/.pnp.cjs": "loader",
+				"mise/installs/node/24.1.0/bin/node": "elf",
+			},
+			wantReason: sharedruntime.ReasonYarnPnP,
+		},
+		{
+			name: "start script calling pnpm keeps the toolchain", start: "pnpm start",
+			files: map[string]string{
+				"app/package.json": `{"scripts":{"start":"pnpm run serve","serve":"node server.js"}}`, "app/server.js": "listen()",
+				"mise/installs/node/24.1.0/bin/node": "elf",
+			},
+			wantReason: sharedruntime.ReasonScriptPackageManager,
 		},
 		{
 			name: "bun start without bun installed", start: "bun run start",

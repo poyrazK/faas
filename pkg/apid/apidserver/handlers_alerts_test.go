@@ -38,6 +38,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -168,6 +169,135 @@ func TestCreateAlertRule_HappyPath(t *testing.T) {
 	}
 	if len(row.WebhookSecretSealed) == 0 {
 		t.Errorf("WebhookSecretSealed is empty — seal did not happen")
+	}
+}
+
+func TestListAlertDeliveriesUsesSavedAnomalyEvidence(t *testing.T) {
+	e := setupAlerts(t, api.PlanPro)
+	const slug = "alerts-delivery-evidence"
+	mustSeedApp(t, e, slug)
+	rule := mustCreateAlertRule(t, e, slug, alertRuleReq())
+	// The rule now uses a fixed p99 threshold. The saved fire used a
+	// baseline comparison over a different metric and window.
+	payload := []byte(`{
+		"event":"alert.fired", "metric":"error_rate_pct", "comparison":"above_baseline",
+		"threshold":3, "window":"15m", "baseline":1.1, "baseline_days":6,
+		"ratio":3.818181818, "observed":4.2, "log_context":{"note":"excluded from response"}
+	}`)
+	_, won, _, err := e.store.ClaimAlertFire(t.Context(), rule.ID, rule.ID+":first", payload, 4.2, time.Now())
+	if err != nil || !won {
+		t.Fatalf("claim delivery: won=%v err=%v", won, err)
+	}
+
+	rec := e.do(t, "GET", "/v1/apps/"+slug+"/alerts/"+rule.ID+"/deliveries", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list deliveries: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var rows []api.AlertDeliveryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	want := api.AlertDeliveryAnomalyEvidence{
+		Metric: "error_rate_pct", Comparison: "above_baseline", Threshold: 3,
+		Window: "15m", Baseline: 1.1, BaselineDays: 6, Ratio: 3.818181818,
+	}
+	if len(rows) != 1 || rows[0].ObservedValue != 4.2 || rows[0].Anomaly == nil || *rows[0].Anomaly != want {
+		t.Fatalf("deliveries=%+v, want saved anomaly evidence %+v", rows, want)
+	}
+	if strings.Contains(rec.Body.String(), "excluded from response") {
+		t.Fatal("delivery response exposed the raw payload")
+	}
+}
+
+func TestGetAlertRuleShowsLatestAnomalyEvaluation(t *testing.T) {
+	e := setupAlerts(t, api.PlanPro)
+	const slug = "alerts-latest-evaluation"
+	mustSeedApp(t, e, slug)
+	created := mustCreateAlertRule(t, e, slug, alertRuleReq())
+	comparison, threshold := state.AlertAboveBaseline, 3.0
+	rule, err := e.store.UpdateAlertRule(t.Context(), created.ID, state.UpdateAlertRuleParams{Comparison: &comparison, Threshold: &threshold})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := rule.UpdatedAt.Add(time.Second).UTC().Truncate(time.Microsecond)
+	evidence := api.AlertAnomalyEvaluation{Reason: api.AlertAnomalyInsufficientHistory, Count: 3, RequiredCount: 5}
+	if accepted, err := e.store.RecordAlertAnomalyEvaluation(t.Context(), rule, at, evidence); err != nil || !accepted {
+		t.Fatalf("record evaluation: accepted=%v err=%v", accepted, err)
+	}
+	read := func() api.AlertRuleResponse {
+		t.Helper()
+		rec := e.do(t, "GET", "/v1/apps/"+slug+"/alerts/"+rule.ID, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("read rule: status=%d body=%s", rec.Code, rec.Body)
+		}
+		var response api.AlertRuleResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	evidence.EvaluatedAt = at
+	if got := read(); got.State != "unknown" || got.AnomalyEvaluation == nil || *got.AnomalyEvaluation != evidence {
+		t.Fatalf("state=%q evidence=%+v, want unknown with 3 of 5 windows", got.State, got.AnomalyEvaluation)
+	}
+	rule, err = e.store.AlertRuleByID(t.Context(), rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet := api.AlertAnomalyEvaluation{Reason: api.AlertAnomalyZeroBaseline, Observed: new(5.0), Baseline: new(0.0)}
+	if accepted, err := e.store.RecordAlertAnomalyEvaluation(t.Context(), rule, at.Add(time.Second), quiet); err != nil || !accepted {
+		t.Fatalf("record completed check: accepted=%v err=%v", accepted, err)
+	}
+	if got := read().AnomalyEvaluation; got == nil || got.Reason != quiet.Reason || got.Observed == nil || *got.Observed != 5 || got.Baseline == nil || *got.Baseline != 0 || got.TriggerValue != nil {
+		t.Fatalf("want the completed check with its zero baseline, got %+v", got)
+	}
+	if _, err := e.store.SetAlertRuleState(t.Context(), rule.ID, state.AlertStateFiring, at.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	rule, err = e.store.AlertRuleByID(t.Context(), rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eligibleAt := at.Add(30 * time.Minute)
+	cooldown := api.AlertAnomalyEvaluation{Reason: api.AlertAnomalyNotificationCooldown, NextNotificationEligibleAt: &eligibleAt}
+	if accepted, err := e.store.RecordAlertAnomalyEvaluation(t.Context(), rule, at.Add(3*time.Second), cooldown); err != nil || !accepted {
+		t.Fatalf("record cooldown: accepted=%v err=%v", accepted, err)
+	}
+	if got := read().AnomalyEvaluation; got == nil || got.Reason != cooldown.Reason || got.NextNotificationEligibleAt == nil || !got.NextNotificationEligibleAt.Equal(eligibleAt) {
+		t.Fatalf("want notification eligibility at %s, got %+v", eligibleAt, got)
+	}
+	if _, err := e.store.SetAlertRuleState(t.Context(), rule.ID, state.AlertStateOk, at.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.State != "ok" || got.AnomalyEvaluation != nil {
+		t.Fatalf("stood-down rule showed cooldown: state=%s evidence=%+v", got.State, got.AnomalyEvaluation)
+	}
+	threshold = 4
+	if _, err := e.store.UpdateAlertRule(t.Context(), rule.ID, state.UpdateAlertRuleParams{Threshold: &threshold}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.AnomalyEvaluation != nil {
+		t.Fatalf("edited rule showed old evaluation: %+v", got.AnomalyEvaluation)
+	}
+}
+
+func TestAlertDeliveryAnomalyEvidenceRequiresRecordedRatio(t *testing.T) {
+	const base = `"event":"alert.fired", "metric":"request_count", "comparison":"below_baseline", "threshold":0.3, "window":"5m", "baseline":200, "baseline_days":7`
+	for _, tc := range []struct {
+		name, payload string
+		test, want    bool
+	}{
+		{"confirmed zero", "{" + base + `,"ratio":0}`, false, true},
+		{"ratio omitted", "{" + base + "}", false, false},
+		{"old delivery", `{"event":"alert.fired","metric":"request_count"}`, false, false},
+		{"test delivery", "{" + base + `,"ratio":0}`, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := alertDeliveryResponse(state.AlertDelivery{Payload: json.RawMessage(tc.payload), IsTest: tc.test})
+			if (got.Anomaly != nil) != tc.want || (got.Anomaly != nil && got.Anomaly.Ratio != 0) {
+				t.Fatalf("anomaly=%+v, want present=%v with ratio 0", got.Anomaly, tc.want)
+			}
+		})
 	}
 }
 

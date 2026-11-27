@@ -154,6 +154,9 @@ func (r *BindingReconciler) Sweep(ctx context.Context) (BindingReconcileSummary,
 			sweepErrors = append(sweepErrors, err)
 		}
 	}
+	if err := r.service.sweepBindingTimeouts(ctx, r.batchSize); err != nil {
+		sweepErrors = append(sweepErrors, err)
+	}
 	return summary, errors.Join(sweepErrors...)
 }
 

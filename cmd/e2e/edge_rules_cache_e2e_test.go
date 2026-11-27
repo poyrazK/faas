@@ -77,10 +77,14 @@ func TestEdgeRulesCache_E2E_DeclarativeCLIAndDistributedPurge(t *testing.T) {
 	if f == nil {
 		return
 	}
+	// Build the CLI before the instance exists: a cold build under runner
+	// load can outlast the Hobby idle timeout (60 s). schedd then parks the
+	// idle instance and the first request wakes one the fake vmmd has no
+	// version for (run 45936570897).
+	bin := buildGregale(t)
 	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "cache-v1")
 	f.vmmd.SetVersion(instance.ID, "cache-v1")
 
-	bin := buildGregale(t)
 	runGregaleForCacheE2E(t, bin, f.h.APIDURL, f.key,
 		"cache", "GET", "/products/:id", "for", "10s",
 		"--app", f.app.Slug,

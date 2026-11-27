@@ -136,40 +136,128 @@ type nextPackage struct {
 	Dependencies map[string]string `json:"dependencies"`
 }
 
-// nextStartScript reports whether package.json starts the app with a plain
-// `next start` and no npm lifecycle hooks around it.
-func (p nextPackage) nextStartScript() bool {
-	return strings.TrimSpace(p.Scripts["start"]) == "next start" &&
-		p.Scripts["prestart"] == "" && p.Scripts["poststart"] == ""
+// nextStartScript returns the standalone server's environment for the
+// package.json start script when it is `next start`, with only the flags
+// nextStartEnv maps, and no npm lifecycle hooks around it.
+func (p nextPackage) nextStartScript() ([]string, bool) {
+	if p.Scripts["prestart"] != "" || p.Scripts["poststart"] != "" {
+		return nil, false
+	}
+	return nextStartEnv(p.Scripts["start"])
+}
+
+// nextStartFlags are the `next start` options the standalone server takes
+// from its environment instead (ADR-20261124160000 amendment 2). A flag
+// overrides the variable in `next start`, so it does in the standalone start.
+var nextStartFlags = map[string]string{
+	"-p": "PORT", "--port": "PORT",
+	"-H": "HOSTNAME", "--hostname": "HOSTNAME",
+	"--keepAliveTimeout": "KEEP_ALIVE_TIMEOUT",
+}
+
+// nextStartEnv parses a `next start` command into the assignments the
+// standalone server needs to listen as it would, in the command's order.
+// It refuses anything else: other options, a project directory, a repeated
+// option, or a value that is not one plain shell word.
+func nextStartEnv(command string) ([]string, bool) {
+	fields := strings.Fields(command)
+	if len(fields) < 2 || fields[0] != "next" || fields[1] != "start" {
+		return nil, false
+	}
+	var env []string
+	seen := map[string]bool{}
+	for i := 2; i < len(fields); i++ {
+		flag, value, inline := strings.Cut(fields[i], "=")
+		name, ok := nextStartFlags[flag]
+		if !ok || inline && !strings.HasPrefix(flag, "--") || seen[name] {
+			return nil, false
+		}
+		if !inline {
+			if i+1 >= len(fields) {
+				return nil, false
+			}
+			i++
+			value = fields[i]
+		}
+		if !nextFlagValue(value) {
+			return nil, false
+		}
+		seen[name] = true
+		env = append(env, name+"="+value)
+	}
+	return env, true
+}
+
+// nextFlagValue reports whether value is a word the start can pass through
+// the shell unchanged: a number, a host, or a variable such as $PORT or
+// ${PORT:-3000}, optionally in double quotes. Anything that could run a
+// command, split into words or glob is refused.
+func nextFlagValue(value string) bool {
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = value[1 : len(value)-1]
+	}
+	if value == "" || value[0] == '-' {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("_.:${}-", r):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // NextStart reports whether command starts the app's Next.js server the
-// way `next start` does: the command itself, or a package manager running a
-// start script that is exactly `next start`. Arguments, other scripts and
-// lifecycle hooks are not the plain server and keep the app's own start.
+// way `next start` does; see NextStandaloneStartFor.
 func NextStart(command string, packageJSON []byte) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 2 && fields[0] == "next" && fields[1] == "start" {
-		return true
+	_, ok := NextStandaloneStartFor(command, packageJSON)
+	return ok
+}
+
+// NextStandaloneStartFor returns the standalone server's start for an app
+// whose command starts its Next.js server the way `next start` does: the
+// command itself, or a package manager running a start script that is
+// `next start`, each with only the flags nextStartEnv maps. Arguments
+// forwarded through the package manager, other scripts and lifecycle hooks
+// are not the plain server and keep the app's own start.
+func NextStandaloneStartFor(command string, packageJSON []byte) ([]string, bool) {
+	if env, ok := nextStartEnv(command); ok {
+		return nextStandaloneArgv(env), true
 	}
+	fields := strings.Fields(command)
 	if len(fields) < 2 {
-		return false
+		return nil, false
 	}
 	switch fields[0] {
 	case "npm", "pnpm", "yarn", "bun":
 	default:
-		return false
+		return nil, false
 	}
 	start := len(fields) == 2 && fields[1] == "start" ||
 		len(fields) == 3 && (fields[1] == "run" || fields[1] == "run-script") && fields[2] == "start"
 	if !start {
-		return false
+		return nil, false
 	}
 	var pkg nextPackage
 	if json.Unmarshal(packageJSON, &pkg) != nil {
-		return false
+		return nil, false
 	}
-	return pkg.nextStartScript()
+	env, ok := pkg.nextStartScript()
+	if !ok {
+		return nil, false
+	}
+	return nextStandaloneArgv(env), true
+}
+
+// nextStandaloneArgv is NextStandaloneStart with env set for the server.
+func nextStandaloneArgv(env []string) []string {
+	if len(env) == 0 {
+		return NextStandaloneStart
+	}
+	return []string{"/bin/sh", "-c", "exec env " + strings.Join(env, " ") + " node /app/.next/standalone/server.js"}
 }
 
 // nextMajor returns the lowest major version a dependency spec such as
@@ -202,7 +290,7 @@ var ErrNotNextStandalone = errors.New("not a next start app")
 // StampNextStandalone rewrites a Railpack plan so its build step builds a
 // Next.js app with standalone output. It applies only to an app whose
 // package.json depends on Next 16 or later, builds with `next build` and
-// starts with a plain `next start` through the package manager; anything
+// starts with `next start` through the package manager; anything
 // else returns ErrNotNextStandalone and the plan is left as it is. capMB is
 // the plan's app layer cap: the build keeps the standalone tree only for an
 // app larger than that. initBytes is guest-init's size, which the app
@@ -216,7 +304,7 @@ func StampNextStandalone(planJSON, packageJSON []byte, capMB int, initBytes int6
 	if err := json.Unmarshal(packageJSON, &pkg); err != nil {
 		return nil, ErrNotNextStandalone
 	}
-	if nextMajor(pkg.Dependencies["next"]) < nextMinMajor || !pkg.nextStartScript() ||
+	if _, ok := pkg.nextStartScript(); nextMajor(pkg.Dependencies["next"]) < nextMinMajor || !ok ||
 		!strings.Contains(pkg.Scripts["build"], "next build") {
 		return nil, ErrNotNextStandalone
 	}

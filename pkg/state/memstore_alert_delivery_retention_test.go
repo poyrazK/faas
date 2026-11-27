@@ -20,7 +20,7 @@ func TestMemStorePurgeAlertDeliveriesBefore(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	fire := func(key string, at time.Time, settle bool) string {
 		t.Helper()
-		id, won, err := m.ClaimAlertFire(ctx, rule.ID, key, []byte(`{}`), 1, at)
+		id, won, _, err := m.ClaimAlertFire(ctx, rule.ID, key, []byte(`{}`), 1, at)
 		if err != nil || !won {
 			t.Fatalf("claim %s: won=%v err=%v", key, won, err)
 		}

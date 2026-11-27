@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 )
 
 // In-place major upgrades (ADR-1027). An upgrade boots the database's
@@ -42,7 +43,8 @@ var (
 	ErrUpgradeRefused = errors.New("dbsched: PostgreSQL refused the upgrade; the database stays on its major")
 	// ErrUpgradeFailed: the upgrade broke the cluster; the database needs
 	// a point-in-time restore, which recovers on its old major.
-	ErrUpgradeFailed = errors.New("dbsched: the upgrade failed; restore the database to a point before it")
+	ErrUpgradeFailed     = errors.New("dbsched: the upgrade failed; restore the database to a point before it")
+	ErrUpgradeExtensions = errors.New(pgextension.UpgradeUnavailable)
 )
 
 // upgradePoll is how often an upgrade polls its guest and Upgrade its
@@ -105,13 +107,19 @@ func upgradeOutcome(vm VM, operation string) error {
 // returns the database with the upgrade's progress or outcome in
 // VM.Upgrade, and resumes it if its lease lapsed; it never upgrades twice.
 func (s *Scheduler) StartUpgrade(ctx context.Context, id string, major int, operation string) (VM, error) {
+	return s.StartUpgradeChecked(ctx, id, major, operation, "")
+}
+
+// StartUpgradeChecked also verifies installed extensions before stopping a
+// running database. Older callers can use StartUpgrade.
+func (s *Scheduler) StartUpgradeChecked(ctx context.Context, id string, major int, operation, database string) (VM, error) {
 	if major < dbguest.MinMajor || major > dbguest.MaxMajor {
 		return VM{}, fmt.Errorf("%w: unsupported postgres major %d", ErrInvalid, major)
 	}
 	if parsed, err := uuid.Parse(operation); err != nil || parsed.String() != operation {
 		return VM{}, fmt.Errorf("%w: the upgrade's operation is a lowercase UUID", ErrInvalid)
 	}
-	vm, held, err := s.beginUpgrade(ctx, id, major, operation)
+	vm, held, err := s.beginUpgrade(ctx, id, major, operation, database)
 	if err != nil {
 		return vm, err
 	}
@@ -124,7 +132,7 @@ func (s *Scheduler) StartUpgrade(ctx context.Context, id string, major int, oper
 // beginUpgrade parks the database if it runs and marks it upgrading,
 // returning the lease it took (zero: the operation was already recorded).
 // A failure leaves the database as it was.
-func (s *Scheduler) beginUpgrade(ctx context.Context, id string, major int, operation string) (VM, time.Time, error) {
+func (s *Scheduler) beginUpgrade(ctx context.Context, id string, major int, operation, database string) (VM, time.Time, error) {
 	unlock := s.lock(id)
 	defer unlock()
 	vm, err := s.store.Get(ctx, id)
@@ -143,6 +151,20 @@ func (s *Scheduler) beginUpgrade(ctx context.Context, id string, major int, oper
 		return vm, time.Time{}, err
 	}
 	wake := vm.State == StateRunning
+	if database != "" {
+		_, blockers, checkErr := s.extensionsLocked(ctx, id, database, "", major)
+		if !wake {
+			// A preflight on an idle database briefly wakes it for the
+			// catalog. Put it back before handing it to the upgrade.
+			checkErr = errors.Join(checkErr, s.parkLocked(ctx, id))
+		}
+		if checkErr != nil {
+			return vm, time.Time{}, checkErr
+		}
+		if len(blockers) != 0 {
+			return vm, time.Time{}, ErrUpgradeExtensions
+		}
+	}
 	if wake {
 		if err := s.parkLocked(ctx, id); err != nil {
 			return vm, time.Time{}, err
@@ -291,7 +313,7 @@ func (s *Scheduler) bootUpgrade(ctx context.Context, node Node, vm VM) (dbguest.
 	boot := vm
 	boot.Major, boot.UpgradeFrom = vm.Upgrade.To, vm.Major
 	// A VM still running from an earlier attempt counts as started.
-	if err := s.vmm.Start(ctx, node, boot); err != nil {
+	if err := s.startPrimary(ctx, node, boot); err != nil {
 		return dbguest.Response{}, fmt.Errorf("boot: %w", err)
 	}
 	for {
@@ -314,6 +336,7 @@ func (s *Scheduler) bootUpgrade(ctx context.Context, node Node, vm VM) (dbguest.
 // running, and records the new major.
 func (s *Scheduler) finishUpgrade(ctx context.Context, node Node, vm VM, lease *heldLease) error {
 	id := vm.DatabaseID
+	s.autovacuumBeforeServing(ctx, node, id, dbguest.StateReady)
 	backupAt, ok := s.baseBackup(ctx, node, id)
 	if !ok {
 		s.log.Warn("dbsched: no base backup on the new major yet; restores to after the upgrade wait for the backup sweep's",

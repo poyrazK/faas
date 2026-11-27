@@ -13,6 +13,7 @@ The setting belongs to the production database, never to the pull request:
 ```sh
 gregale postgres previews set orders empty   # each preview gets an empty database
 gregale postgres previews set orders copy    # each preview gets a copy of orders
+gregale postgres previews set orders masked --policy preview-policy.json
 gregale postgres previews set orders off     # previews get no database (the default)
 ```
 
@@ -26,8 +27,29 @@ Over the API: `PUT /v1/postgres/databases/{id}/previews` with
   it. It needs the production database's restore window. Anyone who can open
   a pull request runs code that can read the copy, so use `copy` only when
   that is acceptable for the data.
+- **`masked`** gives new PR environments a fresh native PostgreSQL database
+  populated by an administrator-approved masking policy. It is available for
+  personally owned native databases. Use the same JSON policy format as
+  [manual masked branches](postgres.md#masked-branches).
 - **`off`**: previews get no database. Preview databases that already exist
   are removed with their pull requests.
+
+### Configure masked previews
+
+Save the policy from a database administrator's session. Gregale stores it
+on the source database and pins its revision when it creates a preview
+database. Policy updates apply to new preview databases. Later pushes reuse
+the existing masked database and keep its writes.
+
+For the API, send `"previews": "masked"` and put the policy in
+`masking_policy` on the same request.
+
+Switching a source to `masked` requires removal of its existing empty and
+full-copy preview databases. Delete them before changing the setting, or
+close the affected PRs and wait for their preview grace period to end. While
+a masked copy is provisioning, its deployment waits and its bindings
+withhold credentials. A failed validation blocks deployment. Fix the policy
+and recreate the failed preview database to retry with the new revision.
 
 ## What the preview sees
 
@@ -69,9 +91,10 @@ delay.
 - When the platform is close to capacity, new preview databases pause
   first (`managed_postgres_new_databases_paused`), so production databases
   can still be created. Existing preview databases keep working.
-- Each is a small development database that scales to zero. An empty one
-  stops at 1 GiB of storage (or your plan's storage, if smaller); a copy
-  keeps the production database's storage limit.
+- Each is a small development database that scales to zero. Empty and masked
+  previews use the preview storage allowance, capped at 1 GiB. Masked previews
+  are also capped at the source database's storage limit. Full copies keep the
+  production database's storage limit.
 - Preview databases never take what production needs. They are left out of
   your plan's storage pool, and once your account has used 80% of its
   monthly compute, preview databases are paused and refuse connections

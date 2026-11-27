@@ -10,7 +10,7 @@
 import { generate } from 'openapi-typescript-codegen';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchBinaryServices, patchStoredWorkflowPathEncoding, shareGeneratedCore, writeServicesBarrel, patchClientCore, patchClientServices } from './post-process.mjs';
+import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchBinaryServices, patchStoredWorkflowPathEncoding, shareGeneratedCore, writeServicesBarrel, patchClientCore, patchClientServices, patchPostgresArchiveUploads } from './post-process.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
@@ -40,6 +40,7 @@ await patchBinaryResponses(outDir);
 await patchStoredWorkflowPathEncoding(outDir);
 await patchClientCore(outDir);
 await patchClientServices(outDir);
+await patchPostgresArchiveUploads(outDir);
 await writeServicesBarrel(resolve(outDir, 'services'));
 
 // Post-process pass 2: write the models barrel so customers can
@@ -69,6 +70,7 @@ await rewriteImportsToJs(publicOutDir);
 await shareGeneratedCore(publicOutDir, '../../generated/core');
 await patchBinaryServices(publicOutDir);
 await patchClientServices(publicOutDir);
+await patchPostgresArchiveUploads(publicOutDir);
 const publicBarrelEntries = await writeModelsBarrel(resolve(publicOutDir, 'models'));
 await writeServicesBarrel(resolve(publicOutDir, 'services'));
 

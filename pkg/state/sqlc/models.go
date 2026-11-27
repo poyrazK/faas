@@ -634,17 +634,30 @@ type AlertChannelResolveRetry struct {
 }
 
 type AlertChannelStandDown struct {
-	RuleID        pgtype.UUID
+	RuleID                pgtype.UUID
+	ChannelID             pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	RuleName              string
+	RuleMetric            string
+	Reason                string
+	QueuedAt              pgtype.Timestamptz
+	Attempts              int32
+	NextAttemptAt         pgtype.Timestamptz
+	LastError             string
+	ObservationTransition bool
+	PagerdutyTargetSealed []byte
+	PagerdutyRegion       pgtype.Text
+}
+
+type AlertDeferredFire struct {
+	ID            pgtype.UUID
+	DeliveryID    pgtype.UUID
 	ChannelID     pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	RuleName      string
-	RuleMetric    string
-	Reason        string
-	QueuedAt      pgtype.Timestamptz
-	Attempts      int32
+	WebhookUrl    string
+	ChannelOnly   bool
+	Started       bool
 	NextAttemptAt pgtype.Timestamptz
-	LastError     string
 }
 
 type AlertDelivery struct {
@@ -681,6 +694,12 @@ type AlertEpisode struct {
 type AlertHistoricalRollbackClaim struct {
 	DeploymentID pgtype.UUID
 	FireID       pgtype.UUID
+}
+
+type AlertObservationCheck struct {
+	RuleID      pgtype.UUID
+	EvaluatedAt pgtype.Timestamptz
+	SkipReason  string
 }
 
 type AlertPreset struct {
@@ -742,6 +761,12 @@ type AlertRule struct {
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
 	CustomMetricLabels              []byte
+	LatestAnomalyEvaluation         []byte
+	ObserveOnly                     bool
+	ObservationEnabled              bool
+	ObservedIncidents               []byte
+	EnvironmentScope                string
+	RecoveryConfirmationChecks      int32
 }
 
 type AlertRuleChannel struct {
@@ -762,6 +787,23 @@ type AlertTestSend struct {
 	Result       []byte
 	CreatedAt    pgtype.Timestamptz
 	CompletedAt  pgtype.Timestamptz
+}
+
+type AlertWebhookStandDown struct {
+	ID                  pgtype.UUID
+	RuleID              pgtype.UUID
+	AppID               pgtype.UUID
+	RuleName            string
+	Metric              string
+	Comparison          string
+	Threshold           float64
+	WindowSpec          string
+	EnvironmentScope    string
+	WebhookUrl          string
+	WebhookSecretSealed []byte
+	QueuedAt            pgtype.Timestamptz
+	NextAttemptAt       pgtype.Timestamptz
+	Attempts            int32
 }
 
 type AnalyticsCohort struct {
@@ -4421,34 +4463,50 @@ type DataUpstreamProbesDefault struct {
 }
 
 type DatabaseNode struct {
-	ID                  string
-	TargetUrl           string
-	AdmissionCeilingMb  int32
-	VolumeCapacityBytes int64
-	BootSlots           int32
-	PostgresMajors      []int32
-	Lifecycle           string
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                           string
+	TargetUrl                    string
+	AdmissionCeilingMb           int32
+	VolumeCapacityBytes          int64
+	BootSlots                    int32
+	PostgresMajors               []int32
+	Lifecycle                    string
+	CreatedAt                    pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
+	RecoveryRegion               string
+	ConfiguredAdmissionCeilingMb pgtype.Int4
 }
 
 type DatabaseRestoreDrill struct {
-	DrillID     pgtype.UUID
-	NodeID      string
-	SourceID    pgtype.UUID
-	TargetAt    pgtype.Timestamptz
-	StartedAt   pgtype.Timestamptz
-	FinishedAt  pgtype.Timestamptz
-	Result      string
-	RecoveredTo pgtype.Timestamptz
-	ErrorCode   pgtype.Text
+	DrillID        pgtype.UUID
+	NodeID         string
+	SourceID       pgtype.UUID
+	TargetAt       pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	Result         string
+	RecoveredTo    pgtype.Timestamptz
+	ErrorCode      pgtype.Text
+	RequestID      pgtype.UUID
+	PendingOutcome pgtype.Text
 }
 
 type DatabaseRoleVerifier struct {
-	DatabaseID pgtype.UUID
-	RoleName   string
-	Verifier   string
-	UpdatedAt  pgtype.Timestamptz
+	DatabaseID   pgtype.UUID
+	RoleName     string
+	Verifier     string
+	UpdatedAt    pgtype.Timestamptz
+	PoolRevision int64
+}
+
+type DatabaseUpgradeRehearsal struct {
+	DrillID          pgtype.UUID
+	RequestID        pgtype.UUID
+	RestoreStarted   bool
+	SourceMajor      int32
+	TargetMajor      int32
+	DatabaseName     string
+	Phase            string
+	RecoveryTimeline int64
 }
 
 type DatabaseUsage struct {
@@ -4496,6 +4554,11 @@ type DatabaseVm struct {
 	MajorHistory            []byte
 	Held                    bool
 	ComputeQuotaUnitSeconds pgtype.Int8
+	IdleParkedAt            pgtype.Timestamptz
+	IdleParkedFrom          pgtype.Timestamptz
+	RecoveryRegion          string
+	RestoreFromRecovery     bool
+	RestoreTimeline         int64
 }
 
 type DeadLetterEvent struct {
@@ -9641,6 +9704,9 @@ type ManagedPostgresDatabase struct {
 	PreviewPrNumber             pgtype.Int4
 	ExpiresAt                   pgtype.Timestamptz
 	DataApiInspectionRevision   int64
+	RecoveryRegion              string
+	RestoreFromRecovery         bool
+	RestoreRecoveryTimeline     int64
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -9785,6 +9851,8 @@ type ManagedPostgresResize struct {
 	TargetStorageLimitBytes pgtype.Int8
 	TargetPostgresMajor     pgtype.Int4
 	ErrorCode               pgtype.Text
+	Automatic               bool
+	AutoGrowIdleAt          pgtype.Timestamptz
 }
 
 type ManagedPostgresRestoreProof struct {
@@ -10968,6 +11036,207 @@ type NativeIssueTicketReceipt struct {
 	LinkID       pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type NativePostgresAutoGrow struct {
+	DatabaseID pgtype.UUID
+	MaxBytes   int64
+	UpdatedAt  pgtype.Timestamptz
+	CheckedAt  pgtype.Timestamptz
+	Reason     string
+}
+
+type NativePostgresAutovacuumSetting struct {
+	DatabaseID    pgtype.UUID
+	Profile       string
+	Revision      int64
+	NextAttemptAt pgtype.Timestamptz
+}
+
+type NativePostgresBackupSchedule struct {
+	DatabaseID      pgtype.UUID
+	OwnerID         string
+	OrgID           string
+	BucketAccountID pgtype.UUID
+	BucketAppID     pgtype.UUID
+	BucketID        pgtype.UUID
+	UtcMinute       int16
+	NextRunAt       pgtype.Timestamptz
+	RetryAt         pgtype.Timestamptz
+	RunID           pgtype.UUID
+	RunDeadline     pgtype.Timestamptz
+	ExportQueued    bool
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	LastSuccessAt   pgtype.Timestamptz
+	LastArchiveKey  pgtype.Text
+	LastErrorCode   pgtype.Text
+}
+
+type NativePostgresBaseRefresh struct {
+	DatabaseID         pgtype.UUID
+	WindowStart        pgtype.Timestamptz
+	WindowEnd          pgtype.Timestamptz
+	SourceRunningAt    pgtype.Timestamptz
+	NodeID             string
+	StartedAt          pgtype.Timestamptz
+	RecoverAfter       pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	Outcome            string
+	ResizeID           pgtype.UUID
+	TargetVolumeBytes  pgtype.Int8
+	RefreshBase        bool
+	RollingStandbyNode pgtype.Text
+	RollingImage       pgtype.Text
+	Phase              string
+	Reason             string
+	StandbyRestarted   bool
+	HandoffStarted     bool
+	HandoffReservedMb  int64
+	PromotionStarted   bool
+}
+
+type NativePostgresBindingTimeout struct {
+	BindingID                         pgtype.UUID
+	StatementTimeoutMs                int32
+	LockTimeoutMs                     int32
+	IdleInTransactionSessionTimeoutMs int32
+	Revision                          int64
+	AppliedAt                         pgtype.Timestamptz
+	RetryAt                           pgtype.Timestamptz
+}
+
+type NativePostgresErrorEvent struct {
+	ID         pgtype.UUID
+	DatabaseID pgtype.UUID
+	ObservedAt pgtype.Timestamptz
+	Severity   string
+	Sqlstate   string
+	BindingID  pgtype.UUID
+}
+
+type NativePostgresErrorHistorySetting struct {
+	DatabaseID pgtype.UUID
+	Epoch      pgtype.UUID
+	Enabled    bool
+}
+
+type NativePostgresExport struct {
+	ID            pgtype.UUID
+	DatabaseID    pgtype.UUID
+	OwnerID       string
+	OrgID         string
+	Generation    int64
+	State         string
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	LeaseToken    pgtype.UUID
+	Manifest      []byte
+	ArtifactToken pgtype.UUID
+}
+
+type NativePostgresExportObject struct {
+	ExportID  pgtype.UUID
+	Token     pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
+type NativePostgresMaintenanceWindow struct {
+	DatabaseID      pgtype.UUID
+	Weekday         int16
+	StartMinute     int16
+	DurationMinutes int16
+	StaleSince      pgtype.Timestamptz
+}
+
+type NativePostgresMaskedBranch struct {
+	DatabaseID            pgtype.UUID
+	SourceResourceID      string
+	Policy                []byte
+	ValidatedAt           pgtype.Timestamptz
+	PreviewPolicyRevision pgtype.Int8
+}
+
+type NativePostgresPreviewMaskingPolicy struct {
+	DatabaseID pgtype.UUID
+	Revision   int64
+	Policy     []byte
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type NativePostgresQueryCancel struct {
+	TargetID     pgtype.UUID
+	OwnerID      pgtype.UUID
+	DatabaseID   pgtype.UUID
+	NodeID       string
+	PrimarySince pgtype.Timestamptz
+	Target       []byte
+	RequestedAt  pgtype.Timestamptz
+	DispatchedAt pgtype.Timestamptz
+	Outcome      pgtype.Text
+}
+
+type NativePostgresQueryInterval struct {
+	DatabaseID pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+	BootAt     pgtype.Timestamptz
+	Counters   []byte
+}
+
+type NativePostgresQuerySetting struct {
+	DatabaseID   pgtype.UUID
+	DatabaseName string
+	Enabled      bool
+	UpdatedAt    pgtype.Timestamptz
+	AttemptedAt  pgtype.Timestamptz
+	SampledAt    pgtype.Timestamptz
+	Baseline     []byte
+}
+
+type NativePostgresQuerySnapshot struct {
+	OwnerID    pgtype.UUID
+	ObservedAt pgtype.Timestamptz
+	Active     []byte
+}
+
+type NativePostgresScheduledGrowth struct {
+	ResizeID        pgtype.UUID
+	WindowStart     pgtype.Timestamptz
+	WindowEnd       pgtype.Timestamptz
+	SourceRunningAt pgtype.Timestamptz
+	PolicyAt        pgtype.Timestamptz
+}
+
+type NativePostgresStorageAlert struct {
+	ID           pgtype.UUID
+	DatabaseID   pgtype.UUID
+	IncidentID   pgtype.UUID
+	State        string
+	SampledAt    pgtype.Timestamptz
+	TotalBytes   int64
+	FreeBytes    int64
+	GrowthReason string
+	DatabaseName string
+	AvailableAt  pgtype.Timestamptz
+	LeaseToken   pgtype.UUID
+	Attempts     int16
+	FinishedAt   pgtype.Timestamptz
+}
+
+type NativePostgresStorageSample struct {
+	DatabaseID     pgtype.UUID
+	Role           string
+	NodeID         string
+	StateChangedAt pgtype.Timestamptz
+	AllocatedBytes int64
+	TotalBytes     int64
+	FreeBytes      int64
+	Low            bool
+	ReadOnly       bool
+	SampledAt      pgtype.Timestamptz
+	LowSince       pgtype.Timestamptz
 }
 
 type NeonProjectKey struct {
@@ -13341,13 +13610,15 @@ type ProductControlCustomer struct {
 }
 
 type ProductControlCustomerChange struct {
-	ID          pgtype.UUID
-	AccountID   pgtype.UUID
-	AppID       pgtype.UUID
-	TenantID    pgtype.UUID
-	Fingerprint string
-	Receipt     []byte
-	CreatedAt   pgtype.Timestamptz
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	TenantID       pgtype.UUID
+	Fingerprint    string
+	Receipt        []byte
+	CreatedAt      pgtype.Timestamptz
+	ScheduledFor   pgtype.Timestamptz
+	ScheduleStatus pgtype.Text
 }
 
 type ProductControlEmailDelivery struct {
@@ -13559,6 +13830,20 @@ type ProductControlRevision struct {
 	AppID     pgtype.UUID
 	Revision  string
 	Spec      []byte
+}
+
+type ProductControlStripeInvoiceSend struct {
+	ExportID          pgtype.UUID
+	ReviewHash        string
+	TermsHash         string
+	DueAt             pgtype.Timestamptz
+	Stage             string
+	SendStartedAt     pgtype.Timestamptz
+	SendEventID       pgtype.Text
+	SendEventAt       pgtype.Timestamptz
+	ReminderHash      pgtype.Text
+	ReminderStartedAt pgtype.Timestamptz
+	ReminderSentAt    pgtype.Timestamptz
 }
 
 type ProductControlWaiver struct {
@@ -15406,40 +15691,43 @@ type ReleaseBundle struct {
 }
 
 type ReleaseDatabaseSwitch struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	Scope               string
-	FromDeploymentID    pgtype.UUID
-	TargetDeploymentID  pgtype.UUID
-	UndoneDeploymentIds []pgtype.UUID
-	SourceDatabaseID    pgtype.UUID
-	TargetDatabaseID    pgtype.UUID
-	TargetName          string
-	RestorePoint        pgtype.Timestamptz
-	CutoverID           pgtype.UUID
-	Phase               string
-	FailureCode         string
-	FailureDetail       string
-	RequestedBy         string
-	CancelRequestedAt   pgtype.Timestamptz
-	FencedAt            pgtype.Timestamptz
-	DrainRequestedAt    pgtype.Timestamptz
-	ReleaseSwitchedAt   pgtype.Timestamptz
-	ActivatedAt         pgtype.Timestamptz
-	FinishedAt          pgtype.Timestamptz
-	PhaseStartedAt      pgtype.Timestamptz
-	DrainRetired        int32
-	DrainParked         int32
-	DrainPending        int32
-	DrainBlocked        int32
-	AttemptCount        int32
-	LastErrorCode       string
-	LeaseToken          pgtype.Text
-	LeaseUntil          pgtype.Timestamptz
-	RetryAt             pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Scope                string
+	FromDeploymentID     pgtype.UUID
+	TargetDeploymentID   pgtype.UUID
+	UndoneDeploymentIds  []pgtype.UUID
+	SourceDatabaseID     pgtype.UUID
+	TargetDatabaseID     pgtype.UUID
+	TargetName           string
+	RestorePoint         pgtype.Timestamptz
+	CutoverID            pgtype.UUID
+	Phase                string
+	FailureCode          string
+	FailureDetail        string
+	RequestedBy          string
+	CancelRequestedAt    pgtype.Timestamptz
+	FencedAt             pgtype.Timestamptz
+	DrainRequestedAt     pgtype.Timestamptz
+	ReleaseSwitchedAt    pgtype.Timestamptz
+	ActivatedAt          pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	PhaseStartedAt       pgtype.Timestamptz
+	DrainRetired         int32
+	DrainParked          int32
+	DrainPending         int32
+	DrainBlocked         int32
+	AttemptCount         int32
+	LastErrorCode        string
+	LeaseToken           pgtype.Text
+	LeaseUntil           pgtype.Timestamptz
+	RetryAt              pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	MigrationOperationID pgtype.UUID
+	MigrationLeaseToken  pgtype.Text
+	MigrationLeaseUntil  pgtype.Timestamptz
 }
 
 type ReleaseFreeze struct {
@@ -16710,10 +16998,37 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput   []byte
-	EgressAllow  []string
-	EgressDeny   []string
-	PlacedNodeID pgtype.Text
+	TaskOutput        []byte
+	EgressAllow       []string
+	EgressDeny        []string
+	PlacedNodeID      pgtype.Text
+	Vcpu              pgtype.Int2
+	VolumeGb          pgtype.Int4
+	PauseRequestedAt  pgtype.Timestamptz
+	ResumeRequestedAt pgtype.Timestamptz
+	PausedAt          pgtype.Timestamptz
+	Durability        pgtype.Text
+	ResumedCold       bool
+	ForkedFrom        pgtype.UUID
+	ResumeNotBefore   pgtype.Timestamptz
+}
+
+type SandboxSessionCapture struct {
+	ID                pgtype.UUID
+	SessionID         pgtype.UUID
+	AccountID         pgtype.UUID
+	NodeID            string
+	StorageKey        string
+	VmstateStorageKey string
+	FcVersion         string
+	MemBytes          int64
+	VmstateBytes      int64
+	HasBacking        bool
+	State             string
+	CreatedAt         pgtype.Timestamptz
+	ConsumedAt        pgtype.Timestamptz
+	CheckedAt         pgtype.Timestamptz
+	VolumeBackupID    pgtype.UUID
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
@@ -16726,22 +17041,31 @@ type SandboxSessionDomain struct {
 
 // ADR-20261027090013 step 11 measured private memory of sandbox session VMs, cumulative, written by agentd from vmmd's usage frames; not billed yet.
 type SandboxSessionUsage struct {
-	SandboxID           pgtype.UUID
-	AccountID           pgtype.UUID
-	Method              int16
-	Samples             int32
-	ExpectedSamples     int32
-	MeasuredMs          int64
-	PausedMs            int64
-	FrozenMs            int64
-	PrivateMbMs         int64
-	UnpausedPrivateMbMs int64
-	BillableMbMs        int64
-	PeakPrivateMb       int64
-	ColdBoot            bool
-	Final               bool
-	RecordedAt          pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	SandboxID               pgtype.UUID
+	AccountID               pgtype.UUID
+	Method                  int16
+	Samples                 int32
+	ExpectedSamples         int32
+	MeasuredMs              int64
+	PausedMs                int64
+	FrozenMs                int64
+	PrivateMbMs             int64
+	UnpausedPrivateMbMs     int64
+	BillableMbMs            int64
+	PeakPrivateMb           int64
+	ColdBoot                bool
+	Final                   bool
+	RecordedAt              pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	LeaseToken              pgtype.Text
+	BaseSamples             int32
+	BaseExpectedSamples     int32
+	BaseMeasuredMs          int64
+	BasePausedMs            int64
+	BaseFrozenMs            int64
+	BasePrivateMbMs         int64
+	BaseUnpausedPrivateMbMs int64
+	BaseBillableMbMs        int64
 }
 
 // ADR-20261027090013: named sandbox templates; each owns one apps row with sandbox_template = true that builds its image.
@@ -16755,6 +17079,30 @@ type SandboxTemplate struct {
 	ReadyTimeoutS int32
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type SandboxVolume struct {
+	SessionID      pgtype.UUID
+	AccountID      pgtype.UUID
+	NodeID         string
+	SizeGb         int32
+	LatestBackupID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SandboxVolumeBackup struct {
+	ID            pgtype.UUID
+	SessionID     pgtype.UUID
+	AccountID     pgtype.UUID
+	NodeID        string
+	Reason        string
+	State         string
+	SizeBytes     int64
+	DataChunks    int32
+	UploadedBytes int64
+	CreatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
 }
 
 // ADR-20261027090013 step 7 persisted sandbox workspaces; agentd inserts, completes and deletes rows; apid reads them and sets delete_requested_at.

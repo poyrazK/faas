@@ -117,6 +117,16 @@ type SandboxWakeRequest struct {
 	// template_start. A registries or web session restores only a
 	// networked snapshot, a none session only a networkless one.
 	Snapshot *Snapshot
+	// SessionCapture marks Snapshot as the session's own pause capture
+	// (ADR-20261122132055 §2), taken after its commands and browser started:
+	// a restore runs none of them again. A cold-boot fallback (ADR-005) runs
+	// them as for a new session.
+	SessionCapture bool
+	// Volume is a persistent session's workspace volume, a host path from
+	// SandboxVolumes.Ensure (ADR-20261122132055 §4). guest-init mounts it at
+	// /workspace. A warm snapshot has no such drive, so a session with a
+	// volume cold-boots unless it restores its own capture.
+	Volume string
 }
 
 // WakeSandbox cold-boots one sandbox session VM on the execution-only path
@@ -141,6 +151,12 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		return nil, fmt.Errorf("fcvm: sandbox network mode %q is not supported", req.Network)
 	}
 	networked := network != ""
+	if req.SessionCapture && req.Snapshot == nil {
+		return nil, errors.New("fcvm: a session capture restore needs its snapshot")
+	}
+	if req.Volume != "" && !req.SessionCapture {
+		req.Snapshot = nil
+	}
 	if req.Snapshot != nil && req.Snapshot.Networkless == networked {
 		return nil, fmt.Errorf("fcvm: a %s sandbox cannot restore this snapshot's network", req.Network)
 	}
@@ -169,6 +185,7 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		sandboxManifest: manifest, AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: layer, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter, Snapshot: req.Snapshot,
+		sandboxVolume: req.Volume,
 	})
 	if err != nil {
 		return nil, err
@@ -186,10 +203,11 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 	if err := awaitSandboxListener(ctx, dialer, req.Instance, agentRunDialWindow+req.ReadyTimeout); err != nil {
 		return destroy(err)
 	}
-	// A cold boot ran the commands from its manifest; a restore's snapshot
-	// was captured before them. The browser's commands have no manifest, so
-	// they run here after either.
+	// A cold boot ran the commands from its manifest; a warm snapshot was
+	// captured before them. The browser's commands have no manifest, so they
+	// run here after either. A restored pause capture already runs them.
 	switch {
+	case req.SessionCapture && inst.Method == WakeRestore:
 	case req.Browser:
 		if err := startSandboxTemplate(ctx, dialer, sandboxBrowserCommands(req)); err != nil {
 			return destroy(err)

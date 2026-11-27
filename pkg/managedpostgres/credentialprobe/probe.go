@@ -17,9 +17,10 @@ import (
 type Access string
 
 const (
-	ReadWrite Access = "read_write"
-	ReadOnly  Access = "read_only"
-	Migration Access = "migration"
+	ReadWrite   Access = "read_write"
+	ReadOnly    Access = "read_only"
+	ReplicaOnly Access = "replica_only"
+	Migration   Access = "migration"
 )
 
 // ConnectCredentialSQL opens a private TLS connection without inheriting host
@@ -40,6 +41,10 @@ func ConnectCredentialSQL(ctx context.Context, dsn string) (*pgx.Conn, error) {
 // VerifyCredentialSQL authenticates without writing customer data. ACL evidence
 // cannot establish data correctness or connectivity from an application VM.
 func VerifyCredentialSQL(ctx context.Context, dsn string, access Access, major int) error {
+	replicaOnly := access == ReplicaOnly
+	if replicaOnly {
+		access = ReadOnly
+	}
 	config, err := CredentialSQLConfig(dsn)
 	if err != nil || major < 1 || (access != ReadWrite && access != ReadOnly && access != Migration) {
 		return pgerrors.ErrInvalid
@@ -56,6 +61,15 @@ func VerifyCredentialSQL(ctx context.Context, dsn string, access Access, major i
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return pgerrors.ErrUnavailable
+	}
+	if replicaOnly {
+		var inRecovery bool
+		if err := tx.QueryRow(ctx, "SELECT pg_catalog.pg_is_in_recovery()").Scan(&inRecovery); err != nil {
+			return pgerrors.ErrUnavailable
+		}
+		if !inRecovery {
+			return pgerrors.ErrConflict
+		}
 	}
 	// Closing the private connection also rolls back this read-only transaction.
 	row, err := sqlc.New().ProbeManagedPostgresCredential(ctx, tx, string(access))

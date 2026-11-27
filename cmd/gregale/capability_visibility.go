@@ -328,7 +328,7 @@ func hiddenFlagArg(flags []cliFlag, args []string) (string, bool) {
 	return "", false
 }
 
-// discoverableFlags drops flags whose capability the view hides.
+// discoverableFlags filters hidden flags and resolves which visible flags are required.
 func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
 	if flags == nil {
 		return nil
@@ -336,6 +336,7 @@ func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
 	kept := make([]cliFlag, 0, len(flags))
 	for _, flag := range flags {
 		if flag.Capability == "" || !v.hides(flag.Capability) {
+			flag.Req = flag.Req || v.hides(flag.RequiredWithoutCapability)
 			kept = append(kept, flag)
 		}
 	}

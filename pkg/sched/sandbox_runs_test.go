@@ -46,10 +46,25 @@ func (r *sandboxRouter) RunSandbox(ctx context.Context, nodeID string, spec sche
 
 func sandboxRunnerFixture(t *testing.T, layer string) (*sched.AgentRunner, *sandboxRouter, *sched.NodeLedger, string) {
 	t.Helper()
+	return sandboxRunnerPoolFixture(t, layer, "agents-1")
+}
+
+// sandboxRunnerPoolFixture runs the agent pool on the named nodes beside one
+// compute node; it returns the last pool node's ID.
+func sandboxRunnerPoolFixture(t *testing.T, layer string, pool ...string) (*sched.AgentRunner, *sandboxRouter, *sched.NodeLedger, string) {
+	t.Helper()
+	runner, router, ledger, node, _ := sandboxRunnerPoolStoreFixture(t, layer, pool...)
+	return runner, router, ledger, node
+}
+
+// sandboxRunnerPoolStoreFixture is sandboxRunnerPoolFixture with its store,
+// for a test that changes a node.
+func sandboxRunnerPoolStoreFixture(t *testing.T, layer string, pool ...string) (*sched.AgentRunner, *sandboxRouter, *sched.NodeLedger, string, *state.MemStore) {
+	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
 	var agentNode string
-	for _, name := range []string{"compute-1", "agents-1"} {
+	for _, name := range append([]string{"compute-1"}, pool...) {
 		n, err := store.UpsertComputeNode(ctx, state.ComputeNode{Name: name, TargetURL: "tcp://" + name + ":50051",
 			VPCPUs: 20, MemMB: 64000, MaxConcurrency: 200, AdmissionCeilingMB: 47600, VCPUBudget: 40, Active: true})
 		if err != nil {
@@ -64,11 +79,11 @@ func sandboxRunnerFixture(t *testing.T, layer string) (*sched.AgentRunner, *sand
 	}
 	router := &sandboxRouter{agentRouter: &agentRouter{ledger: ledger}}
 	runner, err := sched.NewAgentRunner(engine, router, sched.AgentRunConfig{BaseKey: "base/agent-base.ext4",
-		LayerKey: "layer/agent.ext4", SandboxLayerKey: layer, Nodes: []string{"agents-1"}})
+		LayerKey: "layer/agent.ext4", SandboxLayerKey: layer, Nodes: pool})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return runner, router, ledger, agentNode
+	return runner, router, ledger, agentNode, store
 }
 
 func sandboxAdmission() sched.SandboxAdmission {

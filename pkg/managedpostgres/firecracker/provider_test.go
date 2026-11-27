@@ -1325,3 +1325,30 @@ func TestDiscoverRecoversAnUnacknowledgedCreation(t *testing.T) {
 		t.Fatalf("discover after delete = %v", err)
 	}
 }
+
+func TestReplicaOnlyCredentialUsesStandbyEndpoint(t *testing.T) {
+	p, scheduler, _ := newTestProvider(t)
+	ctx := t.Context()
+	spec := devSpec()
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	req := managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "strict-reader", Access: managedpostgres.CredentialReplicaOnly}
+	if _, err := p.IssueCredentials(ctx, req); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("unreplicated database: %v", err)
+	}
+
+	scheduler.vms[testDatabaseID].Replicated = true
+	material, err := p.IssueCredentials(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := managedpostgres.Endpoint{Role: managedpostgres.EndpointReplicaOnly, Host: testDatabaseID + "-replica-pooler.db.gregale.test", Port: 5432}
+	if !strings.HasPrefix(material.Username, "gregale_replica_") || !slices.Equal(material.Endpoints, []managedpostgres.Endpoint{want}) {
+		t.Fatal("standby-only credential has the wrong role or endpoint")
+	}
+	sql := scheduler.admin[len(scheduler.admin)-1]
+	if !strings.Contains(sql, "GRANT SELECT ON ALL TABLES") || strings.Contains(sql, "INSERT") {
+		t.Fatal("standby-only credential does not receive read-only table privileges")
+	}
+}

@@ -3,6 +3,7 @@ package apidserver
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -30,7 +31,13 @@ func (s *server) getManagedPostgresCapabilities(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	view := managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(flagSubject(r, acct)))
+	subject := flagSubject(r, acct)
+	view := managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(subject))
+	if !s.nativePostgresOperationsEnabled(subject) {
+		view.CredentialAccess = slices.DeleteFunc(view.CredentialAccess, func(access string) bool {
+			return access == string(managedpostgres.CredentialReplicaOnly)
+		})
+	}
 	view.StorageResize = view.StorageResize && s.storageResizes().Allows(acct.ID) // a preview until launch
 	writeJSON(w, http.StatusOK, view)
 }
@@ -57,7 +64,7 @@ func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limi
 		out.Availability = append(out.Availability, string(availability))
 	}
 	for _, access := range c.CredentialAccess {
-		if access == managedpostgres.CredentialAuth && !authVisible {
+		if (access == managedpostgres.CredentialAuth && !authVisible) || (access == managedpostgres.CredentialReplicaOnly && !limits.ProductionAllowed) {
 			continue
 		}
 		out.CredentialAccess = append(out.CredentialAccess, string(access))

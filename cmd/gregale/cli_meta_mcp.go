@@ -245,7 +245,8 @@ func mcpCLICommand() cliCommand {
 			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 			{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server insights --app my-mcp", "gregale mcp server insights --app my-mcp --json"}},
-		{Name: "stats", Short: "Show a sold server's customers, revenue, tools and customers near their limit", Notes: []string{
+		{Name: "stats", Short: "Show a sold server's customers, revenue and tools", Notes: []string{
+			"Lists the customers near their limit too.",
 			"Months are UTC calendar months; the current month is to date and its revenue is an estimate. Billed revenue is finalized statements before credits; a closed month not yet finalized shows its draft statements as an estimate.",
 			"Needs API monetization on the account.",
 		}, Flags: []cliFlag{

@@ -19,7 +19,15 @@ ON CONFLICT DO NOTHING;
 -- name: BillingRunDiscoverProductFeeItems :exec
 INSERT INTO billing_run_product_items(run_id,app_id,tenant_id,external_ref,next_attempt_at,updated_at)
 SELECT DISTINCT sqlc.arg(run_id)::uuid,a.app_id,a.tenant_id,p.external_ref,sqlc.arg(now)::timestamptz,sqlc.arg(now)::timestamptz
-FROM product_control_plan_history a
+FROM (
+  SELECT account_id,app_id,tenant_id,plan,revision,effective_at
+  FROM product_control_plan_history
+  WHERE account_id=sqlc.arg(account_id)::uuid
+  UNION ALL
+  SELECT account_id,app_id,tenant_id,receipt->'after'->>'plan',receipt->'after'->>'revision',scheduled_for
+  FROM product_control_customer_changes
+  WHERE account_id=sqlc.arg(account_id)::uuid AND schedule_status='pending' AND scheduled_for<=sqlc.arg(now)::timestamptz
+) a
 JOIN product_control_heads h ON h.account_id=a.account_id AND h.app_id=a.app_id
 JOIN product_control_revisions v ON v.app_id=a.app_id AND v.revision=a.revision
 JOIN platform_tenants p ON p.account_id=a.account_id AND p.id=a.tenant_id

@@ -364,6 +364,9 @@ type cliFlag struct {
 	// them); the marker exists for the man-page SYNOPSIS section
 	// to render the required marker `(<name>|<placeholder>)`.
 	Req bool
+	// RequiredWithoutCapability marks a flag as required while the capability
+	// providing an alternative form is hidden.
+	RequiredWithoutCapability string
 	// Bool marks a switch that takes no value, including when it is
 	// required. Use it for explicit confirmation flags such as --yes.
 	Bool bool
@@ -725,7 +728,7 @@ var cliCommands = []cliCommand{
 				{Name: "env", Short: "environment scope (defaults to linked project environment)", Value: "SCOPE"},
 				{Name: "scope", Short: "environment scope (alias for --env)", Value: "SCOPE"},
 				{Name: "database", Short: "existing database ID or name", Value: "REF"},
-				{Name: "region", Short: "provider-neutral region when creating", Value: "REGION"},
+				{Name: "region", Short: "region for a new database (default: the platform default)", Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
 				{Name: "class", Short: "service class", Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
@@ -6508,16 +6511,44 @@ var cliCommands = []cliCommand{
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage get", "gregale postgres overage set on"}},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
+				{Name: "region", Short: "region (default: the platform default)", Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
 				{Name: "class", Short: "service class", Value: "CLASS", ClosedSet: []string{"development", "burstable", "production"}},
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "storage-bytes", Short: "storage limit in bytes", Value: "N"},
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
-			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
+			}, Examples: []string{"gregale postgres create orders --class development --scale-to-zero"}},
 			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
 			{Name: subStatus, Short: "Show the database's conditions (preview)", Notes: []string{"Ready, Progressing and Degraded, from its state and cached health."}, Positionals: []string{"<database>"}, Examples: []string{"gregale postgres status orders"}},
+			{Name: "diagnose", Short: "Inspect primary connections, lock blockers, and transactions", Positionals: []string{"<database>"}},
+			{Name: "sessions", Short: "Inspect native PostgreSQL client sessions", Positionals: []string{"<database>"}},
+			{Name: "cancel-query", Short: "Cancel a query using a live session target", Positionals: []string{"<database>", "<target_id>"}},
+			{Name: "tables", Short: "Inspect table sizes, dead rows, vacuum and analyze activity", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "sort", Short: "rank by size, dead-rows, or xid-age (default size)", Value: "ORDER"},
+				{Name: "limit", Short: "return 1 to 50 tables (default 20)", Value: "N"},
+			}},
+			{Name: "autovacuum", Short: "Inspect or set the native PostgreSQL autovacuum profile", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "profile", Short: "select the default or high-churn profile", Value: "PROFILE"},
+			}},
+			{Name: "extensions", Short: "Inspect and enable native PostgreSQL extensions", Subcommands: []cliSub{
+				{Name: "list", Short: "List available and installed extension versions", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "target-major", Short: "check extension compatibility with a later PostgreSQL major", Value: "N"},
+				}},
+				{Name: "enable", Short: "Enable a managed extension", Positionals: []string{"<database>", "<extension>"}},
+			}},
+			{Name: "errors", Short: "Show recent pooled PostgreSQL errors", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "enable", Short: "enable collection for pooled connections", Bool: true},
+				{Name: "disable", Short: "stop collecting new events", Bool: true},
+				{Name: "since", Short: "lookback from 1s to 24h", Value: "DURATION"},
+				{Name: "sqlstate", Short: "filter by PostgreSQL SQLSTATE", Value: "CODE"},
+				{Name: "limit", Short: "maximum number of events", Value: "COUNT"},
+			}, Examples: []string{"gregale postgres errors orders --enable", "gregale postgres errors orders --since 1h --sqlstate 40P01"}},
+			{Name: "queries", Short: "Rank native PostgreSQL statements by execution time", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "since", Short: "history window from 1 second to 24 hours", Value: "DURATION"},
+				{Name: "enable", Short: "enable collection at the next eligible restart", Bool: true},
+				{Name: "disable", Short: "stop collecting statement statistics", Bool: true},
+			}},
 			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<database>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale postgres wait orders"}, Flags: []cliFlag{
 				{Name: "for", Short: "Ready, Progressing or Degraded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
@@ -6534,10 +6565,12 @@ var cliCommands = []cliCommand{
 			}, Notes: []string{"The database stops at once; `gregale postgres recover` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
 			{Name: "recover", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres recover orders"}},
 			{Name: "previews", Short: "Give each PR preview environment its own database (preview)", Positionals: []string{"<database>", "empty|copy|off"},
+				Flags: []cliFlag{{Name: "policy", Short: "JSON masking policy required for masked previews", Value: "FILE", Capability: "native-postgres-operations"}},
 				Notes: []string{"empty: every PR preview of an app bound to the database gets its own empty database, bound with the same environment keys and access and removed with the preview. The PR's release command migrates it.",
 					"copy: each PR preview environment gets a copy of the database as of its setup, kept across pushes. Code under review can read it; it needs the database's restore window.",
+					"With --policy, masked mode gives each new PR a validated native PostgreSQL database. Updating the policy affects future previews only.",
 					"off: previews get no database; existing preview databases go with their pull requests."},
-				Examples: []string{"gregale postgres previews set orders empty", "gregale postgres previews set orders copy"}},
+				Examples: []string{"gregale postgres previews set orders empty", "gregale postgres previews set orders copy", "gregale postgres previews set orders masked --policy preview-policy.json"}},
 			{Name: "roles", Short: "Manage custom roles your logins can SET ROLE to (preview)", Subcommands: []cliSub{
 				{Name: "list", Short: "List a database's custom roles", Positionals: []string{"<database>"}},
 				{Name: "create", Short: "Create or replace a NOLOGIN custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
@@ -6560,6 +6593,16 @@ var cliCommands = []cliCommand{
 					{Name: "yes", Short: "skip the typed confirmation"},
 				}},
 			}},
+			{Name: "maintenance", Short: "Schedule native PostgreSQL base refreshes in a weekly UTC window", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "day", Short: "UTC weekday", Value: "WEEKDAY", ClosedSet: []string{"sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"}},
+				{Name: "start", Short: "UTC time the window opens", Value: "HH:MM"},
+				{Name: "duration", Short: "window length from 1m through 24h", Value: "DURATION"},
+				{Name: "off", Short: "remove the weekly window"},
+			}, Examples: []string{"gregale postgres maintenance orders --day sunday --start 02:00 --duration 1h"}},
+			{Name: "auto-grow", Short: "Set a storage ceiling for automatic growth", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "max-bytes", Short: "per-volume ceiling in bytes", Value: "BYTES"},
+				{Name: "off", Short: "disable automatic storage growth"},
+			}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
@@ -6578,9 +6621,79 @@ var cliCommands = []cliCommand{
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
 			}},
 			{Name: "resize-status", Short: "Read compute resize progress", Positionals: []string{"<database>", "<request_uuid>"}},
+			{Name: "backup-schedule", Short: "Schedule a daily portable backup to a private bucket", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "daily-at", Short: "daily UTC time", Value: "HH:MM"},
+				{Name: "bucket-app", Short: "app that owns the bucket", Value: "APP"},
+				{Name: "bucket", Short: "private destination bucket name or ID", Value: "BUCKET"},
+				{Name: "off", Short: "disable future runs", Bool: true},
+			}, Examples: []string{"gregale postgres backup-schedule orders --daily-at 03:00 --bucket-app archive --bucket database-backups"}},
+			{Name: "export", Short: "Download a portable backup of a native PostgreSQL database", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "output", Short: "file to save the PostgreSQL dump", Req: true, Value: "FILE"},
+				{Name: "request-id", Short: "stable request UUID to resume an export", Value: "UUID"},
+			}, Examples: []string{"gregale postgres export orders --output orders.dump"}},
+			{Name: "import", Short: "Restore a backup file or copy a snapshot into an empty native database", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "check", Short: "check compatibility before copying", Bool: true},
+				{Name: "from-file", Short: "restore a Gregale export with its companion manifest", Value: "FILE"},
+				{Name: "source-env", Short: "source URL environment variable (default SOURCE_DATABASE_URL)", Value: "ENV"},
+				{Name: "request-id", Short: "stable operation UUID to reuse on a retry", Value: "UUID"},
+				{Name: "skip-extension", Short: "omit this source extension if compatible (repeatable)", Value: "NAME"},
+			}, Examples: []string{"gregale postgres import orders --check", "gregale postgres import orders", "gregale postgres import orders-recovery --from-file orders.dump"}},
+			{Name: "import-status", Short: "Read a native PostgreSQL import's progress", Positionals: []string{"<database>", "<operation_id>"}},
+			{Name: "migrate", Short: "Manage a live PostgreSQL migration", Subcommands: []cliSub{
+				{Name: "check", Short: "Inspect a source and empty native target", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "source-env", Short: "source URL environment variable (default SOURCE_DATABASE_URL)", Value: "ENV"},
+				}, Examples: []string{"gregale postgres migrate check orders"}},
+				{Name: "start", Short: "Start or resume a fenced native subscriber", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "request-id", Short: "stable operation UUID", Req: true, Value: "UUID"},
+					{Name: "source-env", Short: "source URL environment variable (default SOURCE_DATABASE_URL)", Value: "ENV"},
+				}},
+				{Name: "prepare", Short: "Build supported indexes and report cutover blockers", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "request-id", Short: "original migration operation UUID", Req: true, Value: "UUID"},
+					{Name: "source-env", Short: "source URL environment variable (default SOURCE_DATABASE_URL)", Value: "ENV"},
+				}},
+				{Name: "verify", Short: "Verify durable replay after source writes pause", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "request-id", Short: "original migration operation UUID", Req: true, Value: "UUID"},
+					{Name: "verification-id", Short: "UUID for this continuous source write pause", Req: true, Value: "UUID"},
+					{Name: "source-writes-paused", Short: "confirm source writers are paused and drained", Bool: true, Req: true},
+					{Name: "source-env", Short: "source URL environment variable (default SOURCE_DATABASE_URL)", Value: "ENV"},
+				}},
+				{Name: "activate", Short: "Switch an app's bindings to its verified native database", Positionals: []string{"<target>"}, Flags: []cliFlag{
+					{Name: "source", Short: "managed source database", Req: true, Value: "DATABASE"},
+					{Name: "app", Short: "app whose managed PostgreSQL bindings move", Req: true, Value: "APP"},
+					{Name: "env", Short: "environment whose managed bindings move", Value: "SCOPE"},
+					{Name: "request-id", Short: "original migration operation UUID", Req: true, Value: "UUID"},
+					{Name: "verification-id", Short: "verification UUID for the current write pause", Req: true, Value: "UUID"},
+					{Name: "source-writes-paused", Short: "confirm source writers remain paused and drained", Bool: true, Req: true},
+					{Name: "no-wait", Short: "return after recording the switch", Bool: true},
+				}},
+				{Name: "status", Short: "Report table copy, apply lag, and retained WAL", Positionals: []string{"<database>"}},
+				{Name: "stop", Short: "Stop replication and leave the target fenced", Positionals: []string{"<database>"}, Flags: []cliFlag{
+					{Name: "request-id", Short: "original migration operation UUID", Req: true, Value: "UUID"},
+					{Name: "source-env", Short: "source URL environment variable (default SOURCE_DATABASE_URL)", Value: "ENV"},
+				}},
+			}},
+			{Name: "recovery-region", Short: "Set the configured recovery region for a native PostgreSQL database", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "region", Short: "configured recovery region", Value: "REGION"},
+				{Name: "off", Short: "disable regional recovery", Bool: true},
+			}, Examples: []string{"gregale postgres recovery-region orders --region eu-west-1"}},
+			{Name: "upgrade-rehearsal", Short: "Test a PostgreSQL major upgrade on a disposable restore", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "major", Short: "target PostgreSQL major version", Value: "N"},
+				{Name: "request-id", Short: "UUID to reuse when retrying a start", Value: "UUID"},
+				{Name: "rehearsal-id", Short: "read the status of this rehearsal", Value: "UUID"},
+			}, Examples: []string{
+				"gregale postgres upgrade-rehearsal orders --major 18",
+				"gregale postgres upgrade-rehearsal orders --rehearsal-id REHEARSAL_UUID",
+			}},
+			{Name: "restore-drill", Short: "Verify recovery with a disposable restore", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "request-id", Short: "UUID to reuse when retrying a start", Value: "UUID"},
+				{Name: "drill-id", Short: "read the status of this drill", Value: "UUID"},
+			}},
 			{Name: "restore", Short: "Restore a database to a new database", Positionals: []string{"<database>"}, Flags: []cliFlag{
-				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
-				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
+				{Name: "check", Short: "inspect archive coverage for the requested time", Bool: true, Capability: "native-postgres-operations"},
+				{Name: "name", Short: "name for the restored database when creating a copy", Value: "NAME", RequiredWithoutCapability: "native-postgres-operations"},
+				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Value: "TIMESTAMP", RequiredWithoutCapability: "native-postgres-operations"},
+				{Name: "region", Short: "restore in the database's configured recovery region", Value: "REGION", Capability: "native-postgres-operations"},
+				{Name: "latest", Short: "with --region: use the latest verified point", Bool: true, Capability: "native-postgres-operations"},
 				{Name: "switch", Short: "move this app to the copy, keeping its code", Value: "APP"},
 				{Name: "env", Short: "with --switch: environment whose bindings move", Value: "SCOPE"},
 				{Name: "yes", Short: "with --switch: switch without prompting", Bool: true},
@@ -6593,6 +6706,8 @@ var cliCommands = []cliCommand{
 				"Follow or cancel the switch with `gregale release rollback status <app> <switch-id>`.",
 			}, Examples: []string{
 				"gregale postgres restore orders --name orders-before-import --point-in-time 2026-10-30T09:00:00Z",
+				"gregale postgres restore orders --check --point-in-time 2026-10-30T09:00:00Z",
+				"gregale postgres restore orders --region eu-west-1 --name orders-recovery --latest",
 				"gregale postgres restore orders --name orders-0900 --point-in-time 2026-10-30T09:00:00Z --switch my-api",
 			}},
 			{Name: "branch", Short: "Make, list and delete copy-on-write branches of a database", Notes: []string{
@@ -6607,6 +6722,10 @@ var cliCommands = []cliCommand{
 				{Name: "create", Short: "Branch a database from its latest point or a chosen time", Positionals: []string{"<database>", "<name>"}, Flags: []cliFlag{
 					{Name: "from", Short: "live (default) or an RFC3339 time inside the source's restore range", Value: "live|TIMESTAMP"},
 					{Name: "ttl", Short: "purge the branch this long after it is created, from 5m to 30d (e.g. 2h, 7d)", Value: "DURATION"},
+				}},
+				{Name: "masked", Short: "Copy selected data into a validated masked branch", Positionals: []string{"<database>", "<name>"}, Flags: []cliFlag{
+					{Name: "policy", Short: "JSON file selecting tables, columns and masking actions", Req: true, Value: "FILE"},
+					{Name: "ttl", Short: "expire the branch after this duration, from 5m to 7d (default 2h)", Value: "DURATION"},
 				}},
 				{Name: "list", Short: "List a database's branches", Positionals: []string{"<database>"}},
 				{Name: "delete", Short: "Purge a branch; refuses databases that are not its branches", Positionals: []string{"<database>", "<name>"}, Flags: []cliFlag{
@@ -6644,6 +6763,11 @@ var cliCommands = []cliCommand{
 				}},
 				{Name: "get", Short: "Show one binding", Positionals: []string{"<id>"}},
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
+				{Name: "timeouts", Short: "Show or set native pooled binding timeout defaults", Positionals: []string{"<id>"}, Flags: []cliFlag{
+					{Name: "statement", Short: "statement timeout (0 disables)", Value: "DURATION"},
+					{Name: "lock", Short: "lock timeout (0 disables)", Value: "DURATION"},
+					{Name: "idle-in-transaction", Short: "idle transaction timeout (0 disables)", Value: "DURATION"},
+				}, Examples: []string{"gregale postgres bindings timeouts BINDING_ID --statement 5s --lock 1s --idle-in-transaction 30s"}},
 				{Name: "rotate", Short: "Rotate a binding, optionally waiting for the old credential", Notes: []string{"Waits until the previous credential retires."}, Positionals: []string{"<id>"}, Flags: []cliFlag{
 					{Name: "wait", Short: "wait for the previous credential to retire"},
 					{Name: "wait-timeout", Short: "maximum time to wait for rotation (default 15m)", Value: "DURATION"},
@@ -7003,6 +7127,7 @@ var cliCommands = []cliCommand{
 			{Name: "json", Short: "print the operation receipt"},
 		}},
 			{Name: "switches", Short: "List rollbacks that restored or are restoring the database", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "migration", Short: "list native PostgreSQL migration switches", Bool: true, Capability: "native-postgres-operations"},
 				{Name: "json", Short: "machine-readable output"},
 			}},
 			{Name: "switch", Short: "Show, follow or cancel a rollback that restores the database",
@@ -7015,6 +7140,7 @@ var cliCommands = []cliCommand{
 					{Name: "timeout", Short: "wait deadline (default 60m)", Value: "duration"},
 					{Name: "poll-interval", Short: "poll interval (default 2s)", Value: "duration"},
 					{Name: "operation", Short: "read this rollback operation instead of a switch", Value: "UUID"},
+					{Name: "migration", Short: "show or cancel a native PostgreSQL migration switch", Bool: true, Capability: "native-postgres-operations"},
 					{Name: "json", Short: "machine-readable output"},
 				}}},
 	},

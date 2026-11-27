@@ -358,6 +358,33 @@ type SandboxSession struct {
 	TaskMaxChars        pgtype.Int4
 	TaskExitCode        pgtype.Int4
 	TaskOutput          []byte
+	Vcpu                pgtype.Int2
+	VolumeGb            pgtype.Int4
+	PauseRequestedAt    pgtype.Timestamptz
+	ResumeRequestedAt   pgtype.Timestamptz
+	PausedAt            pgtype.Timestamptz
+	Durability          pgtype.Text
+	ResumedCold         bool
+	ForkedFrom          pgtype.UUID
+	ResumeNotBefore     pgtype.Timestamptz
+}
+
+type SandboxSessionCapture struct {
+	ID                pgtype.UUID
+	SessionID         pgtype.UUID
+	AccountID         pgtype.UUID
+	NodeID            string
+	StorageKey        string
+	VmstateStorageKey string
+	FcVersion         string
+	MemBytes          int64
+	VmstateBytes      int64
+	HasBacking        bool
+	VolumeBackupID    pgtype.UUID
+	State             string
+	CreatedAt         pgtype.Timestamptz
+	ConsumedAt        pgtype.Timestamptz
+	CheckedAt         pgtype.Timestamptz
 }
 
 type SandboxSessionDomain struct {
@@ -368,22 +395,31 @@ type SandboxSessionDomain struct {
 }
 
 type SandboxSessionUsage struct {
-	SandboxID           pgtype.UUID
-	AccountID           pgtype.UUID
-	Method              int16
-	Samples             int32
-	ExpectedSamples     int32
-	MeasuredMs          int64
-	PausedMs            int64
-	FrozenMs            int64
-	PrivateMbMs         int64
-	UnpausedPrivateMbMs int64
-	BillableMbMs        int64
-	PeakPrivateMb       int64
-	ColdBoot            bool
-	Final               bool
-	RecordedAt          pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	SandboxID               pgtype.UUID
+	AccountID               pgtype.UUID
+	Method                  int16
+	Samples                 int32
+	ExpectedSamples         int32
+	MeasuredMs              int64
+	PausedMs                int64
+	FrozenMs                int64
+	PrivateMbMs             int64
+	UnpausedPrivateMbMs     int64
+	BillableMbMs            int64
+	PeakPrivateMb           int64
+	ColdBoot                bool
+	Final                   bool
+	RecordedAt              pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	LeaseToken              pgtype.Text
+	BaseSamples             int32
+	BaseExpectedSamples     int32
+	BaseMeasuredMs          int64
+	BasePausedMs            int64
+	BaseFrozenMs            int64
+	BasePrivateMbMs         int64
+	BaseUnpausedPrivateMbMs int64
+	BaseBillableMbMs        int64
 }
 
 type SandboxTemplate struct {
@@ -396,6 +432,30 @@ type SandboxTemplate struct {
 	ReadyTimeoutS int32
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type SandboxVolume struct {
+	SessionID      pgtype.UUID
+	AccountID      pgtype.UUID
+	NodeID         string
+	SizeGb         int32
+	LatestBackupID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SandboxVolumeBackup struct {
+	ID            pgtype.UUID
+	SessionID     pgtype.UUID
+	AccountID     pgtype.UUID
+	NodeID        string
+	Reason        string
+	State         string
+	SizeBytes     int64
+	DataChunks    int32
+	UploadedBytes int64
+	CreatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
 }
 
 type SandboxWorkspaceSnapshot struct {

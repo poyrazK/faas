@@ -296,8 +296,10 @@ type InvoiceState struct {
 	AutoAdvance      *bool
 	StatementID      string
 	SourceKind       string
+	SendExportID     string
 	Total            int64
 	AmountDue        int64
+	HasTotals        bool
 	FinalizedAt      *time.Time
 	Status           string
 	AmountPaid       int64
@@ -318,8 +320,8 @@ type invoiceStateResponse struct {
 	CollectionMethod  string            `json:"collection_method"`
 	AutoAdvance       *bool             `json:"auto_advance"`
 	Metadata          map[string]string `json:"metadata"`
-	Total             int64             `json:"total"`
-	AmountDue         int64             `json:"amount_due"`
+	Total             *int64            `json:"total"`
+	AmountDue         *int64            `json:"amount_due"`
 	Status            string            `json:"status"`
 	Currency          string            `json:"currency"`
 	AmountPaid        int64             `json:"amount_paid"`
@@ -348,8 +350,22 @@ func (c *Client) GetInvoice(ctx context.Context, key, invoiceID string) (Invoice
 
 // SetManualInvoiceTerms updates a Stripe draft in place without advancing it.
 func (c *Client) SetManualInvoiceTerms(ctx context.Context, key, idempotencyKey, invoiceID string, dueAt time.Time) error {
+	return c.prepareInvoiceSend(ctx, key, idempotencyKey, invoiceID, "", dueAt)
+}
+
+// SendExportMetadataKey links a reviewed Product Control send to its export.
+const SendExportMetadataKey = "gregale_send_export_id"
+
+func (c *Client) PrepareInvoiceSend(ctx context.Context, key, idempotencyKey, invoiceID, exportID string, dueAt time.Time) error {
+	return c.prepareInvoiceSend(ctx, key, idempotencyKey, invoiceID, exportID, dueAt)
+}
+
+func (c *Client) prepareInvoiceSend(ctx context.Context, key, idempotencyKey, invoiceID, exportID string, dueAt time.Time) error {
 	form := url.Values{"collection_method": {"send_invoice"}, "auto_advance": {"false"},
 		"due_date": {strconv.FormatInt(dueAt.Unix(), 10)}}
+	if exportID != "" {
+		form.Set("metadata["+SendExportMetadataKey+"]", exportID)
+	}
 	return c.do(ctx, key, http.MethodPost, "/v1/invoices/"+url.PathEscape(invoiceID), idempotencyKey, form, nil)
 }
 
@@ -376,8 +392,15 @@ func (out invoiceStateResponse) invoiceState() InvoiceState {
 	state := InvoiceState{
 		ID: out.ID, Livemode: out.Livemode, Customer: out.Customer, CustomerEmail: out.CustomerEmail,
 		CollectionMethod: out.CollectionMethod, AutoAdvance: out.AutoAdvance, StatementID: out.Metadata["gregale_statement_id"],
-		SourceKind: out.Metadata["gregale_source"], Total: out.Total, AmountDue: out.AmountDue, Status: out.Status,
+		SourceKind: out.Metadata["gregale_source"], SendExportID: out.Metadata[SendExportMetadataKey], Status: out.Status,
 		AmountPaid: out.AmountPaid, AmountRemaining: out.AmountRemaining, HostedURL: out.HostedInvoiceURL, Currency: out.Currency,
+	}
+	state.HasTotals = out.Total != nil && out.AmountDue != nil
+	if out.Total != nil {
+		state.Total = *out.Total
+	}
+	if out.AmountDue != nil {
+		state.AmountDue = *out.AmountDue
 	}
 	if out.DueDate != nil {
 		due := time.Unix(*out.DueDate, 0).UTC()

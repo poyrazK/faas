@@ -29,6 +29,9 @@ const restorePoll = 500 * time.Millisecond
 // another.
 type RestoreRequest struct {
 	ProvisionRequest
+	RecoveryRegion string
+	// RecoveryTimeline pins a regional restore to the archive lineage checked at admission.
+	RecoveryTimeline uint32
 	// Source is the database whose archive the new one recovers from.
 	Source string
 	// Target is the instant to recover the source to.
@@ -36,6 +39,9 @@ type RestoreRequest struct {
 	// Snapshot names the source's snapshot at Target (snapshot.go), whose
 	// hold keeps Target restorable outside the source's restore window.
 	Snapshot string
+	// Rehearsals reserve capacity on the node that can run both majors.
+	restoreOnNode   string
+	restoreTimeline uint32
 }
 
 // Validate rejects a request that cannot become a restore.
@@ -49,6 +55,9 @@ func (r RestoreRequest) Validate() error {
 	}
 	if source == uuid.MustParse(r.DatabaseID) {
 		return errors.New("dbsched: a database cannot restore into itself")
+	}
+	if r.RecoveryRegion != "" && (!ValidRecoveryRegion(r.RecoveryRegion) || r.Snapshot != "") {
+		return errors.New("dbsched: invalid recovery region")
 	}
 	if r.Snapshot != "" && !dbarchive.ValidHoldName(r.Snapshot) {
 		return errors.New("dbsched: invalid snapshot name")
@@ -80,6 +89,9 @@ func (s *Scheduler) Restore(ctx context.Context, req RestoreRequest) (VM, error)
 	req.DatabaseID = uuid.MustParse(req.DatabaseID).String()
 	// Stores keep microseconds; a retry must compare equal.
 	req.Target = req.Target.UTC().Truncate(time.Microsecond)
+	if req.RecoveryRegion != "" {
+		return s.restoreFromRecovery(ctx, req)
+	}
 	source, err := s.store.Get(ctx, req.Source)
 	if err != nil {
 		return VM{}, err
@@ -111,13 +123,19 @@ func (s *Scheduler) Restore(ctx context.Context, req RestoreRequest) (VM, error)
 	if err != nil {
 		return VM{}, err
 	}
+	if req.restoreOnNode != "" && pin != req.restoreOnNode {
+		return VM{}, ErrNodeUnavailable
+	}
 	place := VM{
 		DatabaseID: req.DatabaseID, NodeID: pin, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB,
 		VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds,
-		RestoreSource: source.DatabaseID, RestoreTarget: req.Target, Replicated: req.Replicated,
+		RestoreSource: source.DatabaseID, RestoreTarget: req.Target, RestoreTimeline: req.restoreTimeline, Replicated: req.Replicated, RecoveryRegion: source.RecoveryRegion,
+	}
+	if req.restoreOnNode != "" {
+		place.State = stateRehearsalRestore
 	}
 	vm, err := s.store.Place(ctx, place)
-	if errors.Is(err, ErrNoCapacity) && pin != "" && s.cfg.SharedArchive {
+	if errors.Is(err, ErrNoCapacity) && pin != "" && s.cfg.SharedArchive && req.restoreOnNode == "" {
 		// The source's node is full; any node reads the archive from the
 		// bucket.
 		place.NodeID = ""
@@ -164,7 +182,7 @@ func (s *Scheduler) sourceNodeLost(ctx context.Context, sourceID string) (bool, 
 }
 
 func (s *Scheduler) resumeExisting(ctx context.Context, vm VM, source string, target time.Time) (VM, error) {
-	if vm.RestoreSource != source || !vm.RestoreTarget.Equal(target) {
+	if vm.RestoreFromRecovery || vm.RestoreSource != source || !vm.RestoreTarget.Equal(target) {
 		return vm, ErrConflict
 	}
 	s.resumeRestore(ctx, vm)
@@ -195,10 +213,15 @@ func (s *Scheduler) restorable(source VM, req RestoreRequest) error {
 	return nil
 }
 
-// ResumeRestores starts every provisioning restore not already running
+// isRestoring identifies the states owned by the restore worker.
+func isRestoring(state State) bool {
+	return state == StateProvisioning || state == stateRehearsalRestore || state == stateRegionalRestore
+}
+
+// ResumeRestores starts every ordinary or regional restore not already running
 // here; the lease keeps two replicas from running the same one.
 func (s *Scheduler) ResumeRestores(ctx context.Context) error {
-	vms, err := s.store.List(ctx, StateProvisioning)
+	vms, err := s.store.List(ctx, StateProvisioning, stateRegionalRestore)
 	if err != nil {
 		return err
 	}
@@ -211,7 +234,7 @@ func (s *Scheduler) ResumeRestores(ctx context.Context) error {
 // resumeRestore runs vm's restore in the background unless this process
 // already is. The restore outlives the call that started it.
 func (s *Scheduler) resumeRestore(ctx context.Context, vm VM) {
-	if vm.State != StateProvisioning || vm.RestoreSource == "" {
+	if !isRestoring(vm.State) || vm.RestoreSource == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.RestoreTimeout)
@@ -257,7 +280,7 @@ func (s *Scheduler) runRestore(ctx context.Context, id string) {
 	}()
 	defer func() { cancel(); <-renewed }()
 	vm, err := s.store.Get(ctx, id)
-	if err != nil {
+	if err != nil || !isRestoring(vm.State) {
 		return
 	}
 	node, err := s.node(ctx, vm.NodeID)
@@ -278,7 +301,7 @@ func (s *Scheduler) runRestore(ctx context.Context, id string) {
 	if node.ID != "" {
 		_ = s.vmm.Stop(cleanup, node, id)
 	}
-	_ = s.store.Transition(cleanup, id, []State{StateProvisioning}, StateFailed, TransitionOptions{LastError: errCodeRestore})
+	_ = s.store.Transition(cleanup, id, []State{vm.State}, StateFailed, TransitionOptions{LastError: errCodeRestore})
 }
 
 // renewLease keeps a restore's or a bootstrap's lease, renewing it with
@@ -305,6 +328,37 @@ func (s *Scheduler) renewLease(ctx context.Context, lease time.Time, claim func(
 
 // restore recovers vm into its volume, backs it up and parks it.
 func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
+	if vm.RestoreFromRecovery {
+		if node.RecoveryRegion != vm.RecoveryRegion {
+			return ErrConflict
+		}
+		probe, err := s.checkReservedRecovery(ctx, node, vm)
+		if err != nil {
+			return err
+		}
+		if probe.Outcome != dbarchive.RestoreCovered || probe.Timeline == 0 || (vm.RestoreTimeline != 0 && probe.Timeline != vm.RestoreTimeline) {
+			return fmt.Errorf("%w: recovery archive cannot reach the reserved point", ErrConflict)
+		}
+		vm, err = s.pinRestoreTimeline(ctx, vm, probe)
+		if err != nil {
+			return err
+		}
+		return s.replayRestore(ctx, node, vm)
+	}
+	if vm.State == stateRehearsalRestore {
+		store, ok := s.store.(*PgStore)
+		if !ok {
+			return ErrConflict
+		}
+		archiveOnly, err := store.isUpgradeRehearsalRestore(ctx, vm)
+		if err != nil {
+			return err
+		}
+		if !archiveOnly {
+			return ErrConflict
+		}
+		return s.replayRestore(ctx, node, vm)
+	}
 	source, err := s.store.Get(ctx, vm.RestoreSource)
 	if err != nil {
 		return fmt.Errorf("restore source: %w", err)
@@ -335,6 +389,37 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 			return fmt.Errorf("flush source archive: %w", err)
 		}
 	}
+	if vm.RestoreTimeline == 0 {
+		if checker, ok := s.vmm.(interface {
+			CheckArchiveRestore(context.Context, Node, string, time.Time, int) (dbarchive.RestoreCheck, error)
+		}); ok {
+			probe, cancel := context.WithTimeout(ctx, 15*time.Second)
+			check, err := checker.CheckArchiveRestore(probe, node, vm.RestoreSource, vm.RestoreTarget, vm.Major)
+			cancel()
+			if err == nil {
+				vm, err = s.pinRestoreTimeline(ctx, vm, check)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return s.replayRestore(ctx, node, vm)
+}
+
+// Persist the evidence before the guest starts. Ordinary restores on timeline 1
+// can still use older images. Regional restores always pin a timeline.
+func (s *Scheduler) pinRestoreTimeline(ctx context.Context, vm VM, check dbarchive.RestoreCheck) (VM, error) {
+	if check.Outcome == dbarchive.RestoreCovered && check.Timeline > 0 && (vm.RestoreFromRecovery || check.Timeline > 1) && vm.RestoreTimeline == 0 {
+		if err := s.store.PinRestoreTimeline(ctx, vm.DatabaseID, check.Timeline); err != nil {
+			return vm, err
+		}
+		vm.RestoreTimeline = check.Timeline
+	}
+	return vm, nil
+}
+
+func (s *Scheduler) replayRestore(ctx context.Context, node Node, vm VM) error {
 	// A previous attempt may have left the VM running; the guest restarts
 	// an unfinished extraction on the next boot.
 	if err := s.vmm.Stop(ctx, node, vm.DatabaseID); err != nil {
@@ -343,20 +428,22 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 	if err := s.vmm.CreateVolume(ctx, node, vm.DatabaseID, vm.VolumeBytes); err != nil {
 		return err
 	}
-	if err := s.vmm.Start(ctx, node, vm); err != nil {
+	if err := s.startPrimary(ctx, node, vm); err != nil {
 		return err
 	}
 	if err := s.pollReady(ctx, node, vm.DatabaseID, s.cfg.RestoreTimeout, restorePoll); err != nil {
 		return err
 	}
-	s.recordRecoveredTo(ctx, node, vm)
+	if err := s.recordRecoveredTo(ctx, node, vm); err != nil {
+		return err
+	}
 	// The restored database archives to its own archive from its new
 	// timeline; its first base backup makes it restorable in turn.
 	s.takeBackup(ctx, node, vm.DatabaseID)
 	if err := s.vmm.Stop(ctx, node, vm.DatabaseID); err != nil {
 		return err
 	}
-	return s.store.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true})
+	return s.store.Transition(ctx, vm.DatabaseID, []State{vm.State}, StateParked, TransitionOptions{Bootstrapped: true})
 }
 
 // flushSource makes the source's archive cover the restore target.
@@ -387,14 +474,18 @@ func (s *Scheduler) flushArchive(ctx context.Context, id string, after time.Time
 
 // recordRecoveredTo stores how far the restore replayed. It is evidence for
 // operators, so a failure to read or record it does not fail the restore.
-func (s *Scheduler) recordRecoveredTo(ctx context.Context, node Node, vm VM) {
+func (s *Scheduler) recordRecoveredTo(ctx context.Context, node Node, vm VM) error {
 	resp, err := s.vmm.Control(ctx, node, vm.DatabaseID, dbguest.Request{Op: dbguest.OpStatus})
+	if vm.RestoreTimeline != 0 && (err != nil || resp.RestoreTimeline != vm.RestoreTimeline) {
+		return fmt.Errorf("%w: guest did not confirm restore timeline %d", ErrConflict, vm.RestoreTimeline)
+	}
 	if err != nil || resp.RecoveredTo.IsZero() {
-		return
+		return nil //nolint:nilerr // Recovery point reporting is best effort once the timeline is confirmed.
 	}
 	if err := s.store.RecordRestore(ctx, vm.DatabaseID, resp.RecoveredTo); err != nil {
 		s.log.Warn("dbsched: record restore point", "database_id", vm.DatabaseID, "err", err)
 	}
 	s.log.Info("dbsched: restore recovered", "database_id", vm.DatabaseID, "target", vm.RestoreTarget,
 		"recovered_to", resp.RecoveredTo, "until_end", vm.RestoreUntilEnd)
+	return nil
 }

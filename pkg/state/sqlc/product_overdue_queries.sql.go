@@ -43,48 +43,6 @@ func (q *Queries) ProductOverdueAllHolds(ctx context.Context, db DBTX) ([]Produc
 	return items, nil
 }
 
-const productOverdueCustomerHold = `-- name: ProductOverdueCustomerHold :one
-SELECT h.app_id, h.tenant_id, h.account_id, h.document_id, h.export_id, h.due_at, h.since,coalesce(e.hosted_invoice_url,'')::text AS hosted_invoice_url
-FROM product_control_overdue_holds h
-JOIN product_control_overdue_policies p ON p.app_id=h.app_id AND p.account_id=h.account_id
-JOIN usage_statement_invoice_exports e ON e.id=h.export_id
-WHERE h.account_id=$1 AND h.app_id=$2 AND h.tenant_id=$3
- AND e.payment_status IN ('open','uncollectible') AND coalesce(e.amount_remaining_minor,1)>0
-`
-
-type ProductOverdueCustomerHoldParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	TenantID  pgtype.UUID
-}
-
-type ProductOverdueCustomerHoldRow struct {
-	AppID            pgtype.UUID
-	TenantID         pgtype.UUID
-	AccountID        pgtype.UUID
-	DocumentID       pgtype.UUID
-	ExportID         pgtype.UUID
-	DueAt            pgtype.Timestamptz
-	Since            pgtype.Timestamptz
-	HostedInvoiceUrl string
-}
-
-func (q *Queries) ProductOverdueCustomerHold(ctx context.Context, db DBTX, arg ProductOverdueCustomerHoldParams) (ProductOverdueCustomerHoldRow, error) {
-	row := db.QueryRow(ctx, productOverdueCustomerHold, arg.AccountID, arg.AppID, arg.TenantID)
-	var i ProductOverdueCustomerHoldRow
-	err := row.Scan(
-		&i.AppID,
-		&i.TenantID,
-		&i.AccountID,
-		&i.DocumentID,
-		&i.ExportID,
-		&i.DueAt,
-		&i.Since,
-		&i.HostedInvoiceUrl,
-	)
-	return i, err
-}
-
 const productOverdueDeleteAppHolds = `-- name: ProductOverdueDeleteAppHolds :many
 DELETE FROM product_control_overdue_holds WHERE account_id=$1 AND app_id=$2 RETURNING app_id, tenant_id, account_id, document_id, export_id, due_at, since
 `
@@ -204,24 +162,49 @@ func (q *Queries) ProductOverdueDue(ctx context.Context, db DBTX, now pgtype.Tim
 }
 
 const productOverdueHolds = `-- name: ProductOverdueHolds :many
-SELECT h.app_id, h.tenant_id, h.account_id, h.document_id, h.export_id, h.due_at, h.since,coalesce(e.hosted_invoice_url,'')::text AS hosted_invoice_url
-FROM product_control_overdue_holds h
+WITH scoped_holds AS (
+ SELECT customer_hold.app_id, customer_hold.tenant_id, customer_hold.account_id, customer_hold.document_id, customer_hold.export_id, customer_hold.due_at, customer_hold.since FROM product_control_overdue_holds customer_hold
+ WHERE customer_hold.account_id=$2 AND customer_hold.app_id=$3
+   AND customer_hold.tenant_id=$4::uuid
+ UNION ALL
+ SELECT app_hold.app_id, app_hold.tenant_id, app_hold.account_id, app_hold.document_id, app_hold.export_id, app_hold.due_at, app_hold.since FROM product_control_overdue_holds app_hold
+ WHERE app_hold.account_id=$2 AND app_hold.app_id=$3 AND $4::uuid IS NULL
+)
+SELECT h.account_id,h.app_id,h.tenant_id,
+       coalesce(next_invoice.document_id,h.document_id)::uuid AS document_id,
+       coalesce(next_invoice.export_id,h.export_id)::uuid AS export_id,
+       coalesce(next_invoice.due_at,h.due_at)::timestamptz AS due_at,h.since,
+       coalesce(current_invoice.hosted_invoice_url,next_invoice.hosted_invoice_url,'')::text AS hosted_invoice_url
+FROM scoped_holds h
 JOIN product_control_overdue_policies p ON p.app_id=h.app_id AND p.account_id=h.account_id
-JOIN usage_statement_invoice_exports e ON e.id=h.export_id
-WHERE h.account_id=$1 AND h.app_id=$2
- AND e.payment_status IN ('open','uncollectible') AND coalesce(e.amount_remaining_minor,1)>0
-ORDER BY h.due_at,h.tenant_id
+LEFT JOIN usage_statement_invoice_exports current_invoice ON current_invoice.id=h.export_id
+ AND current_invoice.payment_status IN ('open','uncollectible') AND coalesce(current_invoice.amount_remaining_minor,1)>0
+LEFT JOIN LATERAL (
+ SELECT d.id AS document_id,e.id AS export_id,e.due_at,e.hosted_invoice_url
+ FROM product_control_billing_documents d
+ JOIN usage_statement_invoice_exports e ON e.statement_id=d.id AND e.account_id=d.account_id AND e.source_kind='product_control'
+ WHERE current_invoice.id IS NULL
+   AND d.account_id=h.account_id AND d.app_id=h.app_id AND d.tenant_id=h.tenant_id AND d.kind='statement'
+   AND e.status='completed' AND e.payment_status IN ('open','uncollectible') AND coalesce(e.amount_remaining_minor,1)>0
+   AND e.due_at+make_interval(days=>p.block_overdue_after_days)<=greatest($1::timestamptz,h.since)
+ ORDER BY e.due_at,e.id
+ LIMIT 1
+) next_invoice ON true
+WHERE current_invoice.id IS NOT NULL OR next_invoice.export_id IS NOT NULL
+ORDER BY coalesce(next_invoice.due_at,h.due_at),h.tenant_id
 `
 
 type ProductOverdueHoldsParams struct {
+	AsOf      pgtype.Timestamptz
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
+	TenantID  pgtype.UUID
 }
 
 type ProductOverdueHoldsRow struct {
+	AccountID        pgtype.UUID
 	AppID            pgtype.UUID
 	TenantID         pgtype.UUID
-	AccountID        pgtype.UUID
 	DocumentID       pgtype.UUID
 	ExportID         pgtype.UUID
 	DueAt            pgtype.Timestamptz
@@ -229,10 +212,15 @@ type ProductOverdueHoldsRow struct {
 	HostedInvoiceUrl string
 }
 
-// Holds apply while their policy exists and their invoice is still unpaid, so
-// payment or a cleared policy takes effect before the next recomputation.
+// An existing hold follows the next qualifying statement when its invoice
+// settles. The point lookup and app list share the same payment snapshot.
 func (q *Queries) ProductOverdueHolds(ctx context.Context, db DBTX, arg ProductOverdueHoldsParams) ([]ProductOverdueHoldsRow, error) {
-	rows, err := db.Query(ctx, productOverdueHolds, arg.AccountID, arg.AppID)
+	rows, err := db.Query(ctx, productOverdueHolds,
+		arg.AsOf,
+		arg.AccountID,
+		arg.AppID,
+		arg.TenantID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -241,9 +229,9 @@ func (q *Queries) ProductOverdueHolds(ctx context.Context, db DBTX, arg ProductO
 	for rows.Next() {
 		var i ProductOverdueHoldsRow
 		if err := rows.Scan(
+			&i.AccountID,
 			&i.AppID,
 			&i.TenantID,
-			&i.AccountID,
 			&i.DocumentID,
 			&i.ExportID,
 			&i.DueAt,

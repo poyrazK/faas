@@ -82,6 +82,18 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 			t.Fatalf("apply %s: %v", name, err)
 		}
 	}
+	// Persistent sessions (ADR-20261122132055): the first is NO TRANSACTION,
+	// so each runs statement by statement as goose runs it.
+	for _, name := range []string{"20261126171607100_sandbox_sessions_persistent.sql", "20261126171607200_sandbox_session_captures.sql",
+		"20261126171607300_sandbox_volumes.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pgtest.ExecMigration(ctx, t, pool, string(raw), true); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO accounts (id) VALUES ($1)`, account); err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ The app runs as a server, so server components, route handlers, server
 actions and middleware all work.
 
 A Next.js 16 app runs on every plan, Free included. When the `start` script
-is a plain `next start`, Gregale builds the app with `output: "standalone"`,
+is `next start`, Gregale builds the app with `output: "standalone"`,
 so `next build` also copies the files the server needs into
 `.next/standalone`. With its full `node_modules`, a small app needs about
 530 MB. If that would not fit your plan, which is the case on Free and Hobby,
@@ -93,9 +93,12 @@ on Free and Hobby, and all of these hold:
 
 - `next` 16 or later is in `dependencies`;
 - the `build` script runs `next build`;
-- the `start` script is exactly `next start`, with no `prestart` or
-  `poststart` script. `next start` reads `PORT`, so flags such as `-p` are
-  not needed; a start with flags, or a custom server, keeps `node_modules`;
+- the `start` script is `next start`, with no `prestart` or `poststart`
+  script. It may set `-p`/`--port`, `-H`/`--hostname` and
+  `--keepAliveTimeout`, each with a plain value such as `3000`, `$PORT` or
+  `0.0.0.0`; the standalone server gets them as `PORT`, `HOSTNAME` and
+  `KEEP_ALIVE_TIMEOUT`. A project directory, any other flag, or a custom
+  server keeps `node_modules`;
 - the app builds on Node 24, the default. An app that declares another Node
   version carries its own Node and its full `node_modules`;
 - the deployment has no release command, which may need your sources or
@@ -171,7 +174,7 @@ browser bundle when it builds, so they are not read at runtime: commit them in
 ## Add PostgreSQL
 
 ```bash
-gregale add postgres --app my-site --region <region>
+gregale add postgres --app my-site
 ```
 
 The connection URL arrives as `DATABASE_URL`, for server components, route

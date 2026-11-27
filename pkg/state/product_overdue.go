@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -70,7 +71,7 @@ type ProductOverdueStore interface {
 	// api.ProductOverdueHeldSyncInterval.
 	SyncProductOverdueHolds(ctx context.Context, now time.Time) (placed, lifted []ProductOverdueHold, err error)
 	// ListProductOverdueHolds and GetProductOverdueHold return holds that
-	// apply: their policy exists and their invoice is still unpaid.
+	// apply, following the next overdue statement if the held invoice settles.
 	ListProductOverdueHolds(ctx context.Context, accountID, appID string) ([]ProductOverdueHold, error)
 	// GetProductOverdueHold is ErrNotFound when the customer is not held.
 	GetProductOverdueHold(ctx context.Context, accountID, appID, tenantID string) (ProductOverdueHold, error)
@@ -106,6 +107,17 @@ func validateProductOverdueApp(accountID, appID string) error {
 func productInvoiceUnpaid(e StatementInvoiceExport) bool {
 	return (e.PaymentStatus == InvoicePaymentOpen || e.PaymentStatus == InvoicePaymentUncollectible) &&
 		(e.AmountRemainingMinor == nil || *e.AmountRemainingMinor > 0)
+}
+
+// Match the ProductOverdueDue query. Product Control uses the last confirmed
+// payment status for its holds.
+func productInvoiceOverdue(e StatementInvoiceExport, days int, now time.Time) bool {
+	return e.Status == StatementInvoiceExportCompleted && productInvoiceUnpaid(e) &&
+		e.DueAt != nil && !e.DueAt.UTC().AddDate(0, 0, days).After(now)
+}
+
+func earlierProductInvoice(e StatementInvoiceExport, other ProductOverdueHold) bool {
+	return e.DueAt.Before(other.DueAt) || e.DueAt.Equal(other.DueAt) && e.ID < other.ExportID
 }
 
 func productOverdueRefusal(h ProductOverdueHold) error {
@@ -188,11 +200,11 @@ func (m *MemStore) SyncProductOverdueHolds(_ context.Context, now time.Time) ([]
 			continue
 		}
 		policy, ok := d.overduePolicies[doc.app]
-		if !ok || policy.AccountID != doc.account || !overdueExport(e, policy.BlockOverdueAfterDays, now) {
+		if !ok || policy.AccountID != doc.account || !productInvoiceOverdue(e, policy.BlockOverdueAfterDays, now) {
 			continue
 		}
 		key := doc.app + "/" + doc.document.TenantID
-		if prior, ok := due[key]; ok && (prior.DueAt.Before(*e.DueAt) || prior.DueAt.Equal(*e.DueAt) && prior.ExportID < e.ID) {
+		if prior, ok := due[key]; ok && !earlierProductInvoice(e, prior) {
 			continue
 		}
 		due[key] = ProductOverdueHold{AccountID: doc.account, AppID: doc.app, TenantID: doc.document.TenantID, DocumentID: doc.document.ID,
@@ -233,11 +245,12 @@ func (m *MemStore) ListProductOverdueHolds(_ context.Context, accountID, appID s
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := []ProductOverdueHold{}
+	now := time.Now()
 	for _, hold := range m.productLocked().overdueHolds {
 		if hold.AccountID != accountID || hold.AppID != appID {
 			continue
 		}
-		if hold, ok := m.productOverdueHoldLocked(accountID, appID, hold.TenantID); ok {
+		if hold, ok := m.productOverdueHoldLocked(accountID, appID, hold.TenantID, now); ok {
 			out = append(out, hold)
 		}
 	}
@@ -248,30 +261,46 @@ func (m *MemStore) ListProductOverdueHolds(_ context.Context, accountID, appID s
 func (m *MemStore) GetProductOverdueHold(_ context.Context, accountID, appID, tenantID string) (ProductOverdueHold, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	hold, ok := m.productOverdueHoldLocked(accountID, appID, tenantID)
+	hold, ok := m.productOverdueHoldLocked(accountID, appID, tenantID, time.Now())
 	if !ok {
 		return ProductOverdueHold{}, ErrNotFound
 	}
 	return hold, nil
 }
 
-// productOverdueHoldLocked is a customer's hold while its policy exists and
-// its invoice is still unpaid.
-func (m *MemStore) productOverdueHoldLocked(accountID, appID, tenantID string) (ProductOverdueHold, bool) {
+// Only existing holds apply here. The worker places new holds.
+func (m *MemStore) productOverdueHoldLocked(accountID, appID, tenantID string, now time.Time) (ProductOverdueHold, bool) {
 	d := m.productLocked()
 	hold, ok := d.overdueHolds[appID+"/"+tenantID]
 	if !ok || hold.AccountID != accountID {
 		return ProductOverdueHold{}, false
 	}
-	if p, ok := d.overduePolicies[appID]; !ok || p.AccountID != accountID {
+	policy, ok := d.overduePolicies[appID]
+	if !ok || policy.AccountID != accountID {
 		return ProductOverdueHold{}, false
 	}
-	e, ok := m.statementInvoiceExports[hold.ExportID]
-	if !ok || !productInvoiceUnpaid(e) {
-		return ProductOverdueHold{}, false
+	if e, ok := m.statementInvoiceExports[hold.ExportID]; ok && productInvoiceUnpaid(e) {
+		hold.HostedInvoiceURL = e.HostedInvoiceURL
+		return hold, true
 	}
-	hold.HostedInvoiceURL = e.HostedInvoiceURL
-	return hold, true
+
+	hold.ExportID = ""
+	if now.Before(hold.Since) {
+		now = hold.Since
+	}
+	for _, e := range m.statementInvoiceExports {
+		if e.AccountID != accountID || e.SourceKind != StatementSourceProductControl ||
+			!productInvoiceOverdue(e, policy.BlockOverdueAfterDays, now) {
+			continue
+		}
+		doc, ok := d.documents[e.StatementID]
+		if !ok || doc.account != accountID || doc.app != appID || doc.document.TenantID != tenantID || doc.document.Kind != "statement" ||
+			(hold.ExportID != "" && !earlierProductInvoice(e, hold)) {
+			continue
+		}
+		hold.DocumentID, hold.ExportID, hold.DueAt, hold.HostedInvoiceURL = e.StatementID, e.ID, e.DueAt.UTC(), e.HostedInvoiceURL
+	}
+	return hold, hold.ExportID != ""
 }
 
 // --- PgStore ---
@@ -412,7 +441,12 @@ func (s *PgStore) ListProductOverdueHolds(ctx context.Context, accountID, appID 
 	if err := validateProductOverdueApp(accountID, appID); err != nil {
 		return nil, err
 	}
-	rows, err := sqlc.New().ProductOverdueHolds(ctx, s.pool, sqlc.ProductOverdueHoldsParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
+	return productOverdueHoldsPG(ctx, s.pool, accountID, appID, pgtype.UUID{}, time.Now())
+}
+
+func productOverdueHoldsPG(ctx context.Context, db sqlc.DBTX, accountID, appID string, tenant pgtype.UUID, now time.Time) ([]ProductOverdueHold, error) {
+	rows, err := sqlc.New().ProductOverdueHolds(ctx, db, sqlc.ProductOverdueHoldsParams{AccountID: mustPgUUID(accountID),
+		AppID: mustPgUUID(appID), TenantID: tenant, AsOf: pgTime(now)})
 	if err != nil {
 		return nil, fmt.Errorf("list product overdue holds: %w", err)
 	}
@@ -425,26 +459,24 @@ func (s *PgStore) ListProductOverdueHolds(ctx context.Context, accountID, appID 
 }
 
 func (s *PgStore) GetProductOverdueHold(ctx context.Context, accountID, appID, tenantID string) (ProductOverdueHold, error) {
-	return productOverdueHoldPG(ctx, s.pool, accountID, appID, tenantID)
+	return productOverdueHoldPG(ctx, s.pool, accountID, appID, tenantID, time.Now())
 }
 
 // productOverdueHoldPG reads a customer's applying hold; admission calls it
 // inside its transaction.
-func productOverdueHoldPG(ctx context.Context, db sqlc.DBTX, accountID, appID, tenantID string) (ProductOverdueHold, error) {
+func productOverdueHoldPG(ctx context.Context, db sqlc.DBTX, accountID, appID, tenantID string, now time.Time) (ProductOverdueHold, error) {
 	if err := validateProductOverdueApp(accountID, appID); err != nil {
 		return ProductOverdueHold{}, err
 	}
 	if _, err := uuid.Parse(tenantID); err != nil {
 		return ProductOverdueHold{}, fmt.Errorf("%w: tenant_id must be a UUID", ErrInvalidArgument)
 	}
-	row, err := sqlc.New().ProductOverdueCustomerHold(ctx, db, sqlc.ProductOverdueCustomerHoldParams{AccountID: mustPgUUID(accountID),
-		AppID: mustPgUUID(appID), TenantID: mustPgUUID(tenantID)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ProductOverdueHold{}, ErrNotFound
-	}
+	holds, err := productOverdueHoldsPG(ctx, db, accountID, appID, mustPgUUID(tenantID), now)
 	if err != nil {
 		return ProductOverdueHold{}, fmt.Errorf("get product overdue hold: %w", err)
 	}
-	return productOverdueHoldFromPG(sqlc.ProductControlOverdueHold{AppID: row.AppID, TenantID: row.TenantID, AccountID: row.AccountID,
-		DocumentID: row.DocumentID, ExportID: row.ExportID, DueAt: row.DueAt, Since: row.Since}, row.HostedInvoiceUrl), nil
+	if len(holds) == 0 {
+		return ProductOverdueHold{}, ErrNotFound
+	}
+	return holds[0], nil
 }

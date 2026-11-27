@@ -124,6 +124,7 @@ type ManagedPostgresDatabase struct {
 	RestoreWindowSeconds    int64                  `json:"restore_window_seconds"`
 	RestoreSourceDatabaseID string                 `json:"restore_source_database_id,omitempty"`
 	RestorePointInTime      string                 `json:"restore_point_in_time,omitempty"`
+	MaskedBranch            bool                   `json:"masked_branch,omitempty"`
 	State                   string                 `json:"state"`
 	LastErrorCode           string                 `json:"last_error_code,omitempty"`
 	CreatedAt               string                 `json:"created_at"`
@@ -164,7 +165,7 @@ type ManagedPostgresDatabase struct {
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
 	// Previews is what this database gives PR preview environments
-	// (ADR-20261102123523): "empty" or "copy"; omitted when off.
+	// (ADR-20261102123523): "empty", "copy" or "masked"; omitted when off.
 	Previews string `json:"previews,omitempty"`
 	// Preview is set on a database a PR preview environment owns: it is
 	// purged with the environment.
@@ -179,9 +180,14 @@ type ManagedPostgresPreviewOwner struct {
 }
 
 // SetManagedPostgresPreviewsRequest sets what a database gives PR preview
-// environments: "off", "empty" or "copy" (ADR-20261102123523).
+// environments (ADR-20261102123523).
 type SetManagedPostgresPreviewsRequest struct {
-	Previews string `json:"previews"`
+	Previews      string                               `json:"previews"`
+	MaskingPolicy *ManagedPostgresPreviewMaskingPolicy `json:"masking_policy,omitempty"`
+}
+
+type ManagedPostgresPreviewMaskingPolicy struct {
+	Tables []ManagedPostgresMaskedTable `json:"tables"`
 }
 
 // ManagedPostgresRestoreRange bounds a restore's point_in_time: from
@@ -378,7 +384,9 @@ type CreateManagedPostgresDatabaseRequest struct {
 }
 
 type RestoreManagedPostgresDatabaseRequest struct {
-	Name string `json:"name"`
+	// Region restores from the database's configured recovery region.
+	Region string `json:"region,omitempty"`
+	Name   string `json:"name"`
 	// PointInTime is an RFC3339 time inside the source's restore range.
 	// Empty restores from the latest point (ADR-20261106103654): apid's
 	// clock minus a couple of seconds.

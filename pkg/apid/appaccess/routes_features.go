@@ -210,6 +210,12 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/database-switches":              authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/database-switches/{id}":         authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/database-switches/{id}/cancel": authz.OrgActionDeployApp,
+	// A managed Postgres migration activation switches the app's database
+	// like a database switch.
+	"GET /v1/apps/{slug}/database-switches/migration":              authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/database-switches/migration/{id}":         authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/database-switches/migration":             authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/database-switches/migration/{id}/cancel": authz.OrgActionDeployApp,
 	// debug
 	"POST /v1/apps/{slug}/debug/compare":                   authz.OrgActionReadAppLogs, // read-only; POST only carries the body
 	"GET /v1/apps/{slug}/debug/coverage":                   authz.OrgActionReadAppLogs,

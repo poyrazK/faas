@@ -634,6 +634,19 @@ mirror when the primary returns an empty catalog or lacks a backup consistent
 at the requested time. See
 [ADR-20261105120854](adr/20261105120854-managed-postgres-mirror-retention-safety.md).
 
+### Check extension compatibility before an in-place upgrade
+
+For an account in the in-place major-upgrade preview, check the installed
+extensions against the target PostgreSQL image.
+
+```sh
+gregale postgres upgrade orders --major 18 --check
+```
+
+The check lists incompatible extension names and installed versions.
+Gregale checks again before stopping a running database for an upgrade.
+PostgreSQL runs its full `pg_upgrade --check` before modifying the cluster.
+
 ## Safety boundary
 
 Schema-generated application APIs use the separately qualified `data_api`

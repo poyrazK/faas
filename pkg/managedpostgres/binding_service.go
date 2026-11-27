@@ -156,7 +156,7 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	if err != nil {
 		return Binding{}, false, err
 	}
-	if err := backend.Capabilities.SupportsCredentialAccess(request.Access); err != nil {
+	if err := backend.SupportsBindingAccess(database.Spec, request.Access); err != nil {
 		return Binding{}, false, err
 	}
 	if s.releaseSecretsPinned != nil {
@@ -301,11 +301,14 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "backend_unavailable", ErrUnavailable, time.Hour)
 	}
-	if err := backend.Capabilities.SupportsCredentialAccess(binding.Access); err != nil {
+	if err := backend.SupportsBindingAccess(database.Spec, binding.Access); err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "credential_access_unsupported", err, time.Hour)
 	}
 
 	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
+	if err := s.attachBindingTimeouts(ctx, backend.Provider, &credentialRequest); err != nil {
+		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "timeout_policy_unavailable", ErrUnavailable, s.retryInterval)
+	}
 	if credentialRequest.CustomRoles, credentialRequest.CustomRoleDefault, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "custom_roles_unavailable", ErrUnavailable, s.retryInterval)
 	}

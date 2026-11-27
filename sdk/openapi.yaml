@@ -2626,7 +2626,7 @@ paths:
         '200':
           description: Bounded credential-free planning and explicit unknown coverage
           headers:
-            Cache-Control: {schema: {type: string}, description: Always no-store}
+            Cache-Control: {schema: {type: string}, description: Connection budget metadata is served with Cache-Control no-store.}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ManagedPostgresConnectionBudget'}
@@ -8838,8 +8838,8 @@ paths:
     get:
       tags: [deployments]
       operationId: getDatabaseSwitch
-      summary: Read a rollback that restores the database.
-      description: The switch's phase, restore point, databases, drain counts and outcome.
+      summary: Read a managed PostgreSQL binding switch.
+      description: The switch's phase, databases, drain counts and outcome.
       responses:
         '200':
           description: The switch.
@@ -33428,11 +33428,11 @@ components:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
       additionalProperties: false
-      required: [name, region]
+      required: [name]
       properties:
         request_id: {type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name."}
         name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
-        region: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        region: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional. Omit it to use the platform's default placement, which GET /v1/postgres/capabilities reports."}
         postgres_major: {type: integer, minimum: 12, maximum: 99, default: 17}
         service_class: {type: string, enum: [development, burstable, production], default: development}
         availability: {type: string, enum: [single_zone, high_availability], default: single_zone}
@@ -33449,7 +33449,7 @@ components:
         point_in_time:
           type: string
           format: date-time
-          description: A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds before the request.
+          description: A time inside the source's restore_range. Omit it to use the latest point.
         ttl_seconds:
           type: integer
           format: int64
@@ -33577,7 +33577,7 @@ components:
         app_id: {type: string, minLength: 1, maxLength: 128}
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
-        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Credential mode. Unsupported modes are rejected before a binding is reserved.}
     ObjectBucket:
       description: Logical bucket metadata without upstream credentials or placement details.
       type: object
@@ -47493,11 +47493,65 @@ components:
         configuration:
           $ref: '#/components/schemas/DeploymentConfigurationStatus'
         error: {type: string, description: "Staging or enqueue error message; partial-failure rows carry this in lieu of IDs."}
-    # ─── Alert rules (issue #396 / ADR-045 PR 3) ──────────────────────────
-    # Wire shape mirrors pkg/api/alerts.go. Plaintext webhook_secret is
-    # only present on the create/update request bodies; every response
-    # carries the masked constant in webhook_secret_sealed_masked. The
-    # sealed ciphertext never leaves the server.
+    AlertObservedIncident:
+      description: An incident observed in live traffic or reconstructed during replay.
+      type: object
+      required: [opened_at, eligible_notifications, last_eligible_at]
+      properties:
+        opening_evidence:
+          $ref: '#/components/schemas/AlertObservedIncidentOpeningEvidence'
+        environment_scope: {type: string, description: Environment of this observation when scoped.}
+        opened_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+        outcome: {type: string, enum: [recovered, observation_ended]}
+        eligible_notifications: {type: integer, minimum: 1, description: Notification opportunities for this incident under the rule's cooldown.}
+        last_eligible_at: {type: string, format: date-time}
+    AlertObservedIncidentOpeningEvidence:
+      description: Values captured at the first breach of a live observed incident.
+      type: object
+      required: [metric, window, comparison, observed, baseline, trigger_value]
+      properties:
+        metric: {type: string, description: Metric the rule evaluated when the incident opened.}
+        window: {type: string, description: Rolling metric window in use when the incident opened.}
+        comparison: {type: string, enum: [above_baseline, below_baseline]}
+        observed: {type: number, format: double, description: Observed value in the metric's units.}
+        baseline: {type: number, format: double, description: Historical median in the metric's units.}
+        trigger_value: {type: number, format: double, description: Trigger derived from the baseline and rule threshold at opening.}
+        baseline_days: {type: integer, minimum: 1, maximum: 7, description: Number of days that qualified for the baseline.}
+    AlertObservationCoverage:
+      description: Recorded live Observe only checks during the 24 hours before this response.
+      type: object
+      required: [attempted, completed]
+      properties:
+        attempted: {type: integer, minimum: 0, description: Recorded checks including skipped checks.}
+        completed: {type: integer, minimum: 0, description: Checks that evaluated the condition.}
+        skipped:
+          type: array
+          description: Recorded skips grouped by reason.
+          items: {$ref: '#/components/schemas/AlertObservationSkipCount'}
+        last_checked_at: {type: string, format: date-time, description: Most recent recorded check for this observation even if older than 24 hours.}
+    AlertObservationSkipCount:
+      description: Count of observation checks skipped for a single reason.
+      type: object
+      required: [reason, count]
+      properties:
+        reason: {type: string, enum: [insufficient_traffic, insufficient_history, telemetry_missing_or_stale, telemetry_unavailable]}
+        count: {type: integer, minimum: 1}
+    AlertAnomalyEvaluation:
+      description: Why the latest anomaly evaluation did not trigger a fire.
+      type: object
+      required: [reason, evaluated_at, count]
+      properties:
+        baseline_days: {type: integer, minimum: 0, maximum: 7, description: Number of days that qualified for the baseline when history was evaluated.}
+        reason: {type: string, enum: [insufficient_traffic, insufficient_history, telemetry_missing_or_stale, telemetry_unavailable, threshold_not_reached, minimum_impact_not_reached, zero_baseline, notification_cooldown, observed_breach, recovery_confirmation_pending, recovery_confirmed]}
+        evaluated_at: {type: string, format: date-time}
+        count: {type: integer, format: int64, minimum: 0, description: "Eligible requests, qualifying historical windows, or consecutive healthy checks depending on the reason."}
+        required_count: {type: integer, format: int64, minimum: 1, description: "Required requests, historical windows, or healthy checks when the reason includes a count."}
+        observed: {type: number, format: double, description: Observed value in the rule metric's units for a completed check.}
+        baseline: {type: number, format: double, description: Historical median in the rule metric's units for a completed check.}
+        trigger_value: {type: number, format: double, description: Baseline multiplied by the rule threshold when a positive baseline is available.}
+        minimum_value: {type: number, format: double, description: "Minimum required observation for an above-baseline rule, or minimum required baseline for a below-baseline rule. Present when that minimum was not reached."}
+        next_notification_eligible_at: {type: string, format: date-time, description: End of the current incident's notification cooldown when the evaluation suppressed a repeat fire.}
     AlertRuleResponse:
       description: |
         A customer-configurable alert rule. Carries the masked webhook
@@ -47520,6 +47574,16 @@ components:
         - created_at
         - updated_at
       properties:
+        observe_only: {type: boolean, description: The rule records observations on the normal evaluation schedule.}
+        recovery_confirmation_checks: {type: integer, minimum: 1, maximum: 2, description: Consecutive healthy checks required to recover.}
+        environment_scope: {type: string, description: Environment observed by this rule when scoped.}
+        observed_incidents:
+          type: array
+          maxItems: 20
+          description: Latest observation-only incidents, most recent first. Included in the individual rule response.
+          items: {$ref: '#/components/schemas/AlertObservedIncident'}
+        observation_coverage:
+          $ref: '#/components/schemas/AlertObservationCoverage'
         mcp_readiness_scope:
           type: string
           maxLength: 40
@@ -47713,6 +47777,8 @@ components:
           description: "Evaluation state. degraded means the rule's own metric source is unavailable; unknown means insufficient samples, compacted event history, or a paused event consumer."
         last_fired_at: {type: string, format: date-time}
         last_evaluated_at: {type: string, format: date-time}
+        anomaly_evaluation:
+          $ref: '#/components/schemas/AlertAnomalyEvaluation'
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     CreateAlertRuleRequest:
@@ -47720,6 +47786,9 @@ components:
       type: object
       required: [name, metric, comparison, threshold, window_spec]
       properties:
+        observe_only: {type: boolean, description: Record baseline breaches as observations. Defaults to false.}
+        recovery_confirmation_checks: {type: integer, minimum: 1, maximum: 2, default: 1, description: Consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison.}
+        environment_scope: {type: string, maxLength: 33, description: "Scope a request-count, error-rate, or p95 latency baseline rule to default or a named project environment. Scoped Notify supports channels and webhooks. Omitted or empty uses app-wide telemetry."}
         mcp_readiness_scope:
           type: string
           maxLength: 40
@@ -47820,6 +47889,9 @@ components:
       description: 'Partial update — every field is optional. Omitted means leave alone.'
       type: object
       properties:
+        observe_only: {type: boolean, description: Switch an app-scoped baseline rule between observing and notifying.}
+        recovery_confirmation_checks: {type: integer, minimum: 1, maximum: 2, description: Change the number of consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison.}
+        environment_scope: {type: string, maxLength: 33, description: Change the environment of an anomaly rule in Observe only mode. Set to the empty string to clear the scope. Omit to keep the saved scope when enabling notifications.}
         mcp_readiness_scope:
           type: string
           maxLength: 40
@@ -47884,6 +47956,18 @@ components:
           minLength: 1
           maxLength: 256
           writeOnly: true
+    AlertDeliveryAnomalyEvidence:
+      description: Baseline comparison captured at the time of an anomaly alert fire.
+      type: object
+      required: [metric, comparison, threshold, window, baseline, baseline_days, ratio]
+      properties:
+        metric: {type: string, enum: [error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count]}
+        comparison: {type: string, enum: [above_baseline, below_baseline]}
+        threshold: {type: number, format: double, description: Configured multiplier when the alert fired.}
+        window: {type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d']}
+        baseline: {type: number, format: double, description: Median value in the metric's units.}
+        baseline_days: {type: integer, minimum: 1, description: Historical windows used in the baseline.}
+        ratio: {type: number, format: double, minimum: 0, description: Observed value divided by baseline.}
     AlertDeliveryResponse:
       description: |
         One alert_deliveries row as surfaced by
@@ -47895,6 +47979,8 @@ components:
       type: object
       required: [id, rule_id, account_id, idempotency_key, status, attempt_count, observed_value, fired_at, is_test]
       properties:
+        anomaly:
+          $ref: '#/components/schemas/AlertDeliveryAnomalyEvidence'
         readiness_event_id: {type: string, format: uuid, description: Stable readiness logical event associated with this physical delivery.}
         readiness_destination: {type: string, enum: [primary, fallback], description: Selected receiver role for this physical readiness dispatch.}
         readiness_failover_reason: {type: string, enum: [primary_failure_threshold, incident_sticky_fallback, recovery_to_primary, primary_queue_blocked], description: Destination selection reason recorded on this physical readiness delivery.}

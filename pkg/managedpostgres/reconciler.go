@@ -172,6 +172,9 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 }
 
 func (r *Reconciler) Run(ctx context.Context) error {
+	if r.service.autoGrowAllowance != nil {
+		go r.runAutoGrow(ctx)
+	}
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 	for {
@@ -200,4 +203,19 @@ func classifyReconcileResult(database Database, err error) ReconcileOutcome {
 		return OutcomeDeferred
 	}
 	return OutcomeFailed
+}
+
+func (r *Reconciler) runAutoGrow(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		if err := r.service.autoGrowSweep(ctx, r.batchSize); err != nil && ctx.Err() == nil {
+			r.logger.Warn("managed postgres auto-grow sweep failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

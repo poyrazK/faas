@@ -121,6 +121,21 @@ func managedPostgresPlanAllows(limits api.ManagedPostgresPlanLimits, spec manage
 	return managedpg.PlanAllowsClass(limits, spec.Class)
 }
 
+// decodeManagedPostgresCreate reads a create request. Placement is the
+// operator's choice: a create without a region lands in the platform
+// default, as dev sessions and manifests do.
+func (s *server) decodeManagedPostgresCreate(w http.ResponseWriter, r *http.Request) (api.CreateManagedPostgresDatabaseRequest, bool) {
+	var req api.CreateManagedPostgresDatabaseRequest
+	if err := decodeJSON(r, &req); err != nil {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return req, false
+	}
+	if strings.TrimSpace(req.Region) == "" {
+		req.Region = s.managedPostgres.DefaultRegion()
+	}
+	return req, true
+}
+
 func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest, limits api.ManagedPostgresPlanLimits) (managedpostgres.Spec, error) {
 	class := managedpostgres.ServiceClass(req.ServiceClass)
 	if class == "" {
@@ -170,7 +185,7 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 		ID: database.ID, Name: database.Name, Region: database.Spec.Region, PostgresMajor: database.Spec.PostgresMajor,
 		ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability), ScaleToZero: database.Spec.ScaleToZero,
 		StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
-		RestoreSourceDatabaseID: database.RestoreSourceDatabaseID, State: string(database.State), LastErrorCode: database.LastErrorCode,
+		RestoreSourceDatabaseID: database.RestoreSourceDatabaseID, MaskedBranch: database.IsMaskedBranch(), State: string(database.State), LastErrorCode: database.LastErrorCode,
 		CreatedAt: database.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: database.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if !database.RestorePointInTime.IsZero() {
@@ -490,9 +505,8 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
 		return
 	}
-	var req api.CreateManagedPostgresDatabaseRequest
-	if err := decodeJSON(r, &req); err != nil {
-		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+	req, ok := s.decodeManagedPostgresCreate(w, r)
+	if !ok {
 		return
 	}
 	spec, err := managedPostgresSpecFromRequest(req, limits)
@@ -668,6 +682,10 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
+	if req.Region != "" && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
+		writeMissingRoute(w, r)
+		return
+	}
 	restore, err := managedPostgresRestoreRequest(acct.ID, source.ID, req)
 	if err != nil {
 		managedPostgresProblem(w, err)
@@ -693,7 +711,7 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 // No point_in_time restores from the latest point; ttl_seconds makes the copy
 // a branch (ADR-20261106103654).
 func managedPostgresRestoreRequest(accountID, sourceID string, req api.RestoreManagedPostgresDatabaseRequest) (managedpostgres.RestoreDatabaseRequest, error) {
-	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name}
+	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name, RecoveryRegion: req.Region}
 	if raw := strings.TrimSpace(req.PointInTime); raw == "" {
 		restore.Latest = true
 	} else {
@@ -717,6 +735,9 @@ func managedPostgresRestoredEvent(database managedpostgres.Database, latest bool
 	event := map[string]any{
 		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
 		"point_in_time": database.RestorePointInTime.UTC().Format(time.RFC3339Nano), "latest": latest,
+	}
+	if database.RestoreFromRecovery {
+		event["recovery_region"] = database.Spec.Region
 	}
 	if !database.ExpiresAt.IsZero() {
 		event["expires_at"] = database.ExpiresAt.UTC().Format(time.RFC3339Nano)
@@ -764,6 +785,10 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 	}
 	// Application Auth is a dark launch: without it the mode is unknown.
 	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialReplicaOnly && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}

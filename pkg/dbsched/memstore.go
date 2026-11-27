@@ -33,6 +33,9 @@ func (m *MemStore) UpsertNode(_ context.Context, node Node) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	node.BootSlots = bootSlots(node)
+	if old, ok := m.nodes[node.ID]; ok && old.RecoveryRegion != node.RecoveryRegion {
+		return ErrConflict
+	}
 	m.nodes[node.ID] = node
 	return nil
 }
@@ -117,7 +120,7 @@ func (m *MemStore) Place(_ context.Context, vm VM) (VM, error) {
 		nodes = append(nodes, n)
 	}
 	usage := m.usageLocked()
-	node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID, vm.Major)
+	node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID, vm.Major, vm.RecoveryRegion)
 	if !ok {
 		return VM{}, ErrNoCapacity
 	}
@@ -131,6 +134,9 @@ func (m *MemStore) Place(_ context.Context, vm VM) (VM, error) {
 	}
 	now := m.now()
 	vm.NodeID, vm.State, vm.Bootstrapped, vm.LastError = node.ID, StateProvisioning, false, ""
+	if vm.RestoreFromRecovery {
+		vm.State = stateRegionalRestore
+	}
 	vm.CreatedAt, vm.StateChangedAt, vm.LastActiveAt = now, now, time.Time{}
 	m.vms[vm.DatabaseID] = vm
 	m.openLocked(vm.DatabaseID, MeterStorage, vm.VolumeBytes, now)
@@ -300,7 +306,8 @@ func (m *MemStore) claimProvisioning(id string, restore bool, held time.Time, le
 	}
 	current, leased := m.leases[id]
 	now := m.now()
-	if vm.State != StateProvisioning || (vm.RestoreSource != "") != restore || (leased && !current.Before(now) && !current.Equal(held)) {
+	eligible := vm.State == StateProvisioning || (restore && isRestoring(vm.State))
+	if !eligible || (vm.RestoreSource != "") != restore || (leased && !current.Before(now) && !current.Equal(held)) {
 		return time.Time{}, ErrConflict
 	}
 	next := now.Add(lease)
@@ -308,11 +315,23 @@ func (m *MemStore) claimProvisioning(id string, restore bool, held time.Time, le
 	return next, nil
 }
 
+func (m *MemStore) PinRestoreTimeline(_ context.Context, id string, timeline uint32) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || !isRestoring(vm.State) || vm.RestoreSource == "" || (vm.RestoreTimeline != 0 && vm.RestoreTimeline != timeline) {
+		return ErrConflict
+	}
+	vm.RestoreTimeline = timeline
+	m.vms[id] = vm
+	return nil
+}
+
 func (m *MemStore) RecordRestore(_ context.Context, id string, recoveredTo time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	vm, ok := m.vms[id]
-	if !ok || vm.State != StateProvisioning || vm.RestoreSource == "" {
+	if !ok || !isRestoring(vm.State) || vm.RestoreSource == "" {
 		return ErrConflict
 	}
 	vm.RestoreRecoveredTo = recoveredTo

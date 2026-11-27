@@ -35,6 +35,8 @@ type Config struct {
 	// Offsite mirrors the archive to a second bucket, at another provider
 	// (pkg/dbarchive offsite.go). It needs Remote.
 	Offsite *RemoteConfig `toml:"offsite"`
+	// Recovery reads the off-site archive sent by the paired source region.
+	Recovery *RemoteConfig `toml:"recovery"`
 }
 
 // RemoteConfig reaches an S3-compatible bucket.
@@ -75,6 +77,17 @@ func (c *Config) validate() error {
 	}
 	if c.PruneInterval < time.Minute || c.PruneInterval > 24*time.Hour {
 		return errors.New("dbbackupd: prune_interval must be between 1m and 24h")
+	}
+	if c.Recovery != nil {
+		if c.Remote == nil {
+			return errors.New("dbbackupd: recovery needs remote for restored databases")
+		}
+		if err := c.Recovery.validate("recovery", time.Minute); err != nil {
+			return err
+		}
+		if c.Recovery.Endpoint == c.Remote.Endpoint && c.Recovery.Bucket == c.Remote.Bucket {
+			return errors.New("dbbackupd: recovery must use a separate bucket from remote")
+		}
 	}
 	r, o := c.Remote, c.Offsite
 	if r == nil {

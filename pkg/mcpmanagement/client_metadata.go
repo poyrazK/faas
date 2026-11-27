@@ -41,6 +41,10 @@ type clientMetadataDocument struct {
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	// TokenEndpointAuthMethods lists every method the client can use (MCP
+	// SEP-3149). ChatGPT publishes ["none", "private_key_jwt"] and keeps the
+	// legacy singular field as a preference for private_key_jwt.
+	TokenEndpointAuthMethods []string `json:"token_endpoint_auth_methods_supported"`
 }
 
 // isClientMetadataURL reports whether a client_id names a metadata document:
@@ -115,7 +119,7 @@ func validClientMetadata(id string, doc clientMetadataDocument) error {
 		return fmt.Errorf("%w: redirect_uris must list 1 to %d URIs", errClientMetadata, clientMetadataRedirects)
 	case len(doc.ClientName) > 256:
 		return fmt.Errorf("%w: client_name is too long", errClientMetadata)
-	case doc.TokenEndpointAuthMethod != "" && doc.TokenEndpointAuthMethod != "none":
+	case !publicClientMetadata(doc):
 		return fmt.Errorf("%w: only public clients (token_endpoint_auth_method none) are supported", errClientMetadata)
 	}
 	if !grantTypesAllowed(doc.GrantTypes) {
@@ -127,6 +131,19 @@ func validClientMetadata(id string, doc clientMetadataDocument) error {
 		}
 	}
 	return nil
+}
+
+// publicClientMetadata reports whether the client can exchange codes as a
+// public client, the only kind this server supports. A document that lists
+// the methods it can use (MCP SEP-3149) is public when "none" is among them:
+// the server picks from the intersection with its own methods, and the legacy
+// singular field is then only a preference. Without the list, the singular
+// field decides, and its absence means none.
+func publicClientMetadata(doc clientMetadataDocument) bool {
+	if len(doc.TokenEndpointAuthMethods) > 0 {
+		return slices.Contains(doc.TokenEndpointAuthMethods, "none")
+	}
+	return doc.TokenEndpointAuthMethod == "" || doc.TokenEndpointAuthMethod == "none"
 }
 
 // clientMetadataTTL honors a document's max-age within the server's bounds.

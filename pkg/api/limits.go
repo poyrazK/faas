@@ -899,6 +899,8 @@ const (
 	ProductControlInvoiceReferenceMaxBytes                = 255
 	ProductControlOwnerPageSize                           = 100
 	ProductControlOwnerCursorMaxBytes                     = 1024
+	ProductControlBalanceRefreshBatchMax                  = 5
+	ProductControlStripeSendBatchMax                      = 5
 	ProductControlOwnerFormMaxBytes                       = 16 << 10
 	ProductControlSetupFormMaxBytes                       = 128 << 10
 	ProductControlDoctorMaxChecks                         = 1024
@@ -1939,6 +1941,9 @@ const (
 	// attempt cannot create a second provider invoice; a crashed attempt's
 	// claim expires (ADR-20261019180000).
 	StatementInvoiceExportClaimTTL = 15 * time.Minute
+	// Stripe can prune idempotency records after 24 hours. Leave a margin
+	// for request time and clock differences when retrying uncertain sends.
+	ProductStripeInvoiceSendRetryWindow = 23 * time.Hour
 	// List page sizes.
 	StatementInvoiceListDefault = 50
 	StatementInvoiceListMax     = 200
@@ -12145,6 +12150,35 @@ var (
 	SandboxSnapshotPendingSec = 3600
 	// SandboxPersistTimeoutSec bounds one workspace:persist call.
 	SandboxPersistTimeoutSec = 1800
+
+	// Persistent sessions (ADR-20261122132055 §6; proposed values, confirmed
+	// with the storage price). SandboxPersistentMax bounds an account's
+	// persistent sessions, paused or not. A running persistent session pauses
+	// after SandboxPersistentIdlePauseSec without calls, or once it has run
+	// SandboxPersistentRunMaxSec; a paused one expires after
+	// SandboxPausedRetentionDays. A call to a paused session waits up to
+	// SandboxResumeWaitSec for its resume.
+	SandboxPersistentMax          = [4]int{0, 2, 10, 50}
+	SandboxPersistentIdlePauseSec = [4]int{0, 300, 600, 1800}
+	SandboxPersistentRunMaxSec    = [4]int{0, 86_400, 259_200, 604_800}
+	SandboxPausedRetentionDays    = [4]int{0, 7, 30, 90}
+	SandboxResumeWaitSec          = 30
+	// SandboxForkMax bounds the forks one request makes (§3).
+	SandboxForkMax = [4]int{0, 1, 10, 100}
+	// SandboxVolumeMaxGB bounds a persistent session's workspace volume, and
+	// SandboxVolumeDefaultGB is its size when create names none (§4). A
+	// running volume is backed up every SandboxVolumeBackupSec.
+	SandboxVolumeMaxGB     = [4]int{0, 10, 50, 200}
+	SandboxVolumeDefaultGB = 10
+	SandboxVolumeBackupSec = 600
+	// SandboxPersistentRAMMBMax and SandboxPersistentVCPUMax are a persistent
+	// session's largest shape (§5); larger ones (32 GB, 16 vCPU) are by
+	// contract.
+	SandboxPersistentRAMMBMax = [4]int{0, 2048, 8192, 16_384}
+	SandboxPersistentVCPUMax  = [4]int{0, 2, 4, 8}
+	// SandboxPausedBytesFreePerAccount is the stored bytes of paused sessions
+	// (captures and volume backups) an account keeps free each month (§8).
+	SandboxPausedBytesFreePerAccount = [4]int64{0, 5 << 30, 25 << 30, 100 << 30}
 	// SandboxExposedPortsMax, SandboxPreviewRequestsPerSec and
 	// SandboxPublicPreview govern preview URLs (§11): ports per session,
 	// requests per second per session, and whether a port may be public.
@@ -19216,6 +19250,13 @@ const (
 	AlertChannelResolveRetryBatch      = 100
 )
 
+// PublicSourceFetchesPerHour caps the reads of public GitHub repositories one
+// account makes without an installation, scans and deploys together
+// (ADR-20261126164847). Every account shares githubd's one public-read token,
+// 5,000 GitHub calls an hour, so no plan raises it. Counted in the database
+// counter every apid shares (ADR 20261108160000).
+const PublicSourceFetchesPerHour = 30
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -19299,14 +19340,20 @@ const AlertRatioMinRequests = 10
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.
 const (
-	AnomalyBaselineDays       = 7
-	AnomalyBaselineMinDays    = 5
-	AnomalyBaselineCacheTTL   = time.Hour
-	AnomalyAlertMinRequests   = 50
-	AnomalyAboveMultiplierMin = 1.5
-	AnomalyAboveMultiplierMax = 20.0
-	AnomalyBelowMultiplierMin = 0.05
-	AnomalyBelowMultiplierMax = 0.67
+	AnomalyBaselineDays          = 7
+	AnomalyBaselineMinDays       = 5
+	AnomalyBaselineCacheTTL      = time.Hour
+	AnomalyAlertMinRequests      = 50
+	AnomalyAboveMultiplierMin    = 1.5
+	AnomalyAboveMultiplierMax    = 20.0
+	AnomalyBelowMultiplierMin    = 0.05
+	AnomalyBelowMultiplierMax    = 0.67
+	AnomalyPreviewChecks         = 7 * 24
+	AnomalyPreviewStep           = time.Hour
+	AnomalyIncidentReplayChecks  = 2 * 60
+	AnomalyIncidentReplayStep    = time.Minute
+	AnomalyReplayRecoveryChecks  = 2
+	AnomalyObservedIncidentLimit = 20
 )
 
 // AnomalyAlertMetrics are the request metrics that support baseline
@@ -21082,3 +21129,19 @@ const (
 
 // UnclaimedDeployTTLDefault is UnclaimedDeployTTLHoursDefault as a duration.
 const UnclaimedDeployTTLDefault = UnclaimedDeployTTLHoursDefault * time.Hour
+
+// Persistent session timers (ADR-20261122132055 §2), constants so daemons
+// can size their own constants from them. A pause vmmd never answers is
+// given up after SandboxPauseTimeoutSec (a capture that lands later is still
+// taken for 3× as long); a running persistent session whose pauses are all
+// refused ends SandboxPersistentOverrunSec past its run limit. A capture's
+// node uploads it for up to SandboxCaptureUploadSec, then leaves its copy to
+// eviction; agentd deletes a used capture only after that window. A resume
+// refused for want of its capture's node is claimed again after
+// SandboxResumeRetrySec.
+const (
+	SandboxPauseTimeoutSec      = 600
+	SandboxPersistentOverrunSec = 1800
+	SandboxCaptureUploadSec     = 86_400
+	SandboxResumeRetrySec       = 30
+)
