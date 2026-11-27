@@ -47,6 +47,21 @@ func (m *Middleware) notePreviewApproval(w http.ResponseWriter, r *http.Request,
 			return answered
 		}
 	}
+	if m.RemoteAgentGate == nil {
+		// The Connect grant would let the real request through
+		// (ADR-20261127160000); a preview records nothing.
+		settings, err := approvalSettingsFor(r.Context(), m.Authn, key)
+		if err != nil {
+			m.storeUnavailable(w, r, err, "could not load the agent's approval settings; retry shortly")
+			return true
+		}
+		if _, granted, err := m.connectGrant(r.Context(), key, rule, settings); err != nil {
+			m.storeUnavailable(w, r, err, "could not load the agent's approval settings; retry shortly")
+			return true
+		} else if granted {
+			return false
+		}
+	}
 	note.category = rule.Category
 	return false
 }
