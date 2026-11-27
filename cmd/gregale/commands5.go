@@ -1337,7 +1337,7 @@ func cmdPlan(args []string) int {
 			return renderPlanCheckoutHandoff(ae, target)
 		}
 		if errors.As(err, &ae) && ae.Problem.Code == api.CodeBillingSubscriptionEnding && !jsonOutput && acct.Plan != "" {
-			PrintWarn(osStderr, "Keep the subscription first: gregale billing plan %s", acct.Plan)
+			PrintWarn(osStderr, "Keep the subscription first: %s", billingPlanCommand(acct.Plan))
 		}
 		return printErr("Plan change failed", err)
 	}

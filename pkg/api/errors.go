@@ -7731,10 +7731,13 @@ func ErrOrgInvitationCapExceeded(limit, observed int) *Problem {
 // clients that branch on it still do, and names the upgrade instead of a
 // "0 of 0" limit (ADR-20261127200000).
 func ErrOrgPlanHasNoSeats(slug string, plan Plan) *Problem {
+	detail := fmt.Sprintf("organization %s is on the %s plan, which has no seats for other members; upgrade the organization before inviting.",
+		slug, plan)
+	if !plan.Valid() {
+		detail = fmt.Sprintf("organization %s has no plan with seats for other members; choose a paid plan for it before inviting.", slug)
+	}
 	return NewProblem(http.StatusForbidden, CodeOrgInvitationCapExceeded,
-		"Organization plan has no member seats",
-		fmt.Sprintf("organization %s is on the %s plan, which has no seats for other members; upgrade the organization before inviting.",
-			slug, plan)).
+		"Organization plan has no member seats", detail).
 		WithLimit(0, 0).
 		WithFix("gregale --org " + slug + " billing plan hobby").
 		WithDocs(docsBase + "/orgs#member-limits")

@@ -67,7 +67,8 @@ func TestOrgRouteTargetsRegisteredRoutes(t *testing.T) {
 	for _, route := range routes {
 		method, pattern, _ := strings.Cut(route, " ")
 		if !strings.HasPrefix(pattern, "/v1/account") && !strings.HasPrefix(pattern, "/v1/billing") &&
-			!strings.HasPrefix(pattern, "/v1/postgres") && pattern != "/v1/apps" && pattern != "/v1/apps/{slug}/buckets" {
+			!strings.HasPrefix(pattern, "/v1/postgres") && !strings.HasPrefix(pattern, "/v1/usage") &&
+			!strings.HasPrefix(pattern, "/v1/keys") && pattern != "/v1/apps" && pattern != "/v1/apps/{slug}/buckets" {
 			continue
 		}
 		sample := routeParam.ReplaceAllString(pattern, "x1")

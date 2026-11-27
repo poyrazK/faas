@@ -49,12 +49,24 @@ not get started from the terminal:
      connections, cutovers and a few settings), which keep their flat path.
    App-scoped paths are unchanged: app slugs are global, and the server
    authorizes the member's role on a company app (ADR-202610171901).
-4. **`--org` never quietly acts on the personal account.** Any other write to
-   `/v1/account`, `/v1/billing`, `/v1/keys` or `/v1/usage` under `--org` fails
-   in the client with `unsupported_by_cli` before it is sent.
-   `GET /v1/account` (who am I) still works.
+4. **`--org` never quietly acts on or shows the personal account.** The
+   monthly usage read (`GET /v1/usage`) goes to the organization's usage.
+   Under `--org`, these fail in the client with `unsupported_by_cli` before
+   they are sent:
+   - personal API keys (`/v1/keys`): the error points to
+     `gregale org key ... --org SLUG`, because organization keys answer in
+     other shapes;
+   - billing and usage calls with no organization form (forecast, FOCUS
+     export, daily and storage usage, budget alert channels, cancel, retry);
+   - the personal usage reads under `/v1/account`, and the managed
+     PostgreSQL overage setting;
+   - any other write to `/v1/account`.
+
+   Other `GET /v1/account...` reads, such as who-am-I and rate limits, still
+   work.
 5. `gregale --org SLUG billing plan PLAN` reads the organization's plan for
-   its downgrade confirmation.
+   its downgrade confirmation. Its retry and keep-subscription hints keep
+   `--org`, and it points to `gregale org info SLUG` to check the switch.
 6. A source-scanning test pins the client mapping to apid's registered
    routes. Every rewritten path must exist, and every PostgreSQL path left
    flat must have no organization form, so a new organization route is not

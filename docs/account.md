@@ -176,12 +176,16 @@ gregale --org acme deploy --project       # acme's projects
 ```
 
 `--org` applies to projects, new apps, managed PostgreSQL, buckets, the plan,
-billing status, the billing portal, budgets, overage caps and costs. Existing
-apps need no flag: an app's name is global and your role in its organization
-decides what you can do. A command that changes only your personal account,
-such as `gregale key create` or `gregale billing cancel`, fails with
-`unsupported_by_cli` under `--org` rather than acting on your personal
-account.
+billing status, the billing portal, budgets, overage caps, costs and monthly
+usage. Existing apps need no flag: an app's name is global and your role in
+its organization decides what you can do.
+
+A command that shows or changes only your personal account fails with
+`unsupported_by_cli` under `--org`, rather than acting on your personal
+account or showing its data as if it were the organization's. Examples are
+`gregale billing cancel`, the billing forecast and daily usage. For the
+organization's API keys, use `gregale org key list|create|rotate|delete
+--org SLUG`.
 
 ### Roles
 

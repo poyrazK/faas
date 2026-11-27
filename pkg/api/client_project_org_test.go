@@ -30,6 +30,14 @@ func TestOrgRoute(t *testing.T) {
 		{name: "personal key refused", org: "acme", method: "POST", path: "/v1/keys", refused: true},
 		{name: "billing cancel refused", org: "acme", method: "POST", path: "/v1/billing/cancel", refused: true},
 		{name: "budget channels write refused", org: "acme", method: "PUT", path: "/v1/billing/budgets/b1/channels", refused: true},
+		{name: "budget channels read refused", org: "acme", method: "GET", path: "/v1/billing/budgets/b1/channels", refused: true},
+		{name: "usage", org: "acme", method: "GET", path: "/v1/usage?month=2026-11", want: "/v1/orgs/acme/usage?month=2026-11"},
+		{name: "daily usage refused", org: "acme", method: "GET", path: "/v1/usage/daily?days=7", refused: true},
+		{name: "forecast refused", org: "acme", method: "GET", path: "/v1/billing/forecast", refused: true},
+		{name: "personal key list refused", org: "acme", method: "GET", path: "/v1/keys", refused: true},
+		{name: "personal storage usage refused", org: "acme", method: "GET", path: "/v1/account/object-storage-usage", refused: true},
+		{name: "postgres overage refused", org: "acme", method: "GET", path: "/v1/postgres/overage", refused: true},
+		{name: "account read kept", org: "acme", method: "GET", path: "/v1/account/rate-limits", want: "/v1/account/rate-limits"},
 		{name: "postgres flat-only kept", org: "acme", method: "POST", path: "/v1/postgres/databases/db1/query", want: "/v1/postgres/databases/db1/query"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

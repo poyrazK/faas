@@ -149,6 +149,31 @@ func (s *server) loadMutableOrgByMembership(ctx context.Context, w http.Response
 // ConsumeOrgInvitation is the load-bearing back-stop — see
 // handlers_org_invitations.go:166-167.
 
+// memberCapProblem is the 403 an accept answers when the store refused it at
+// the member cap. A plan with no seats (Free) asks for an upgrade rather than
+// reporting "0 of 0"; a full paid plan reports its limit and the live
+// active-member count, which a downgrade can leave above the limit
+// (ADR-20261127200000). Lookups are best effort: the refusal stands either way.
+func (s *server) memberCapProblem(ctx context.Context, tokenHash []byte) *api.Problem {
+	inv, err := s.store.OrgInvitationByTokenHash(ctx, tokenHash)
+	if err != nil {
+		return api.ErrOrgMemberCapExceeded(0, 0)
+	}
+	org, err := s.store.OrgByID(ctx, inv.OrgID)
+	if err != nil {
+		return api.ErrOrgMemberCapExceeded(0, 0)
+	}
+	limit := org.Plan.OrgMembersMax()
+	if limit <= 0 {
+		return api.ErrOrgSeatsUnavailable()
+	}
+	active, err := s.store.CountActiveOrgMembers(ctx, org.ID)
+	if err != nil {
+		active = limit
+	}
+	return api.ErrOrgMemberCapExceeded(limit, active)
+}
+
 // enforcePendingInvitationCap applies the per-plan
 // OrgPendingInvitationsMax limit on POST /v1/orgs/{slug}/members.
 // Free + unknown plans have OrgPendingInvitationsMax == 0 by plan
