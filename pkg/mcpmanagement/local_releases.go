@@ -525,6 +525,17 @@ func checkLocalLink(path, app string) error {
 
 // fingerprintTree hashes the path, contents, size, mode and modification time of every
 // regular file outside .git, in lexical order. Apply refuses a changed tree.
+//
+// What `gregale deploy` writes for itself is left out, because the deploy
+// being reviewed writes it: a deploy that creates an app links the
+// directory to it (rememberCreatedApp in cmd/gregale), saving
+// .gregale/project.json and adding .gregale/ to the root .gitignore. When the
+// upload commit then waited for a person's approval, the approved retry saw
+// a changed tree and failed with source_changed, so every first deploy of a
+// new app needed a second plan and a second approval (ChatGPT review
+// account, 2026-11-27). The CLI never uploads its local context
+// (cliLocalContext in cmd/gregale/pack.go), and the .gitignore is hashed
+// without the CLI's own lines, so every other edit still counts.
 func fingerprintTree(dir string) (string, int, int64, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -539,24 +550,42 @@ func fingerprintTree(dir string) (string, int, int64, error) {
 			return err
 		}
 		if entry.IsDir() {
-			if entry.Name() == ".git" && path != dir {
+			if entry.Name() == ".git" && path != dir || cliLocalContext(path, true) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() {
+		if !entry.Type().IsRegular() || cliLocalContext(path, false) {
 			return nil
 		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		if files++; files > maxLocalSourceFiles {
-			return invalid("source_too_large", fmt.Sprintf("the directory holds more than %d files; deploy it with `gregale deploy`", maxLocalSourceFiles))
-		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
+		}
+		if rel == ".gitignore" {
+			ignore, err := root.ReadFile(rel)
+			if err != nil {
+				return err
+			}
+			if ignore = withoutCLIIgnoreLines(ignore); len(ignore) == 0 {
+				return nil
+			}
+			if files++; files > maxLocalSourceFiles {
+				return invalid("source_too_large", fmt.Sprintf("the directory holds more than %d files; deploy it with `gregale deploy`", maxLocalSourceFiles))
+			}
+			size += int64(len(ignore))
+			_, err = fmt.Fprintf(h, "%s\x00%d\x00ignore\n", rel, len(ignore))
+			if err == nil {
+				_, err = h.Write(ignore)
+			}
+			return err
+		}
+		if files++; files > maxLocalSourceFiles {
+			return invalid("source_too_large", fmt.Sprintf("the directory holds more than %d files; deploy it with `gregale deploy`", maxLocalSourceFiles))
 		}
 		size += info.Size()
 		_, err = fmt.Fprintf(h, "%s\x00%d\x00%o\x00%d\n", filepath.ToSlash(rel), info.Size(), info.Mode().Perm(), info.ModTime().UnixNano())
@@ -579,4 +608,37 @@ func fingerprintTree(dir string) (string, int, int64, error) {
 		return "", 0, 0, invalid("invalid_path", "could not read the project directory: "+err.Error())
 	}
 	return hex.EncodeToString(h.Sum(nil)), files, size, nil
+}
+
+// cliLocalContext reports a path under a .gregale directory that only the
+// CLI on this machine uses and never uploads: the app link a deploy saves,
+// local job defaults and accepted-run receipts. It mirrors cliLocalContext
+// in cmd/gregale/pack.go; the rest of .gregale/ ships and is fingerprinted.
+func cliLocalContext(path string, isDir bool) bool {
+	if filepath.Base(filepath.Dir(path)) != ".gregale" {
+		return false
+	}
+	switch base := filepath.Base(path); {
+	case isDir:
+		return base == "accepted-runs"
+	default:
+		return base == "project.json" || base == "jobs.json"
+	}
+}
+
+// withoutCLIIgnoreLines is a .gitignore without its blank lines and the
+// lines the CLI adds when it links a directory (ensureProjectContextIgnored
+// in cmd/gregale): its comment and the .gregale/ entry. Empty means the file
+// holds nothing else, as when the CLI created it.
+func withoutCLIIgnoreLines(data []byte) []byte {
+	var out []byte
+	for line := range strings.SplitSeq(string(data), "\n") {
+		switch strings.TrimSpace(line) {
+		case "", "# Gregale local project context", ".gregale", ".gregale/", "/.gregale", "/.gregale/":
+			continue
+		}
+		out = append(out, line...)
+		out = append(out, '\n')
+	}
+	return out
 }
