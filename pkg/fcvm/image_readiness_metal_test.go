@@ -133,7 +133,7 @@ func TestMetalImageHealthcheckAcrossSnapshots(t *testing.T) {
 	}
 	readImageReadinessFixture(t, ctx, bad, "action=fail")
 	monitorCtx, stopMonitor := context.WithTimeout(ctx, time.Minute)
-	reason := RunImageHealthcheckMonitor(monitorCtx, vmm.VsockUDSSocketPath(bad.Lease.Instance), nil)
+	reason := RunImageHealthcheckMonitor(monitorCtx, vmm.VsockUDSSocketPath(bad.Lease.Instance), nil, nil)
 	stopMonitor()
 	if reason != LivenessReasonImageHealthcheck {
 		t.Fatalf("listening unhealthy image did not request runtime recovery: %q", reason)
