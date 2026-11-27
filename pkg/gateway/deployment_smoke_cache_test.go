@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -346,6 +347,37 @@ func TestDeploymentSmokePassesIngressIPAllowlist(t *testing.T) {
 		}
 		if !smoke && rec.Code != http.StatusForbidden {
 			t.Fatalf("ordinary request from a non-allowlisted address: status %d, want 403", rec.Code)
+		}
+	}
+}
+
+type smokeIPDenyMatcher struct {
+	*cacheOnlyMatcher
+	accountID string
+}
+
+func (m *smokeIPDenyMatcher) MatchIP(context.Context, string, string, string) *EdgeRuleIPResolved {
+	_, all, _ := net.ParseCIDR("0.0.0.0/0")
+	return &EdgeRuleIPResolved{ID: "deny-all", AccountID: m.accountID, PathGlob: "/", Deny: []*net.IPNet{all}}
+}
+
+// A route split denies every address on the route app's own hosts before it
+// deploys that app (ADR-20261121170000 amendment 4). The rollout's authorized
+// smoke must still pass, or the route's app never goes live and the split
+// rolls back.
+func TestDeploymentSmokePassesEdgeIPDenyRule(t *testing.T) {
+	f := newSmokeCacheFixture(t)
+	f.handler.edgeRules = &smokeIPDenyMatcher{cacheOnlyMatcher: f.handler.edgeRules.(*cacheOnlyMatcher), accountID: f.backend.app.AccountID}
+	for _, smoke := range []bool{false, true} {
+		r := f.request(smoke)
+		r.Header.Set("X-Forwarded-For", "198.51.100.7")
+		rec := httptest.NewRecorder()
+		f.handler.ServeHTTP(rec, r)
+		if smoke && rec.Code != http.StatusOK {
+			t.Fatalf("authorized smoke under a deny-all ip rule: status %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+		if !smoke && rec.Code != http.StatusForbidden {
+			t.Fatalf("ordinary request under a deny-all ip rule: status %d, want 403", rec.Code)
 		}
 	}
 }
