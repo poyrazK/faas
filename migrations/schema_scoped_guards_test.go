@@ -97,7 +97,8 @@ func TestMigrations_GuardsAreSchemaScoped(t *testing.T) {
 		{"instances", "instances_job_id_fk"},
 		{"compute_nodes", "compute_nodes_last_recovery_outcome_chk"},
 		{"managed_postgres_databases", "managed_postgres_restore_source_database_fk"},
-		{"managed_postgres_databases", "managed_postgres_restore_fields_ck"},
+		// managed_postgres_restore_fields_ck is guarded on the way up, then
+		// 20261126223533213_admit_native_postgres_logical_branches drops it.
 	} {
 		var n int
 		if err := pool.QueryRow(ctx,
