@@ -6777,7 +6777,7 @@ func cmdUsage(args []string) int {
 	// `usage basic-hello` printed the usage line and then the unknown
 	// subcommand, the usage twice over (prod hunt r76). Name the word once,
 	// say the rows are per app already, and list the subcommands.
-	printCommandValidation(os.Stderr, "unknown usage subcommand %q: `gregale usage` lists every app's usage for the month.\n", args[0])
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q: `gregale billing usage` lists every app's usage for the month.\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "usage", parent, args[0])
 }
 
