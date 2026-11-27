@@ -7,8 +7,13 @@ system. Gregale does not collect payment from your customers.
 
 API monetization is not released (ADR-20261018090210). It stays off, with
 no customer-facing surface, until an operator sets the `api_monetization_enabled`
-runtime setting; `FAAS_API_MONETIZATION_ENABLED=1` is its bootstrap value for
-apid and gateways and shows its commands in the CLI. Once released it is
+runtime setting, or releases it to an account with the `api_monetization`
+platform flag; `FAAS_API_MONETIZATION_ENABLED=1` is the setting's bootstrap
+value for apid and gateways. The CLI shows the selling commands (consumer
+plans, rate cards, statements, `mcp stats`, `mcp listing`) to a logged-in
+account whose capability view (`GET /v1/capabilities`) does not hide
+`api-monetization`; the variable in your shell still shows them everywhere,
+including the generated reference. Once released it is
 available on Hobby, Pro, and Scale; see [Plans and pricing](plans.md) for
 consumer key limits.
 

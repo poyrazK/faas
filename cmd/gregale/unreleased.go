@@ -29,14 +29,15 @@ func applicationAuthCLI() bool {
 // environment clones (fullclone.go) or environment branches (envbranch.go),
 // unless they are turned on.
 func visibleCliCommands() []cliCommand {
-	return visibleCliCommandsWith(realtimePreviewCLI())
+	return visibleCliCommandsWith(realtimePreviewCLI(), monetizationCLI())
 }
 
-// visibleCliCommandsWith is visibleCliCommands with the realtime preview's
-// visibility decided by the caller: discovery for a logged-in account shows
-// it when the account's capability view does (realtime_preview.go).
-func visibleCliCommandsWith(realtimePreview bool) []cliCommand {
-	auth, monetization := applicationAuthCLI(), monetizationCLI()
+// visibleCliCommandsWith is visibleCliCommands with the visibility of the
+// realtime preview and API monetization decided by the caller: discovery for
+// a logged-in account shows them when the account's capability view does
+// (realtime_preview.go, monetization.go).
+func visibleCliCommandsWith(realtimePreview, monetization bool) []cliCommand {
+	auth := applicationAuthCLI()
 	fullClone := fullEnvironmentCloneCLI()
 	branches := environmentBranchCLI()
 	mcpGateway := mcpGatewayPreviewCLI()
