@@ -252,7 +252,7 @@ gregale deploy --path packages/api --source=worktree
 
 Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--boot] [--env-file <FILE>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -261,6 +261,8 @@ Check local source, an image or project prerequisites before deploying
 | `--registry-user <USER>` | without --project: registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | without --project: read the registry password or token from stdin |  |
 | `--docker-config <PATH>` | without --project: with --image, use the credentials `docker login` stored for the image&#39;s registry, from this config.json or its directory |  |
+| `--boot` | without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT and stays up |  |
+| `--env-file <FILE>` | without --project: with --boot, pass KEY=VALUE lines from this file to the container |  |
 | `--strict` | without --project: exit 1 on warnings |  |
 | `--app <SLUG>` | without --project: app whose env and secret names count as declared (defaults to linked context) |  |
 | `--project-slug <SLUG>` | with --project: project slug (defaults to linked context or selected directory) |  |
@@ -4270,7 +4272,7 @@ Add an edge rule
 | `--app <slug>` | app slug | required |
 | `--kind <KIND>` | rule kind | required; one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` · `challenge` |
 | `--match-host <HOST>` | host to match; @app covers every host the app serves | required |
-| `--match-path <PATH>` | path glob to match (default / covers only the root; /** covers every path) |  |
+| `--match-path <PATH>` | path glob to match (default / covers only the root, except /** for waf and challenge; /** covers every path) |  |
 | `--match-method <METHOD>` | HTTP method to match (repeat for multiple) |  |
 | `--match-header <Name=Value>` | exact request header selector (repeat) |  |
 | `--priority <N>` | match priority; lower wins (default 100) |  |

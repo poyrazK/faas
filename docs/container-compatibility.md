@@ -34,6 +34,29 @@ faster for large images and is the better choice in CI. Local image deploys are
 being released gradually; an account without them gets "Local image deploys
 unavailable" and can deploy through a registry instead.
 
+## Boot the image locally before deploying
+
+`doctor` and `deploy check` read image metadata only. Add `--boot` to also run
+the image with your local Docker, the way Gregale starts it: as linux/amd64, with
+`PORT` set to the serving port (the single exposed TCP port, otherwise 8080).
+
+```sh
+gregale doctor --image ghcr.io/acme/api:1.2 --boot
+gregale deploy check --image ghcr.io/acme/api:1.2 --boot --env-file .env
+```
+
+It reports whether the container started or crashed (with its last output),
+answered `GET /` on `0.0.0.0:$PORT`, and was still running 10 seconds after it
+started. When nothing answers, it reads the container's listening sockets and
+names the mistake, such as a server bound to `127.0.0.1` or to a port other
+than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
+app needs to start with `--env-file` (docker env-file format). The container is
+removed afterwards, and nothing runs on Gregale. An image Docker can run but
+the registry cannot serve (one that exists only on your machine) still boots;
+its metadata check reports the registry error. On an Apple silicon Mac, Docker
+runs the amd64 image under emulation, so startup is slower than on Gregale.
+Set `GREGALE_DOCKER=podman` to use another Docker-compatible client.
+
 Gregale preserves the OCI/Docker process model. Image metadata supplies the
 entrypoint, command, environment, working directory, user, health check, stop
 signal, and exposed ports. Deployment overrides can replace the start command,

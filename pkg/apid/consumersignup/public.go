@@ -96,11 +96,7 @@ func (s *Service) Form(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := api.ConsumerSignupFormResponse{App: app.Slug, DisplayName: set.DisplayName, TermsURL: set.TermsURL, TrialDays: set.TrialDays}
-	if connections, ok := s.Host.Store().(state.StatementInvoiceExportStore); ok {
-		if conn, err := connections.GetBillingConnection(r.Context(), app.AccountID, state.BillingProviderStripe); err == nil {
-			out.Livemode = conn.Livemode
-		}
-	}
+	out.Livemode = s.liveMode(r.Context(), app.AccountID)
 	plans, err := s.OfferedPlans(r.Context(), app, set)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not read the plans"))
@@ -236,8 +232,9 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 	var key string
 	var livemode bool
 	if free {
-		// No checkout, but the sign-up still records the connection's mode.
-		_, livemode, _ = s.Host.StripeKey(ctx, app.AccountID)
+		// No checkout, but the sign-up still records the connection's mode
+		// (live without one).
+		livemode = s.liveMode(ctx, app.AccountID)
 	} else {
 		var problem *api.Problem
 		if key, livemode, problem = s.Host.StripeKey(ctx, app.AccountID); problem != nil {
