@@ -306,6 +306,22 @@ func (q *Queries) GetAPIKeyApprovalCategories(ctx context.Context, db DBTX, keyI
 	return categories, err
 }
 
+const getAPIKeyConnectGrant = `-- name: GetAPIKeyConnectGrant :one
+SELECT granted_by, granted_at FROM api_key_connect_grants WHERE key_id = $1::uuid
+`
+
+type GetAPIKeyConnectGrantRow struct {
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetAPIKeyConnectGrant(ctx context.Context, db DBTX, keyID pgtype.UUID) (GetAPIKeyConnectGrantRow, error) {
+	row := db.QueryRow(ctx, getAPIKeyConnectGrant, keyID)
+	var i GetAPIKeyConnectGrantRow
+	err := row.Scan(&i.GrantedBy, &i.GrantedAt)
+	return i, err
+}
+
 const getAgentApproval = `-- name: GetAgentApproval :one
 SELECT id, key_id, account_id, org_id, category, method, path, body_sha256, status, decided_by,
        created_at, decided_at, consumed_at, expires_at, decision_note, reason, budget_cost_millicents
@@ -383,6 +399,23 @@ type InsertAPIKeyApprovalCategoriesParams struct {
 // ADR-20261104140058: the categories a key must have approved; set once, when it is minted.
 func (q *Queries) InsertAPIKeyApprovalCategories(ctx context.Context, db DBTX, arg InsertAPIKeyApprovalCategoriesParams) error {
 	_, err := db.Exec(ctx, insertAPIKeyApprovalCategories, arg.KeyID, arg.Categories)
+	return err
+}
+
+const insertAPIKeyConnectGrant = `-- name: InsertAPIKeyConnectGrant :exec
+INSERT INTO api_key_connect_grants (key_id, granted_by)
+VALUES ($1::uuid, $2::uuid)
+`
+
+type InsertAPIKeyConnectGrantParams struct {
+	KeyID     pgtype.UUID
+	GrantedBy pgtype.UUID
+}
+
+// ADR-20261127160000: the Connect consent that approves a hosted MCP key's
+// deploys; written once, when apid mints the key from the approved sign-in.
+func (q *Queries) InsertAPIKeyConnectGrant(ctx context.Context, db DBTX, arg InsertAPIKeyConnectGrantParams) error {
+	_, err := db.Exec(ctx, insertAPIKeyConnectGrant, arg.KeyID, arg.GrantedBy)
 	return err
 }
 

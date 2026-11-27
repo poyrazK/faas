@@ -96,7 +96,7 @@ type CliAuthExchangeResponse struct {
 // Empty Purpose preserves the normal CLI login contract.
 type CliAuthCodeRequest struct {
 	Purpose string `json:"purpose,omitempty"`
-	// Scopes, with purpose "mcp" only, adds MCPGrantableScopes to apps:read.
+	// Scopes, with purpose "mcp" only, adds MCPCodeScopes to apps:read.
 	Scopes []string `json:"scopes,omitempty"`
 	// Device asks for a CLI login code bound to a device code
 	// (CliAuthCodeResponse.DeviceCode).
@@ -125,8 +125,21 @@ const CliAuthPurposeMCP = "mcp"
 // postgres:read with it.
 var MCPGrantableScopes = []string{ScopeDeployWrite, ScopeSecretsRequest, ScopeStorageManage, ScopeManagedPostgresManage, ScopeEnvWrite, ScopeUsageRead, ScopeDataRead}
 
+// ScopeConnectApproval, on an MCP sign-in code only, is the person's Connect
+// consent standing in for per-request approval of the connection's deploys,
+// promotions, rollbacks, restarts and undo (ADR-20261127160000). No key
+// carries it: the exchange records it in api_key_connect_grants instead. It
+// is not in MCPGrantableScopes, so organization agent policies neither list
+// nor cap it; an organization's approval floor still applies.
+const ScopeConnectApproval = "approvals:connect"
+
+// MCPCodeScopes are the scope bits of an MCP sign-in code, in bit order:
+// MCPGrantableScopes, then ScopeConnectApproval at bit 7. A new grantable
+// scope takes bit 8, so a code keeps its meaning across releases.
+var MCPCodeScopes = []string{ScopeDeployWrite, ScopeSecretsRequest, ScopeStorageManage, ScopeManagedPostgresManage, ScopeEnvWrite, ScopeUsageRead, ScopeDataRead, ScopeConnectApproval}
+
 // MintScopedMCPAuthCode mints a browser code for apps:read plus scopes, each
-// one of MCPGrantableScopes.
+// one of MCPCodeScopes.
 func (c *Client) MintScopedMCPAuthCode(ctx context.Context, scopes []string) (CliAuthCodeResponse, error) {
 	var out CliAuthCodeResponse
 	err := c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Purpose: CliAuthPurposeMCP, Scopes: scopes}, &out)
