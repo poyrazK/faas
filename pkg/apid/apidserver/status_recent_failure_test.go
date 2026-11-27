@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // ADR-20261127103000: a deployment-success value under target degrades the
@@ -63,7 +64,7 @@ func TestDeploymentBreachIsCurrent(t *testing.T) {
 // aggregates separately, as production did on 2026-11-27: three rollout
 // failures from two accounts in the day, none after 09:15Z.
 type windowOutcomeStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	day, hour state.DeploymentOutcomeCounts
 	hourErr   error
 	calls     []time.Duration
@@ -102,7 +103,7 @@ func TestStatusDeploymentsRecoverOnceFailuresAreOld(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &windowOutcomeStore{MemStore: state.NewMemStore(), day: day, hour: tc.hour, hourErr: tc.hourErr}
-			snap, err := newStatusCacheWithStore(prom.URL, store, slog.Default()).fetch(context.Background())
+			snap, err := newStatusCacheWithStore(prom.URL, statetest.NewMem(store), slog.Default()).fetch(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}

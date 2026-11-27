@@ -538,6 +538,9 @@ func deploymentBreachIsCurrent(snap *statusEvaluation) bool {
 // countRecentDeploymentFailures records how many platform-attributed failures
 // fall in the last statusDeploymentRecentFailureWindow. It skips the query
 // when the 24-hour window has none, since the shorter window is inside it.
+// The aggregate dates a failure by rollout_aborted_at, which every failed
+// deployment carries (deployments_failed_traffic_fence_chk), so a deploy that
+// queued for hours and failed just now still counts as recent.
 func (c *statusCache) countRecentDeploymentFailures(ctx context.Context, counter deploymentOutcomeCounter, now time.Time, day state.DeploymentOutcomeCounts, excluded []string, snap *statusEvaluation) {
 	if day.Failed == 0 {
 		snap.deploymentRecentFailures, snap.deploymentRecencyKnown = 0, true

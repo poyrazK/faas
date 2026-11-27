@@ -26,8 +26,11 @@ Deployment success degrades the Deployments component only when the 24-hour
 breach also has at least one platform-attributed failure in the last hour.
 
 - The published percentage is unchanged: it still counts every
-  platform-attributed failure in the 24-hour window, and the daily history
-  still records the day's dip.
+  platform-attributed failure in the 24-hour window.
+- A failure is dated by `rollout_aborted_at`, which every failed deployment
+  carries (`deployments_failed_traffic_fence_chk`; a trigger stamps it when
+  the row turns failed). A deploy that queued for a long time and failed now
+  therefore counts as recent.
 - The two-account rule of ADR-20261025131406 is unchanged and still applies to
   the 24-hour window.
 - The last-hour count uses the same durable aggregate
@@ -44,6 +47,11 @@ breach also has at least one platform-attributed failure in the last hour.
 - Deployments returns to operational one hour after the last
   platform-attributed failure, while the percentage keeps showing the day's
   failures for 24 hours.
+- The component history (the five-minute buckets behind the daily uptime
+  bars) records the evaluated state, so it now marks Deployments degraded for
+  the hour after the last failure instead of the following 24 hours. On
+  2026-11-27 that is about 80 minutes of degraded buckets (08:57–10:15Z)
+  rather than the rest of the day.
 - A platform fault that keeps breaking deploys keeps the component degraded,
   since each new failure renews the hour. A fault during an hour in which
   nobody deploys is not shown by this indicator; alert rules with a
