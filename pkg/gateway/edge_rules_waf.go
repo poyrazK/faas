@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -158,17 +160,21 @@ func (h *Handler) WithWAFInlineChecker(checker WAFInlineChecker) *Handler {
 }
 
 // applyEdgeRuleWAF is the kind=waf gate (ADR-831). Warn and block rules first
-// check headers and URI in-path: a detection under block is answered with
-// 403 here (handled=true); under warn the response is tagged and the request
-// passes. Otherwise, and for observe rules, the body prefix is recorded as
-// later stages read it, and the returned func submits the sample off-path
-// once the request is finished (ServeHTTP defers it). Bodies are never
+// check headers, URI and, under edge_waf_strict_inspection and
+// edge_waf_inline_body, the first api.EdgeWAFMaxInlineBodyBytes of the body
+// in-path (amendment 22): a
+// detection under block is answered with 403 here (handled=true); under warn
+// the response is tagged and the request passes. Otherwise, and for observe
+// rules, the body prefix is recorded as later stages read it, and the
+// returned func submits the sample off-path once the request is finished
+// (ServeHTTP defers it). Body bytes past the in-path bound are reported, not
 // blocked. For an account the edge_waf_blocking platform flag leaves out,
 // warn and block rules are inspected as observe (ADR-20261023113721).
 func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (handled bool, submit func()) {
 	var submits []func()
+	var body wafInlineBody
 	for _, rule := range h.matchEdgeRuleWAF(r, app) {
-		handled, submit := h.applyEdgeRuleWAFRule(w, r, app, rec, rule)
+		handled, submit := h.applyEdgeRuleWAFRule(w, r, app, rec, rule, &body)
 		if handled {
 			return true, nil
 		}
@@ -190,10 +196,13 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 }
 
 // applyEdgeRuleWAFRule applies one matched waf rule.
-func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, rule *EdgeRuleWAFResolved) (handled bool, submit func()) {
+func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, rule *EdgeRuleWAFResolved, body *wafInlineBody) (handled bool, submit func()) {
 	sample := newWAFSample(r, app, rule)
 	sample.Strict = h.edgeFeatureReleased(platformflags.EdgeWAFStrictInspection, app)
 	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
+		if sample.Strict && h.edgeFeatureReleased(platformflags.EdgeWAFInlineBody, app) {
+			sample.Body, sample.BodyTruncated = body.read(r)
+		}
 		res := h.checkEdgeRuleWAFInline(rule, sample)
 		outcome := res.Outcome
 		if outcome == WAFInlineDetected {
@@ -217,11 +226,13 @@ func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, a
 			// 21). Without a body there is nothing more to find.
 			return false, h.sampleEdgeRuleWAF(r, rule, sample)
 		}
-		// The in-path check has scored the headers and URI. Without a body,
-		// an off-path sample would only add the rule families the in-path
-		// set leaves out, for a full-rule-set evaluation competing with
-		// in-path checks for the same CPUs (ADR-831 amendment 6). A skipped
-		// or failed check is still sampled.
+		// The in-path check has scored the headers, URI and body prefix.
+		// Without a body, an off-path sample would only add the rule
+		// families the in-path set leaves out, for a full-rule-set
+		// evaluation competing with in-path checks for the same CPUs
+		// (ADR-831 amendment 6). A body is still sampled: the sampled check
+		// scores the rule's whole inspect_body_bytes with every rule family.
+		// A skipped or failed check is still sampled.
 		if outcome == WAFInlineClean && !requestHasBody(r) {
 			return false, nil
 		}
@@ -231,6 +242,51 @@ func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, a
 
 func requestHasBody(r *http.Request) bool {
 	return r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0
+}
+
+// wafInlineBody is the body prefix warn and block rules score in-path
+// (ADR-831 amendment 22), read at most once per request however many waf
+// rules match.
+type wafInlineBody struct {
+	done      bool
+	prefix    []byte
+	truncated bool
+}
+
+// read returns the first api.EdgeWAFMaxInlineBodyBytes of r's body, and
+// whether the body is longer, and puts the bytes it read back in front of
+// the rest, so the app and the off-path sample receive the body unchanged.
+// It returns nothing for a body api.EdgeWAFInlineBodyInspectable leaves to
+// the sampled check, and for a body whose read failed: the error stays with
+// the body for the proxy to report.
+func (b *wafInlineBody) read(r *http.Request) ([]byte, bool) {
+	if b.done {
+		return b.prefix, b.truncated
+	}
+	b.done = true
+	if !requestHasBody(r) || !api.EdgeWAFInlineBodyInspectable(r.ContentLength, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding")) {
+		return nil, false
+	}
+	buf := make([]byte, api.EdgeWAFMaxInlineBodyBytes+1)
+	n, err := io.ReadFull(r.Body, buf)
+	buf = buf[:n]
+	r.Body = &wafReplayedBody{Reader: io.MultiReader(bytes.NewReader(buf), r.Body), Closer: r.Body}
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, false
+	}
+	if n > api.EdgeWAFMaxInlineBodyBytes {
+		b.prefix, b.truncated = buf[:api.EdgeWAFMaxInlineBodyBytes], true
+	} else {
+		b.prefix = buf
+	}
+	return b.prefix, b.truncated
+}
+
+// wafReplayedBody is a request body with the bytes already read put back in
+// front of the rest.
+type wafReplayedBody struct {
+	io.Reader
+	io.Closer
 }
 
 func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) []*EdgeRuleWAFResolved {
