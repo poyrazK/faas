@@ -3706,9 +3706,9 @@ See [Deploy from a GitHub source ref](source-ref.md#failure-modes).
 
 ### `source_too_large`
 
-HTTP 413 Request Entity Too Large · Source too large; Entry too large
+HTTP 413 Request Entity Too Large · Source too large; Entry too large; Image too large
 
-See [Builds and framework detection](build.md#limits).
+See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md).
 
 ### `stage_dependency_restore_failed`
 
