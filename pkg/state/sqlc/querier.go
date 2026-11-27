@@ -900,6 +900,9 @@ type Querier interface {
 	CopyRetryDeploymentEnvironmentOwner(ctx context.Context, db DBTX, arg CopyRetryDeploymentEnvironmentOwnerParams) error
 	CopyRetryDeploymentWorkloadSpec(ctx context.Context, db DBTX, arg CopyRetryDeploymentWorkloadSpecParams) error
 	CountAPISandboxLibraryScenarios(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	// The job_failures alert metric: the account's job runs that finished failed
+	// or dead-lettered in a window, through job_runs_failed_finished_idx.
+	CountAccountFailedJobRuns(ctx context.Context, db DBTX, arg CountAccountFailedJobRunsParams) (int64, error)
 	CountActiveAppForks(ctx context.Context, db DBTX, arg CountActiveAppForksParams) (CountActiveAppForksRow, error)
 	CountActiveBindingVerificationRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMigrationVerifications(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
@@ -918,6 +921,12 @@ type Querier interface {
 	// ADR-20261023215834: runs parked on an event count only beyond the plan's
 	// parked allowance.
 	CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForRetryParams) (int64, error)
+	// The boot_failures alert metric: the app's failed VM boots in a window.
+	// record_runtime_failed (schedd could not publish runtime state) is a
+	// platform cause and mirror-mode boots belong to a candidate deployment, not
+	// the live app, so neither counts. events_boot_failed_app_at_idx keys the
+	// scan by app so a fleet-wide incident does not widen it.
+	CountAppBootFailures(ctx context.Context, db DBTX, arg CountAppBootFailuresParams) (int64, error)
 	// Bindings, references and plaintext variables share the app's environment-key quota.
 	CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error)
 	CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error)
