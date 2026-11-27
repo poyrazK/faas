@@ -1023,6 +1023,56 @@ agents connected to Gregale's MCP server can call
   units this month, most used first: the customers an upgrade prompt is
   about to reach.
 
+### MCP listing
+
+Give a sold MCP server a public page that people and agents can find and
+install from. From the server's source directory (the one with
+`gregale-mcp.json`):
+
+```bash
+gregale mcp server listing publish --app my-mcp \
+  --title "Web search" --summary "Search the web from your agent."
+gregale mcp server listing get --app my-mcp
+gregale mcp server listing delete --app my-mcp     # unpublish
+```
+
+`publish` lists the live server's tools and stores them with the listing.
+The page shows the tools as of the last publish, so publish again after
+you change them. A republish keeps the title, summary, registry name and
+usage setting unless you pass them again. A server that requires a client credential at the
+gateway needs `--token-env <ENV>` so the CLI can list its tools.
+
+The page lives at `https://<gregale domain>/v1/consumer-signup/my-mcp/listing/page`
+and shows:
+
+- the title, summary and tools;
+- the plans you offer on [the sign-up page](#let-customers-sign-up-themselves)
+  with their current prices, and a sign-up link while sign-up is open;
+- one-click install links for Cursor and VS Code, and a client
+  configuration to paste into other MCP clients;
+- with `--show-usage`, the number of open customers.
+
+The page serves only while the app takes sign-ups. Its JSON is at
+`GET /v1/consumer-signup/my-mcp/listing`, which needs no credential. The
+endpoint must be https on the app's own host (its platform URL or default
+custom domain); if the app stops answering on that host, for example after
+you remove the custom domain, the page stops serving until you publish
+again. The owner API is
+`GET`, `PUT` and `DELETE /v1/apps/my-mcp/mcp-listing`.
+
+To list the server in the [MCP registry](https://registry.modelcontextprotocol.io),
+publish with `--registry-name io.github.<user>/<server>` (the namespace must
+be one you can prove to the registry). Then print the registry's
+`server.json` and submit it with `mcp-publisher`:
+
+```bash
+gregale mcp server listing export --app my-mcp > server.json
+mcp-publisher publish
+```
+
+The same document is served at
+`GET /v1/consumer-signup/my-mcp/server.json`.
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send

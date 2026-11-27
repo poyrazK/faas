@@ -10254,6 +10254,66 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-signup/{slug}/listing:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose public listing to read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getPublicMCPListing
+      summary: Read a sold MCP server's public listing.
+      description: |
+        Needs no credential. Serves while the seller has published a listing
+        and the app takes sign-ups: the tools as of the last publish, the
+        offered plans and their current prices, the sign-up link and install
+        links for MCP clients.
+      security: []
+      responses:
+        '200':
+          description: The public listing with plans, sign-up and install links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicMCPListingResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: Too many listing reads from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/server.json:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose registry server.json to read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getMCPListingServerJSON
+      summary: Read a listed MCP server's registry server.json.
+      description: |
+        Needs no credential. The MCP registry server.json (schema
+        2025-12-11) of a listing with a registry name, with one
+        streamable-http remote at the listed endpoint; submit it with
+        mcp-publisher.
+      security: []
+      responses:
+        '200':
+          description: The server.json document.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: Too many server.json reads from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/consumer-signup/{slug}/signups/{signup}/complete:
     parameters:
       - name: slug
@@ -25684,6 +25744,64 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/mcp-listing:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getMCPListing
+      summary: Read a sold MCP server's published listing.
+      responses:
+        '200':
+          description: The app's published listing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPListingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putMCPListing
+      summary: Publish or refresh a sold MCP server's public listing.
+      description: |
+        Publishes the server's title, summary, endpoint and tools as they are
+        now; the page shows this snapshot until the next publish, which bumps
+        version. The endpoint must be https on the app's own host. The page
+        serves while the app takes sign-ups. With registry_name set, the
+        listing also serves an MCP registry server.json.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutMCPListingRequest' }
+      responses:
+        '200':
+          description: The published listing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPListingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: The request body is above 512 KiB (`request_too_large`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [consumers]
+      operationId: deleteMCPListing
+      summary: Take a sold MCP server's public listing down.
+      responses:
+        '204': { description: Unpublished. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: The app does not exist or has no published listing.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/consumer-identities:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -31579,6 +31697,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/DebuggerRegressionUnavailable' }
+  /v1/apps/{slug}/debug/requests/{req_id}/sandbox-scenario-draft:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: req_id
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+        description: Public request ID or internal telemetry row UUID.
+    get:
+      tags: [apps, deployments]
+      operationId: getDebugAPISandboxScenarioDraft
+      summary: Draft an API sandbox scenario from a retained request.
+      description: Read-only endpoint for the serving release, method, and any matching declared route. Supply synthetic inputs and the desired expected status before saving.
+      responses:
+        '200':
+          description: Starting metadata for a private scenario draft.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxScenarioDraft' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403':
+          description: The caller may not access the source app.
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Request evidence or scenario storage is unavailable.
   /v1/apps/{slug}/debug/regressions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -39220,6 +39367,124 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/deployments/{id}/approvals/sandbox-suite-runs:
+    parameters:
+      - $ref: '#/components/parameters/SandboxHeldDeploymentID'
+    get:
+      tags: [deployments]
+      operationId: listAPISandboxSuiteRuns
+      summary: List recent regression suite runs for a release.
+      responses:
+        '200':
+          description: Recent runs and their progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxSuiteRunsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/deployments/{id}/approvals/sandbox-suite-runs/{run}:
+    parameters:
+      - $ref: '#/components/parameters/SandboxHeldDeploymentID'
+      - name: run
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Client-generated run UUID.
+    get:
+      tags: [deployments]
+      operationId: getAPISandboxSuiteRun
+      summary: Read one suite run and its scenario results.
+      responses:
+        '200':
+          description: Scenario results and current verdict.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxSuiteRunReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [deployments]
+      operationId: createAPISandboxSuiteRun
+      summary: Queue the app's regression suite for a held build and live baseline.
+      description: Pins the deployment artifacts and current library scenario revisions. Each scenario runs in a fresh pair of sandboxes. Reuse the run UUID and the same inputs to retry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxSuiteRunRequest' }
+      responses:
+        '202':
+          description: Suite run queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxSuiteRunReport' }
+        '200':
+          description: Existing run for this UUID.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxSuiteRunReport' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/deployments/{id}/approvals/sandbox-checks:
+    parameters:
+      - $ref: '#/components/parameters/SandboxHeldDeploymentID'
+    get:
+      tags: [deployments]
+      operationId: listSandboxApprovalChecks
+      summary: List sandbox checks for a release approval.
+      description: Lists prior checks and the current availability, serving baseline, and saved scenario. Inspect each check verdict for stale evidence.
+      responses:
+        '200':
+          description: Sandbox approval evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxApprovalChecksResponse' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+
+  /v1/deployments/{id}/approvals/sandbox-checks/{check}:
+    parameters:
+      - $ref: '#/components/parameters/SandboxHeldDeploymentID'
+      - $ref: '#/components/parameters/SandboxApprovalCheckID'
+    get:
+      tags: [deployments]
+      operationId: getSandboxApprovalCheck
+      summary: Read a sandbox approval check.
+      description: Use the top-level verdict. It becomes stale if the candidate artifact, production baseline, or baseline scenario changes. The nested comparison preserves historical run receipts.
+      responses:
+        '200':
+          description: The selected comparison and its current approval verdict.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxApprovalCheck' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+    put:
+      tags: [deployments]
+      operationId: createSandboxApprovalCheck
+      summary: Compare the held build with the current serving release in two sandboxes.
+      description: Uses the live baseline and scenario revision returned by the list endpoint. The production release must still be waiting before its release command. Reuse the check UUID and original inputs to retry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxComparisonRequest' }
+      responses:
+        '202':
+          description: The check was queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxApprovalCheck' }
+        '200':
+          description: The same check already exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxApprovalCheck' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
 
   /v1/deployments/{id}/approvals:
     parameters:
@@ -51968,6 +52233,652 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+    get:
+      tags: [deployments]
+      operationId: listAPISandboxComparisons
+      summary: List recent sandbox release comparisons and previous eligible baselines.
+      description: The candidate comes from the deployment path. Baselines are retained releases of the same application, most recent first.
+      responses:
+        '200':
+          description: Comparison data.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxComparisonsResponse' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxComparisonID'
+    get:
+      tags: [deployments]
+      operationId: getAPISandboxComparison
+      summary: Read the current comparison verdict and its two run receipts.
+      description: Poll until verdict is passed, regression, or inconclusive. Both receipts use the same saved scenario revision.
+      responses:
+        '200':
+          description: The selected comparison and its two run receipts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxComparisonReport' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+    put:
+      tags: [deployments]
+      operationId: createAPISandboxComparison
+      summary: Run the same saved sandbox scenario on two retained releases.
+      description: The candidate comes from the deployment path. Choose a different retained baseline from the same application and use a current app library or candidate scenario revision. Reuse the comparison UUID with the same inputs to retry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxComparisonRequest' }
+      responses:
+        '202':
+          description: Comparison is queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxComparisonReport' }
+        '200':
+          description: An identical comparison request already exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxComparisonReport' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+    get:
+      tags: [deployments]
+      operationId: listAPISandboxRuns
+      summary: List the 25 most recent scenario runs for a release.
+      responses:
+        '200':
+          description: Scenario runs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxRunsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    get:
+      tags: [deployments]
+      operationId: getAPISandboxRun
+      summary: Read progress or the report for a scenario run.
+      responses:
+        '200':
+          description: Scenario run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxRunReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [deployments]
+      operationId: createAPISandboxRun
+      summary: Start a scenario run in a fresh copy of the selected release.
+      description: >
+        Repeat with the same run UUID, scenario revision, and mode to recover the existing run.
+        A partner run waits for the partner's ordered HTTP requests, then runs the final GET with its JSON assertions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxRunRequest' }
+      responses:
+        '200':
+          description: Existing scenario run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxRunReport' }
+        '202':
+          description: Queued for sandbox setup.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxRunReport' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/invite:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    post:
+      tags: [deployments]
+      operationId: issueAPISandboxRunInvite
+      summary: Issue a one-time invitation for a partner scenario run.
+      description: An unused link can be replaced. The recipient can redeem it once the pinned sandbox is ready.
+      responses:
+        '201':
+          description: Partner invitation token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxPartnerInviteResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410':
+          description: Sandbox has ended.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/report-link:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    post:
+      tags: [deployments]
+      operationId: shareAPISandboxRun
+      summary: Issue a read-only token for a finished scenario run report.
+      description: A new link replaces the previous link for this run. The token expires after 24 hours.
+      responses:
+        '201':
+          description: Shareable report token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxRunShareResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    post:
+      tags: [deployments]
+      operationId: createAPISandboxReceiverInvite
+      summary: Invite a partner to verify a webhook receiver.
+      description: Reserves a one-time invite for a new run ID and an outbound scenario revision. No sandbox is provisioned until the owner starts the run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxReceiverInviteRequest' }
+      responses:
+        '201':
+          description: Setup status and one-time token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxReceiverInvite' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+    get:
+      tags: [deployments]
+      operationId: getAPISandboxReceiverInvite
+      summary: Read the receiver setup status.
+      description: Read readiness for this release without returning any credentials.
+      responses:
+        '200':
+          description: Receiver setup status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxReceiverInvite' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+
+  /v1/api-sandbox-runs/{run}/receiver-invite:
+    parameters:
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    get:
+      tags: [deployments]
+      operationId: getAPISandboxReceiverProof
+      summary: Read the endpoint ownership proof.
+      description: Use the one-time receiver invite as the bearer token. Configure the exact HTTPS callback URL to return the proof as the GET response body.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ownership proof.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxReceiverProof' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+    post:
+      tags: [deployments]
+      operationId: verifyAPISandboxReceiver
+      summary: Verify the partner receiver and redeem the invitation.
+      description: Use the one-time invite as the bearer token. The platform makes a redirect-free HTTPS GET to the submitted URL. Successful verification consumes the invite and returns the run-scoped signing secret and outcome token once.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxReceiverURL' }
+      responses:
+        '200':
+          description: Run-scoped receiver credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxReceiverCredentials' }
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+
+  /v1/api-sandbox-runs/{run}/receiver-ready:
+    parameters:
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    post:
+      tags: [deployments]
+      operationId: readyAPISandboxReceiver
+      summary: Confirm the partner is ready to receive the callback.
+      description: Use the outcome token as the bearer token after installing the run signing secret in the test receiver.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: The owner can start the run.
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+
+  /v1/api-sandbox-runs/{run}/receiver-outcome:
+    parameters:
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    post:
+      tags: [deployments]
+      operationId: recordAPISandboxReceiverOutcome
+      summary: Submit the processor outcome for the retried delivery.
+      description: Use the outcome token as the bearer token. Submit the count of committed business effects for the stable delivery ID after the second attempt. A 409 can indicate the retry has yet to be recorded or the outcome window has closed. A repeat of the same accepted outcome is idempotent while the token is active.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxReceiverOutcome' }
+      responses:
+        '204':
+          description: The outcome was recorded.
+        default: { $ref: '#/components/responses/APISandboxProblem' }
+
+  /v1/api-sandbox-runs/{run}/report:
+    parameters:
+      - $ref: '#/components/parameters/SandboxScenarioRunID'
+    get:
+      tags: [deployments]
+      operationId: readSharedAPISandboxRun
+      summary: Read a finished run using its report token.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Redacted scenario run report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxRunReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: Too many invalid requests.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/api-sandbox-suite:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps, deployments]
+      operationId: getAPISandboxSuite
+      summary: Read the app's saved API regression suite.
+      responses:
+        '200':
+          description: Saved suite configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxSuiteResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [apps, deployments]
+      operationId: putAPISandboxSuite
+      summary: Save the app's API regression suite.
+      description: Choose up to five scenarios from this app's library. Their order controls the run order. An empty list clears the selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxSuiteSaveRequest' }
+      responses:
+        '200':
+          description: Updated suite configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxSuiteResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/api-sandbox-scenarios:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps, deployments]
+      operationId: listAPISandboxLibraryScenarios
+      summary: List reusable sandbox scenarios for this app.
+      responses:
+        '200':
+          description: Names and current revisions of app library scenarios.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxScenarioLibraryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/api-sandbox-scenarios/{scenario}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scenario
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Stable, app-scoped scenario UUID.
+    get:
+      tags: [apps, deployments]
+      operationId: getAPISandboxLibraryScenario
+      summary: Read a reusable sandbox scenario and its private provenance.
+      responses:
+        '200':
+          description: Current scenario definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxLibraryScenario' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps, deployments]
+      operationId: putAPISandboxLibraryScenario
+      summary: Save a reusable sandbox scenario.
+      description: Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision to edit. A Debugger source request can be supplied when creating. Names are unique within the app.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxLibraryScenarioSaveRequest' }
+      responses:
+        '200':
+          description: Saved scenario and its current revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxLibraryScenario' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps, deployments]
+      operationId: deleteAPISandboxLibraryScenario
+      summary: Remove a scenario from the app's library.
+      parameters:
+        - $ref: '#/components/parameters/SandboxScenarioExpectedRevision'
+      responses:
+        '204':
+          description: Scenario removed. Existing sandbox runs retain their pinned definition.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+    get:
+      tags: [deployments]
+      operationId: getReleaseAPISandboxScenario
+      summary: Read the saved API sandbox scenario for a release.
+      responses:
+        '200':
+          description: Saved scenario or null when the release has none.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxScenarioResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [deployments]
+      operationId: putReleaseAPISandboxScenario
+      summary: Save the API sandbox scenario for a release.
+      description: Changes the scenario used for future copies. Existing sandboxes keep their original scenario.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxScenarioSaveRequest' }
+      responses:
+        '200':
+          description: Saved scenario and its revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxScenarioResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandboxes:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+    get:
+      tags: [deployments]
+      operationId: listReleaseAPISandboxes
+      summary: List shareable API sandboxes for a release.
+      description: Returns owner-visible receipts without invitation credentials.
+      responses:
+        '200':
+          description: API sandbox receipts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
+    put:
+      tags: [deployments]
+      operationId: ensureReleaseAPISandbox
+      summary: Queue or retrieve an API sandbox.
+      description: Starts background provisioning of the selected artifact and an isolated PostgreSQL database. Reuse the sandbox UUID to get the existing sandbox after an interrupted response.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/APISandboxCreateRequest' }
+      responses:
+        '200':
+          description: Existing sandbox provisioning receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxResponse' }
+        '202':
+          description: Sandbox provisioning accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxResponse' }
+        '410':
+          description: Sandbox lease has ended.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [deployments]
+      operationId: endReleaseAPISandbox
+      summary: End an API sandbox.
+      description: Revokes sandbox access and removes its workload and fixtures.
+      responses:
+        '204':
+          description: Sandbox ended.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/invites:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
+    post:
+      tags: [deployments]
+      operationId: createReleaseAPISandboxInvite
+      summary: Issue an API sandbox invitation.
+      description: Returns a sandbox-only consumer credential after public verification of the pinned release. The key expires with the sandbox.
+      responses:
+        '201':
+          description: Sandbox invitation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxInviteResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner/invite:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
+    post:
+      tags: [deployments]
+      operationId: issueReleaseAPISandboxPartnerInvite
+      summary: Issue a one-time invite for a private partner copy.
+      description: The owner can issue a link during provisioning. A new link invalidates any unredeemed link for the copy.
+      responses:
+        '201':
+          description: One-time invite credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxPartnerInviteResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410':
+          description: The sandbox lease has ended.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SandboxSourceDeploymentID'
+      - $ref: '#/components/parameters/ReleaseSandboxID'
+    delete:
+      tags: [deployments]
+      operationId: revokeReleaseAPISandboxPartner
+      summary: Revoke this partner copy's invite and redeemed key.
+      responses:
+        '204':
+          description: Partner access revoked.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/api-sandboxes/{sandbox}/redeem:
+    parameters:
+      - $ref: '#/components/parameters/ReleaseSandboxID'
+    post:
+      tags: [deployments]
+      operationId: redeemAPISandboxPartnerInvite
+      summary: Exchange a one-time partner invite for a sandbox key.
+      description: Supply the invite token in the Authorization bearer header. The key and recipient guide are returned once after sandbox verification.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Redeemed sandbox key and scenario guide.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxInviteResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429':
+          description: Too many invalid redemption attempts.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/api-sandboxes/{sandbox}/invite:
+    get:
+      tags: [deployments]
+      operationId: getAPISandboxInvite
+      summary: Read an API sandbox invitation.
+      description: Authenticates with the invitation credential and returns the exact sandbox URL and matching OpenAPI URL.
+      security:
+        - apiSandboxInvite: []
+      parameters:
+        - $ref: '#/components/parameters/ReleaseSandboxID'
+      responses:
+        '200':
+          description: Sandbox access and release receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APISandboxResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /v1/apps/{slug}/entities/quotas:
     get:
@@ -79258,6 +80169,11 @@ paths:
 components:
 
   securitySchemes:
+    apiSandboxInvite:
+      type: http
+      scheme: bearer
+      bearerFormat: ck_<prefix>_<secret>
+      description: An invitation credential scoped to one shareable API sandbox.
     consumerKey:
       type: http
       scheme: bearer
@@ -79364,6 +80280,55 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    ReleaseSandboxID:
+      name: sandbox
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: UUID of the isolated copy of the release.
+
+    SandboxApprovalCheckID:
+      name: check
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Client-generated UUID of the comparison attached to the approval.
+
+    SandboxComparisonID:
+      name: comparison
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: UUID of the retained sandbox comparison.
+
+    SandboxHeldDeploymentID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: UUID of the candidate deployment held before its release command.
+
+    SandboxScenarioExpectedRevision:
+      name: expected_revision
+      in: query
+      required: true
+      schema: { type: string, format: uuid }
+      description: Latest scenario revision required to delete the saved scenario.
+
+    SandboxScenarioRunID:
+      name: run
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: UUID of the scenario run this request addresses.
+
+    SandboxSourceDeploymentID:
+      name: deployment
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: UUID of the release selected as the sandbox source.
+
     ManagedPostgresExportID:
       name: export_id
       in: path
@@ -80247,6 +81212,612 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    APISandboxJSONAssertion:
+      description: Expected scalar at a JSON Pointer in a sandbox response.
+      type: object
+      required: [pointer, equals]
+      properties:
+        pointer:
+          type: string
+          maxLength: 512
+          description: JSON Pointer into the response. An empty string selects the response root.
+        equals:
+          description: Expected JSON scalar value, including null.
+          type: [string, number, boolean, 'null']
+
+    APISandboxReceiverInviteRequest:
+      description: Saved scenario revision to use for a partner receiver invitation.
+      type: object
+      required: [scenario_revision]
+      properties:
+        scenario_revision: { type: string, format: uuid }
+
+    APISandboxReceiverInvite:
+      description: Lifecycle state of a partner invitation to verify a webhook receiver.
+      type: object
+      required: [run_id, scenario_revision, expires_at, status]
+      properties:
+        run_id: { type: string, format: uuid }
+        scenario_revision: { type: string, format: uuid }
+        expires_at: { type: string, format: date-time }
+        status: { type: string, enum: [pending, verified, ready, expired] }
+        token: { type: string, description: Returned once when creating the invite. }
+
+    APISandboxReceiverProof:
+      description: String the invited receiver serves to prove ownership of the callback endpoint.
+      type: object
+      required: [proof, expires_at]
+      properties:
+        proof: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    APISandboxReceiverURL:
+      description: Callback endpoint submitted by the partner for an ownership check.
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri, maxLength: 2048, description: Exact public HTTPS endpoint on port 443. }
+
+    APISandboxReceiverCredentials:
+      description: Signing secret and outcome credential issued after receiver verification.
+      type: object
+      required: [signing_secret, outcome_token, expires_at]
+      properties:
+        signing_secret: { type: string }
+        outcome_token: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    APISandboxReceiverOutcome:
+      description: Partner-reported result of processing the retried sandbox callback.
+      type: object
+      required: [delivery_id, applied_count]
+      properties:
+        delivery_id: { type: string, format: uuid }
+        applied_count: { type: integer, minimum: 0, maximum: 1000, description: Number of committed business effects reported by the partner. }
+
+    APISandboxApprovalCheck:
+      description: Comparison evidence attached to a held release, with its current verdict.
+      type: object
+      required: [comparison, verdict]
+      properties:
+        comparison: { $ref: '#/components/schemas/APISandboxComparisonReport' }
+        verdict: { type: string, enum: [running, passed, regression, inconclusive, stale], description: Current verdict for release review. }
+        stale_reason: { type: string, enum: [candidate_artifact_changed, live_baseline_changed, baseline_scenario_changed] }
+
+    APISandboxSuite:
+      description: Ordered set of saved scenarios used to check releases of an app.
+      type: object
+      required: [revision, scenario_ids]
+      properties:
+        revision: { type: string, format: uuid }
+        run_before_approval:
+          type: boolean
+          description: Automatically queue an advisory suite when an eligible build reaches approval.
+        scenario_ids:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, format: uuid }
+
+    APISandboxSuiteResponse:
+      description: The app's saved suite, or null when the app has no suite.
+      type: object
+      required: [suite]
+      properties:
+        suite:
+          oneOf:
+            - $ref: '#/components/schemas/APISandboxSuite'
+            - type: 'null'
+
+    APISandboxSuiteSaveRequest:
+      description: Ordered scenario selection and revision precondition for saving a suite.
+      type: object
+      required: [expected_revision, scenario_ids]
+      properties:
+        expected_revision:
+          type: string
+          description: Use the current suite revision or the empty string to create the suite.
+        run_before_approval:
+          type: boolean
+          description: Enable or disable automatic advisory suites. An omitted value keeps the existing setting and an empty scenario list disables it.
+        scenario_ids:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, format: uuid }
+
+    APISandboxSuiteRunRequest:
+      description: Saved suite revision and live baseline pinned for this run.
+      type: object
+      required: [suite_revision, baseline_deployment_id]
+      properties:
+        suite_revision: { type: string, format: uuid }
+        baseline_deployment_id: { type: string, format: uuid }
+
+    APISandboxSuiteRunSummary:
+      description: Progress and timestamps for a regression suite run.
+      type: object
+      required: [id, suite_revision, baseline_deployment_id, candidate_deployment_id, scenario_count, completed_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        suite_revision: { type: string, format: uuid }
+        baseline_deployment_id: { type: string, format: uuid }
+        candidate_deployment_id: { type: string, format: uuid }
+        scenario_count: { type: integer, minimum: 1, maximum: 5 }
+        completed_count: { type: integer, minimum: 0, maximum: 5 }
+        created_at: { type: string, format: date-time }
+        automatic:
+          type: boolean
+          description: This run started automatically at release approval.
+        waiting_for_capacity:
+          type: boolean
+          description: The next comparison is waiting for available sandbox capacity.
+        finished_at: { type: string, format: date-time }
+
+    APISandboxSuiteRunsResponse:
+      description: Recent suite runs, automatic launch status, and release admission status.
+      type: object
+      required: [runs]
+      properties:
+        automatic_status:
+          type: string
+          enum: [queued, waiting_for_capacity, waiting_for_baseline, waiting_for_scenarios, unavailable, started, approval_ended, disabled]
+          description: Latest automatic launch status for this candidate when the app has requested an automatic run.
+        release_gate: { $ref: '#/components/schemas/APISandboxReleaseGate' }
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxSuiteRunSummary' }
+
+    APISandboxReleaseGate:
+      description: Current suite requirement and the run evaluated at release admission.
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [waiting, failed, stale, no_suite, unavailable, passed, admitted]
+          description: Current requirement status or the recorded decision after command admission.
+        suite_run_id: { type: string, format: uuid, description: The evaluated suite run or the run accepted at admission. }
+
+    APISandboxSuiteScenarioResult:
+      description: The result of comparing a saved scenario on both releases in a suite.
+      type: object
+      required: [scenario_id, scenario_name, scenario_revision, status]
+      properties:
+        scenario_id: { type: string, format: uuid }
+        scenario_name: { type: string }
+        scenario_revision: { type: string, format: uuid }
+        status: { type: string, enum: [queued, running, passed, regression, inconclusive, not_run] }
+        comparison: { $ref: '#/components/schemas/APISandboxComparisonReport' }
+
+    APISandboxSuiteRunReport:
+      description: Aggregate verdict and per-scenario evidence for a regression suite run.
+      allOf:
+        - $ref: '#/components/schemas/APISandboxSuiteRunSummary'
+        - type: object
+          required: [verdict, scenarios]
+          properties:
+            verdict: { type: string, enum: [running, passed, regression, inconclusive, stale] }
+            stale_reason: { type: string, enum: [candidate_artifact_changed, live_baseline_changed, suite_changed, suite_scenario_changed] }
+            failure_code: { type: string, enum: [timed_out, approval_inputs_changed, entitlement_changed] }
+            scenarios:
+              type: array
+              items: { $ref: '#/components/schemas/APISandboxSuiteScenarioResult' }
+
+    APISandboxApprovalChecksResponse:
+      description: Prior approval checks and inputs available for a new check.
+      type: object
+      required: [availability, checks]
+      properties:
+        availability: { type: string, enum: [ready, not_waiting, unsupported, no_baseline, no_scenario] }
+        baseline_deployment_id: { type: string, format: uuid }
+        scenario_revision: { type: string, format: uuid }
+        scenario_name: { type: string }
+        library_scenarios:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxLibraryScenarioSummary' }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxApprovalCheck' }
+
+    APISandboxComparisonRequest:
+      description: Baseline release and scenario revision used for a two-release comparison.
+      type: object
+      required: [baseline_deployment_id, scenario_revision]
+      properties:
+        baseline_deployment_id: { type: string, format: uuid }
+        scenario_revision: { type: string, format: uuid }
+
+    APISandboxComparisonBaseline:
+      description: A retained release eligible to serve as a comparison baseline.
+      type: object
+      required: [deployment_id, created_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        commit_sha: { type: string }
+        created_at: { type: string, format: date-time }
+
+    APISandboxComparisonReport:
+      description: Paired scenario results and the verdict for a sandbox comparison.
+      type: object
+      required: [id, baseline_deployment_id, candidate_deployment_id, scenario_revision, scenario_name, verdict, baseline, candidate, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        baseline_deployment_id: { type: string, format: uuid }
+        candidate_deployment_id: { type: string, format: uuid }
+        scenario_revision: { type: string, format: uuid }
+        scenario_name: { type: string }
+        verdict: { type: string, enum: [running, passed, regression, inconclusive] }
+        reason: { type: string, enum: [candidate_check_failed, baseline_check_failed, baseline_unavailable, candidate_unavailable] }
+        failure_side: { type: string, enum: [baseline, candidate] }
+        failure_code: { type: string }
+        first_failing_step: { $ref: '#/components/schemas/APISandboxRunStep' }
+        baseline: { $ref: '#/components/schemas/APISandboxRunReport' }
+        candidate: { $ref: '#/components/schemas/APISandboxRunReport' }
+        created_at: { type: string, format: date-time }
+
+    APISandboxComparisonsResponse:
+      description: Eligible baselines and recent comparisons for the selected release.
+      type: object
+      required: [comparisons, baselines]
+      properties:
+        comparisons:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxComparisonReport' }
+        baselines:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxComparisonBaseline' }
+
+    APISandboxRunRequest:
+      description: Saved scenario revision and execution mode for a fresh sandbox run.
+      type: object
+      required: [scenario_revision]
+      properties:
+        scenario_revision: { type: string, format: uuid }
+        mode: { type: string, enum: [automated, partner], default: automated }
+        partner_webhook: { type: boolean, description: Use the receiver registered for this outbound run. }
+
+    APISandboxRunStep:
+      description: Redacted evidence for one request or webhook step in a scenario.
+      type: object
+      required: [index, title, method, duration_ms]
+      properties:
+        index: { type: integer, minimum: 1 }
+        title: { type: string }
+        method: { type: string }
+        path: { type: string, description: Saved request path without its query string. }
+        partner_request: { type: boolean }
+        acknowledgement_dropped: { type: boolean, description: Gregale intentionally ignored the first successful HTTP response. }
+        partner_applied_count: { type: integer, minimum: 0, maximum: 1000, description: Business effects reported by the partner. }
+        kind: { type: string, enum: [stripe_webhook, webhook_duplicate, webhook_processing, outbound_job, outbound_webhook_queued, outbound_webhook_attempt, outbound_webhook_payload, partner_webhook_outcome] }
+        event_type: { type: string }
+        invocation_id: { type: string, format: uuid }
+        invocation_state: { type: string, enum: [pending, dispatching, completed, failed, cancelled, superseded, expired, dead_letter] }
+        delivery_attempts: { type: integer, minimum: 1 }
+        delivery_id: { type: string, format: uuid }
+        attempt_number: { type: integer, minimum: 1 }
+        observed_at: { type: string, format: date-time }
+        expected_status: { type: integer, minimum: 200, maximum: 599 }
+        http_status: { type: integer, minimum: 100, maximum: 599 }
+        duration_ms: { type: integer, minimum: 0 }
+        request_id: { type: string }
+        failure_code: { type: string }
+        failed_assertion: { type: integer, minimum: 1 }
+        failed_pointer: { type: string }
+
+    APISandboxRunReport:
+      description: Run outcome and recorded steps with their request or delivery identifiers.
+      type: object
+      required: [id, source_deployment_id, scenario_revision, scenario_name, mode, status, steps, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_deployment_id: { type: string, format: uuid }
+        sandbox_deployment_id: { type: string, format: uuid }
+        scenario_revision: { type: string, format: uuid }
+        scenario_name: { type: string }
+        mode: { type: string, enum: [automated, partner] }
+        partner_step_count: { type: integer, minimum: 1, maximum: 7 }
+        partner_webhook: { type: boolean }
+        partner_outcome_until: { type: string, format: date-time }
+        status: { type: string, enum: [queued, running, awaiting_partner, awaiting_partner_outcome, checking_state, passed, failed, interrupted] }
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxRunStep' }
+        failure_code: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+
+    APISandboxRunsResponse:
+      description: Recent scenario run reports for one release.
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxRunReport' }
+        receiver_invites:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxReceiverInvite' }
+
+    APISandboxRunShareResponse:
+      description: Read-only credential and expiry for sharing a completed run report.
+      type: object
+      required: [token, expires_at]
+      properties:
+        token: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    APISandboxExampleRequest:
+      description: Synthetic request and response expectations saved in a scenario.
+      type: object
+      required: [title, method, path, expected_status]
+      properties:
+        title: { type: string, maxLength: 100 }
+        method: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE] }
+        path: { type: string, maxLength: 512, description: Same-host path and optional query. }
+        body:
+          description: Optional JSON value for a request body. Limit of 2 KiB.
+        expected_status: { type: integer, minimum: 200, maximum: 599 }
+        assertions:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/APISandboxJSONAssertion' }
+
+    APISandboxScenarioGuide:
+      description: Instructions and example requests that can be shown to a partner.
+      type: object
+      required: [name, requests]
+      properties:
+        name: { type: string, maxLength: 100 }
+        seeded_ids:
+          type: object
+          maxProperties: 8
+          additionalProperties: { type: string, maxLength: 256 }
+          description: Synthetic IDs shown to invite recipients.
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items: { $ref: '#/components/schemas/APISandboxExampleRequest' }
+
+    APISandboxStripeWebhook:
+      type: object
+      description: Owner-only synthetic Stripe event fixture for an automated run.
+      required: [delivery_path, event_type, data_object]
+      properties:
+        delivery_path: { type: string, maxLength: 256, description: Sandbox app route without a query or fragment. }
+        event_type: { type: string, maxLength: 256, example: invoice.paid }
+        data_object:
+          type: object
+          additionalProperties: true
+          description: Fixture for Stripe data.object, up to 8 KiB as JSON.
+
+    APISandboxOutboundWebhook:
+      type: object
+      description: Check a managed async job completion callback to a sandbox-owned receiver.
+      properties:
+        retry_once: { type: boolean, description: Return HTTP 503 on the first verified delivery and HTTP 204 on the retry. }
+        assertions:
+          type: array
+          maxItems: 5
+          description: Assertions on the job result carried by the callback.
+          items: { $ref: '#/components/schemas/APISandboxJSONAssertion' }
+
+    APISandboxScenarioInput:
+      description: Editable scenario content, including fixtures and request expectations.
+      allOf:
+        - $ref: '#/components/schemas/APISandboxScenarioGuide'
+        - type: object
+          required: [seed]
+          properties:
+            seed:
+              type: object
+              additionalProperties: true
+              description: Synthetic fixture data of up to 8 KiB. Passed to the sandbox release as GREGALE_API_SANDBOX_SEED.
+            stripe_webhook:
+              $ref: '#/components/schemas/APISandboxStripeWebhook'
+            outbound_webhook:
+              $ref: '#/components/schemas/APISandboxOutboundWebhook'
+
+    APISandboxScenarioSaveRequest:
+      description: Definition and optional revision precondition for saving a release scenario.
+      allOf:
+        - $ref: '#/components/schemas/APISandboxScenarioInput'
+        - type: object
+          properties:
+            source_request_id:
+              type: string
+              description: Private retained request provenance from a draft for this release.
+            expected_revision:
+              type: string
+              description: Required with source_request_id. Use the draft revision, or the empty string if the release had no scenario. A changed revision returns 409.
+
+    APISandboxLibraryScenarioSummary:
+      description: Name and current revision of a scenario in the app library.
+      type: object
+      required: [id, name, revision]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 100 }
+        revision: { type: string, format: uuid }
+
+    APISandboxLibraryScenario:
+      description: Saved library scenario with its private provenance, when available.
+      type: object
+      required: [id, scenario]
+      properties:
+        id: { type: string, format: uuid }
+        scenario: { $ref: '#/components/schemas/APISandboxScenario' }
+        source_request_id:
+          type: string
+          format: uuid
+          description: Private Debugger provenance of this scenario.
+
+    APISandboxScenarioLibraryResponse:
+      description: Reusable scenario summaries for a single app.
+      type: object
+      required: [scenarios]
+      properties:
+        scenarios:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/APISandboxLibraryScenarioSummary' }
+
+    APISandboxLibraryScenarioSaveRequest:
+      description: Reusable scenario definition and required revision precondition.
+      allOf:
+        - $ref: '#/components/schemas/APISandboxScenarioInput'
+        - type: object
+          required: [expected_revision]
+          properties:
+            expected_revision:
+              type: string
+              description: Current revision for an edit, or the empty string for a new scenario.
+            source_request_id:
+              type: string
+              description: Private retained request identifier from a Debugger draft for this app. Accepted on creation.
+
+    APISandboxScenarioDraft:
+      description: Safe scenario starting point derived from a retained request.
+      type: object
+      required: [deployment_id, source_request_id, expected_revision, method]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        source_request_id: { type: string, format: uuid }
+        expected_revision:
+          type: string
+          description: Current scenario revision or an empty string when the release has no saved scenario.
+        method: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE] }
+        route_template:
+          type: string
+          description: The matching declared route or stored OpenAPI path, when available. Replace placeholders with synthetic values before saving.
+
+    APISandboxScenario:
+      description: Saved scenario definition and revision metadata.
+      allOf:
+        - $ref: '#/components/schemas/APISandboxScenarioInput'
+        - type: object
+          required: [revision]
+          properties:
+            revision: { type: string, format: uuid }
+
+    APISandboxScenarioReceipt:
+      description: Shareable scenario guide and revision without its database seed.
+      allOf:
+        - $ref: '#/components/schemas/APISandboxScenarioGuide'
+        - type: object
+          required: [revision]
+          properties:
+            revision: { type: string, format: uuid }
+
+    APISandboxScenarioResponse:
+      description: A release's current scenario and optional source request identifier.
+      type: object
+      required: [scenario]
+      properties:
+        scenario:
+          oneOf:
+            - $ref: '#/components/schemas/APISandboxScenario'
+            - type: 'null'
+        source_request_id:
+          type: string
+          format: uuid
+          description: Private Debugger provenance, present when the saved scenario originated from a retained request.
+
+    APISandboxPartnerResponse:
+      type: object
+      description: Owner-only partner progress.
+      required: [label]
+      properties:
+        label: { type: string, maxLength: 100 }
+        invited_at: { type: string, format: date-time }
+        redeemed_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        first_success_at: { type: string, format: date-time }
+
+    APISandboxPartnerInviteResponse:
+      description: One-time credential used to exchange an invitation for a partner key.
+      type: object
+      required: [partner, token]
+      properties:
+        partner: { $ref: '#/components/schemas/APISandboxPartnerResponse' }
+        token: { type: string, description: One-time invite token exchanged through the sandbox redemption endpoint. }
+
+    APISandboxCreateRequest:
+      description: Configuration for a fresh copy of an API release.
+      type: object
+      properties:
+        smoke_path:
+          type: string
+          maxLength: 512
+          description: Optional absolute path on the sandbox host to check with GET. Use the same value when retrying with this sandbox UUID.
+        scenario_revision:
+          type: string
+          format: uuid
+          description: Copy the selected app library or release scenario revision into the sandbox. Reuse this value when retrying the same sandbox UUID.
+        partner_label:
+          type: string
+          maxLength: 100
+          description: Optional recipient label. Requires scenario_revision and creates a private copy. Raw partner progress is available to the owner.
+
+    APISandboxVerification:
+      description: Readiness evidence from probing the sandbox API and its OpenAPI document.
+      type: object
+      required: [deployment_id, checked_at, openapi_status]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        checked_at: { type: string, format: date-time }
+        openapi_status: { type: integer, minimum: 200, maximum: 299 }
+        smoke_status: { type: integer, minimum: 200, maximum: 299 }
+
+    APISandboxFailure:
+      description: Setup failure code and guidance for recovering with a new sandbox.
+      type: object
+      required: [code, detail]
+      properties:
+        code: { type: string }
+        detail: { type: string }
+        http_status: { type: integer, minimum: 100, maximum: 599 }
+
+    APISandboxResponse:
+      description: Status and access details for a retained release's isolated API copy.
+      type: object
+      required: [id, source_deployment_id, status, url, openapi_url, expires_at]
+      properties:
+        partner_step_count: { type: integer, minimum: 1, maximum: 7, description: The leading requests executed by the partner before the platform checks final state. }
+        id: { type: string, format: uuid }
+        source_deployment_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [preparing_database, running_migrations, starting_release, verifying_api, live, failed, tearing_down, ended]
+        url: { type: string, format: uri }
+        openapi_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        smoke_path: { type: string }
+        failure: { $ref: '#/components/schemas/APISandboxFailure' }
+        verification: { $ref: '#/components/schemas/APISandboxVerification' }
+        scenario: { $ref: '#/components/schemas/APISandboxScenarioReceipt' }
+        partner: { $ref: '#/components/schemas/APISandboxPartnerResponse' }
+
+    APISandboxListResponse:
+      description: API copies provisioned from the selected release.
+      type: object
+      required: [sandboxes]
+      properties:
+        sandboxes:
+          type: array
+          items: { $ref: '#/components/schemas/APISandboxResponse' }
+
+    APISandboxInviteResponse:
+      description: Sandbox-specific bearer key and guide for using the isolated API.
+      type: object
+      required: [sandbox, token]
+      properties:
+        sandbox: { $ref: '#/components/schemas/APISandboxResponse' }
+        token: { type: string, description: Sandbox-only bearer credential. }
+
     RunBudgetRefusal:
       description: "Budget limit that prevented admission and the current usage against it."
       type: object
@@ -132437,6 +134008,7 @@ components:
         timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "How long a release may wait before its rollout is aborted." }
         approvers: { type: string, enum: [admin, developer], description: "admin: organization owners and admins; developer: developers too." }
         allow_self_approval: { type: boolean, description: "Whether the deployer's own approval counts." }
+        require_passing_sandbox_suite: { type: boolean, description: Require current passing sandbox evidence before a production release command that waits for approval. }
         notify_channels: { type: array, maxItems: 5, items: { type: string }, description: "Notification channels told when a release waits, is approved or rejected, or times out." }
         updated_by: { type: string }
         created_at: { type: string, format: date-time }
@@ -132451,6 +134023,7 @@ components:
         timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "Default 1440." }
         approvers: { type: string, enum: [admin, developer], description: "Default admin." }
         allow_self_approval: { type: boolean, description: "Default false; always true for an app outside an organization." }
+        require_passing_sandbox_suite: { type: boolean, description: Opt in to the sandbox suite requirement. Omit to keep the current setting. }
         notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; at least one is needed, so the approvers learn a release waits, and PagerDuty channels are refused. Slack messages link to the approval page." }
     DecideReleaseApprovalRequest:
       description: "One person's decision on a release. A rejection needs a comment."
@@ -132662,6 +134235,8 @@ components:
       type: object
       required: [deployment_id, app, state, approvals, decisions]
       properties:
+        before_release_command: { type: boolean, description: The release approval applies before its release command. }
+        require_passing_sandbox_suite: { type: boolean, description: The release requires current passing sandbox evidence in addition to human approval. }
         deployment_id: { type: string, format: uuid }
         app: { type: string }
         state: { type: string, enum: [not_required, waiting, approved, rejected, expired] }
@@ -135344,6 +136919,76 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    MCPListingTool:
+      description: "One tool of a listed MCP server, as of the last publish."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 128 }
+        title: { type: string, maxLength: 128 }
+        description: { type: string, maxLength: 1024 }
+    PutMCPListingRequest:
+      description: "A sold MCP server's listing to publish: the tools are those the server lists now."
+      type: object
+      required: [title, endpoint, tools]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        summary: { type: string, maxLength: 500, description: "One or two sentences on what the server does." }
+        endpoint: { type: string, maxLength: 2048, description: "The MCP endpoint, https on the app's own host." }
+        tools:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/MCPListingTool' }
+        registry_name: { type: string, description: "MCP registry name, such as io.github.<user>/<server>; enables server.json." }
+        show_usage: { type: boolean, description: "Show the open customer count on the page." }
+    MCPListingResponse:
+      description: "A sold MCP server's published listing, as its owner sees it."
+      type: object
+      required: [app, title, summary, endpoint, tools, show_usage, version, published_at, page_url]
+      properties:
+        app: { type: string }
+        title: { type: string }
+        summary: { type: string, description: "What the server does, as the seller wrote it." }
+        endpoint: { type: string }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPListingTool' }
+        registry_name: { type: string }
+        show_usage: { type: boolean }
+        version: { type: integer, description: "Bumped on every publish." }
+        published_at: { type: string, format: date-time }
+        page_url: { type: string, description: "The public listing page." }
+        server_json_url: { type: string, description: "The registry server.json, when registry_name is set." }
+    MCPListingInstall:
+      description: "Ways to add a listed MCP server to a client."
+      type: object
+      required: [cursor_url, vscode_url, client_config]
+      properties:
+        cursor_url: { type: string }
+        vscode_url: { type: string }
+        client_config: { type: object, additionalProperties: true, description: "An mcpServers client configuration." }
+    PublicMCPListingResponse:
+      description: "A sold MCP server's public listing."
+      type: object
+      required: [app, title, endpoint, summary, tools, plans, livemode, signup_open, install, published_at]
+      properties:
+        app: { type: string }
+        title: { type: string }
+        summary: { type: string, description: "What the listed server does." }
+        endpoint: { type: string }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPListingTool' }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+        trial_days: { type: integer }
+        livemode: { type: boolean }
+        signup_open: { type: boolean }
+        signup_url: { type: string, description: "The sign-up page, while sign-up is open." }
+        install: { $ref: '#/components/schemas/MCPListingInstall' }
+        published_at: { type: string, format: date-time }
+        customers: { type: integer, format: int64, description: "Open customers, when the seller shows usage." }
     MCPSellerStatsResponse:
       description: "A sold MCP server's customers, tools and revenue over UTC calendar months."
       type: object
@@ -155999,6 +157644,12 @@ components:
           type: boolean
 
   responses:
+    APISandboxProblem:
+      description: The sandbox operation returned an HTTP problem.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
     CheckPostgresMigrationSuccess:
       description: Compatibility evidence or explicit blockers.
       content:

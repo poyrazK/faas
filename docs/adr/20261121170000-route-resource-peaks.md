@@ -204,10 +204,10 @@ the rules go), then the rules, the block and the target app are deleted. A faile
 leaves the split `done`, so undo can be retried.
 
 The first slice splits standalone apps only. Apps in a project (their
-workloads are source-managed), previews, and apps with managed bindings
-(Postgres, object storage) or service bindings are refused up front with
-422 `route_split_unsupported` and what blocks them, so no split ever serves
-a route without the data it needs. So are apps with a static egress IP
+workloads are source-managed) and previews are refused up front with
+422 `route_split_unsupported` and what blocks them. (The first slice also
+refused managed and service bindings; amendment 4 carries them.) So are
+apps with a static egress IP
 (unique to one app) and apps with app-wide (`@app`) edge rules. An
 account that may not create `kind=ip` rules is refused before anything is
 made. So is an app with an enabled rule whose path may overlap the split's
@@ -230,10 +230,65 @@ rules match a routed request; if the gateway starts applying a routed
 source's `@app` rules, the refusal can go. Rules changed after a split is
 done (a new `@app` rule on the source, a deleted block) are not watched
 yet. (Amendment 3, 2026-11-26, replaces the first slice's refusal
-of any edge rule.) A second slice copies request-path
-bindings with the environment clone's binding definitions and still never
-copies consumers.
+of any edge rule.) Amendment 4 carries request-path bindings and still
+never copies consumers.
 
 `gregale app scale <slug> --suggest --apply-split` applies the suggestion it
 read, `--split-status` lists the app's splits and `--undo-split <id>`
 reverses one. (`--apply` already applies a saved scale plan.)
+
+## Amendment 4 (2026-11-26): bindings
+
+The owner chose that a split carries the app's bindings, so the moved route
+reads the same database, bucket and services it did in the app.
+
+**Own credentials, never copies.** Managed bindings are per app: a Postgres
+binding is its own login with its own rotation and connection share, a
+compute binding its own S3 key. Copying the app's secret would share one
+credential between two apps, so rotating or deleting the app's binding
+would break the route's app and its connections would go uncounted.
+Instead, before the route's app gets its first deployment, apid gives it
+its own binding like each of the app's default-scope bindings (the scope a
+standalone app serves; other scopes stay with the app):
+
+- **Postgres**: a binding on the same database with the same access mode
+  and variable, through the binding service the API uses (same quotas,
+  per-app binding cap, provider and audit). The app's binding is ready, so
+  the database is, and the new login is issued inline; one that is not
+  ready in that request fails the split, which rolls back.
+- **Object storage**: a compute binding on the app's bucket held by the
+  route's app, with the source binding's label, permission, variable
+  prefix and key scope. This is the one new capability: until now a compute
+  binding could only belong to the bucket's owner. A *borrowed* binding is
+  one whose holder is another app of the bucket's account
+  (`ObjectS3ComputeBindingCreateRequest.Borrowed`; the store locks the
+  holder without the owner join, and still refuses another account's app).
+  Only a split makes one; the bucket API still binds the owner alone, and
+  its list and rotate routes stay the owner's. The S3 gateway resolves a
+  key to its bucket, not to the holder, so it needs no change. A borrowed
+  key is revoked with its bucket like every other key of it.
+
+A binding still being set up or rotated (Postgres not `ready` or rotating;
+a bucket key with a pending rotation) refuses the split with 409, so a copy
+is never of a half state. Bindings of the app's other scopes are not
+copied.
+
+**Release before delete.** Every path that deletes the route's app
+(rollback, undo, a failed apply) first deletes its Postgres bindings (apid
+refuses to delete an app with live ones; a delete the provider has not
+finished stays `deleting` and does not block) and revokes its borrowed
+keys. A release that fails keeps the app and retries, so no credential
+outlives its app. Deleting a route's app by hand is refused with 409
+`app_has_borrowed_bucket_bindings` pointing at `--undo-split`: deleting it
+alone would leave the route pointing at a deleted app.
+
+**Service bindings** carry with the manifest, which the route's app already
+takes from the app (its declared bindings, policy, transport and `uses:`
+grants; each caller presents its own workload identity). What does not
+carry is how *other* apps see it: an app whose `allowed_service_callers` or
+`allowed_service_call_scopes` names the app would refuse the route's app,
+which has its own name. A split never edits another app's security
+settings, so it is refused with 422 naming those apps; the owner adds the
+route's app to them or drops the list, then applies again.
+
+Queue bindings, work policies and other consumers are still never copied.

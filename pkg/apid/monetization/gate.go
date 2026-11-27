@@ -25,6 +25,7 @@ var routes = []string{
 	"/v1/apps/{}/consumer-signup",
 	"/v1/apps/{}/consumer-signups",
 	"/v1/apps/{}/mcp-stats",
+	"/v1/apps/{}/mcp-listing",
 	"/v1/apps/{}/consumers/{}/usage/quote",
 	"/v1/apps/{}/monetization-funnel",
 	"/v1/apps/{}/consumers/{}/billing-progress",

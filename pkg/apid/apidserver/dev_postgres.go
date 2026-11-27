@@ -61,9 +61,13 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		return nil, err
 	}
 	wasExisting := false
+	sandbox := state.IsAPISandbox(app)
 	var existing *managedpostgres.Database
 	for _, database := range databases {
 		if database.Name == app.Slug {
+			if sandbox && database.ID != app.ID {
+				return nil, managedpostgres.ErrConflict
+			}
 			wasExisting = true
 			copy := database
 			existing = &copy
@@ -101,11 +105,19 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	if spec.StorageLimitBytes > limits.StorageLimitBytes {
 		return nil, managedpostgres.ErrQuotaExceeded
 	}
-	database, err := s.managedPostgres.Create(ctx, managedpostgres.CreateRequest{
+	create := managedpostgres.CreateRequest{
 		AccountID: acct.ID,
 		Name:      app.Slug,
 		Spec:      spec,
-	})
+	}
+	var database managedpostgres.Database
+	if sandbox {
+		// The sandbox app ID is allocated before provisioning and survives
+		// retries. A same-named database with another ID belongs to someone else.
+		database, err = s.managedPostgres.CreateWithID(ctx, create, app.ID)
+	} else {
+		database, err = s.managedPostgres.Create(ctx, create)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +138,11 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 			created = append(created, binding.ID)
 		}
 		if err != nil {
-			s.compensateDevPostgres(ctx, acct.ID, database.ID, created, !wasExisting)
+			// Sandbox setup retries under a durable lease and reuses partial
+			// resources. Its janitor owns cleanup after the sandbox closes.
+			if !sandbox {
+				s.compensateDevPostgres(ctx, acct.ID, database.ID, created, !wasExisting)
+			}
 			return nil, err
 		}
 		if i == 0 {
@@ -241,10 +257,8 @@ func (s *server) describeDevPostgres(ctx context.Context, app state.App) (*api.D
 	return nil, nil
 }
 
-// cleanupDevPostgres removes only the automatically named database when its
-// DATABASE_URL binding belongs to this developer app. A database with the
-// same name but no matching binding is never touched, which keeps explicit
-// customer-managed attachments safe.
+// cleanupDevPostgres removes the sandbox's reserved database or the developer
+// database whose automatically named DATABASE_URL binding proves ownership.
 func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 	if app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 || s.managedPostgres == nil || s.managedPostgresBindings == nil {
 		return nil
@@ -253,15 +267,18 @@ func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 	if err != nil {
 		return err
 	}
+	sandbox := state.IsAPISandbox(app)
 	for _, database := range databases {
-		if database.Name != app.Slug {
+		if database.Name != app.Slug || (sandbox && database.ID != app.ID) {
 			continue
 		}
 		bindings, listErr := s.managedPostgresBindings.List(ctx, app.AccountID, database.ID)
 		if listErr != nil {
 			return listErr
 		}
-		owned := false
+		// A sandbox reserves the database ID at app creation, so its
+		// database can be reclaimed even after partial binding setup.
+		owned := sandbox
 		for _, binding := range bindings {
 			if binding.AppID == app.ID && binding.Scope == api.DefaultEnvScope && binding.EnvironmentKey == devPostgresEnvironmentKey {
 				owned = true

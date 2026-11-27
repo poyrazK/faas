@@ -563,6 +563,14 @@ func (h *Handler) proxyAttempt(
 		// WakeID is a cause of this request, not the sibling's cached history.
 		selected.WakeID = target.WakeID
 		completed = selected
+		// Record the attempted deployment after repicking, so an API sandbox
+		// check can attribute the public response to the release that served it.
+		if app.IsAPISandbox {
+			dst.Header().Del(api.RevisionHeader)
+			if selected.DeploymentID != "" {
+				dst.Header().Set(api.RevisionHeader, selected.DeploymentID)
+			}
+		}
 		if h.sessionAffinity(app) {
 			if _, ok := h.backend.(affinityPicker); ok {
 				h.setSessionAffinityCookie(dst, app.ID, selected.InstanceID)
@@ -570,6 +578,12 @@ func (h *Handler) proxyAttempt(
 		}
 		recordTrafficAttempt(ctx)
 		unguarded(dst, req, selected)
+	}
+	// Scenario runs checkpoint their guest requests and retain one pinned
+	// deployment. Retrying here could repeat a mutation before its receipt.
+	if app.APISandboxRun {
+		forward(w, r, target)
+		return completed
 	}
 	// A node capacity refusal is the app's warm saturation: queue it like
 	// the gateway's own saturation instead of answering 429 at once.

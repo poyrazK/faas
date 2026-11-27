@@ -68,6 +68,7 @@ type ConsumerAuthConsumer struct {
 	AccountID        string
 	AppID            string
 	PlatformTenantID string
+	ExternalRef      string
 	Status           string
 	RevokedAt        *time.Time
 }
@@ -166,7 +167,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		// edge CORS rule or the app could answer it (Hunt 34 H34-36). The
 		// preflight carries no consumer and the real request is still
 		// checked.
-		if mode == api.ConsumerAuthModeOptional || isCORSPreflight(r) {
+		if mode == api.ConsumerAuthModeOptional || (!app.IsAPISandbox && isCORSPreflight(r)) {
 			return true
 		}
 		api.WriteProblem(w, api.ErrConsumerKeyRequired())
@@ -207,7 +208,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	prefix := consumerKeyPrefixFromPlaintext(token)
 	keyAppID := app.ID
 	key, err := h.lookupConsumerKey(r.Context(), app, prefix)
-	if errors.Is(err, ErrConsumerAuthNotFound) && app.IsPreview && app.ProductionAppID != "" {
+	if errors.Is(err, ErrConsumerAuthNotFound) && app.IsPreview && !app.IsAPISandbox && app.ProductionAppID != "" {
 		// A preview keeps its production app's consumer-auth gate, so it
 		// accepts that app's consumers' keys; without them a required-mode
 		// preview refused every request (ADR-20261105090226).
@@ -295,6 +296,10 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		api.WriteProblem(w, api.ErrConsumerScopeMissing(r.Method))
 		rec.status = http.StatusForbidden
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
+
+	if (app.APISandboxPartner || app.APISandboxRun) && !h.enforceIsolatedSandboxKey(w, r, rec, app, consumer, key) {
 		return false
 	}
 

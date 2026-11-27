@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
+	"github.com/onebox-faas/faas/pkg/apid/mcplisting"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/sales"
 	"github.com/onebox-faas/faas/pkg/apid/support"
@@ -139,8 +140,10 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	privateTools     *toolregistry.PrivateExecutor
-	privateToolsOnce sync.Once
+	apiSandboxProbeClient    *http.Client
+	apiSandboxReceiverClient *http.Client
+	privateTools             *toolregistry.PrivateExecutor
+	privateToolsOnce         sync.Once
 	// environmentBranchDataWake wakes the branch data reconciler when a
 	// branch is created with pending data (environment_branch_data.go).
 	environmentBranchDataWake     chan struct{}
@@ -2935,6 +2938,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-signups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.List))))
 	// ADR-20261126082046: a sold MCP server's seller stats.
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getMCPSellerStats))))
+	// MCP listing (ADR-20261126175800): the seller publishes a public page.
+	mcpListing := mcplisting.Owner{Host: consumerSignupHost{s: s}, Log: s.log} // ADR-20261126175800
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpListing.Get))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpListing.Put))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpListing.Delete))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-identities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.ListIdentities))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-identities/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteIdentity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
@@ -4713,6 +4721,38 @@ func (s *server) handler() http.Handler {
 	// adminAllows email gate still narrows /v1/compute-nodes separately.
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.invokeApp))))
 	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/response-check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkDeploymentResponse))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPISandboxScenario))))
+	mux.HandleFunc("GET /v1/apps/{slug}/api-sandbox-scenarios", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPISandboxLibraryScenarios))))
+	mux.HandleFunc("GET /v1/apps/{slug}/api-sandbox-suite", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPISandboxSuite))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/api-sandbox-suite", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.putAPISandboxSuite)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/api-sandbox-scenarios/{scenario}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPISandboxLibraryScenario))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/api-sandbox-scenarios/{scenario}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.putAPISandboxLibraryScenario)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/api-sandbox-scenarios/{scenario}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.deleteAPISandboxLibraryScenario)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment}/api-sandbox-scenario", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.putAPISandboxScenario)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPISandboxComparisons))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPISandboxComparison))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment}/api-sandbox-comparisons/{comparison}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createAPISandboxComparison)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPISandboxRuns))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPISandboxRun))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createAPISandboxRun)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/invite", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.issueAPISandboxRunInvite)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/report-link", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.shareAPISandboxRun)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createAPISandboxReceiverInvite)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/api-sandbox-runs/{run}/receiver-invite", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPISandboxReceiverInvite))))
+	receiverAuthLimit := middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)
+	mux.Handle("GET /v1/api-sandbox-runs/{run}/receiver-invite", receiverAuthLimit(http.HandlerFunc(s.getAPISandboxReceiverProof)))
+	mux.Handle("POST /v1/api-sandbox-runs/{run}/receiver-invite", receiverAuthLimit(http.HandlerFunc(s.verifyAPISandboxReceiver)))
+	mux.Handle("POST /v1/api-sandbox-runs/{run}/receiver-ready", receiverAuthLimit(http.HandlerFunc(s.readyAPISandboxReceiver)))
+	mux.Handle("POST /v1/api-sandbox-runs/{run}/receiver-outcome", receiverAuthLimit(http.HandlerFunc(s.recordAPISandboxReceiverOutcome)))
+	mux.Handle("GET /v1/api-sandbox-runs/{run}/report", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.readSharedAPISandboxRun)))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/api-sandboxes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPISandboxes))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createAPISandbox)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.endAPISandbox))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/invites", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createAPISandboxInvite)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner/invite", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.issueAPISandboxPartnerInvite)))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/deployments/{deployment}/api-sandboxes/{sandbox}/partner", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeAPISandboxPartner))))
+	mux.Handle("POST /v1/api-sandboxes/{sandbox}/redeem", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.redeemAPISandboxPartnerInvite)))
+	mux.Handle("GET /v1/api-sandboxes/{sandbox}/invite", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.readAPISandboxInvite)))
 	mux.HandleFunc("GET /v1/deployments/response-check/capabilities", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.getDeploymentResponseCheckCapabilities)))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/quotas", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.App(s.durable.InspectEntityTenantQuotas))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/entities/readiness", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.durable.App(s.durable.InspectDurableEntityReadiness))))))
@@ -4851,6 +4891,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryExportHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryGetHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}/evidence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRequestEvidenceHandler))))
+	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests/{req_id}/sandbox-scenario-draft", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDebugSandboxScenarioDraft))))
 	// ADR-127 PR-B: regression banner feed (dashboard + CLI).
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/regressions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugRegressionsHandler))))
 	// ADR-127 debugger lifecycle: operator workflow state is separate from
@@ -5441,6 +5482,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/release-approval-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.putReleaseApprovalPolicy))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/release-approval-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.deleteReleaseApprovalPolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/release-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseApprovals)))
+	mux.HandleFunc("GET /v1/deployments/{id}/approvals/sandbox-checks", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSandboxApprovalChecks)))
+	mux.HandleFunc("GET /v1/deployments/{id}/approvals/sandbox-suite-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAPISandboxSuiteRuns))))
+	mux.HandleFunc("GET /v1/deployments/{id}/approvals/sandbox-suite-runs/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAPISandboxSuiteRun))))
+	mux.HandleFunc("PUT /v1/deployments/{id}/approvals/sandbox-suite-runs/{run}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createAPISandboxSuiteRun)))))
+	mux.HandleFunc("GET /v1/deployments/{id}/approvals/sandbox-checks/{check}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSandboxApprovalCheck)))
+	mux.HandleFunc("PUT /v1/deployments/{id}/approvals/sandbox-checks/{check}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createSandboxApprovalCheck)))))
 	mux.HandleFunc("GET /v1/deployments/{id}/approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseApproval)))
 	mux.HandleFunc("POST /v1/deployments/{id}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.decideReleaseApproval)))))
 	// ADR-1448 amendment 1: record a check after a release command whose outcome is unknown.
@@ -6330,6 +6377,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/page", s.consumerSignup.Page)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.js", s.consumerSignup.Script)
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/signup.css", s.consumerSignup.Style)
+	// A published MCP listing (ADR-20261126175800): no credential.
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing", s.consumerSignup.Listing)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing/page", s.consumerSignup.ListingPage)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing.js", s.consumerSignup.ListingScript)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/listing.css", s.consumerSignup.ListingStyle)
+	mux.HandleFunc("GET /v1/consumer-signup/{slug}/server.json", s.consumerSignup.ServerJSON)
 	// Upgrade links (ADR-20261124094745): the link's signed token is the
 	// only credential, and opens only the consumer's plan change.
 	mux.HandleFunc("GET /v1/consumer-signup/{slug}/upgrade", s.consumerSignup.UpgradePage)

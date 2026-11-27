@@ -3,9 +3,11 @@ package apidserver
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
+	"github.com/onebox-faas/faas/pkg/apid/mcplisting"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -14,7 +16,10 @@ import (
 // ADR-20261021143000).
 type consumerSignupHost struct{ s *server }
 
-var _ consumersignup.Host = consumerSignupHost{}
+var (
+	_ consumersignup.Host = consumerSignupHost{}
+	_ mcplisting.Host     = consumerSignupHost{}
+)
 
 func (h consumerSignupHost) Store() state.Store { return h.s.store }
 
@@ -47,6 +52,19 @@ func (h consumerSignupHost) IssueConsumerKey(ctx context.Context, acct state.Acc
 
 func (h consumerSignupHost) Audit(ctx context.Context, event, accountID string, fields map[string]any) {
 	h.s.audit.Emit(ctx, event, &accountID, fields)
+}
+
+// AppHosts are the hosts app answers on now: its platform URL and its
+// default custom domain (ADR-20261126175800).
+func (h consumerSignupHost) AppHosts(ctx context.Context, app state.App) []string {
+	hosts := []string{}
+	if u, err := url.Parse(appURLForDomain(app.Slug, h.s.domain)); err == nil && u.Host != "" {
+		hosts = append(hosts, u.Host)
+	}
+	if domain := h.s.defaultCustomDomain(ctx, app.ID); domain != "" {
+		hosts = append(hosts, domain)
+	}
+	return hosts
 }
 
 func (h consumerSignupHost) PublicOrigin() string { return "https://" + h.s.platformHost() }

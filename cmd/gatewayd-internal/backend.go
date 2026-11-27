@@ -670,7 +670,7 @@ func (r pgRouter) toPublicApp(ctx context.Context, app state.App) (gateway.App, 
 // A production app the account no longer holds leaves the preview with its
 // own rules; a failed read fails the host's resolution closed.
 func (r pgRouter) previewProductionAppID(ctx context.Context, app state.App) (string, error) {
-	if app.PreviewOfSlug == "" {
+	if app.PreviewOfSlug == "" || state.IsAPISandbox(app) {
 		return "", nil
 	}
 	production, err := r.store.AppBySlug(ctx, app.PreviewOfSlug)
@@ -687,8 +687,13 @@ func (r pgRouter) previewProductionAppID(ctx context.Context, app state.App) (st
 }
 
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
-	if app.Status == state.AppDeleted {
+	if app.Status == state.AppDeleted || (state.IsAPISandbox(app) && !state.APISandboxAcceptsRequests(app, time.Now())) {
 		return gateway.App{}, false, nil
+	}
+	if state.IsAPISandbox(app) {
+		app.RequireAuthn = false
+		app.PublicAuthMode = api.AppPublicAuthModeOpen
+		app.ConsumerAuthMode = api.ConsumerAuthModeRequired
 	}
 	if exact != nil {
 		resolved, err := state.ResolveAppForDeployment(ctx, r.store, app, *exact)
@@ -805,6 +810,9 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		CanonicalHost:                app.Slug + r.appsSuffix,
 		IsPreview:                    app.PreviewOfSlug != "",
 		ProductionAppID:              productionAppID,
+		IsAPISandbox:                 state.IsAPISandbox(app),
+		APISandboxPartner:            state.IsAPISandbox(app) && app.Manifest.APISandboxPartner,
+		APISandboxRun:                state.IsAPISandbox(app) && app.Manifest.APISandboxRun,
 		StreamingEnabled:             app.StreamingEnabled,
 		SessionAffinity:              app.Manifest.SessionAffinity,
 		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,

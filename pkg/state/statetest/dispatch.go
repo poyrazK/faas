@@ -197,6 +197,7 @@ var memDispatched = map[string]bool{
 	"RenewOperationExecution":                                 true,
 	"RequestTelemetryAnalyticsByDimension":                    true,
 	"RequestTelemetryAnalyticsByRoute":                        true,
+	"GetRequestTelemetryByAppAndIdentifier":                   true,
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
@@ -1513,6 +1514,15 @@ func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 
 		return o.RenewOperationExecution(p0, p1, p2, p3)
 	}
 	return s.MemStore.RenewOperationExecution(p0, p1, p2, p3)
+}
+
+func (s *Mem) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, query sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
+	if override, ok := s.over.(interface {
+		GetRequestTelemetryByAppAndIdentifier(context.Context, sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
+	}); ok {
+		return override.GetRequestTelemetryByAppAndIdentifier(ctx, query)
+	}
+	return s.MemStore.GetRequestTelemetryByAppAndIdentifier(ctx, query)
 }
 
 func (s *Mem) RequestTelemetryAnalyticsByDimension(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
