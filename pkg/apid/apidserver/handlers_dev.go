@@ -277,7 +277,14 @@ func (s *server) writeDevSessionStoreError(w http.ResponseWriter, operation, slu
 // tombstone stays as it was.
 func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, project string, app state.App, limits api.Limits, watch *api.DevWatch) (state.App, *api.Problem, bool) {
 	tomb, err := s.store.AppBySlugIncludingDeleted(r.Context(), slug)
-	if err != nil || tomb.DeletedAt == nil || tomb.AccountID != acct.ID ||
+	if err != nil {
+		// Nothing to revive: the caller reports the slug conflict.
+		if !errors.Is(err, state.ErrNotFound) {
+			s.log.Warn("developer session tombstone lookup failed", "app", slug, "err", err)
+		}
+		tomb = state.App{}
+	}
+	if tomb.DeletedAt == nil || tomb.AccountID != acct.ID ||
 		tomb.PreviewOfSlug != project || tomb.PreviewPrNumber != 0 ||
 		tomb.PreviewPrState != state.PreviewPrStateTornDown ||
 		tomb.Type != app.Type || (app.Type == state.AppTypeFunction && tomb.Runtime != app.Runtime) {
@@ -304,8 +311,8 @@ func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, pro
 		}
 		return state.App{}, nil, false
 	}
-	notifyRestored := func() {
-		_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
+	notifyRestored := func(ctx context.Context) {
+		_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 			fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
 	}
 	if ram != restored.RAMMB {
@@ -314,13 +321,13 @@ func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, pro
 			// The session is back but too small for watch mode; the retry
 			// takes the existing-session path, which checks it again.
 			s.log.Warn("developer session RAM not raised for watch mode", "app", restored.ID, "ram_mb", restored.RAMMB, "want_mb", ram, "err", err)
-			notifyRestored()
+			notifyRestored(r.Context())
 			return state.App{}, api.ErrCapacity("revive developer session"), false
 		}
 		s.log.Info("developer session RAM raised for watch mode", "app", restored.ID, "from_mb", restored.RAMMB, "to_mb", ram)
 		restored = raised
 	}
-	notifyRestored()
+	notifyRestored(r.Context())
 	return restored, nil, true
 }
 
