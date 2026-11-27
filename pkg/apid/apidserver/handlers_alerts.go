@@ -1056,6 +1056,9 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if !api.IsFiniteFloat(req.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
 	}
+	if reason := api.AlertThresholdUnreachable(req.Metric, req.Comparison, req.Threshold); reason != "" {
+		return api.ErrAlertRuleInvalid(reason)
+	}
 	if req.CooldownMinutes != nil {
 		if *req.CooldownMinutes < api.AlertRuleCooldownMinMinutes || *req.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
 			return api.ErrAlertRuleInvalid(fmt.Sprintf("cooldown_minutes must be in [%d, %d]", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
@@ -1173,6 +1176,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	}
 	if !api.IsFiniteFloat(merged.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
+	}
+	if reason := api.AlertThresholdUnreachable(string(merged.Metric), string(merged.Comparison), merged.Threshold); reason != "" {
+		return api.ErrAlertRuleInvalid(reason)
 	}
 	if merged.CooldownMinutes < api.AlertRuleCooldownMinMinutes || merged.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("cooldown_minutes must be in [%d, %d]", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))

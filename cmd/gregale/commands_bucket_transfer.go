@@ -319,8 +319,17 @@ func cmdUsageObjectStorage(args []string) int {
 		return jsonOut(writeJSON(u))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Object storage observed: %d bytes; reserved keys: %d\nRequests: %d; egress: %d bytes; authorizations: %d\nFresh: %t; billing: %s\n", u.Usage.ObservedBytes, u.Usage.CapacityKeys, u.Usage.RequestCount, u.Usage.EgressBytes, u.Usage.Authorizations, u.Usage.Fresh, u.BillingMode)
-	if len(u.Usage.UnavailableMeters) != 0 {
-		_, _ = fmt.Fprintf(osStdout, "Unavailable meters (numeric values are unknown): %s\n", strings.Join(u.Usage.UnavailableMeters, ", "))
+	// cost_millicents is the provider's cost, never part of a charge
+	// (api.ObjectStorageUsage.Chargeable), and is always unavailable; listing
+	// it beside a $0 estimate read as "the charge is unknown" (prod hunt r63).
+	var unavailable []string
+	for _, m := range u.Usage.UnavailableMeters {
+		if m != "cost_millicents" {
+			unavailable = append(unavailable, m)
+		}
+	}
+	if len(unavailable) != 0 {
+		_, _ = fmt.Fprintf(osStdout, "Unavailable meters (numeric values are unknown): %s\n", strings.Join(unavailable, ", "))
 	}
 	if u.Charges != nil {
 		_, _ = fmt.Fprintf(osStdout, "Estimated charge: %d millicents %s\n", u.Charges.TotalMillicents, u.Charges.Currency)

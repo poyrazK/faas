@@ -146,18 +146,20 @@ func cmdSLOsRm(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	fillLinkedApp(slug)
-	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert slo delete [--app <slug>] <slo-id> [--yes]", "slos")
+	// <slo-id> or <app> <slo-id>, as `slo create <app>` and `check delete
+	// <app> <check>` take it (prod hunt r63).
+	id, ok := syntheticCheckArgs(slug, fs.Args())
+	if !ok {
+		PrintUsage(os.Stderr, "usage: gregale alert slo delete [<slug>|--app <slug>] <slo-id> [--yes]", "slos")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.DeleteSLO(context.Background(), *slug, fs.Arg(0)); err != nil {
+	if err := client.DeleteSLO(context.Background(), *slug, id); err != nil {
 		return printErr("Could not delete SLO", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Deleted SLO %s\n", fs.Arg(0))
+	_, _ = fmt.Fprintf(osStdout, "Deleted SLO %s\n", id)
 	return 0
 }
