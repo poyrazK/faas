@@ -2030,8 +2030,9 @@ Each distinct attributed deployment is checked once before projection and once
 before release; app identity is checked last. Requests with unavailable deployment
 attribution keep it unavailable.
 
-Remote OAuth review has an optional, unchecked **App diagnostics** checkbox
-for each app. Approval covers retained request, performance, wake, sampled CPU profile function labels and
+Remote OAuth review has an optional **App diagnostics** checkbox for each
+app, ticked by default like every Connect choice (ADR-20261127160000 §6);
+untick the apps it should not cover. Approval covers retained request, performance, wake, sampled CPU profile function labels and
 collection/attribution summaries, and scheduler residency diagnostics across **all of that app's environments** and pins its
 current immutable ID. App-wide/future-app
 access, default reads and named environment reads do not implicitly approve it.
