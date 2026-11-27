@@ -173,6 +173,12 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		if strings.HasPrefix(pos, "../../pkg/e2etest/functionsql/") {
 			continue
 		}
+		// The native Commit consumer fixture runs in the customer's database,
+		// where the metal test (cmd/e2e/commit_consumer_native_metal_test.go)
+		// creates its processed_events, business_effects and deliveries tables.
+		if strings.HasPrefix(pos, "../../pkg/e2etest/testdata/commitconsumer/") {
+			continue
+		}
 		if strings.HasPrefix(pos, "../../pkg/commit/") || strings.HasPrefix(pos, "../../pkg/commitmanaged/") {
 			target = customerConn
 			query = s.sql

@@ -94,16 +94,21 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	}
 	dialer := pgproxy.NewVmmdDialer(vmmdTLS)
 	defer func() { _ = dialer.Close() }()
+	scheduler := scheddpb.NewScheddClient(scheddConn)
 	proxy, err := pgproxy.New(pgproxy.Config{
 		TLS: &tls.Config{GetCertificate: cert.GetCertificate}, HostSuffix: cfg.HostSuffix, DecoySecret: decoy,
 		PoolMaxServers: cfg.PoolMaxServers, PoolWait: cfg.PoolWait, PoolServerIdle: cfg.PoolServerIdle,
-		InstanceID: uint8(cfg.InstanceID), CancelPeers: cfg.peers, //nolint:gosec // validated 0-255
+		ReplicaMaxReplayLagBytes: cfg.ReplicaMaxReplayLagBytes,
+		InstanceID:               uint8(cfg.InstanceID), CancelPeers: cfg.peers, //nolint:gosec // validated 0-255
 		StartupTimeout: cfg.StartupTimeout, TrustedSources: cfg.trusted, MaxAuthFailures: cfg.MaxAuthFailures,
 		Metrics: pgproxy.NewMetrics(reg),
-	}, verifiers, pgproxy.NewScheddWaker(scheddpb.NewScheddClient(scheddConn)), dialer, log)
+	}, verifiers, pgproxy.NewScheddWaker(scheduler), dialer, log)
 	if err != nil {
 		return err
 	}
+
+	go proxy.RunQueryControls(ctx, scheduler)
+	go proxy.RunErrorHistory(ctx, scheduler)
 
 	// Ready means pgproxyd can authenticate (control-plane database), wake
 	// (schedd) and accept clients.

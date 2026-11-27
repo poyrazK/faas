@@ -8,6 +8,8 @@ pgproxyd_enabled: false
 pgproxyd_host_suffix: ""
 pgproxyd_listen_addr: ":5432"
 pgproxyd_verifier_cache_ttl: "30s"
+# Maximum unapplied WAL a replica-only binding can read through.
+pgproxyd_replica_max_replay_lag_bytes: 16777216
 # /healthz, /readyz and /metrics: loopback unless the manifest sets
 # database_node_metrics_host (the overlay address control-plane Prometheus
 # scrapes; the database_node firewall admits only the control plane).

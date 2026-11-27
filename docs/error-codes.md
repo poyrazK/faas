@@ -1450,6 +1450,10 @@ HTTP 400 Bad Request · Doc must be a JSON object with a top-level 'openapi' or 
 
 HTTP 400 Bad Request · Invalid OAuth Request
 
+### `invalid_postgres_restore_receipt`
+
+HTTP 400 Bad Request · Invalid PostgreSQL restore manifest
+
 ### `invalid_public_auth_ip_allowlist`
 
 HTTP 400 Bad Request · Invalid public-auth IP allowlist entry

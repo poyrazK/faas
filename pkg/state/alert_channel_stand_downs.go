@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -29,6 +30,8 @@ type AlertChannelStandDown struct {
 	RuleName, RuleMetric, Reason string
 	QueuedAt                     time.Time
 	Attempts                     int
+	PagerDutyTargetSealed        []byte
+	PagerDutyRegion              string
 }
 
 // AlertChannelStandDownStore queues and drains those notices. Optional on
@@ -46,8 +49,13 @@ type AlertChannelStandDownStore interface {
 	// RecordAlertChannelStandDownAttempt counts a failed attempt.
 	RecordAlertChannelStandDownAttempt(ctx context.Context, ruleID, channelID string, next time.Time, lastErr string) error
 	DeleteAlertChannelStandDown(ctx context.Context, ruleID, channelID string) error
-	// ClearAlertChannelStandDowns drops a rule's notices: a new fire
-	// supersedes them.
+	// AlertChannelStandDownPending reports a terminal notice from entering
+	// Observe only. A new fire may supersede ordinary queued notices.
+	AlertChannelStandDownPending(ctx context.Context, ruleID, channelID string, supersede bool) (bool, error)
+	// ListPagerDutyObservationStandDownChannels includes unbound channels
+	// that still owe a resolve and may share a binding's routing key.
+	ListPagerDutyObservationStandDownChannels(ctx context.Context, ruleID string) ([]NotificationChannel, error)
+	// ClearAlertChannelStandDowns drops ordinary notices for a rule.
 	ClearAlertChannelStandDowns(ctx context.Context, ruleID string) error
 	// ListStrandedAlertRules lists up to maxRows rules that are not ok but
 	// are no longer evaluated: disabled, or their app deleted.
@@ -84,6 +92,7 @@ func (s *PgStore) DueAlertChannelStandDowns(ctx context.Context, now time.Time, 
 			RuleID: row.RuleID, ChannelID: row.ChannelID, AccountID: row.AccountID, AppID: row.AppID,
 			RuleName: row.RuleName, RuleMetric: row.RuleMetric, Reason: row.Reason,
 			QueuedAt: row.QueuedAt.Time.UTC(), Attempts: int(row.Attempts),
+			PagerDutyTargetSealed: row.PagerdutyTargetSealed, PagerDutyRegion: row.PagerdutyRegion,
 		})
 	}
 	return out, nil
@@ -113,6 +122,35 @@ func (s *PgStore) DeleteAlertChannelStandDown(ctx context.Context, ruleID, chann
 		return fmt.Errorf("state: delete channel stand-down: %w", err)
 	}
 	return nil
+}
+
+func (s *PgStore) AlertChannelStandDownPending(ctx context.Context, ruleID, channelID string, supersede bool) (bool, error) {
+	rule, channel, err := alertChannelRetryKeys(ruleID, channelID)
+	if err != nil {
+		return false, err
+	}
+	return sqlc.New().AlertChannelStandDownPending(ctx, s.pool, sqlc.AlertChannelStandDownPendingParams{
+		RuleID: rule, ChannelID: channel, Supersede: supersede,
+	})
+}
+
+func (s *PgStore) ListPagerDutyObservationStandDownChannels(ctx context.Context, ruleID string) ([]NotificationChannel, error) {
+	rule, err := alertPgUUID(ruleID)
+	if err != nil || !rule.Valid {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListPagerDutyObservationStandDownChannels(ctx, s.pool, rule)
+	if err != nil {
+		return nil, fmt.Errorf("state: list PagerDuty stand-down destinations: %w", err)
+	}
+	out := make([]NotificationChannel, 0, len(rows))
+	for _, row := range rows {
+		channel := channelFromRow(row.NotificationChannel)
+		channel.TargetSealed = row.StandDownTargetSealed
+		channel.PagerDutyRegion = row.StandDownRegion
+		out = append(out, channel)
+	}
+	return out, nil
 }
 
 func (s *PgStore) ClearAlertChannelStandDowns(ctx context.Context, ruleID string) error {
@@ -153,8 +191,9 @@ func validStandDownReason(reason string) bool {
 // memStandDown is one queued notice and its retry state.
 type memStandDown struct {
 	AlertChannelStandDown
-	nextAttemptAt time.Time
-	lastError     string
+	nextAttemptAt         time.Time
+	lastError             string
+	observationTransition bool
 }
 
 func (m *MemStore) QueueAlertChannelStandDowns(_ context.Context, ruleID, reason string, at time.Time) (int64, error) {
@@ -167,12 +206,12 @@ func (m *MemStore) QueueAlertChannelStandDowns(_ context.Context, ruleID, reason
 	if !ok {
 		return 0, nil
 	}
-	return m.queueAlertChannelStandDownsLocked(rule, reason, at.UTC()), nil
+	return m.queueAlertChannelStandDownsLocked(rule, reason, at.UTC(), false), nil
 }
 
 // queueAlertChannelStandDownsLocked mirrors QueueAlertChannelStandDowns and
 // the alert_rules_channel_stand_downs trigger; m.mu is held.
-func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason string, at time.Time) int64 {
+func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason string, at time.Time, observationTransition bool) int64 {
 	owed := map[string]bool{}
 	if m.alertRuleEpisodeOpenLocked(rule.ID) {
 		for _, id := range m.alertRuleChannels[rule.ID] {
@@ -185,27 +224,39 @@ func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason stri
 		}
 	}
 	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == rule.ID })
-	live := map[string]bool{}
+	live := make(map[string]NotificationChannel)
 	for _, c := range m.notificationChannels[rule.AccountID] {
-		live[c.ID] = true
+		live[c.ID] = c
 	}
 	if m.alertChannelStandDowns == nil {
 		m.alertChannelStandDowns = map[alertChannelRetryKey]memStandDown{}
 	}
 	var queued int64
 	for channelID := range owed {
-		key := alertChannelRetryKey{rule.ID, channelID}
-		if _, dup := m.alertChannelStandDowns[key]; dup || !live[channelID] {
+		ch, exists := live[channelID]
+		if !exists {
 			continue
 		}
-		m.alertChannelStandDowns[key] = memStandDown{
-			AlertChannelStandDown: AlertChannelStandDown{
-				RuleID: rule.ID, ChannelID: channelID, AccountID: rule.AccountID, AppID: rule.AppID,
-				RuleName: rule.Name, RuleMetric: string(rule.Metric), Reason: reason, QueuedAt: at,
-			},
-			nextAttemptAt: at,
+		key := alertChannelRetryKey{rule.ID, channelID}
+		notice, exists := m.alertChannelStandDowns[key]
+		if !exists {
+			notice = memStandDown{
+				AlertChannelStandDown: AlertChannelStandDown{
+					RuleID: rule.ID, ChannelID: channelID, AccountID: rule.AccountID, AppID: rule.AppID,
+					RuleName: rule.Name, RuleMetric: string(rule.Metric), Reason: reason, QueuedAt: at,
+				},
+				nextAttemptAt: at,
+			}
+			queued++
 		}
-		queued++
+		if observationTransition && !notice.observationTransition {
+			notice.observationTransition = true
+			if ch.Kind == "pagerduty" {
+				notice.PagerDutyTargetSealed = bytes.Clone(ch.TargetSealed)
+				notice.PagerDutyRegion = ch.PagerDutyRegion
+			}
+		}
+		m.alertChannelStandDowns[key] = notice
 	}
 	return queued
 }
@@ -269,10 +320,47 @@ func (m *MemStore) DeleteAlertChannelStandDown(_ context.Context, ruleID, channe
 	return nil
 }
 
+func (m *MemStore) AlertChannelStandDownPending(_ context.Context, ruleID, channelID string, supersede bool) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := alertChannelRetryKey{ruleID, channelID}
+	notice := m.alertChannelStandDowns[key]
+	if notice.observationTransition {
+		return true, nil
+	}
+	if supersede {
+		delete(m.alertChannelStandDowns, key)
+	}
+	return false, nil
+}
+
+func (m *MemStore) ListPagerDutyObservationStandDownChannels(_ context.Context, ruleID string) ([]NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pagerDutyObservationStandDownChannelsLocked(m.alertRules[ruleID]), nil
+}
+
+func (m *MemStore) pagerDutyObservationStandDownChannelsLocked(rule AlertRule) []NotificationChannel {
+	var channels []NotificationChannel
+	for _, ch := range m.notificationChannels[rule.AccountID] {
+		notice := m.alertChannelStandDowns[alertChannelRetryKey{rule.ID, ch.ID}]
+		if ch.Kind == "pagerduty" && notice.observationTransition {
+			if notice.PagerDutyTargetSealed != nil {
+				ch.TargetSealed = bytes.Clone(notice.PagerDutyTargetSealed)
+				ch.PagerDutyRegion = notice.PagerDutyRegion
+			}
+			channels = append(channels, ch)
+		}
+	}
+	return channels
+}
+
 func (m *MemStore) ClearAlertChannelStandDowns(_ context.Context, ruleID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.clearAlertChannelStandDownsLocked(func(k alertChannelRetryKey) bool { return k.rule == ruleID })
+	m.clearAlertChannelStandDownsLocked(func(k alertChannelRetryKey) bool {
+		return k.rule == ruleID && !m.alertChannelStandDowns[k].observationTransition
+	})
 	return nil
 }
 

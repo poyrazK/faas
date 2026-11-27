@@ -731,6 +731,10 @@ const (
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
 	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
+	// CodePublicSourceFetchRateLimited marks an account past
+	// PublicSourceFetchesPerHour reads of public repositories without a
+	// GitHub installation (ADR-20261126164847).
+	CodePublicSourceFetchRateLimited = "public_source_fetch_rate_limited"
 	// CodeNotificationChannelInUse marks a channel delete refused because the
 	// channel is the only destination of alert rules (ADR-20261029203000).
 	CodeNotificationChannelInUse = "notification_channel_in_use"
@@ -2349,10 +2353,17 @@ func StatusForCode(code string) int {
 		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired,
 		CodeBillingEmailInUse, CodeBillingContactMember, CodeBillingSubscriptionEnding, CodeDevDebugNotDeveloperEnvironment:
 		return http.StatusConflict
-	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
+	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending,
+		CodeGitHubRepoNotAccessible:
 		return http.StatusForbidden
-	case CodeGitHubAppNotInstalled, CodeWorkflowFunctionNotInvocable:
+	case CodeGitHubAppNotInstalled, CodeWorkflowFunctionNotInvocable, CodeGitHubInstallNotFound:
 		return http.StatusNotFound
+	// githubd's source-ref streams return these through gRPC; without them
+	// apid answered a missing ref or an unreachable GitHub with HTTP 500.
+	case CodeInvalidRef:
+		return http.StatusBadRequest
+	case CodeSourceRefUnavailable:
+		return http.StatusServiceUnavailable
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
 	case CodeStoredWorkflowEventsUnavailable:
@@ -7452,6 +7463,21 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		"Source-ref fetch unavailable",
 		reason).
 		WithDocs(docsBase + "/deploy-from-source#failure-modes")
+}
+
+// ErrPublicSourceFetchRateLimited is the 429 for an account past
+// PublicSourceFetchesPerHour reads of public repositories without an
+// installation (ADR-20261126164847).
+func ErrPublicSourceFetchRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodePublicSourceFetchRateLimited,
+		"Public repository reads rate limited",
+		fmt.Sprintf("This account has read %d public GitHub repositories without a GitHub installation in the last hour. Connect GitHub to deploy without this limit.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/deploy-from-source")
 }
 
 // PreviewDatabaseRetryAfter is the Retry-After of

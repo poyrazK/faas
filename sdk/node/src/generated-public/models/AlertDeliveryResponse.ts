@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AlertDeliveryAnomalyEvidence } from './AlertDeliveryAnomalyEvidence.js';
 /**
  * One alert_deliveries row as surfaced by
  * GET /v1/apps/{slug}/alerts/{id}/deliveries.
@@ -12,6 +13,7 @@
  *
  */
 export type AlertDeliveryResponse = {
+  anomaly?: AlertDeliveryAnomalyEvidence;
   /**
    * Stable readiness logical event associated with this physical delivery.
    */

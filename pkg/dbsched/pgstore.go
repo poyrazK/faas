@@ -50,12 +50,15 @@ func statesText(states []State) []string {
 }
 
 func (s *PgStore) UpsertNode(ctx context.Context, node Node) error {
-	err := s.q.UpsertDatabaseNode(ctx, s.pool, sqlc.UpsertDatabaseNodeParams{
+	count, err := s.q.UpsertDatabaseNode(ctx, s.pool, sqlc.UpsertDatabaseNodeParams{
 		ID: node.ID, TargetUrl: node.TargetURL, AdmissionCeilingMb: int32(node.AdmissionCeilingMB),
-		VolumeCapacityBytes: node.VolumeCapacityBytes, BootSlots: int32(bootSlots(node)), PostgresMajors: int32s(node.Majors), Lifecycle: node.Lifecycle,
+		VolumeCapacityBytes: node.VolumeCapacityBytes, BootSlots: int32(bootSlots(node)), PostgresMajors: int32s(node.Majors), Lifecycle: node.Lifecycle, RecoveryRegion: node.RecoveryRegion,
 	})
 	if err != nil {
 		return fmt.Errorf("dbsched: upsert node %s: %w", node.ID, err)
+	}
+	if count != 1 {
+		return fmt.Errorf("%w: database node %s already belongs to another archive fleet", ErrConflict, node.ID)
 	}
 	return nil
 }
@@ -68,7 +71,7 @@ func (s *PgStore) Nodes(ctx context.Context) ([]Node, error) {
 	out := make([]Node, len(rows))
 	for i, r := range rows {
 		out[i] = Node{ID: r.ID, TargetURL: r.TargetUrl, AdmissionCeilingMB: int(r.AdmissionCeilingMb), VolumeCapacityBytes: r.VolumeCapacityBytes,
-			BootSlots: int(r.BootSlots), Majors: ints(r.PostgresMajors), Lifecycle: r.Lifecycle}
+			BootSlots: int(r.BootSlots), Majors: ints(r.PostgresMajors), Lifecycle: r.Lifecycle, RecoveryRegion: r.RecoveryRegion}
 	}
 	return out, nil
 }
@@ -87,7 +90,8 @@ func vmFromRow(r sqlc.DatabaseVm) (VM, error) {
 		VcpuCount: int(r.VcpuCount), MemMiB: int(r.MemMib), VolumeBytes: r.VolumeBytes, State: State(r.State),
 		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, Held: r.Held, ComputeQuotaUnitSeconds: r.ComputeQuotaUnitSeconds.Int64, LastBackupAt: r.LastBackupAt.Time, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
-		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
+		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTimeline: uint32(r.RestoreTimeline), RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
+		RecoveryRegion: r.RecoveryRegion, RestoreFromRecovery: r.RestoreFromRecovery,
 		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
 		Replicated: r.Replicated, StandbyNode: r.StandbyNode.String, StandbyRunning: r.StandbyRunning, StandbySynced: r.StandbySynced,
 		PromotePending: r.PromotePending, DropStandbySlot: r.DropStandbySlot,
@@ -168,7 +172,7 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		if err != nil {
 			return VM{}, err
 		}
-		node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID, vm.Major)
+		node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID, vm.Major, vm.RecoveryRegion)
 		if !ok {
 			return VM{}, ErrNoCapacity
 		}
@@ -197,6 +201,13 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 			DatabaseID: key, NodeID: node.ID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount),
 			MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes, AlwaysOn: vm.AlwaysOn,
 			RestoreWindowSeconds: vm.RestoreWindowSeconds, Replicated: vm.Replicated,
+			RecoveryRegion: vm.RecoveryRegion, RestoreFromRecovery: vm.RestoreFromRecovery, RestoreTimeline: int64(vm.RestoreTimeline),
+		}
+		params.State = string(StateProvisioning)
+		if vm.RestoreFromRecovery {
+			params.State = string(stateRegionalRestore)
+		} else if vm.State == stateRehearsalRestore {
+			params.State = string(stateRehearsalRestore)
 		}
 		if len(placed) == 2 {
 			params.StandbyNode = pgtype.Text{String: placed[1].ID, Valid: true}
@@ -263,6 +274,28 @@ func (s *PgStore) AdmitWake(ctx context.Context, id string, keepStandbySynced bo
 		if err != nil {
 			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.NodeID, err)
 		}
+		// Grow admission locks this same node. Re-read after acquiring
+		// it so a different schedd cannot boot a volume being grown.
+		vm, err = s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		if vm.State == StateRunning || vm.State == StateWaking {
+			return vm, nil
+		}
+		if vm.State != StateParked || vm.NodeID != row.ID {
+			return vm, ErrConflict
+		}
+		if vm.ResizePending {
+			return vm, ErrStorageResizePending
+		}
+		wait, err := waitForAutoGrow(ctx, tx, id)
+		if err != nil {
+			return vm, err
+		}
+		if wait {
+			return vm, ErrStorageResizePending
+		}
 		node := Node{ID: row.ID, AdmissionCeilingMB: int(row.AdmissionCeilingMb), BootSlots: int(row.BootSlots), Lifecycle: row.Lifecycle}
 		if node.Lifecycle == NodeUnavailable {
 			return VM{}, ErrNodeUnavailable
@@ -290,6 +323,11 @@ func (s *PgStore) AdmitWake(ctx context.Context, id string, keepStandbySynced bo
 
 func (s *PgStore) Transition(ctx context.Context, id string, from []State, to State, opts TransitionOptions) error {
 	_, err := inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		if slices.Contains(from, StateParking) {
+			if err := guardRollingSwitch(ctx, tx, id); err != nil {
+				return VM{}, err
+			}
+		}
 		return VM{}, s.transition(ctx, tx, id, from, to, opts)
 	})
 	return err
@@ -300,9 +338,21 @@ func (s *PgStore) transition(ctx context.Context, db sqlc.DBTX, id string, from 
 	if err != nil {
 		return err
 	}
+	if !opts.IdleCutoff.IsZero() {
+		var idle bool
+		err := db.QueryRow(ctx, `SELECT state = 'running' AND NOT always_on
+			AND (last_active_at IS NULL OR last_active_at <= $2)
+			FROM database_vms WHERE database_id = $1 FOR UPDATE`, key, opts.IdleCutoff).Scan(&idle)
+		if err != nil {
+			return err
+		}
+		if !idle {
+			return ErrConflict
+		}
+	}
 	n, err := s.q.TransitionDatabaseVM(ctx, db, sqlc.TransitionDatabaseVMParams{
 		ToState: string(to), LastError: pgtype.Text{String: opts.LastError, Valid: opts.LastError != ""},
-		Bootstrapped: opts.Bootstrapped, DatabaseID: key, FromStates: statesText(from),
+		Bootstrapped: opts.Bootstrapped, IdleParkFrom: pgtype.Timestamptz{Time: opts.IdleParkFrom, Valid: !opts.IdleParkFrom.IsZero()}, DatabaseID: key, FromStates: statesText(from),
 	})
 	if err != nil {
 		return fmt.Errorf("dbsched: transition %s to %s: %w", id, to, err)
@@ -378,6 +428,16 @@ func (s *PgStore) ClaimProvision(ctx context.Context, id string, held time.Time,
 		return time.Time{}, fmt.Errorf("dbsched: claim provision %s: %w", id, err)
 	}
 	return until.Time, nil
+}
+
+func (s *PgStore) PinRestoreTimeline(ctx context.Context, id string, timeline uint32) error {
+	n, err := s.q.PinDatabaseVMRestoreTimeline(ctx, s.pool, sqlc.PinDatabaseVMRestoreTimelineParams{
+		DatabaseID: mustUUID(id), RestoreTimeline: int64(timeline),
+	})
+	if err == nil && n == 0 {
+		return ErrConflict
+	}
+	return err
 }
 
 func (s *PgStore) RecordRestore(ctx context.Context, id string, recoveredTo time.Time) error {
@@ -562,6 +622,10 @@ func (s *PgStore) Usage(ctx context.Context, id string, from, to time.Time) (Usa
 }
 
 func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Time) error {
+	return s.resize(ctx, id, shape, at, "")
+}
+
+func (s *PgStore) resize(ctx context.Context, id string, shape Shape, at time.Time, autoReservation string) error {
 	key, err := pgUUID(id)
 	if err != nil {
 		return err
@@ -574,7 +638,7 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 		if err := checkResize(vm, shape); err != nil {
 			return VM{}, err
 		}
-		if vm.shape() == shape {
+		if autoReservation == "" && vm.shape() == shape {
 			return VM{}, nil
 		}
 		// The primary's node and a kept standby's, in one order.
@@ -589,13 +653,33 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 		if err != nil {
 			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.NodeID, err)
 		}
+		if autoReservation != "" {
+			vm, err = s.get(ctx, tx, id)
+			if err != nil {
+				return VM{}, err
+			}
+			if vm.NodeID != row.ID || vm.State != StateParked || vm.Replicated || !vm.AlwaysOn && vm.Held || shape.VolumeBytes < vm.VolumeBytes {
+				return VM{}, ErrConflict
+			}
+			if err := verifyAutoGrowStorage(ctx, tx, vm, autoReservation, shape.VolumeBytes); err != nil {
+				return VM{}, err
+			}
+			if vm.shape() == shape {
+				return vm, nil
+			}
+		}
 		node := Node{ID: row.ID, AdmissionCeilingMB: int(row.AdmissionCeilingMb), VolumeCapacityBytes: row.VolumeCapacityBytes, Lifecycle: row.Lifecycle}
 		usage, err := s.usage(ctx, tx)
 		if err != nil {
 			return VM{}, err
 		}
-		if err := resizeFits(node, usage[node.ID], vm, shape); err != nil {
-			return VM{}, err
+		// A scheduled grow already reserved node space atomically with its
+		// stop. The node usage includes that reservation until the VM shape
+		// records the same bytes.
+		if autoReservation == "" || !vm.AlwaysOn {
+			if err := resizeFits(node, usage[node.ID], vm, shape); err != nil {
+				return VM{}, err
+			}
 		}
 		if len(locked) == 2 {
 			row, err := s.q.LockDatabaseNode(ctx, tx, vm.StandbyNode)
@@ -618,6 +702,7 @@ func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Ti
 		n, err := s.q.ResizeDatabaseVM(ctx, tx, sqlc.ResizeDatabaseVMParams{
 			VcpuCount: int32(shape.VcpuCount), MemMib: int32(shape.MemMiB), VolumeBytes: shape.VolumeBytes, DatabaseID: key,
 			Replicated: next.Replicated, StandbyNode: pgtype.Text{String: next.StandbyNode, Valid: next.StandbyNode != ""}, DropStandbySlot: next.DropStandbySlot,
+			ParkedOnly: autoReservation != "" && !vm.AlwaysOn,
 		})
 		if err != nil {
 			return VM{}, fmt.Errorf("dbsched: resize %s: %w", id, err)
@@ -997,17 +1082,21 @@ func (s *PgStore) ClaimStandby(ctx context.Context, id string) (VM, error) {
 }
 
 func (s *PgStore) ReleaseStandby(ctx context.Context, id string, keepSynced bool) error {
-	key, err := pgUUID(id)
-	if err != nil {
-		return err
-	}
-	_, err = inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
-		n, err := s.q.ReleaseDatabaseStandby(ctx, tx, sqlc.ReleaseDatabaseStandbyParams{KeepSynced: keepSynced, DatabaseID: key})
-		if err := s.changed(ctx, tx, id, n, err); err != nil {
+	_, err := inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		if err := guardRollingSwitch(ctx, tx, id); err != nil {
 			return VM{}, err
 		}
-		return s.getSyncingStandby(ctx, tx, id)
+		return VM{}, s.releaseStandbyTx(ctx, tx, id, keepSynced)
 	})
+	return err
+}
+
+func (s *PgStore) releaseStandbyTx(ctx context.Context, tx pgx.Tx, id string, keepSynced bool) error {
+	n, err := s.q.ReleaseDatabaseStandby(ctx, tx, sqlc.ReleaseDatabaseStandbyParams{KeepSynced: keepSynced, DatabaseID: mustUUID(id)})
+	if err := s.changed(ctx, tx, id, n, err); err != nil {
+		return err
+	}
+	_, err = s.getSyncingStandby(ctx, tx, id)
 	return err
 }
 
@@ -1016,8 +1105,41 @@ func (s *PgStore) MarkStandbySynced(ctx context.Context, id string, synced bool)
 	if err != nil {
 		return err
 	}
-	n, err := s.q.MarkDatabaseStandbySynced(ctx, s.pool, sqlc.MarkDatabaseStandbySyncedParams{Synced: synced, DatabaseID: key})
-	return s.changed(ctx, s.pool, id, n, err)
+	_, err = inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		if err := guardRollingSwitch(ctx, tx, id); err != nil {
+			return VM{}, err
+		}
+		n, err := s.q.MarkDatabaseStandbySynced(ctx, tx, sqlc.MarkDatabaseStandbySyncedParams{Synced: synced, DatabaseID: key})
+		return VM{}, s.changed(ctx, tx, id, n, err)
+	})
+	return err
+}
+
+// markStandbyDropped rechecks a failed replication sample under the VM lock.
+func (s *PgStore) markStandbyDropped(ctx context.Context, sampled VM) error {
+	_, err := inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		vm, err := s.lockRollingVM(ctx, tx, sampled.DatabaseID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return VM{}, ErrConflict
+		}
+		if err != nil {
+			return VM{}, err
+		}
+		if vm.State != StateRunning || !vm.StandbyRunning || vm.NodeID != sampled.NodeID || vm.StandbyNode != sampled.StandbyNode ||
+			!vm.StateChangedAt.Equal(sampled.StateChangedAt) {
+			return VM{}, ErrConflict
+		}
+		pending, err := rollingStandbyResume(ctx, tx, vm)
+		if err != nil {
+			return VM{}, err
+		}
+		if pending {
+			return VM{}, ErrConflict
+		}
+		n, err := s.q.MarkDatabaseStandbySynced(ctx, tx, sqlc.MarkDatabaseStandbySyncedParams{DatabaseID: mustUUID(vm.DatabaseID)})
+		return VM{}, s.changed(ctx, tx, vm.DatabaseID, n, err)
+	})
+	return err
 }
 
 func (s *PgStore) ReplaceStandby(ctx context.Context, id string, avoid ...string) (VM, error) {
@@ -1060,30 +1182,37 @@ func (s *PgStore) ReplaceStandby(ctx context.Context, id string, avoid ...string
 
 func (s *PgStore) Failover(ctx context.Context, id string) (VM, error) {
 	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
-		vm, err := s.get(ctx, tx, id)
-		if err != nil {
+		if err := guardRollingSwitch(ctx, tx, id); err != nil {
 			return VM{}, err
 		}
-		if !canFailover(vm) {
-			return VM{}, ErrConflict
-		}
-		n, err := s.q.FailoverDatabaseVM(ctx, tx, mustUUID(vm.DatabaseID))
-		if err := s.changed(ctx, tx, id, n, err); err != nil {
-			return VM{}, err
-		}
-		after, err := s.getSyncingStandby(ctx, tx, id)
-		if err != nil {
-			return VM{}, err
-		}
-		key, now := mustUUID(id), time.Now()
-		switch {
-		case isActive(after.State) && !isActive(vm.State):
-			err = s.open(ctx, tx, key, MeterCompute, computeRate(after), now)
-		case !isActive(after.State) && isActive(vm.State):
-			err = s.close(ctx, tx, key, MeterCompute, now)
-		}
-		return after, err
+		return s.failoverTx(ctx, tx, id)
 	})
+}
+
+func (s *PgStore) failoverTx(ctx context.Context, tx pgx.Tx, id string) (VM, error) {
+	vm, err := s.get(ctx, tx, id)
+	if err != nil {
+		return VM{}, err
+	}
+	if !canFailover(vm) {
+		return VM{}, ErrConflict
+	}
+	n, err := s.q.FailoverDatabaseVM(ctx, tx, mustUUID(vm.DatabaseID))
+	if err := s.changed(ctx, tx, id, n, err); err != nil {
+		return VM{}, err
+	}
+	after, err := s.getSyncingStandby(ctx, tx, id)
+	if err != nil {
+		return VM{}, err
+	}
+	key, now := mustUUID(id), time.Now()
+	switch {
+	case isActive(after.State) && !isActive(vm.State):
+		err = s.open(ctx, tx, key, MeterCompute, computeRate(after), now)
+	case !isActive(after.State) && isActive(vm.State):
+		err = s.close(ctx, tx, key, MeterCompute, now)
+	}
+	return after, err
 }
 
 func (s *PgStore) FinishPromotion(ctx context.Context, id string) error {

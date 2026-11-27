@@ -9,6 +9,7 @@ package firecracker
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 )
 
 func TestMetalSnapshotRestoreOutlivesRetention(t *testing.T) {
@@ -60,6 +62,18 @@ func TestMetalSnapshotRestoreOutlivesRetention(t *testing.T) {
 		return out
 	}
 	query := func(id, sql string) string { return run(id, sql, false) }
+	var enabled pgextension.Catalog
+	for range 2 {
+		catalog, _, err := p.Extensions(ctx, source, "pg_trgm", 0)
+		if err != nil || !slices.ContainsFunc(catalog.Installed, func(i pgextension.Installed) bool { return i.Name == "pg_trgm" }) ||
+			enabled.Installed != nil && !slices.Equal(enabled.Installed, catalog.Installed) {
+			t.Fatalf("enable pg_trgm: %+v, %v", catalog, err)
+		}
+		enabled = catalog
+	}
+	if got := query(source, "SELECT similarity('gregale', 'gregale')::text"); got != "1" {
+		t.Fatalf("source similarity = %q", got)
+	}
 	run(source, "CREATE TABLE kept(v text); INSERT INTO kept VALUES ('before')", true)
 	time.Sleep(1100 * time.Millisecond)
 	point := time.Now().UTC().Truncate(time.Microsecond)
@@ -109,6 +123,12 @@ func TestMetalSnapshotRestoreOutlivesRetention(t *testing.T) {
 	restored := time.Since(started)
 	if got := query(target, "SELECT string_agg(v, ',' ORDER BY v) FROM kept"); got != "before" {
 		t.Fatalf("restored rows = %q; want only the commit before the snapshot", got)
+	}
+	if got := query(target, "SELECT similarity('gregale', 'gregale')::text"); got != "1" {
+		t.Fatalf("restored similarity = %q", got)
+	}
+	if catalog, _, err := p.Extensions(ctx, target, "", 0); err != nil || !slices.Equal(catalog.Installed, enabled.Installed) {
+		t.Fatalf("restored extensions = %+v, %v", catalog, err)
 	}
 
 	deletion := managedpostgres.SnapshotRestoreDeletionRequest{Restore: req, SnapshotCreatedAt: snap.CreatedAt, TargetCreatedAt: obs.TargetCreatedAt}

@@ -49,7 +49,7 @@ func TestHistoricalAlertEvidenceWorkerPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fire, won, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now().UTC())
+	fire, won, _, err := (*e.Store()).ClaimAlertFire(ctx, rule.ID, rule.ID+":fire", nil, 42, time.Now().UTC())
 	if err != nil || !won {
 		t.Fatalf("fire %v %v", won, err)
 	}

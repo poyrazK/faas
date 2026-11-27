@@ -266,6 +266,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"analytics_cohorts.environment_id", // Product analytics events, property keys and cohorts cascade with the environment row.
 		"analytics_events.environment_id",
 		"analytics_property_keys.environment_id",
+		"api_consumers.environment_id", // API consumers and their keys cascade with the environment row.
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
 		"app_config_guards.scope",      // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
@@ -291,7 +292,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_webhooks.scope",
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
-		"crons.deployment_scope",                 // Environment crons have their own clone lifecycle (#7134).
+		"consumer_keys.environment_id",
+		"crons.deployment_scope", // Environment crons have their own clone lifecycle (#7134).
 		"crons.environment_id",
 		"custom_domains.environment_id",
 		"customer_operation_approval_forms.scope",

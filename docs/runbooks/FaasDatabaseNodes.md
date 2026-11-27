@@ -307,6 +307,15 @@ idle. A security minor should not wait for that.
    standby on its own), switch it over (see "Switching a database over").
    The new standby copies the new primary on the current base.
 
+### FaasDatabasePrimaryStorageLow (warn)
+
+The scheduler reports at least one writable primary with free space
+below the storage guard's recovery threshold. Find the database ID in
+schedd logs under `primary is low on storage`. Check the customer's latest
+storage sample, the health of WAL archiving, and whether the node and
+account have enough headroom for a storage resize. The separate read-only
+alert covers primaries after the guard has turned them read-only.
+
 ### FaasDatabaseStorageReadOnly (warn)
 
 A database's volume is its storage limit. When a primary's free space
@@ -464,6 +473,34 @@ stops after its primary) and wakes it again. That takes a few seconds,
 during which clients wait in pgproxyd and idle sessions drop. A parked
 database is left as it is: its next wake boots the current base. A
 database moving, waking, parking or failed is refused (`conflict`).
+
+## Setting up a recovery region
+
+Choose a recovery region with its own native database nodes, writable
+archive and database proxy. Place the source fleet's existing off-site
+mirror in that region. On the recovery nodes configure
+`dbbackupd_recovery_s3_*` with list and read access to that mirror's prefix.
+Keep the recovery nodes' normal writable archive in a separate bucket.
+
+Set `recovery_region` to the destination region on each dedicated node in
+`faas_schedd_database_scheduler.nodes`. Use new node IDs for this fleet.
+Placement keeps these nodes and their restored databases together,
+including maintenance moves and standbys. Share the destination's
+writable archive across those nodes if they offer standby failover or
+moves. Keep the catalogue, recovery proxy and storage credentials
+reachable during a source-region outage.
+
+Register a native backend for the recovery fleet. In the managed PostgreSQL
+backend configuration, map the source region to this backend ID using
+`recovery_targets`. For example, `"recovery_targets": {"eu-central-1": "native-dr-west"}`
+pairs a source region with the backend `native-dr-west`, whose region is
+`eu-west-1`. The destination backend is dedicated to recovery and is
+excluded from the normal region defaults.
+
+The off-site uploader mirrors archives independently of customer recovery
+preferences. Enabling the preference permits regional restores for that
+database. Recovery nodes only read the incoming mirror, and a restored
+database writes its new timeline into the destination's writable archive.
 
 ## Switching a database over
 

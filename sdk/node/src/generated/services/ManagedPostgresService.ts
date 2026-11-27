@@ -4,10 +4,12 @@
 /* eslint-disable */
 import type { AppPostgresBindingList } from '../models/AppPostgresBindingList.js';
 import type { AppTaskResponse } from '../models/AppTaskResponse.js';
+import type { CancelManagedPostgresQueryRequest } from '../models/CancelManagedPostgresQueryRequest.js';
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateDataAPIContractTaskRequest } from '../models/CreateDataAPIContractTaskRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
+import type { CreateManagedPostgresMaskedBranchRequest } from '../models/CreateManagedPostgresMaskedBranchRequest.js';
 import type { DataAPIChangeEventBatch } from '../models/DataAPIChangeEventBatch.js';
 import type { DataAPIChangeEventBatchResponse } from '../models/DataAPIChangeEventBatchResponse.js';
 import type { DataAPIChangeHookReport } from '../models/DataAPIChangeHookReport.js';
@@ -21,8 +23,12 @@ import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportRes
 import type { LabelChange } from '../models/LabelChange.js';
 import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ManagedPostgresActivity } from '../models/ManagedPostgresActivity.js';
+import type { ManagedPostgresAutoGrowStatus } from '../models/ManagedPostgresAutoGrowStatus.js';
+import type { ManagedPostgresAutovacuum } from '../models/ManagedPostgresAutovacuum.js';
+import type { ManagedPostgresBackupSchedule } from '../models/ManagedPostgresBackupSchedule.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
+import type { ManagedPostgresBindingTimeouts } from '../models/ManagedPostgresBindingTimeouts.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
 import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgresComputePolicyChange.js';
 import type { ManagedPostgresConnectionBudget } from '../models/ManagedPostgresConnectionBudget.js';
@@ -32,20 +38,50 @@ import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js
 import type { ManagedPostgresCutoverPreflight } from '../models/ManagedPostgresCutoverPreflight.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresDiagnostics } from '../models/ManagedPostgresDiagnostics.js';
+import type { ManagedPostgresErrorHistory } from '../models/ManagedPostgresErrorHistory.js';
+import type { ManagedPostgresExport } from '../models/ManagedPostgresExport.js';
+import type { ManagedPostgresExportManifest } from '../models/ManagedPostgresExportManifest.js';
+import type { ManagedPostgresExportRequest } from '../models/ManagedPostgresExportRequest.js';
+import type { ManagedPostgresExtensions } from '../models/ManagedPostgresExtensions.js';
+import type { ManagedPostgresImportRequest } from '../models/ManagedPostgresImportRequest.js';
+import type { ManagedPostgresImportSource } from '../models/ManagedPostgresImportSource.js';
+import type { ManagedPostgresImportStatus } from '../models/ManagedPostgresImportStatus.js';
+import type { ManagedPostgresMaintenanceStatus } from '../models/ManagedPostgresMaintenanceStatus.js';
+import type { ManagedPostgresMigrationCheck } from '../models/ManagedPostgresMigrationCheck.js';
+import type { ManagedPostgresMigrationProgress } from '../models/ManagedPostgresMigrationProgress.js';
+import type { ManagedPostgresMigrationVerifyRequest } from '../models/ManagedPostgresMigrationVerifyRequest.js';
 import type { ManagedPostgresOverage } from '../models/ManagedPostgresOverage.js';
 import type { ManagedPostgresOverageRequest } from '../models/ManagedPostgresOverageRequest.js';
+import type { ManagedPostgresQueryCancellation } from '../models/ManagedPostgresQueryCancellation.js';
+import type { ManagedPostgresQueryInsights } from '../models/ManagedPostgresQueryInsights.js';
 import type { ManagedPostgresQueryRequest } from '../models/ManagedPostgresQueryRequest.js';
 import type { ManagedPostgresQueryResponse } from '../models/ManagedPostgresQueryResponse.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
+import type { ManagedPostgresRestoreCheck } from '../models/ManagedPostgresRestoreCheck.js';
+import type { ManagedPostgresRestoreDrill } from '../models/ManagedPostgresRestoreDrill.js';
+import type { ManagedPostgresSessions } from '../models/ManagedPostgresSessions.js';
 import type { ManagedPostgresSuspendTimeout } from '../models/ManagedPostgresSuspendTimeout.js';
+import type { ManagedPostgresTableHealth } from '../models/ManagedPostgresTableHealth.js';
+import type { ManagedPostgresUpgradeRehearsal } from '../models/ManagedPostgresUpgradeRehearsal.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { ManagedPostgresWakeWithApp } from '../models/ManagedPostgresWakeWithApp.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { PutManagedPostgresCustomRoleRequest } from '../models/PutManagedPostgresCustomRoleRequest.js';
+import type { RequestManagedPostgresRestoreDrill } from '../models/RequestManagedPostgresRestoreDrill.js';
+import type { RequestManagedPostgresUpgradeRehearsal } from '../models/RequestManagedPostgresUpgradeRehearsal.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
+import type { SetManagedPostgresAutoGrowRequest } from '../models/SetManagedPostgresAutoGrowRequest.js';
+import type { SetManagedPostgresAutovacuumRequest } from '../models/SetManagedPostgresAutovacuumRequest.js';
+import type { SetManagedPostgresBackupScheduleRequest } from '../models/SetManagedPostgresBackupScheduleRequest.js';
+import type { SetManagedPostgresBindingTimeoutsRequest } from '../models/SetManagedPostgresBindingTimeoutsRequest.js';
+import type { SetManagedPostgresErrorHistoryRequest } from '../models/SetManagedPostgresErrorHistoryRequest.js';
+import type { SetManagedPostgresMaintenanceRequest } from '../models/SetManagedPostgresMaintenanceRequest.js';
+import type { SetManagedPostgresQueryInsightsRequest } from '../models/SetManagedPostgresQueryInsightsRequest.js';
+import type { SetManagedPostgresRecoveryRegionRequest } from '../models/SetManagedPostgresRecoveryRegionRequest.js';
 import type { SetManagedPostgresSuspendTimeoutRequest } from '../models/SetManagedPostgresSuspendTimeoutRequest.js';
 import type { SetManagedPostgresWakeWithAppRequest } from '../models/SetManagedPostgresWakeWithAppRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -354,6 +390,7 @@ export class ManagedPostgresService {
    * never stored. Ready follows the lifecycle state; a database whose
    * compute scaled to zero is Ready=True with reason suspended. Failed,
    * deleting and deleted databases report terminal conditions.
+   * Reading this endpoint leaves parked databases asleep.
    * Cache-Control no-store.
    *
    * @returns ResourceStatus The managed database's conditions.
@@ -901,6 +938,65 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Set a native database's automatic storage growth ceiling.
+   * Single-node databases grow at an idle park or during their maintenance
+   * window. A zero ceiling disables future automatic growth.
+   *
+   * @returns ManagedPostgresAutoGrowStatus The stored auto-grow policy.
+   * @returns Problem Invalid policy, missing access or database, or unsupported backend or compute policy.
+   * @throws ApiError
+   */
+  public static setManagedPostgresAutoGrow({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresAutoGrowRequest,
+  }): CancelablePromise<ManagedPostgresAutoGrowStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/auto-grow',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Set a weekly UTC window for planned native PostgreSQL base refreshes.
+   * Available for always-on native PostgreSQL databases. Production refreshes
+   * verify the standby before a planned switchover. Clients can disconnect
+   * during a refresh. A null window restores the default refresh policy.
+   *
+   * @returns ManagedPostgresMaintenanceStatus The stored schedule, current or next window, and latest refresh.
+   * @returns Problem Invalid schedule, missing access or database, or unsupported backend or compute policy.
+   * @throws ApiError
+   */
+  public static setManagedPostgresMaintenance({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresMaintenanceRequest,
+  }): CancelablePromise<ManagedPostgresMaintenanceStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/maintenance-window',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
    * Resize managed PostgreSQL compute
    * Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
    * @returns Problem Invalid request, conflict, plan limit or backend unavailable
@@ -954,6 +1050,992 @@ export class ManagedPostgresService {
         'id': id,
         'resize_id': resizeId,
       },
+    });
+  }
+  /**
+   * Check prerequisites for a native PostgreSQL live migration
+   * Inspects source replication settings, capacity, supported table structures and an empty target. It may wake the target. The check creates no replication resources.
+   * @returns ManagedPostgresMigrationCheck Compatibility evidence or explicit blockers.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static checkManagedPostgresMigration({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportSource,
+  }): CancelablePromise<ManagedPostgresMigrationCheck | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/migration-check',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Start or resume a native PostgreSQL live migration
+   * Copies tables into an empty single-zone native target and starts continuous logical replication with application connections fenced. Resume with the same operation ID and source credentials.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static startManagedPostgresMigration({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/migration',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get native PostgreSQL live migration progress
+   * Reports initial table copy and source WAL progress without waking a parked target.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresMigration({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/migration',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Stop a native PostgreSQL live migration
+   * Stops applying changes and attempts to clean up verified source replication resources. The target remains fenced.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static stopManagedPostgresMigration({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/migration/stop',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Prepare the target of a native PostgreSQL live migration
+   * Queues schema preparation after initial table copy. Builds supported indexes while the subscriber continues to apply changes and reports source schema blockers. Read progress from the migration status endpoint.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static prepareManagedPostgresMigration({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/migration/prepare',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Verify durable replay after a PostgreSQL migration source write pause
+   * Queues a replicated marker and sequence synchronization after an operator confirms a source write pause. Read the receipt from migration status. Keep source writes paused throughout verification and until activation.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static verifyManagedPostgresMigration({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresMigrationVerifyRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/migration/verify',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a daily portable backup schedule and its last outcome.
+   * @returns ManagedPostgresBackupSchedule The destination, next scheduled run and most recent outcome.
+   * @returns Problem The schedule is absent or the caller cannot access it.
+   * @throws ApiError
+   */
+  public static getManagedPostgresBackupSchedule({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBackupSchedule | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/backup-schedule',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Schedule a daily portable backup to a private Object Storage bucket.
+   * Upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the destination's single-upload limit.
+   * @returns ManagedPostgresBackupSchedule The saved backup schedule.
+   * @returns Problem Validation, permission, or active execution conflict.
+   * @throws ApiError
+   */
+  public static setManagedPostgresBackupSchedule({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresBackupScheduleRequest,
+  }): CancelablePromise<ManagedPostgresBackupSchedule | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/backup-schedule',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Disable future portable backup runs.
+   * Leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
+   * @returns Problem Permission or active execution conflict.
+   * @throws ApiError
+   */
+  public static deleteManagedPostgresBackupSchedule({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/databases/{id}/backup-schedule',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Start a portable export of a native PostgreSQL database
+   * Produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL management access. The caller-supplied request ID identifies the same export on retry.
+   * @returns ManagedPostgresExport The export already reached its terminal state.
+   * @returns Problem Invalid request, access denied, unavailable export, or expired export.
+   * @throws ApiError
+   */
+  public static startManagedPostgresExport({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresExportRequest,
+  }): CancelablePromise<ManagedPostgresExport | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/exports',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL export and its manifest
+   * The ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256 checksum.
+   * @returns ManagedPostgresExport Export status.
+   * @returns Problem Invalid request, access denied, unavailable export, or expired export.
+   * @throws ApiError
+   */
+  public static getManagedPostgresExport({
+    id,
+    exportId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier of the portable export returned when it was requested.
+     */
+    exportId: string,
+  }): CancelablePromise<ManagedPostgresExport | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/exports/{export_id}',
+      path: {
+        'id': id,
+        'export_id': exportId,
+      },
+    });
+  }
+  /**
+   * Download a completed native PostgreSQL export
+   * Streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL management access.
+   * @returns binary Standard PostgreSQL custom archive.
+   * @returns Problem Invalid request, access denied, unavailable export, or expired export.
+   * @throws ApiError
+   */
+  public static downloadManagedPostgresExport({
+    id,
+    exportId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier of the portable export returned when it was requested.
+     */
+    exportId: string,
+  }): CancelablePromise<Blob | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/exports/{export_id}/download',
+      path: {
+        'id': id,
+        'export_id': exportId,
+      },
+    });
+  }
+  /**
+   * Check a PostgreSQL source and an empty native import target
+   * Checks the source connection, major version, extensions, target emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management access.
+   * @returns ManagedPostgresImportStatus Import evidence.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static checkManagedPostgresImport({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportSource,
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/imports/check',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Start a snapshot import into an empty native PostgreSQL database
+   * Copies a consistent source snapshot. Reuse the operation ID to recover or retry the same import. The copy leaves application bindings in place.
+   * @returns ManagedPostgresImportStatus Import evidence.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static startManagedPostgresImport({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/imports',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Restore a Gregale-exported PostgreSQL archive to an empty native database
+   * Uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first. The target must be empty and compatible. Inspect the existing import status endpoint after upload.
+   * @returns ManagedPostgresImportStatus Import progress or preflight failure.
+   * @returns Problem Invalid receipt, invalid archive, access denied, conflicting operation, or unsupported target.
+   * @throws ApiError
+   */
+  public static uploadManagedPostgresArchive({
+    id,
+    operationId,
+    formData,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier used to start or resume the import operation.
+     */
+    operationId: string,
+    formData: {
+      manifest: ManagedPostgresExportManifest;
+      archive: Blob;
+    },
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/imports/{operation_id}/archive',
+      path: {
+        'id': id,
+        'operation_id': operationId,
+      },
+      formData: { manifest: formData.manifest, archive: formData.archive },
+      mediaType: 'multipart/form-data',
+    });
+  }
+  /**
+   * Read the progress of a native PostgreSQL import
+   * Reads the import without waking the target. An unverified result means the current guest cannot report the requested operation.
+   * @returns ManagedPostgresImportStatus Import evidence.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresImport({
+    id,
+    operationId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier used to start or resume the import operation.
+     */
+    operationId: string,
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/imports/{operation_id}',
+      path: {
+        'id': id,
+        'operation_id': operationId,
+      },
+    });
+  }
+  /**
+   * List native PostgreSQL extension versions
+   * Reads the current primary and may wake it. An optional later major compares installed versions with the configured upgrade image.
+   * @returns ManagedPostgresExtensions Available managed versions and observed installed extensions.
+   * @returns Problem Invalid request, access denied, or unsupported or unavailable database.
+   * @throws ApiError
+   */
+  public static listManagedPostgresExtensions({
+    id,
+    targetMajor,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * PostgreSQL major to use for comparing managed extension versions.
+     */
+    targetMajor?: number,
+  }): CancelablePromise<ManagedPostgresExtensions | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/extensions',
+      path: {
+        'id': id,
+      },
+      query: {
+        'target_major': targetMajor,
+      },
+    });
+  }
+  /**
+   * Enable a managed PostgreSQL extension
+   * Installs the default version of the extension on the native primary. Repeating the operation preserves an installed version.
+   * @returns ManagedPostgresExtensions Available managed versions and observed installed extensions.
+   * @returns Problem Invalid request, access denied, or unsupported or unavailable database.
+   * @throws ApiError
+   */
+  public static enableManagedPostgresExtension({
+    id,
+    extension,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Managed PostgreSQL extension name from the extension catalog.
+     */
+    extension: 'btree_gist' | 'pg_trgm' | 'vector',
+  }): CancelablePromise<ManagedPostgresExtensions | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/extensions/{extension}',
+      path: {
+        'id': id,
+        'extension': extension,
+      },
+    });
+  }
+  /**
+   * Inspect native PostgreSQL client sessions
+   * Samples a running primary without waking a parked database. A cancel target identifies one currently tracked pooled query.
+   * @returns ManagedPostgresSessions Session metadata and available cancel targets.
+   * @returns Problem Access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static listManagedPostgresSessions({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresSessions | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/sessions',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Send a cancel request for a live PostgreSQL query target
+   * Sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come from a recent session sample. Replaying the same target returns its recorded outcome while the receipt is retained.
+   * @returns ManagedPostgresQueryCancellation Cancel delivery outcome. Signal sent confirms sending the request to PostgreSQL.
+   * @returns Problem Invalid target, access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static cancelManagedPostgresQuery({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: CancelManagedPostgresQueryRequest,
+  }): CancelablePromise<ManagedPostgresQueryCancellation | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/cancel-query',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL autovacuum profile and effective settings
+   * Reads the selected profile and live settings where available. A parked database stays asleep.
+   * @returns ManagedPostgresAutovacuum Autovacuum profile status.
+   * @returns Problem Access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresAutovacuum({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresAutovacuum | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/autovacuum',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Set a native PostgreSQL autovacuum profile
+   * Saves the requested profile. Gregale reloads running instances and applies the saved profile at the next wake on parked databases.
+   * @returns ManagedPostgresAutovacuum The saved profile and its current application status.
+   * @returns Problem Invalid profile, access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static setManagedPostgresAutovacuum({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresAutovacuumRequest,
+  }): CancelablePromise<ManagedPostgresAutovacuum | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/autovacuum',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read recent errors from native PostgreSQL pooled connections.
+   * Returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading history does not wake a parked database.
+   * @returns ManagedPostgresErrorHistory Collection state and matching error metadata.
+   * @returns Problem Invalid filter, permission, or database problem.
+   * @throws ApiError
+   */
+  public static getManagedPostgresErrorHistory({
+    id,
+    sinceSeconds = 3600,
+    sqlstate,
+    limit = 40,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Time range in seconds to include in the pooled error history.
+     */
+    sinceSeconds?: number,
+    /**
+     * Filter by the five-character SQLSTATE reported by PostgreSQL.
+     */
+    sqlstate?: string,
+    /**
+     * Maximum number of matching pooled errors.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedPostgresErrorHistory | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/errors',
+      path: {
+        'id': id,
+      },
+      query: {
+        'since_seconds': sinceSeconds,
+        'sqlstate': sqlstate,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Enable or disable collection of pooled PostgreSQL errors.
+   * Collection defaults to disabled. Disabling collection keeps events already retained until they expire.
+   * @returns ManagedPostgresErrorHistory The saved collection state and recent events.
+   * @returns Problem Invalid settings, permission, or database problem.
+   * @throws ApiError
+   */
+  public static setManagedPostgresErrorHistory({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresErrorHistoryRequest,
+  }): CancelablePromise<ManagedPostgresErrorHistory | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/errors',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Rank statements by execution time over an observed window
+   * Reads stored numeric statement statistics for a single-zone native PostgreSQL database without waking it.
+   * @returns ManagedPostgresQueryInsights Query statistics and observation coverage.
+   * @returns Problem Invalid request, access denied, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresQueryInsights({
+    id,
+    sinceSeconds = 3600,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Time range in seconds to include in the statement statistics.
+     */
+    sinceSeconds?: number,
+  }): CancelablePromise<ManagedPostgresQueryInsights | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/query-insights',
+      path: {
+        'id': id,
+      },
+      query: {
+        'since_seconds': sinceSeconds,
+      },
+    });
+  }
+  /**
+   * Set native PostgreSQL query statistics collection
+   * Applies the collection setting at an eligible primary restart. Historical observations remain available until they expire.
+   * @returns ManagedPostgresQueryInsights Query statistics and observation coverage.
+   * @returns Problem Invalid request, access denied, or unsupported backend.
+   * @throws ApiError
+   */
+  public static setManagedPostgresQueryInsights({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresQueryInsightsRequest,
+  }): CancelablePromise<ManagedPostgresQueryInsights | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/query-insights',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Diagnose a native PostgreSQL primary
+   * Reads one bounded activity sample from the running primary. A parked database stays asleep and reports its state.
+   * @returns ManagedPostgresDiagnostics Primary activity or its current sample availability.
+   * @returns Problem Access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresDiagnostics({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresDiagnostics | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/diagnostics',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Inspect native PostgreSQL table health
+   * Reads a bounded sample of stored tables and leaf partitions from the running primary. Parked databases stay asleep.
+   * @returns ManagedPostgresTableHealth Table health or its current sample availability.
+   * @returns Problem Invalid options, access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresTableHealth({
+    id,
+    sort = 'size',
+    limit = 20,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Rank descending by total table and index size, estimated dead rows, or transaction ID age.
+     */
+    sort?: 'size' | 'dead-rows' | 'xid-age',
+    /**
+     * Maximum number of observed relations to return.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedPostgresTableHealth | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/tables',
+      path: {
+        'id': id,
+      },
+      query: {
+        'sort': sort,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Queue a native PostgreSQL restore drill
+   * Saves an idempotent request for a temporary restore and may wake the source to write a verification marker.
+   * @returns Problem Invalid request, access denied, busy, or unsupported backend.
+   * @returns ManagedPostgresRestoreDrill The recorded drill. Reusing the same request ID returns its current outcome.
+   * @throws ApiError
+   */
+  public static startManagedPostgresRestoreDrill({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: RequestManagedPostgresRestoreDrill,
+  }): CancelablePromise<Problem | ManagedPostgresRestoreDrill> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/restore-drills',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL restore drill
+   * Reads a requested drill for the selected database. Reading the receipt leaves a parked source asleep.
+   * @returns ManagedPostgresRestoreDrill The recorded drill and its progress.
+   * @returns Problem Access denied, drill not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresRestoreDrill({
+    id,
+    drillId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier returned when the database restore drill was queued.
+     */
+    drillId: string,
+  }): CancelablePromise<ManagedPostgresRestoreDrill | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/restore-drills/{drill_id}',
+      path: {
+        'id': id,
+        'drill_id': drillId,
+      },
+    });
+  }
+  /**
+   * Queue a native PostgreSQL upgrade rehearsal
+   * Queues a rehearsal of the target major on a private restore from verified archive evidence. The source keeps its current version and runtime state.
+   * @returns Problem Invalid request, access denied, busy, or unsupported backend.
+   * @returns ManagedPostgresUpgradeRehearsal The recorded rehearsal. Reuse the request ID with the same target major to read its current outcome.
+   * @throws ApiError
+   */
+  public static startManagedPostgresUpgradeRehearsal({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: RequestManagedPostgresUpgradeRehearsal,
+  }): CancelablePromise<Problem | ManagedPostgresUpgradeRehearsal> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/upgrade-rehearsals',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL upgrade rehearsal
+   * Reads the rehearsal progress or outcome for the selected source database.
+   * @returns ManagedPostgresUpgradeRehearsal The recorded rehearsal and its progress.
+   * @returns Problem Access denied, rehearsal not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getManagedPostgresUpgradeRehearsal({
+    id,
+    rehearsalId,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier returned when the upgrade rehearsal was queued.
+     */
+    rehearsalId: string,
+  }): CancelablePromise<ManagedPostgresUpgradeRehearsal | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/upgrade-rehearsals/{rehearsal_id}',
+      path: {
+        'id': id,
+        'rehearsal_id': rehearsalId,
+      },
+    });
+  }
+  /**
+   * Check native PostgreSQL archive evidence for a restore target.
+   * Reads the selected base backup and bounded WAL evidence for this target. A covered result describes the archive at check time.
+   * @returns ManagedPostgresRestoreCheck Archive evidence for the requested recovery point.
+   * @returns Problem Invalid restore point, access denied, or unsupported backend.
+   * @throws ApiError
+   */
+  public static checkManagedPostgresRestore({
+    id,
+    pointInTime,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * UTC timestamp to verify against the database's recoverable archive.
+     */
+    pointInTime: string,
+  }): CancelablePromise<ManagedPostgresRestoreCheck | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/restore-check',
+      path: {
+        'id': id,
+      },
+      query: {
+        'point_in_time': pointInTime,
+      },
+    });
+  }
+  /**
+   * Create a masked branch of a native PostgreSQL database.
+   * Copies selected data into a fresh database using the supplied masking policy. The target remains in provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage scope, MFA, and verified email.
+   * @returns Problem Request refused or service unavailable.
+   * @returns ManagedPostgresDatabase Masked branch accepted.
+   * @throws ApiError
+   */
+  public static createManagedPostgresMaskedBranch({
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: CreateManagedPostgresMaskedBranchRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresDatabase> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/masked-branches',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Set the recovery region for a native PostgreSQL database
+   * @returns Problem Invalid region, insufficient access, or recovery unavailable.
+   * @throws ApiError
+   */
+  public static setManagedPostgresRecoveryRegion({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresRecoveryRegionRequest,
+  }): CancelablePromise<Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/databases/{id}/recovery-region',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
@@ -1420,6 +2502,55 @@ export class ManagedPostgresService {
       headers: {
         'Idempotency-Key': idempotencyKey,
       },
+    });
+  }
+  /**
+   * Get timeout defaults for a native pooled app binding.
+   * @returns ManagedPostgresBindingTimeouts Saved values and the pool refresh state.
+   * @returns Problem Problem reading binding timeout defaults.
+   * @throws ApiError
+   */
+  public static getManagedPostgresBindingTimeouts({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBindingTimeouts | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/bindings/{id}/timeouts',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Save timeout defaults for a native pooled app binding.
+   * Changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting. Application happens asynchronously and existing transactions keep their current defaults.
+   * @returns ManagedPostgresBindingTimeouts Saved values and the pool refresh state.
+   * @returns Problem Invalid settings, conflict, or provider problem.
+   * @throws ApiError
+   */
+  public static setManagedPostgresBindingTimeouts({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresBindingTimeoutsRequest,
+  }): CancelablePromise<ManagedPostgresBindingTimeouts | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/bindings/{id}/timeouts',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
@@ -2044,6 +3175,1202 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Check prerequisites for a native PostgreSQL live migration for the organization.
+   * On the organization's database, inspects source replication settings, capacity, supported table structures and an empty target. It may wake the target. The check creates no replication resources.
+   * @returns ManagedPostgresMigrationCheck Compatibility evidence or explicit blockers.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static checkOrgManagedPostgresMigration({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportSource,
+  }): CancelablePromise<ManagedPostgresMigrationCheck | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/migration-check',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Start or resume a native PostgreSQL live migration for the organization.
+   * On the organization's database, copies tables into an empty single-zone native target and starts continuous logical replication with application connections fenced. Resume with the same operation ID and source credentials.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static startOrgManagedPostgresMigration({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/migration',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get native PostgreSQL live migration progress for the organization.
+   * On the organization's database, reports initial table copy and source WAL progress without waking a parked target.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresMigration({
+    organization,
+    id,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/migration',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Stop a native PostgreSQL live migration for the organization.
+   * On the organization's database, stops applying changes and attempts to clean up verified source replication resources. The target remains fenced.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static stopOrgManagedPostgresMigration({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/migration/stop',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Prepare the target of a native PostgreSQL live migration for the organization.
+   * On the organization's database, queues schema preparation after initial table copy. Builds supported indexes while the subscriber continues to apply changes and reports source schema blockers. Read progress from the migration status endpoint.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static prepareOrgManagedPostgresMigration({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/migration/prepare',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Verify durable replay after a PostgreSQL migration source write pause for the organization.
+   * On the organization's database, queues a replicated marker and sequence synchronization after an operator confirms a source write pause. Read the receipt from migration status. Keep source writes paused throughout verification and until activation.
+   * @returns ManagedPostgresMigrationProgress Latest observed migration progress.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static verifyOrgManagedPostgresMigration({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresMigrationVerifyRequest,
+  }): CancelablePromise<ManagedPostgresMigrationProgress | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/migration/verify',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a daily portable backup schedule and its last outcome for the organization.
+   * @returns ManagedPostgresBackupSchedule The destination, next scheduled run and most recent outcome.
+   * @returns Problem The schedule is absent or the caller cannot access it.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresBackupSchedule({
+    organization,
+    id,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBackupSchedule | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/backup-schedule',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Schedule a daily portable backup to a private Object Storage bucket for the organization.
+   * On the organization's database, upsert one daily UTC schedule. The database and the ready, private destination bucket belong to the same owner scope. Requires PostgreSQL management and destination write authority. Transfers use the destination's single-upload limit.
+   * @returns ManagedPostgresBackupSchedule The saved backup schedule.
+   * @returns Problem Validation, permission, or active execution conflict.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresBackupSchedule({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresBackupScheduleRequest,
+  }): CancelablePromise<ManagedPostgresBackupSchedule | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/backup-schedule',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Disable future portable backup runs for the organization.
+   * On the organization's database, leaves the objects already delivered to the bucket. An active delivery lease can return conflict.
+   * @returns Problem Permission or active execution conflict.
+   * @throws ApiError
+   */
+  public static deleteOrgManagedPostgresBackupSchedule({
+    organization,
+    id,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/backup-schedule',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Start a portable export of a native PostgreSQL database for the organization.
+   * On the organization's database, produces a consistent custom-format PostgreSQL dump in the background. Requires verified PostgreSQL management access. The caller-supplied request ID identifies the same export on retry.
+   * @returns ManagedPostgresExport The export already reached its terminal state.
+   * @returns Problem Invalid request, access denied, unavailable export, or expired export.
+   * @throws ApiError
+   */
+  public static startOrgManagedPostgresExport({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresExportRequest,
+  }): CancelablePromise<ManagedPostgresExport | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/exports',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL export and its manifest for the organization.
+   * On the organization's database, the ready manifest carries the snapshot time, PostgreSQL major, extension versions, size and SHA-256 checksum.
+   * @returns ManagedPostgresExport Export status.
+   * @returns Problem Invalid request, access denied, unavailable export, or expired export.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresExport({
+    organization,
+    id,
+    exportId,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier of the portable export returned when it was requested.
+     */
+    exportId: string,
+  }): CancelablePromise<ManagedPostgresExport | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/exports/{export_id}',
+      path: {
+        'organization': organization,
+        'id': id,
+        'export_id': exportId,
+      },
+    });
+  }
+  /**
+   * Download a completed native PostgreSQL export for the organization.
+   * On the organization's database, streams the private PostgreSQL custom archive before its expiry. Authenticate with PostgreSQL management access.
+   * @returns binary Standard PostgreSQL custom archive.
+   * @returns Problem Invalid request, access denied, unavailable export, or expired export.
+   * @throws ApiError
+   */
+  public static downloadOrgManagedPostgresExport({
+    organization,
+    id,
+    exportId,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier of the portable export returned when it was requested.
+     */
+    exportId: string,
+  }): CancelablePromise<Blob | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/exports/{export_id}/download',
+      path: {
+        'organization': organization,
+        'id': id,
+        'export_id': exportId,
+      },
+    });
+  }
+  /**
+   * Check a PostgreSQL source and an empty native import target for the organization.
+   * On the organization's database, checks the source connection, major version, extensions, target emptiness and estimated storage. May wake the target to inspect it. Requires PostgreSQL management access.
+   * @returns ManagedPostgresImportStatus Import evidence.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static checkOrgManagedPostgresImport({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportSource,
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/imports/check',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Start a snapshot import into an empty native PostgreSQL database for the organization.
+   * On the organization's database, copies a consistent source snapshot. Reuse the operation ID to recover or retry the same import. The copy leaves application bindings in place.
+   * @returns ManagedPostgresImportStatus Import evidence.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static startOrgManagedPostgresImport({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: ManagedPostgresImportRequest,
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/imports',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Restore a Gregale-exported PostgreSQL archive to an empty native database for the organization.
+   * On the organization's database, uploads a PostgreSQL custom archive and its signed export manifest. Send the manifest part first. The target must be empty and compatible. Inspect the existing import status endpoint after upload.
+   * @returns ManagedPostgresImportStatus Import progress or preflight failure.
+   * @returns Problem Invalid receipt, invalid archive, access denied, conflicting operation, or unsupported target.
+   * @throws ApiError
+   */
+  public static uploadOrgManagedPostgresArchive({
+    organization,
+    id,
+    operationId,
+    formData,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier used to start or resume the import operation.
+     */
+    operationId: string,
+    formData: {
+      manifest: ManagedPostgresExportManifest;
+      archive: Blob;
+    },
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/imports/{operation_id}/archive',
+      path: {
+        'organization': organization,
+        'id': id,
+        'operation_id': operationId,
+      },
+      formData: { manifest: formData.manifest, archive: formData.archive },
+      mediaType: 'multipart/form-data',
+    });
+  }
+  /**
+   * Read the progress of a native PostgreSQL import for the organization.
+   * On the organization's database, reads the import without waking the target. An unverified result means the current guest cannot report the requested operation.
+   * @returns ManagedPostgresImportStatus Import evidence.
+   * @returns Problem Invalid request, access denied, conflicting operation, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresImport({
+    organization,
+    id,
+    operationId,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier used to start or resume the import operation.
+     */
+    operationId: string,
+  }): CancelablePromise<ManagedPostgresImportStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/imports/{operation_id}',
+      path: {
+        'organization': organization,
+        'id': id,
+        'operation_id': operationId,
+      },
+    });
+  }
+  /**
+   * List native PostgreSQL extension versions for the organization.
+   * On the organization's database, reads the current primary and may wake it. An optional later major compares installed versions with the configured upgrade image.
+   * @returns ManagedPostgresExtensions Available managed versions and observed installed extensions.
+   * @returns Problem Invalid request, access denied, or unsupported or unavailable database.
+   * @throws ApiError
+   */
+  public static listOrgManagedPostgresExtensions({
+    organization,
+    id,
+    targetMajor,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * PostgreSQL major to use for comparing managed extension versions.
+     */
+    targetMajor?: number,
+  }): CancelablePromise<ManagedPostgresExtensions | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/extensions',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      query: {
+        'target_major': targetMajor,
+      },
+    });
+  }
+  /**
+   * Enable a managed PostgreSQL extension for the organization.
+   * On the organization's database, installs the default version of the extension on the native primary. Repeating the operation preserves an installed version.
+   * @returns ManagedPostgresExtensions Available managed versions and observed installed extensions.
+   * @returns Problem Invalid request, access denied, or unsupported or unavailable database.
+   * @throws ApiError
+   */
+  public static enableOrgManagedPostgresExtension({
+    organization,
+    id,
+    extension,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Managed PostgreSQL extension name from the extension catalog.
+     */
+    extension: 'btree_gist' | 'pg_trgm' | 'vector',
+  }): CancelablePromise<ManagedPostgresExtensions | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/extensions/{extension}',
+      path: {
+        'organization': organization,
+        'id': id,
+        'extension': extension,
+      },
+    });
+  }
+  /**
+   * Inspect native PostgreSQL client sessions for the organization.
+   * On the organization's database, samples a running primary without waking a parked database. A cancel target identifies one currently tracked pooled query.
+   * @returns ManagedPostgresSessions Session metadata and available cancel targets.
+   * @returns Problem Access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static listOrgManagedPostgresSessions({
+    organization,
+    id,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresSessions | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/sessions',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Send a cancel request for a live PostgreSQL query target for the organization.
+   * On the organization's database, sends a PostgreSQL cancel request through the proxy that owns the execution. The target must come from a recent session sample. Replaying the same target returns its recorded outcome while the receipt is retained.
+   * @returns ManagedPostgresQueryCancellation Cancel delivery outcome. Signal sent confirms sending the request to PostgreSQL.
+   * @returns Problem Invalid target, access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static cancelOrgManagedPostgresQuery({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: CancelManagedPostgresQueryRequest,
+  }): CancelablePromise<ManagedPostgresQueryCancellation | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/cancel-query',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL autovacuum profile and effective settings for the organization.
+   * On the organization's database, reads the selected profile and live settings where available. A parked database stays asleep.
+   * @returns ManagedPostgresAutovacuum Autovacuum profile status.
+   * @returns Problem Access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresAutovacuum({
+    organization,
+    id,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresAutovacuum | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/autovacuum',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Set a native PostgreSQL autovacuum profile for the organization.
+   * On the organization's database, saves the requested profile. Gregale reloads running instances and applies the saved profile at the next wake on parked databases.
+   * @returns ManagedPostgresAutovacuum The saved profile and its current application status.
+   * @returns Problem Invalid profile, access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresAutovacuum({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresAutovacuumRequest,
+  }): CancelablePromise<ManagedPostgresAutovacuum | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/autovacuum',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read recent errors from native PostgreSQL pooled connections for the organization.
+   * On the organization's database, returns newest first. The history keeps up to 1000 events per database for up to 24 hours. Reading history does not wake a parked database.
+   * @returns ManagedPostgresErrorHistory Collection state and matching error metadata.
+   * @returns Problem Invalid filter, permission, or database problem.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresErrorHistory({
+    organization,
+    id,
+    sinceSeconds = 3600,
+    sqlstate,
+    limit = 40,
+  }: {
+    /**
+     * Organization that owns the database.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Time range in seconds to include in the pooled error history.
+     */
+    sinceSeconds?: number,
+    /**
+     * Filter by the five-character SQLSTATE reported by PostgreSQL.
+     */
+    sqlstate?: string,
+    /**
+     * Maximum number of matching pooled errors.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedPostgresErrorHistory | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/errors',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      query: {
+        'since_seconds': sinceSeconds,
+        'sqlstate': sqlstate,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Enable or disable collection of pooled PostgreSQL errors for the organization.
+   * On the organization's database, collection defaults to disabled. Disabling collection keeps events already retained until they expire.
+   * @returns ManagedPostgresErrorHistory The saved collection state and recent events.
+   * @returns Problem Invalid settings, permission, or database problem.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresErrorHistory({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Organization that owns the database.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresErrorHistoryRequest,
+  }): CancelablePromise<ManagedPostgresErrorHistory | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/errors',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Rank statements by execution time over an observed window for the organization.
+   * On the organization's database, reads stored numeric statement statistics for a single-zone native PostgreSQL database without waking it.
+   * @returns ManagedPostgresQueryInsights Query statistics and observation coverage.
+   * @returns Problem Invalid request, access denied, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresQueryInsights({
+    organization,
+    id,
+    sinceSeconds = 3600,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Time range in seconds to include in the statement statistics.
+     */
+    sinceSeconds?: number,
+  }): CancelablePromise<ManagedPostgresQueryInsights | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/query-insights',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      query: {
+        'since_seconds': sinceSeconds,
+      },
+    });
+  }
+  /**
+   * Set native PostgreSQL query statistics collection for the organization.
+   * On the organization's database, applies the collection setting at an eligible primary restart. Historical observations remain available until they expire.
+   * @returns ManagedPostgresQueryInsights Query statistics and observation coverage.
+   * @returns Problem Invalid request, access denied, or unsupported backend.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresQueryInsights({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresQueryInsightsRequest,
+  }): CancelablePromise<ManagedPostgresQueryInsights | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/query-insights',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Diagnose a native PostgreSQL primary for the organization.
+   * On the organization's database, reads one bounded activity sample from the running primary. A parked database stays asleep and reports its state.
+   * @returns ManagedPostgresDiagnostics Primary activity or its current sample availability.
+   * @returns Problem Access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresDiagnostics({
+    organization,
+    id,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresDiagnostics | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/diagnostics',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Inspect native PostgreSQL table health for the organization.
+   * On the organization's database, reads a bounded sample of stored tables and leaf partitions from the running primary. Parked databases stay asleep.
+   * @returns ManagedPostgresTableHealth Table health or its current sample availability.
+   * @returns Problem Invalid options, access denied, database not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresTableHealth({
+    organization,
+    id,
+    sort = 'size',
+    limit = 20,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Sort the organization's table sample in descending order by total table and index size, estimated dead rows, or transaction ID age.
+     */
+    sort?: 'size' | 'dead-rows' | 'xid-age',
+    /**
+     * Maximum number of observed relations to return.
+     */
+    limit?: number,
+  }): CancelablePromise<ManagedPostgresTableHealth | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/tables',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      query: {
+        'sort': sort,
+        'limit': limit,
+      },
+    });
+  }
+  /**
+   * Queue a native PostgreSQL restore drill for the organization.
+   * On the organization's database, saves an idempotent request for a temporary restore and may wake the source to write a verification marker.
+   * @returns Problem Invalid request, access denied, busy, or unsupported backend.
+   * @returns ManagedPostgresRestoreDrill The recorded drill. Reusing the same request ID returns its current outcome.
+   * @throws ApiError
+   */
+  public static startOrgManagedPostgresRestoreDrill({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: RequestManagedPostgresRestoreDrill,
+  }): CancelablePromise<Problem | ManagedPostgresRestoreDrill> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/restore-drills',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL restore drill for the organization.
+   * On the organization's database, reads a requested drill for the selected database. Reading the receipt leaves a parked source asleep.
+   * @returns ManagedPostgresRestoreDrill The recorded drill and its progress.
+   * @returns Problem Access denied, drill not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresRestoreDrill({
+    organization,
+    id,
+    drillId,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier returned when the database restore drill was queued.
+     */
+    drillId: string,
+  }): CancelablePromise<ManagedPostgresRestoreDrill | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/restore-drills/{drill_id}',
+      path: {
+        'organization': organization,
+        'id': id,
+        'drill_id': drillId,
+      },
+    });
+  }
+  /**
+   * Queue a native PostgreSQL upgrade rehearsal for the organization.
+   * On the organization's database, queues a rehearsal of the target major on a private restore from verified archive evidence. The source keeps its current version and runtime state.
+   * @returns Problem Invalid request, access denied, busy, or unsupported backend.
+   * @returns ManagedPostgresUpgradeRehearsal The recorded rehearsal. Reuse the request ID with the same target major to read its current outcome.
+   * @throws ApiError
+   */
+  public static startOrgManagedPostgresUpgradeRehearsal({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: RequestManagedPostgresUpgradeRehearsal,
+  }): CancelablePromise<Problem | ManagedPostgresUpgradeRehearsal> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/upgrade-rehearsals',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Read a native PostgreSQL upgrade rehearsal for the organization.
+   * On the organization's database, reads the rehearsal progress or outcome for the selected source database.
+   * @returns ManagedPostgresUpgradeRehearsal The recorded rehearsal and its progress.
+   * @returns Problem Access denied, rehearsal not found, or unsupported backend.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresUpgradeRehearsal({
+    organization,
+    id,
+    rehearsalId,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Identifier returned when the upgrade rehearsal was queued.
+     */
+    rehearsalId: string,
+  }): CancelablePromise<ManagedPostgresUpgradeRehearsal | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/upgrade-rehearsals/{rehearsal_id}',
+      path: {
+        'organization': organization,
+        'id': id,
+        'rehearsal_id': rehearsalId,
+      },
+    });
+  }
+  /**
+   * Check native PostgreSQL archive evidence for a restore target for the organization.
+   * On the organization's database, reads the selected base backup and bounded WAL evidence for this target. A covered result describes the archive at check time.
+   * @returns ManagedPostgresRestoreCheck Archive evidence for the requested recovery point.
+   * @returns Problem Invalid restore point, access denied, or unsupported backend.
+   * @throws ApiError
+   */
+  public static checkOrgManagedPostgresRestore({
+    organization,
+    id,
+    pointInTime,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * UTC timestamp to verify against the database's recoverable archive.
+     */
+    pointInTime: string,
+  }): CancelablePromise<ManagedPostgresRestoreCheck | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/restore-check',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      query: {
+        'point_in_time': pointInTime,
+      },
+    });
+  }
+  /**
+   * Create a masked branch of a native PostgreSQL database for the organization.
+   * On the organization's database, copies selected data into a fresh database using the supplied masking policy. The target remains in provisioning until the copy and its constraints are validated. Requires managed PostgreSQL manage scope, MFA, and verified email.
+   * @returns Problem Request refused or service unavailable.
+   * @returns ManagedPostgresDatabase Masked branch accepted for create a masked branch of a native PostgreSQL database for the organization.
+   * @throws ApiError
+   */
+  public static createOrgManagedPostgresMaskedBranch({
+    organization,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: CreateManagedPostgresMaskedBranchRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresDatabase> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/masked-branches',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Set the recovery region for a native PostgreSQL database for the organization.
+   * @returns Problem Invalid region, insufficient access, or recovery unavailable.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresRecoveryRegion({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Slug of the organization that owns the native PostgreSQL resource.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresRecoveryRegionRequest,
+  }): CancelablePromise<Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/recovery-region',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
    * Restore the company database to a separate resource.
    * An owner or admin creates a restore within the source database's organization. The company plan, restore window and aggregate database reservation quota are enforced.
    * @returns Problem Problem while attempting to restore the company database to a separate resource.
@@ -2242,6 +4569,67 @@ export class ManagedPostgresService {
         404: `code: not_found`,
         409: `code: conflict`,
       },
+    });
+  }
+  /**
+   * Get timeout defaults for a native pooled app binding for the organization.
+   * @returns ManagedPostgresBindingTimeouts Saved values and the pool refresh state.
+   * @returns Problem Problem reading binding timeout defaults.
+   * @throws ApiError
+   */
+  public static getOrgManagedPostgresBindingTimeouts({
+    organization,
+    id,
+  }: {
+    /**
+     * Organization that owns the app binding.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresBindingTimeouts | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/postgres/bindings/{id}/timeouts',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Save timeout defaults for a native pooled app binding for the organization.
+   * On the organization's database, changes the supplied settings on a ready read_write or read_only binding. Zero disables a setting. Application happens asynchronously and existing transactions keep their current defaults.
+   * @returns ManagedPostgresBindingTimeouts Saved values and the pool refresh state.
+   * @returns Problem Invalid settings, conflict, or provider problem.
+   * @throws ApiError
+   */
+  public static setOrgManagedPostgresBindingTimeouts({
+    organization,
+    id,
+    requestBody,
+  }: {
+    /**
+     * Organization that owns the app binding.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    requestBody: SetManagedPostgresBindingTimeoutsRequest,
+  }): CancelablePromise<ManagedPostgresBindingTimeouts | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/postgres/bindings/{id}/timeouts',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

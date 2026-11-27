@@ -195,7 +195,9 @@ var routeActions = map[string]authz.OrgAction{
 	"DELETE /v1/apps/{slug}/alerts/{id}":             authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/alerts/{id}/deliveries":     authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/log-drains":                 authz.OrgActionReadApp,
+	// The anomaly preview reads the app's own metrics, like an alert's history.
+	"GET /v1/apps/{slug}/alerts/anomaly-preview": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/log-drains":             authz.OrgActionReadApp,
 	// AI gateway access tokens act as their app. Minting stays with the
 	// app's creator (their standing keeps the tokens working); a company's
 	// owners and admins can see and revoke them once the creator is gone.

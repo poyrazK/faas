@@ -536,6 +536,26 @@ func (f *fakeVmmdClient) DatabaseReplication(context.Context, ...grpc.CallOption
 	panic("DatabaseReplication: not stubbed")
 }
 
+func (f *fakeVmmdClient) DatabaseReplicaSession(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	panic("DatabaseReplicaSession: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseArchiveRestoreCheck(context.Context, *vmmdpb.DatabaseArchiveRestoreCheckRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveRestoreCheckResponse, error) {
+	panic("DatabaseArchiveRestoreCheck: not stubbed")
+}
+
+func (f *fakeVmmdClient) StreamDatabaseExport(context.Context, *vmmdpb.DatabaseExportRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.DatabaseExportFrame], error) {
+	panic("StreamDatabaseExport: not stubbed")
+}
+
+func (f *fakeVmmdClient) StreamDatabaseArchiveImport(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseArchiveImportFrame, vmmdpb.DatabaseArchiveImportProgress], error) {
+	panic("StreamDatabaseArchiveImport: not stubbed")
+}
+
+func (f *fakeVmmdClient) DeleteSandboxVolume(context.Context, *vmmdpb.DeleteSandboxVolumeRequest, ...grpc.CallOption) (*vmmdpb.DeleteSandboxVolumeResponse, error) {
+	panic("DeleteSandboxVolume: not stubbed")
+}
+
 // All other RPCs panic — the forwarder only calls ForwardHTTPStream.
 func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed")

@@ -22,7 +22,9 @@ import (
 // variables containing secrets. Backend IDs are immutable and must remain in
 // config for as long as a database references them.
 type Config struct {
-	DefaultRegion          string            `json:"default_region"`
+	DefaultRegion string `json:"default_region"`
+	// RecoveryTargets maps a source region to a dedicated recovery backend ID.
+	RecoveryTargets        map[string]string `json:"recovery_targets,omitempty"`
 	Defaults               map[string]string `json:"defaults"`
 	MaxDatabasesPerAccount int               `json:"max_databases_per_account"`
 	ProvisioningEnabled    bool              `json:"provisioning_enabled"`
@@ -153,6 +155,18 @@ type Backend struct {
 	previous map[string]bool
 }
 
+// SupportsBindingAccess checks placement for native routing options and the
+// qualified SQL privileges for every binding mode.
+func (b Backend) SupportsBindingAccess(spec Spec, access CredentialAccess) error {
+	if access == CredentialReplicaOnly {
+		if b.Driver != "firecracker" || spec.Class != ClassProduction {
+			return ErrUnsupported
+		}
+		access = access.Privileges()
+	}
+	return b.Capabilities.SupportsCredentialAccess(access)
+}
+
 // capacitySettings are the backend settings that bound what a database may
 // ask for without saying where it lives. Changing one may be declared in
 // previous_settings; every other setting is placement.
@@ -207,8 +221,9 @@ func (b Backend) LiveHub(databaseID string) string {
 type Factory func(BackendConfig, func(string) string) (Provider, error)
 
 type Registry struct {
-	DefaultRegion string
-	health        HealthPolicy
+	DefaultRegion   string
+	recoveryTargets map[string]string
+	health          HealthPolicy
 	// policy holds the operator policy: the file's values with the live
 	// runtime config policy laid over them (live_policy.go). Read it only
 	// through ProvisioningEnabled, MaxDatabasesPerAccount, UsagePolicy,
@@ -310,6 +325,19 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 			return nil, errors.New("managed postgres: default references missing backend or mismatched region")
 		}
 		registry.defaults[region] = backendID
+	}
+	registry.recoveryTargets = make(map[string]string, len(config.RecoveryTargets))
+	destinations := make(map[string]bool, len(config.RecoveryTargets))
+	for source, id := range config.RecoveryTargets {
+		home, err := registry.Default(source)
+		recovery, ok := registry.backends[id]
+		if err != nil || !ok || source == recovery.Region || registry.defaults[recovery.Region] != "" || destinations[recovery.Region] ||
+			home.Driver != "firecracker" || recovery.Driver != "firecracker" ||
+			!home.Capabilities.PointInTimeRestore || !recovery.Capabilities.PointInTimeRestore {
+			return nil, fmt.Errorf("managed postgres: invalid recovery backend %q for region %q", id, source)
+		}
+		destinations[recovery.Region] = true
+		registry.recoveryTargets[source] = id
 	}
 	if _, ok := registry.defaults[registry.DefaultRegion]; !ok {
 		return nil, errors.New("managed postgres: default_region is not configured")

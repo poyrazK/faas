@@ -6730,6 +6730,9 @@ haveApp:
 			"Deployment smoke not authorized", "the smoke challenge is unknown or expired on this gateway"))
 		return
 	}
+	if !deploymentSmoke && h.metrics != nil {
+		r = r.WithContext(withRequestEnvironment(r.Context(), app))
+	}
 	workloadAdmissionScope := app.Scope
 	if app.PinnedDeploymentScope != "" {
 		workloadAdmissionScope = app.PinnedDeploymentScope
@@ -8875,9 +8878,12 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			h.metrics.ObservePlatformError(appID, plan)
 			ObservedRouteCarrierFrom(r.Context()).MarkUnanswered5xx()
 		}
-		if capacityRefusalForSLO(r, status) {
+		refused := capacityRefusalForSLO(r, status)
+		if refused {
 			h.metrics.ObserveCapacityRefusal(appID)
 		}
+		class := statusClassBucket(status)
+		h.metrics.environmentRequests.observe(r.Context(), appID, class, elapsed, refused)
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
 		// to keep cardinality bounded — full status codes would explode
@@ -8894,7 +8900,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// ObserveRequestDuration call; that helper is retained for
 		// test paths that don't carry a deployment id.
 		deploymentLabel := h.metrics.deploymentLabels.admit(appID, api.Plan(plan), target.DeploymentID)
-		h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, statusClassBucket(status), deploymentLabel, elapsed, traceIDFromContext(r.Context()))
+		h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, class, deploymentLabel, elapsed, traceIDFromContext(r.Context()))
 		// ADR-093: per-route emission. Gated on a non-empty
 		// routeLabel (the routeLabelSet always returns a non-empty
 		// label for an opted-in app — the empty string is the
@@ -8904,7 +8910,6 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// (preserved per ADR-042 §1 deviation). The gateway's series
 		// budget may decline a route it has no room for
 		// (ADR-20261024154324).
-		class := statusClassBucket(status)
 		if routeLabel != "" && h.metrics.AdmitRouteSeries(appID, plan, routeLabel, code, class, time.Now()) {
 			h.metrics.ObserveRequestRoute(appID, plan, routeLabel, code)
 			h.metrics.ObserveRequestDurationRoute(appID, routeLabel, class, elapsed)

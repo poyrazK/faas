@@ -345,6 +345,24 @@ func (l *liveClient) StreamSourceRef(ctx context.Context, accountID string, inst
 	}, nil
 }
 
+// StreamPublicSourceRef passes through to
+// githubdgrpc.Client.StreamPublicSourceRef (ADR-20261126164847): the archive
+// of a repository GitHub reports as public, read without an installation.
+func (l *liveClient) StreamPublicSourceRef(ctx context.Context, repoFullName, ref string, maxArchiveBytes int64) (*StreamSourceRefResult, error) {
+	res, err := l.c.StreamPublicSourceRef(ctx, repoFullName, ref, maxArchiveBytes)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, nil
+	}
+	stats := &StreamSourceRefStats{}
+	return &StreamSourceRefResult{
+		Body:  &liveSourceRefBody{ReadCloser: res.Body, remote: res.Stats, local: stats},
+		Stats: stats,
+	}, nil
+}
+
 func (l *liveClient) GetInstallationRepository(ctx context.Context, accountID string, installationID int64, repoFullName string) (githubdgrpc.InstallationRepository, bool, error) {
 	return l.c.GetInstallationRepository(ctx, accountID, installationID, repoFullName)
 }

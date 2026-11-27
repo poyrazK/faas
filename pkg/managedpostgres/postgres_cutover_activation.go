@@ -48,6 +48,9 @@ func (s *PostgresStore) ActivateCutover(ctx context.Context, a CutoverActivation
 	if err != nil {
 		return ActivatedCutover{}, err
 	}
+	if err := checkMigrationBindings(ctx, tx, c); err != nil {
+		return ActivatedCutover{}, err
+	}
 	if err := checkActivationDrain(ctx, tx, q, c, a.FencedAt); err != nil {
 		return ActivatedCutover{}, err
 	}
@@ -122,6 +125,25 @@ func checkActivationDatabases(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, c
 			row.DesiredGeneration != want.DesiredGeneration {
 			return activationBlocked(ActivationDatabasesChanged)
 		}
+	}
+	return nil
+}
+
+// Check that the live switch owns all source bindings and has exclusive
+// use of the target while both databases are pinned by the cutover.
+func checkMigrationBindings(ctx context.Context, tx pgx.Tx, c Cutover) error {
+	var other bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT FROM release_database_switches sw
+		JOIN managed_postgres_bindings b ON b.database_id IN (sw.source_database_id, sw.target_database_id)
+		WHERE sw.id = $1::uuid AND sw.migration_operation_id IS NOT NULL AND b.state <> 'deleted'
+		  AND (b.database_id = sw.target_database_id OR b.app_id <> $2::uuid OR b.scope <> $3)
+	)`, c.ID, c.AppID, c.Scope).Scan(&other)
+	if err != nil {
+		return mapPostgresError(err)
+	}
+	if other {
+		return activationBlocked(ActivationBindingsChanged)
 	}
 	return nil
 }

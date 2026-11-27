@@ -292,7 +292,10 @@ type Server struct {
 	sandboxUsageEvery time.Duration
 	// sandboxStorage keeps persisted sandbox workspaces (ADR-20261027090013
 	// step 7); nil persists none. See WithSandboxWorkspaces.
-	sandboxStorage       storage.StorageBackend
+	sandboxStorage storage.StorageBackend
+	// sandboxVolumes keeps persistent sessions' workspace volumes
+	// (ADR-20261122132055 §4); nil refuses sessions with one.
+	sandboxVolumes       *fcvm.SandboxVolumes
 	executionFileStorage storage.StorageBackend
 
 	vmm VmmdAPI

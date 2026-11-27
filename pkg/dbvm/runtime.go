@@ -128,6 +128,7 @@ func (r *Runtime) archiveQuota(volume string) int64 {
 
 // BootRequest starts one database VM.
 type BootRequest struct {
+	QueryInsights     bool
 	ID                string
 	Major             int
 	VcpuCount         int
@@ -138,7 +139,8 @@ type BootRequest struct {
 	RestoreSource string
 	// RestoreTarget boots the (empty) volume as a point-in-time restore of
 	// RestoreSource to that instant.
-	RestoreTarget time.Time
+	RestoreTarget   time.Time
+	RestoreTimeline uint32
 	// RestoreWindowSeconds reaches dbbackupd in the relay header and sets
 	// how long the database's archive is kept.
 	RestoreWindowSeconds int64
@@ -166,8 +168,7 @@ type Runtime struct {
 	fcReal string
 	mu     sync.Mutex
 	vms    map[string]*databaseVM
-	// transfers are the stopped databases whose volumes are being
-	// exported or imported (transfer.go).
+	// transfers guard stopped volumes during export, import or growth.
 	transfers map[string]bool
 	// filling serializes FillSpares; sparesStopped, set by StopSpares
 	// under it, ends filling for good.
@@ -195,9 +196,13 @@ type databaseVM struct {
 	// replication relays a standby's streams to its primary.
 	replication net.Listener
 	// importLn relays an import's source connections to importSrc.
-	importLn  net.Listener
-	importSrc atomic.Pointer[ImportSource]
-	header    atomic.Pointer[dbarchive.Header]
+	importLn             net.Listener
+	migrationLn          net.Listener
+	migrationSrc         atomic.Pointer[ImportSource]
+	importSrc            atomic.Pointer[ImportSource]
+	importMu             sync.Mutex
+	importUncertainUntil time.Time
+	header               atomic.Pointer[dbarchive.Header]
 	// spare is the shape of a spare VM, waiting while no database has
 	// adopted it; spareDir is the host directory bound into its jail.
 	spare    SpareShape
@@ -335,7 +340,7 @@ func (r *Runtime) DeleteVolume(_ context.Context, id string) error {
 	if err := os.Remove(r.VolumePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("dbvm: delete volume: %w", err)
 	}
-	return nil
+	return r.deleteMigrationBinding(id)
 }
 
 // Volume is one database volume on this node.
@@ -369,9 +374,11 @@ func (r *Runtime) GrowVolume(ctx context.Context, id string, sizeBytes int64) er
 	if err := validID(id); err != nil {
 		return err
 	}
-	if r.Running(id) {
-		return ErrRunning
+	release, err := r.hold(id)
+	if err != nil {
+		return err
 	}
+	defer release()
 	path := r.VolumePath(id)
 	if _, err := os.Stat(path); err != nil {
 		return ErrVolumeNotFound
@@ -402,7 +409,8 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if err := validID(req.ID); err != nil {
 		return err
 	}
-	if (req.RestoreSource == "") != req.RestoreTarget.IsZero() || req.RestoreSource == req.ID {
+	source, recovery := dbarchive.ParseRecoverySource(req.RestoreSource)
+	if (source == "") != req.RestoreTarget.IsZero() || source == req.ID || recovery && (source == "" || req.RestoreUntilEnd) {
 		return errors.New("dbvm: a restore names another source database and a target")
 	}
 	if req.Primary != nil && req.RestoreSource != "" {
@@ -422,7 +430,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 		}
 	}
 	if req.RestoreSource != "" {
-		if err := validID(req.RestoreSource); err != nil {
+		if err := validID(source); err != nil {
 			return err
 		}
 	}
@@ -434,7 +442,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if _, err := os.Stat(volume); err != nil {
 		return ErrVolumeNotFound
 	}
-	if req.RestoreTarget.IsZero() && req.Primary == nil && !req.Promote && req.UpgradeFrom == 0 && r.startFromSpare(ctx, req) {
+	if req.RestoreTarget.IsZero() && req.Primary == nil && !req.Promote && req.UpgradeFrom == 0 && !req.QueryInsights && r.startFromSpare(ctx, req) {
 		return nil
 	}
 	vm, err := r.reserve(req.ID)
@@ -472,6 +480,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 		PrimaryNode: req.PrimaryNode, PrimaryTarget: req.PrimaryTarget, LaunchVersion: launchVersion, BootedAt: time.Now().UTC()}); err != nil {
 		return err
 	}
+	r.restoreMigrationRelay(ctx, req.ID, vm)
 	waitCtx, cancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
 	defer cancel()
 	alive, stop := context.WithCancel(waitCtx)
@@ -518,8 +527,8 @@ func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
 		KernelPath: jailKernel, BasePath: jailBase, VolumePath: jailVolume, Major: req.Major,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
-		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
-		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd, Standby: req.Primary != nil || req.Promote,
+		QueryInsights: req.QueryInsights, VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
+		RestoreTarget: req.RestoreTarget, RestoreTimeline: req.RestoreTimeline, RestoreUntilEnd: req.RestoreUntilEnd, Standby: req.Primary != nil || req.Promote,
 		Promote: req.Promote, UpgradeFrom: req.UpgradeFrom, UpgradeBasePath: upgradeBasePath(req),
 	})
 }
@@ -653,11 +662,19 @@ func (r *Runtime) WaitState(ctx context.Context, id string, want ...dbguest.Stat
 
 // Dial opens a client session to the database VM's PostgreSQL socket.
 func (r *Runtime) Dial(ctx context.Context, id string) (net.Conn, error) {
+	return r.dialData(ctx, id, dbguest.DataPort)
+}
+
+func (r *Runtime) DialReplica(ctx context.Context, id string) (net.Conn, error) {
+	return r.dialData(ctx, id, dbguest.ReplicaDataPort)
+}
+
+func (r *Runtime) dialData(ctx context.Context, id string, port uint32) (net.Conn, error) {
 	vm, err := r.running(id)
 	if err != nil {
 		return nil, err
 	}
-	return Dial(ctx, r.udsPath(vm), dbguest.DataPort)
+	return Dial(ctx, r.udsPath(vm), port)
 }
 
 func (r *Runtime) running(id string) (*databaseVM, error) {
@@ -708,8 +725,11 @@ func (r *Runtime) teardown(id string, vm *databaseVM) {
 		_ = vm.replication.Close()
 	}
 	r.mu.Lock()
-	importLn := vm.importLn
+	importLn, migrationLn := vm.importLn, vm.migrationLn
 	r.mu.Unlock()
+	if migrationLn != nil {
+		_ = migrationLn.Close()
+	}
 	if importLn != nil {
 		_ = importLn.Close()
 	}

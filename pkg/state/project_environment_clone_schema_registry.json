@@ -827,11 +827,27 @@
       "channel_id",
       "last_error",
       "next_attempt_at",
+      "observation_transition",
+      "pagerduty_region",
+      "pagerduty_target_sealed",
       "queued_at",
       "reason",
       "rule_id",
       "rule_metric",
       "rule_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "alert_deferred_fires",
+    "columns": [
+      "channel_id",
+      "channel_only",
+      "delivery_id",
+      "id",
+      "next_attempt_at",
+      "started",
+      "webhook_url"
     ],
     "kind": "operational"
   },
@@ -877,6 +893,15 @@
     "columns": [
       "deployment_id",
       "fire_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "alert_observation_checks",
+    "columns": [
+      "evaluated_at",
+      "rule_id",
+      "skip_reason"
     ],
     "kind": "operational"
   },
@@ -944,11 +969,13 @@
       "custom_metric_name",
       "edge_rule_id",
       "enabled",
+      "environment_scope",
       "event_subscription_id",
       "failure_source",
       "id",
       "last_evaluated_at",
       "last_fired_at",
+      "latest_anomaly_evaluation",
       "log_query",
       "mcp_for_minutes",
       "mcp_min_calls",
@@ -956,8 +983,12 @@
       "metric",
       "name",
       "notify_resolved",
+      "observation_enabled",
+      "observe_only",
+      "observed_incidents",
       "org_id",
       "post_deploy_rollback_window_seconds",
+      "recovery_confirmation_checks",
       "slo_id",
       "state",
       "synthetic_check_id",
@@ -972,6 +1003,26 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "alert_webhook_stand_downs",
+    "columns": [
+      "app_id",
+      "attempts",
+      "comparison",
+      "environment_scope",
+      "id",
+      "metric",
+      "next_attempt_at",
+      "queued_at",
+      "rule_id",
+      "rule_name",
+      "threshold",
+      "webhook_secret_sealed",
+      "webhook_url",
+      "window_spec"
+    ],
+    "kind": "operational"
   },
   {
     "table": "api_consumer_billing_policies",
@@ -11218,8 +11269,11 @@
       "previews",
       "provider_resource_id",
       "purge_after",
+      "recovery_region",
       "region",
+      "restore_from_recovery",
       "restore_point_in_time",
+      "restore_recovery_timeline",
       "restore_slot_until",
       "restore_source_database_id",
       "restore_source_resource_id",
@@ -11320,6 +11374,8 @@
     "table": "managed_postgres_resizes",
     "columns": [
       "account_id",
+      "auto_grow_idle_at",
+      "automatic",
       "backend_fingerprint",
       "backend_id",
       "completed_at",
@@ -18715,7 +18771,38 @@
       "state",
       "storage_key",
       "vmstate_bytes",
-      "vmstate_storage_key"
+      "vmstate_storage_key",
+      "volume_backup_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_volumes",
+    "columns": [
+      "account_id",
+      "created_at",
+      "latest_backup_id",
+      "node_id",
+      "session_id",
+      "size_gb",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_volume_backups",
+    "columns": [
+      "account_id",
+      "created_at",
+      "data_chunks",
+      "deleted_at",
+      "id",
+      "node_id",
+      "reason",
+      "session_id",
+      "size_bytes",
+      "state",
+      "uploaded_bytes"
     ],
     "kind": "operational"
   },
@@ -21670,6 +21757,9 @@
       "last_error_code",
       "lease_token",
       "lease_until",
+      "migration_lease_token",
+      "migration_lease_until",
+      "migration_operation_id",
       "phase",
       "phase_started_at",
       "release_switched_at",
@@ -22048,10 +22138,12 @@
     "columns": [
       "admission_ceiling_mb",
       "boot_slots",
+      "configured_admission_ceiling_mb",
       "created_at",
       "id",
       "lifecycle",
       "postgres_majors",
+      "recovery_region",
       "target_url",
       "updated_at",
       "volume_capacity_bytes"
@@ -22065,7 +22157,9 @@
       "error_code",
       "finished_at",
       "node_id",
+      "pending_outcome",
       "recovered_to",
+      "request_id",
       "result",
       "source_id",
       "started_at",
@@ -22077,9 +22171,24 @@
     "table": "database_role_verifiers",
     "columns": [
       "database_id",
+      "pool_revision",
       "role_name",
       "updated_at",
       "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_upgrade_rehearsals",
+    "columns": [
+      "database_name",
+      "drill_id",
+      "phase",
+      "recovery_timeline",
+      "request_id",
+      "restore_started",
+      "source_major",
+      "target_major"
     ],
     "kind": "operational"
   },
@@ -22104,6 +22213,8 @@
       "database_id",
       "drop_standby_slot",
       "held",
+      "idle_parked_at",
+      "idle_parked_from",
       "last_active_at",
       "last_backup_at",
       "last_error",
@@ -22114,12 +22225,15 @@
       "node_id",
       "postgres_major",
       "promote_pending",
+      "recovery_region",
       "replicated",
       "resize_pending",
+      "restore_from_recovery",
       "restore_lease_until",
       "restore_recovered_to",
       "restore_source",
       "restore_target",
+      "restore_timeline",
       "restore_window_seconds",
       "standby_node",
       "standby_running",
@@ -22133,6 +22247,291 @@
       "upgrade_result",
       "vcpu_count",
       "volume_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_auto_grow",
+    "columns": [
+      "checked_at",
+      "database_id",
+      "max_bytes",
+      "reason",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_autovacuum_settings",
+    "columns": [
+      "database_id",
+      "next_attempt_at",
+      "profile",
+      "revision"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "native_postgres_backup_schedules",
+    "columns": [
+      "bucket_account_id",
+      "bucket_app_id",
+      "bucket_id",
+      "database_id",
+      "export_queued",
+      "last_archive_key",
+      "last_error_code",
+      "last_success_at",
+      "lease_token",
+      "lease_until",
+      "next_run_at",
+      "org_id",
+      "owner_id",
+      "retry_at",
+      "run_deadline",
+      "run_id",
+      "utc_minute"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "native_postgres_base_refreshes",
+    "columns": [
+      "database_id",
+      "finished_at",
+      "handoff_reserved_mb",
+      "handoff_started",
+      "node_id",
+      "outcome",
+      "phase",
+      "promotion_started",
+      "reason",
+      "recover_after",
+      "refresh_base",
+      "resize_id",
+      "rolling_image",
+      "rolling_standby_node",
+      "source_running_at",
+      "standby_restarted",
+      "started_at",
+      "target_volume_bytes",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_binding_timeouts",
+    "columns": [
+      "applied_at",
+      "binding_id",
+      "idle_in_transaction_session_timeout_ms",
+      "lock_timeout_ms",
+      "retry_at",
+      "revision",
+      "statement_timeout_ms"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "live_on_owner": true,
+      "via": [
+        [
+          "binding_id",
+          "managed_postgres_bindings",
+          "id"
+        ]
+      ]
+    }
+  },
+  {
+    "table": "native_postgres_error_events",
+    "columns": [
+      "binding_id",
+      "database_id",
+      "id",
+      "observed_at",
+      "severity",
+      "sqlstate"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_error_history_settings",
+    "columns": [
+      "database_id",
+      "enabled",
+      "epoch"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "native_postgres_export_objects",
+    "columns": [
+      "expires_at",
+      "export_id",
+      "token"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_exports",
+    "columns": [
+      "artifact_token",
+      "created_at",
+      "database_id",
+      "expires_at",
+      "generation",
+      "id",
+      "lease_token",
+      "lease_until",
+      "manifest",
+      "org_id",
+      "owner_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_maintenance_windows",
+    "columns": [
+      "database_id",
+      "duration_minutes",
+      "stale_since",
+      "start_minute",
+      "weekday"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_masked_branches",
+    "columns": [
+      "database_id",
+      "policy",
+      "preview_policy_revision",
+      "source_resource_id",
+      "validated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_preview_masking_policies",
+    "columns": [
+      "database_id",
+      "policy",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_query_cancels",
+    "columns": [
+      "database_id",
+      "dispatched_at",
+      "node_id",
+      "outcome",
+      "owner_id",
+      "primary_since",
+      "requested_at",
+      "target",
+      "target_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_query_intervals",
+    "columns": [
+      "boot_at",
+      "counters",
+      "database_id",
+      "ended_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_query_settings",
+    "columns": [
+      "attempted_at",
+      "baseline",
+      "database_id",
+      "database_name",
+      "enabled",
+      "sampled_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_query_snapshots",
+    "columns": [
+      "active",
+      "observed_at",
+      "owner_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_scheduled_growth",
+    "columns": [
+      "policy_at",
+      "resize_id",
+      "source_running_at",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_storage_alerts",
+    "columns": [
+      "attempts",
+      "available_at",
+      "database_id",
+      "database_name",
+      "finished_at",
+      "free_bytes",
+      "growth_reason",
+      "id",
+      "incident_id",
+      "lease_token",
+      "sampled_at",
+      "state",
+      "total_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "native_postgres_storage_samples",
+    "columns": [
+      "allocated_bytes",
+      "database_id",
+      "free_bytes",
+      "low",
+      "low_since",
+      "node_id",
+      "read_only",
+      "role",
+      "sampled_at",
+      "state_changed_at",
+      "total_bytes"
     ],
     "kind": "operational"
   },

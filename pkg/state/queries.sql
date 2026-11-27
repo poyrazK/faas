@@ -16966,8 +16966,15 @@ SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;
 -- name: InsertManagedPostgresLifecycleDatabase :one
 INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,scale_to_zero,
     storage_limit_bytes,restore_window_seconds,backend_id,backend_fingerprint,restore_source_database_id,restore_source_resource_id,
-    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required,org_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,sqlc.narg(org_id)::uuid) RETURNING *;
+    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required,org_id,restore_from_recovery,restore_recovery_timeline)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,sqlc.narg(org_id)::uuid,sqlc.arg(restore_from_recovery),sqlc.arg(restore_recovery_timeline)) RETURNING *;
+
+-- name: SetManagedPostgresRecoveryRegion :execrows
+UPDATE managed_postgres_databases
+SET recovery_region = sqlc.arg(recovery_region), updated_at = now()
+WHERE id = sqlc.arg(id) AND account_id = sqlc.arg(account_id)
+  AND state = 'ready' AND provider_resource_id = sqlc.arg(provider_resource_id)
+  AND region = sqlc.arg(source_region) AND recovery_region = sqlc.arg(previous_region);
 
 -- name: ClaimManagedPostgresLifecycleProvision :one
 UPDATE managed_postgres_databases SET state='provisioning',lease_token=sqlc.arg(lease_token)::text,
@@ -22029,8 +22036,9 @@ SELECT * FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2;
 SELECT * FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending';
 
 -- name: ReadManagedPostgresResizeConflicts :one
-SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted'
-    AND (state<>'ready' OR rotation_previous_generation<>0 OR lease_token IS NOT NULL)) AS unfinished_bindings,
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=$1 AND b.state<>'deleted'
+    AND (b.state<>'ready' OR b.rotation_previous_generation<>0 OR b.lease_token IS NOT NULL)) AS unfinished_bindings,
+    EXISTS(SELECT 1 FROM managed_postgres_bindings replica WHERE replica.database_id=$1 AND replica.state<>'deleted' AND replica.access='replica_only') AS replica_bindings,
     EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state NOT IN ('ready','deleted')) AS unfinished_restores;
 
 -- name: BeginManagedPostgresResizeDatabase :one
@@ -22042,8 +22050,8 @@ WHERE id=sqlc.arg(id)::uuid AND state='ready' AND desired_generation=sqlc.arg(so
 
 -- name: InsertManagedPostgresResize :one
 INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
-    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,target_postgres_major,generation,state,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14) RETURNING *;
+    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,target_postgres_major,generation,state,created_at,automatic,auto_grow_idle_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14,$15,$16) RETURNING *;
 
 -- name: ClaimManagedPostgresResize :one
 UPDATE managed_postgres_databases SET lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(until)::timestamptz,
@@ -22336,23 +22344,87 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb)
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb,sqlc.arg(observe_only),sqlc.arg(observation_enabled),sqlc.arg(environment_scope),sqlc.arg(recovery_confirmation_checks))
 RETURNING *;
+
+-- name: LockCustomerAlertRule :one
+SELECT * FROM alert_rules WHERE id=sqlc.arg(id) FOR UPDATE;
 
 -- name: UpdateCustomerAlertRule :one
 UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,mcp_min_calls),
- mcp_for_minutes=coalesce(sqlc.narg(mcp_for_minutes)::integer,mcp_for_minutes), name=coalesce(sqlc.narg(name)::text,name),enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
+ mcp_for_minutes=coalesce(sqlc.narg(mcp_for_minutes)::integer,mcp_for_minutes), name=coalesce(sqlc.narg(name)::text,name),enabled=sqlc.arg(enabled),
  metric=coalesce(sqlc.narg(metric)::text,metric),comparison=coalesce(sqlc.narg(comparison)::text,comparison),
  threshold=coalesce(sqlc.narg(threshold)::double precision,threshold),window_spec=coalesce(sqlc.narg(window_spec)::text,window_spec),
  action=coalesce(sqlc.narg(action)::text,action),webhook_url=coalesce(sqlc.narg(webhook_url)::text,webhook_url),
  webhook_secret_sealed=coalesce(sqlc.narg(webhook_secret_sealed)::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce(sqlc.narg(cooldown_minutes)::integer,cooldown_minutes),
+ recovery_confirmation_checks=coalesce(sqlc.narg(recovery_confirmation_checks)::integer,recovery_confirmation_checks),
  post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),
- notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),updated_at=now()
+ notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),
+ state=CASE WHEN observe_only <> sqlc.arg(observe_only)::boolean THEN 'ok' ELSE state END,
+ observe_only=sqlc.arg(observe_only),observation_enabled=sqlc.arg(observation_enabled),
+ environment_scope=coalesce(sqlc.narg(environment_scope)::text,environment_scope),
+ observed_incidents=sqlc.narg(observed_incidents)::jsonb,
+ latest_anomaly_evaluation=NULL,updated_at=sqlc.arg(updated_at)
 WHERE id=sqlc.arg(id) RETURNING *;
+
+-- name: CloseLiveAlertEpisodeForObservation :exec
+UPDATE alert_episodes AS episode SET resolved_at=greatest(episode.opened_at,sqlc.arg(ended_at)::timestamptz)
+WHERE episode.rule_id=sqlc.arg(id) AND episode.resolved_at IS NULL;
+
+-- name: LockAlertRuleObservationMode :one
+SELECT observe_only, environment_scope FROM alert_rules WHERE id=sqlc.arg(id) FOR UPDATE;
+
+-- name: RecordCustomerAlertObservation :execrows
+WITH recorded AS (
+ UPDATE alert_rules SET last_evaluated_at=sqlc.arg(evaluated_at)::timestamptz,
+ latest_anomaly_evaluation=sqlc.narg(evidence)::jsonb,
+ observed_incidents=sqlc.narg(incidents)::jsonb
+ WHERE id=sqlc.arg(id) AND observe_only AND observation_enabled
+ AND environment_scope=sqlc.arg(expected_environment_scope)
+ AND updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND last_evaluated_at IS NOT DISTINCT FROM sqlc.narg(expected_last_evaluated_at)::timestamptz
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < sqlc.arg(evaluated_at)::timestamptz)
+ RETURNING id
+), expired AS (
+ DELETE FROM alert_observation_checks USING recorded
+ WHERE rule_id=recorded.id AND evaluated_at <= sqlc.arg(coverage_cutoff)::timestamptz
+)
+INSERT INTO alert_observation_checks(rule_id,evaluated_at,skip_reason)
+SELECT id,sqlc.arg(evaluated_at)::timestamptz,sqlc.arg(skip_reason)::text FROM recorded;
+
+-- name: ListCustomerAlertObservationCoverage :many
+SELECT checks.skip_reason, count(*) FILTER (WHERE checks.evaluated_at > sqlc.arg(coverage_cutoff)::timestamptz) AS checks_in_window,
+ max(checks.evaluated_at)::timestamptz AS last_checked_at
+FROM alert_observation_checks AS checks
+JOIN alert_rules AS rule ON rule.id=checks.rule_id
+WHERE rule.id=sqlc.arg(id) AND rule.observe_only
+ AND rule.updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND checks.evaluated_at <= sqlc.arg(as_of)::timestamptz
+GROUP BY checks.skip_reason ORDER BY checks.skip_reason;
+
+-- name: DeleteCustomerAlertObservationChecks :exec
+DELETE FROM alert_observation_checks WHERE rule_id=sqlc.arg(id);
+
+-- name: RecordCustomerAlertAnomalyEvaluation :execrows
+-- A skipped observation leaves any open alert episode alone.
+WITH scope_aware AS (
+ SELECT set_config('faas.scoped_alert_state', 'on', true)
+)
+UPDATE alert_rules SET
+ last_evaluated_at=sqlc.arg(evaluated_at)::timestamptz,
+ latest_anomaly_evaluation=sqlc.narg(evidence)::jsonb,
+ updated_at=CASE WHEN state <> sqlc.narg(skipped_state)::text
+                 THEN greatest(updated_at,sqlc.arg(evaluated_at)::timestamptz) ELSE updated_at END,
+ state=coalesce(sqlc.narg(skipped_state)::text,state)
+FROM scope_aware
+WHERE id=sqlc.arg(id) AND enabled AND comparison IN ('above_baseline','below_baseline')
+ AND updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND (recovery_confirmation_checks = 1 OR last_evaluated_at IS NOT DISTINCT FROM sqlc.narg(expected_last_evaluated_at)::timestamptz)
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < sqlc.arg(evaluated_at)::timestamptz);
 
 -- name: ReadCustomerAlertRule :one
 SELECT * FROM alert_rules WHERE id=sqlc.arg(id);
@@ -22414,15 +22486,23 @@ WITH rule AS (
     DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = sqlc.arg(rule_id)::uuid
 )
 INSERT INTO alert_channel_stand_downs
-    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at,
+     observation_transition, pagerduty_target_sealed, pagerduty_region)
 SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
-       sqlc.arg(reason)::text, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
-  FROM rule CROSS JOIN owed
-ON CONFLICT (rule_id, channel_id) DO NOTHING;
+       sqlc.arg(reason)::text, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz, sqlc.arg(observation_transition)::boolean,
+       CASE WHEN sqlc.arg(observation_transition)::boolean AND c.kind = 'pagerduty' THEN c.target_sealed END,
+       CASE WHEN sqlc.arg(observation_transition)::boolean AND c.kind = 'pagerduty' THEN c.pagerduty_region END
+  FROM rule CROSS JOIN owed JOIN notification_channels c ON c.id = owed.channel_id
+ON CONFLICT (rule_id, channel_id) DO UPDATE SET
+    observation_transition = true,
+    pagerduty_target_sealed = EXCLUDED.pagerduty_target_sealed,
+    pagerduty_region = EXCLUDED.pagerduty_region
+ WHERE EXCLUDED.observation_transition AND NOT alert_channel_stand_downs.observation_transition;
 
 -- name: DueAlertChannelStandDowns :many
 SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
-       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts
+       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts,
+       s.pagerduty_target_sealed, coalesce(s.pagerduty_region, '')::text AS pagerduty_region
   FROM alert_channel_stand_downs s
  WHERE s.next_attempt_at <= sqlc.arg(now)::timestamptz
  ORDER BY s.next_attempt_at, s.rule_id, s.channel_id
@@ -22438,7 +22518,133 @@ DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid AN
 
 -- name: ClearAlertChannelStandDowns :exec
 -- A new fire of the rule supersedes the recovery notices it still owed.
-DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid;
+DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid AND NOT observation_transition;
+
+-- name: AlertChannelStandDownPending :one
+-- A new fire can supersede ordinary stand-downs. On entering Observe only,
+-- the old episode's terminal notice must go out before the channel opens another.
+WITH superseded AS (
+    DELETE FROM alert_channel_stand_downs
+     WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid
+       AND NOT observation_transition AND sqlc.arg(supersede)::boolean
+)
+SELECT EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs
+     WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid AND observation_transition
+)::boolean AS pending;
+
+-- name: ListPagerDutyObservationStandDownChannels :many
+SELECT sqlc.embed(c), coalesce(s.pagerduty_target_sealed, c.target_sealed)::bytea AS stand_down_target_sealed,
+       coalesce(s.pagerduty_region, c.pagerduty_region, '')::text AS stand_down_region
+  FROM alert_channel_stand_downs s
+  JOIN notification_channels c ON c.id = s.channel_id
+ WHERE s.rule_id = sqlc.arg(rule_id)::uuid AND s.observation_transition AND c.kind = 'pagerduty';
+
+-- name: QueueDeferredAlertFires :many
+-- Use the recipients selected by the claim. The current bindings may have
+-- changed since that snapshot. Meterd compares actual PagerDuty keys when
+-- releasing same-region aliases.
+WITH live AS (
+    SELECT d.id, d.fired_at, r.id AS rule_id, r.webhook_url
+      FROM alert_deliveries d JOIN alert_rules r ON r.id = d.rule_id
+     WHERE d.id = sqlc.arg(delivery_id)::uuid
+), recipients AS (
+    SELECT unnest(sqlc.arg(channel_ids)::uuid[]) AS channel_id,
+           unnest(sqlc.arg(pagerduty_regions)::text[]) AS pagerduty_region
+)
+INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
+SELECT live.id, target.channel_id, '', live.webhook_url = '', live.fired_at
+  FROM live CROSS JOIN recipients target
+ WHERE EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs s JOIN notification_channels old ON old.id = s.channel_id
+     WHERE s.rule_id = live.rule_id AND s.observation_transition
+       AND (s.channel_id = target.channel_id OR
+            (old.kind = 'pagerduty' AND target.pagerduty_region = coalesce(s.pagerduty_region, old.pagerduty_region)))
+ )
+UNION ALL
+SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
+ WHERE live.webhook_url <> '' AND EXISTS (
+    SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = live.rule_id AND s.webhook_url = live.webhook_url
+ )
+RETURNING coalesce(channel_id::text, '')::text AS channel_id, webhook_url;
+
+-- name: AlertDeferredFireRecipients :many
+SELECT coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE d.rule_id = sqlc.arg(rule_id)::uuid AND d.fired_at = sqlc.arg(fired_at)::timestamptz
+   AND (f.channel_id IS NOT NULL OR (NOT f.started AND d.status = 'pending'));
+
+-- name: DueDeferredAlertFires :many
+SELECT f.id::text AS id, d.id::text AS delivery_id, d.rule_id::text AS rule_id,
+       coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url, f.channel_only,
+       d.fired_at, d.status, d.payload, d.observed_value,
+       CASE WHEN f.channel_id IS NULL THEN EXISTS (
+           SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = d.rule_id AND s.webhook_url = f.webhook_url
+       ) ELSE EXISTS (
+           SELECT 1 FROM alert_channel_stand_downs s
+            WHERE s.rule_id = d.rule_id AND s.channel_id = f.channel_id AND s.observation_transition
+       ) END::boolean AS blocked
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE f.next_attempt_at <= sqlc.arg(now)::timestamptz
+ ORDER BY f.next_attempt_at, f.id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: StartDeferredWebhookFire :execrows
+-- Serialize handing the webhook to transport with edits that end its episode.
+WITH live AS (
+    SELECT f.id
+      FROM alert_deferred_fires f
+      JOIN alert_deliveries d ON d.id = f.delivery_id
+      JOIN alert_rules r ON r.id = d.rule_id
+     WHERE f.id = sqlc.arg(id)::uuid AND f.channel_id IS NULL
+       AND r.enabled AND NOT r.observe_only AND r.state = 'firing'
+       AND r.last_fired_at = d.fired_at AND r.webhook_url = f.webhook_url AND d.status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = r.id AND s.webhook_url = f.webhook_url)
+     FOR UPDATE OF r
+)
+UPDATE alert_deferred_fires f SET started = true FROM live WHERE f.id = live.id;
+
+-- name: FinishDeferredAlertFire :one
+WITH removed AS (
+    DELETE FROM alert_deferred_fires WHERE id = sqlc.arg(id)::uuid RETURNING id, delivery_id
+)
+SELECT NOT EXISTS (
+    SELECT 1 FROM alert_deferred_fires f JOIN removed ON f.delivery_id = removed.delivery_id AND f.id <> removed.id
+)::boolean AS last_recipient;
+
+-- name: RetryDeferredAlertFire :exec
+UPDATE alert_deferred_fires SET next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz WHERE id = sqlc.arg(id)::uuid;
+
+-- name: QueueAlertWebhookStandDown :exec
+-- Snapshot the pre-edit destination and payload while its live episode is open.
+INSERT INTO alert_webhook_stand_downs
+    (rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+     webhook_url, webhook_secret_sealed, queued_at, next_attempt_at)
+SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spec, r.environment_scope,
+       r.webhook_url, r.webhook_secret_sealed, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
+  FROM alert_rules r
+ WHERE r.id = sqlc.arg(rule_id)::uuid AND r.notify_resolved AND r.webhook_url <> ''
+   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL)
+   AND NOT EXISTS (
+       SELECT 1 FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+        WHERE d.rule_id = r.id AND d.fired_at = r.last_fired_at AND f.webhook_url = r.webhook_url AND NOT f.started AND d.status = 'pending'
+   );
+
+-- name: DueAlertWebhookStandDowns :many
+SELECT id, rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+       webhook_url, webhook_secret_sealed, queued_at, attempts
+  FROM alert_webhook_stand_downs
+ WHERE next_attempt_at <= sqlc.arg(now)::timestamptz
+ ORDER BY next_attempt_at, id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: DeleteAlertWebhookStandDown :exec
+DELETE FROM alert_webhook_stand_downs WHERE id = sqlc.arg(id)::uuid;
+
+-- name: RetryAlertWebhookStandDown :exec
+UPDATE alert_webhook_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+ WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ListStrandedAlertRules :many
 -- Rules left out of evaluation (disabled, or their app deleted) while not
@@ -22467,7 +22673,7 @@ DELETE FROM alert_deliveries d WHERE d.id IN (
 -- name: ListEnabledCustomerAlertRules :many
 -- A deleted app's rules wait out its restore grace without evaluating
 -- (ADR-20261029203000); account-wide rules have no app.
-SELECT * FROM alert_rules r WHERE r.enabled=true
+SELECT * FROM alert_rules r WHERE (r.enabled OR r.observation_enabled)
  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
  ORDER BY r.account_id;
 
@@ -24249,7 +24455,13 @@ SELECT (jsonb_build_object(
  -- (#7923) keep the id without a foreign key.
  'deployment_verification_queries.deployment_id', (SELECT count(*) FROM deployment_verification_queries WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'instance_resource_minutes.deployment_id', (SELECT count(*) FROM instance_resource_minutes WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
- 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=sqlc.arg(deployment_id)::uuid)
+ 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ -- Data API inspection admissions (#8068) pin the inspected deployment
+ -- without a foreign key.
+ 'data_api_inspection_admissions.deployment_id', (SELECT count(*) FROM data_api_inspection_admissions WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ -- A route split (#8100) records its route app's deployment without a
+ -- foreign key.
+ 'route_splits.target_deployment_id', (SELECT count(*) FROM route_splits WHERE target_deployment_id=sqlc.arg(deployment_id)::uuid)
 ))::jsonb AS borrowers;
 
 -- name: CloneCheckpointCompensationHasWorkloadCleanup :one
@@ -28010,23 +28222,26 @@ UPDATE customer_workflow_playbook_progress SET payload=sqlc.arg(payload),revisio
 -- Database VMs (ADR-1027). database_nodes is inventory; database_vms is
 -- written only by schedd's database scheduler (pkg/dbsched).
 
--- name: UpsertDatabaseNode :exec
-INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle)
+-- name: UpsertDatabaseNode :execrows
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region)
 VALUES (sqlc.arg(id), sqlc.arg(target_url), sqlc.arg(admission_ceiling_mb), sqlc.arg(volume_capacity_bytes), sqlc.arg(boot_slots),
-    sqlc.arg(postgres_majors)::integer[], sqlc.arg(lifecycle))
+    sqlc.arg(postgres_majors)::integer[], sqlc.arg(lifecycle), sqlc.arg(recovery_region))
 ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
     admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
     volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
     boot_slots = EXCLUDED.boot_slots,
     postgres_majors = EXCLUDED.postgres_majors,
-    lifecycle = EXCLUDED.lifecycle, updated_at = now();
+    lifecycle = EXCLUDED.lifecycle, updated_at = now()
+WHERE database_nodes.recovery_region = EXCLUDED.recovery_region;
 
 -- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region
 FROM database_nodes ORDER BY id;
 
 -- name: LockDatabaseNode :one
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- name: DatabaseNodeUsage :many
@@ -28035,13 +28250,15 @@ FROM database_nodes WHERE id = sqlc.arg(id) FOR UPDATE;
 -- standby volume counts on its standby node, and its memory there while
 -- the standby runs. An upgrading database's VM runs pg_upgrade.
 SELECT n.id AS node_id,
-    COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
-    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+    COALESCE(sum(greatest(v.volume_bytes, a.target_volume_bytes)), 0)::bigint AS volume_bytes,
+    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'maintenance_handoff', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running)), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'maintenance_handoff', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running))::bigint AS active_vms,
     count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
 FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id OR v.standby_node = n.id
+LEFT JOIN native_postgres_base_refreshes a ON a.database_id = v.database_id AND a.node_id = n.id
+    AND a.finished_at IS NULL AND a.resize_id IS NOT NULL
 GROUP BY n.id ORDER BY n.id;
 
 -- name: GetDatabaseVM :one
@@ -28050,7 +28267,7 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
     upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
-    held, compute_quota_unit_seconds
+    held, compute_quota_unit_seconds, idle_parked_at, idle_parked_from, recovery_region, restore_from_recovery, restore_timeline
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
@@ -28059,15 +28276,16 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
     upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
-    held, compute_quota_unit_seconds
+    held, compute_quota_unit_seconds, idle_parked_at, idle_parked_from, recovery_region, restore_from_recovery, restore_timeline
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
 INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on,
-    restore_window_seconds, restore_source, restore_target, replicated, standby_node, state)
+    restore_window_seconds, restore_source, restore_target, replicated, standby_node, state, recovery_region, restore_from_recovery, restore_timeline)
 VALUES (sqlc.arg(database_id), sqlc.arg(node_id), sqlc.arg(postgres_major), sqlc.arg(vcpu_count),
     sqlc.arg(mem_mib), sqlc.arg(volume_bytes), sqlc.arg(always_on), sqlc.arg(restore_window_seconds),
-    sqlc.narg(restore_source), sqlc.narg(restore_target), sqlc.arg(replicated), sqlc.narg(standby_node), 'provisioning')
+    sqlc.narg(restore_source), sqlc.narg(restore_target), sqlc.arg(replicated), sqlc.narg(standby_node), sqlc.arg(state),
+    sqlc.arg(recovery_region), sqlc.arg(restore_from_recovery), sqlc.arg(restore_timeline))
 ON CONFLICT (database_id) DO NOTHING;
 
 -- name: ClaimDatabaseStandby :execrows
@@ -28102,7 +28320,7 @@ UPDATE database_vms SET node_id = standby_node, standby_node = NULL, standby_run
     state = CASE WHEN standby_running THEN 'running' ELSE 'parked' END,
     last_error = 'failed_over', state_changed_at = now()
 WHERE database_id = sqlc.arg(database_id) AND standby_synced
-    AND state IN ('parked', 'running', 'parking', 'failed');
+    AND state IN ('parked', 'running', 'parking', 'maintenance_handoff', 'failed');
 
 -- name: FinishDatabasePromotion :execrows
 UPDATE database_vms SET promote_pending = false WHERE database_id = sqlc.arg(database_id);
@@ -28150,7 +28368,8 @@ SET vcpu_count = sqlc.arg(vcpu_count), mem_mib = sqlc.arg(mem_mib), volume_bytes
     standby_synced = standby_synced AND sqlc.arg(replicated)::boolean,
     drop_standby_slot = sqlc.arg(drop_standby_slot)::boolean,
     resize_pending = true
-WHERE database_id = sqlc.arg(database_id) AND state IN ('parked', 'running');
+WHERE database_id = sqlc.arg(database_id) AND state IN ('parked', 'running')
+    AND (NOT sqlc.arg(parked_only)::boolean OR (state = 'parked' AND idle_parked_at = state_changed_at));
 
 -- name: ClearDatabaseStandbySlotDrop :execrows
 UPDATE database_vms SET drop_standby_slot = false WHERE database_id = sqlc.arg(database_id);
@@ -28160,7 +28379,7 @@ UPDATE database_vms SET resize_pending = false WHERE database_id = sqlc.arg(data
 
 -- name: RecordDatabaseVMRestore :execrows
 UPDATE database_vms SET restore_recovered_to = sqlc.arg(recovered_to)
-WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL;
+WHERE database_id = sqlc.arg(database_id) AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL;
 
 -- name: ClaimDatabaseVMRestore :one
 -- Takes (held is NULL) or renews (held is the current lease) the lease on
@@ -28168,7 +28387,7 @@ WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore
 -- clocks do not matter.
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
-WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL
+WHERE database_id = sqlc.arg(database_id) AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
   AND (restore_lease_until IS NULL OR restore_lease_until < now()
        OR restore_lease_until = sqlc.narg(held)::timestamptz)
 RETURNING restore_lease_until;
@@ -28204,7 +28423,9 @@ WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
 UPDATE database_vms SET state = sqlc.arg(to_state), state_changed_at = now(),
     last_error = sqlc.narg(last_error),
     bootstrapped = bootstrapped OR sqlc.arg(bootstrapped)::boolean,
-    last_active_at = CASE WHEN sqlc.arg(to_state) = 'running' THEN now() ELSE last_active_at END
+    last_active_at = CASE WHEN sqlc.arg(to_state) = 'running' THEN now() ELSE last_active_at END,
+    idle_parked_at = CASE WHEN sqlc.narg(idle_park_from)::timestamptz IS NOT NULL THEN now() ELSE NULL END,
+    idle_parked_from = sqlc.narg(idle_park_from)::timestamptz
 WHERE database_id = sqlc.arg(database_id) AND state = ANY(sqlc.arg(from_states)::text[]);
 
 -- name: BeginDatabaseVMMove :execrows
@@ -28309,7 +28530,7 @@ VALUES (@drill_id, @node_id, @source_id, @target_at)
 ON CONFLICT (drill_id) DO NOTHING;
 
 -- name: RunningDatabaseRestoreDrills :many
-SELECT * FROM database_restore_drills WHERE result = 'running' ORDER BY started_at;
+SELECT * FROM database_restore_drills WHERE result = 'running' AND request_id IS NULL ORDER BY started_at;
 
 -- name: FinishDatabaseRestoreDrill :execrows
 UPDATE database_restore_drills
@@ -28320,11 +28541,12 @@ UPDATE database_restore_drills
 SELECT node_id,
        max(started_at)::timestamptz AS last_started,
        coalesce(max(finished_at) FILTER (WHERE result = 'ok'), 'epoch'::timestamptz)::timestamptz AS last_ok
-  FROM database_restore_drills
+  FROM database_restore_drills d
+ WHERE NOT EXISTS (SELECT 1 FROM database_upgrade_rehearsals r WHERE r.drill_id = d.drill_id)
  GROUP BY node_id;
 
 -- name: PruneDatabaseRestoreDrills :execrows
-DELETE FROM database_restore_drills WHERE result <> 'running' AND started_at < @before;
+DELETE FROM database_restore_drills WHERE finished_at IS NOT NULL AND started_at < @before;
 
 -- name: SaveReadinessSubscriptionWatches :execrows
 UPDATE customer_workflow_readiness_subscriptions SET payload=$2, lease_token=NULL, lease_until=NULL, next_evaluation_at=$3 WHERE id=$1;
@@ -29324,7 +29546,7 @@ FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
 JOIN project_environments e ON e.id=g.environment_id
 JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
- AND b.access IN ('read_write','read_only','migration','session') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+ AND b.access IN ('read_write','read_only','migration','session','replica_only') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
 JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
  AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL
@@ -30922,7 +31144,7 @@ JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.d
 JOIN orgs o ON o.id = d.org_id AND o.personal_org AND o.personal_owner_account_id = b.account_id
 WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND b.scope IN ('default', 'production') AND b.state IN ('provisioning', 'ready')
-  AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
+  AND d.previews IN ('empty', 'copy', 'masked') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
 
