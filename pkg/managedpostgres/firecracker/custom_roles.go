@@ -139,6 +139,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE %[5]s IN SCHEMA public GRANT EXECUTE ON FUNCTI
 			if access == managedpostgres.CredentialReadWrite {
 				markers = append(markers, credential+string(managedpostgres.CredentialSession))
 			}
+			if access == managedpostgres.CredentialReadOnly {
+				markers = append(markers, credential+string(managedpostgres.CredentialReplicaOnly))
+			}
 		}
 		for _, other := range desired {
 			if slices.Contains(other.MemberOf, spec.Name) {
@@ -181,6 +184,9 @@ END $gregale$;
 		markers := []string{credential + string(access)}
 		if access == managedpostgres.CredentialReadWrite {
 			markers = append(markers, credential+string(managedpostgres.CredentialSession))
+		}
+		if access == managedpostgres.CredentialReadOnly {
+			markers = append(markers, credential+string(managedpostgres.CredentialReplicaOnly))
 		}
 		b.WriteString(defaultRoleSQL(markers, want))
 	}

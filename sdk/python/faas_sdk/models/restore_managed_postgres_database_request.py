@@ -20,8 +20,7 @@ class RestoreManagedPostgresDatabaseRequest:
 
     name: str
     point_in_time: datetime.datetime | Unset = UNSET
-    """A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds
-    before the request."""
+    """A time inside the source's restore_range. Omit it to use the latest point."""
     ttl_seconds: int | Unset = UNSET
     """Purge the new database this many seconds after it is created. Its bindings are revoked first; the source is
     never touched. The database shows expires_at."""

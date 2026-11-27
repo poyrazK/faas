@@ -69,6 +69,7 @@ type DatabaseSchedulerConfig struct {
 
 // DatabaseNodeConfig is one database node.
 type DatabaseNodeConfig struct {
+	RecoveryRegion      string `toml:"recovery_region"`
 	ID                  string `toml:"id"`
 	TargetURL           string `toml:"target_url"`
 	AdmissionCeilingMB  int    `toml:"admission_ceiling_mb"`
@@ -94,6 +95,8 @@ func (c DatabaseNodeConfig) node() (dbsched.Node, error) {
 		return dbsched.Node{}, errors.New("database_scheduler.nodes: id and target_url are required")
 	case c.AdmissionCeilingMB <= 0 || c.VolumeCapacityBytes <= 0:
 		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: admission_ceiling_mb and volume_capacity_bytes must be positive", c.ID)
+	case c.RecoveryRegion != "" && !dbsched.ValidRecoveryRegion(c.RecoveryRegion):
+		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: invalid recovery_region", c.ID)
 	case c.BootSlots < 0 || c.BootSlots > 256:
 		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: boot_slots must be 1-256", c.ID)
 	case slices.ContainsFunc(c.PostgresMajors, func(m int) bool { return m < dbguest.MinMajor || m > dbguest.MaxMajor }):
@@ -102,7 +105,7 @@ func (c DatabaseNodeConfig) node() (dbsched.Node, error) {
 		return dbsched.Node{}, fmt.Errorf("database_scheduler.nodes %s: unknown lifecycle %q", c.ID, lifecycle)
 	}
 	return dbsched.Node{ID: c.ID, TargetURL: c.TargetURL, AdmissionCeilingMB: c.AdmissionCeilingMB, VolumeCapacityBytes: c.VolumeCapacityBytes,
-		BootSlots: c.BootSlots, Majors: c.PostgresMajors, Lifecycle: lifecycle}, nil
+		BootSlots: c.BootSlots, Majors: c.PostgresMajors, Lifecycle: lifecycle, RecoveryRegion: c.RecoveryRegion}, nil
 }
 
 // databaseNodeVerifier binds database-node vmmd certificates to the

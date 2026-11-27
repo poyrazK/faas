@@ -274,7 +274,7 @@ RULES = [
     (r"entit|durable-entity|__gregale/entities", "Durable entities"),
     (r"redis|valkey|^resp$", "Managed Redis"),
     (r"data-api|dataapi|postgres-pool|pgpool", "Data API"),
-    (r"postgres|database|^pg-|managedpostgres|managed-postgres|/databases|pgbouncer", "Managed Postgres"),
+    (r"postgres|database|^pg-|^pgarchive$|^pgexport$|managedpostgres|managed-postgres|/databases|pgbouncer", "Managed Postgres"),
     (r"bucket|object|s3|upload-route|storage", "Object storage"),
     # --- async
     (r"inbound-webhook", "Durable inbound webhooks"),

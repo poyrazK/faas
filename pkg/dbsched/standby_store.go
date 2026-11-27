@@ -20,7 +20,7 @@ func pickStandby(nodes []Node, usage map[string]nodeUsage, vm VM, exclude ...str
 			others = append(others, n)
 		}
 	}
-	return pickNode(others, usage, vm.VolumeBytes, "", vm.Major)
+	return pickNode(others, usage, vm.VolumeBytes, "", vm.Major, vm.RecoveryRegion)
 }
 
 // claimStandbyOn checks a standby VM against its node.
@@ -37,7 +37,7 @@ func claimStandbyOn(node Node, usage nodeUsage, memMiB int) error {
 // canFailover reports whether a database's standby may take over.
 func canFailover(vm VM) bool {
 	switch vm.State {
-	case StateParked, StateRunning, StateParking, StateFailed:
+	case StateParked, StateRunning, StateParking, stateMaintenanceHandoff, StateFailed:
 		return vm.StandbySynced && vm.StandbyNode != ""
 	}
 	return false

@@ -316,30 +316,37 @@ type decodeCloser struct {
 func (d *decodeCloser) Read(p []byte) (int, error) { return d.dec.Read(p) }
 func (d *decodeCloser) Close() error               { d.dec.Close(); return d.f.Close() }
 
-// backupStopTime reads the stop time from the backup history file the
-// archive received at pg_backup_stop: recovery is consistent only past it.
-// wal reads the history file (a TieredStore falls back to the remote).
-func backupStopTime(ctx context.Context, wal walReader, databaseID string, m BackupManifest) (time.Time, error) {
+// readBackupHistory opens the history file PostgreSQL archived at backup end.
+func readBackupHistory(ctx context.Context, wal walReader, databaseID string, m BackupManifest) ([]byte, error) {
 	parts := strings.SplitN(m.StartLSN, "/", 2)
 	if len(parts) != 2 {
-		return time.Time{}, errors.New("dbarchive: bad start lsn")
+		return nil, errors.New("dbarchive: bad start lsn")
 	}
 	// The history file is <start wal>.<offset within the segment>.backup;
 	// database VMs use PostgreSQL's default 16 MiB segments.
 	var lo uint64
 	if _, err := fmt.Sscanf(parts[1], "%X", &lo); err != nil {
-		return time.Time{}, err
+		return nil, err
 	}
 	name := fmt.Sprintf("%s.%08X.backup", m.StartWAL, lo%(16<<20))
 	rc, _, err := wal.OpenWAL(ctx, databaseID, name)
 	if err != nil {
-		return time.Time{}, err
+		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	body, err := io.ReadAll(io.LimitReader(rc, 64<<10))
+	return io.ReadAll(io.LimitReader(rc, 64<<10))
+}
+
+// backupStopTime reports when the backup reached consistency for recovery.
+func backupStopTime(ctx context.Context, wal walReader, databaseID string, m BackupManifest) (time.Time, error) {
+	body, err := readBackupHistory(ctx, wal, databaseID, m)
 	if err != nil {
 		return time.Time{}, err
 	}
+	return backupHistoryStopTime(body)
+}
+
+func backupHistoryStopTime(body []byte) (time.Time, error) {
 	g := regexp.MustCompile(`(?m)^STOP TIME: (.+)$`).FindStringSubmatch(string(body))
 	if g == nil {
 		return time.Time{}, errors.New("dbarchive: backup history has no stop time")

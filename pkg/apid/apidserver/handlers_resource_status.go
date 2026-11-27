@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/conditions"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -54,7 +55,35 @@ func (s *server) getDatabaseStatus(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, conditions.Database(managedPostgresView(database), time.Now()))
+	status := conditions.Database(managedPostgresView(database), time.Now())
+	if !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	storage, err := s.managedPostgres.StorageStatuses(r.Context(), []managedpostgres.Database{database})
+	if err != nil {
+		s.log.Warn("could not read database storage status", "database_id", database.ID, "err", err)
+	}
+	volume := storage[database.ID]
+	if volume != nil {
+		volume.AutoGrow, err = s.managedPostgres.AutoGrowStatus(r.Context(), database, volume)
+		if err != nil {
+			s.log.Warn("could not read database auto-grow status", "database_id", database.ID, "err", err)
+		}
+	}
+	status.Maintenance, err = s.managedPostgres.MaintenanceStatus(r.Context(), database)
+	if err != nil {
+		s.log.Warn("could not read database maintenance status", "database_id", database.ID, "err", err)
+	}
+	status.Backup, err = s.managedPostgres.BackupStatus(r.Context(), database)
+	if err != nil {
+		s.log.Warn("could not read database backup and restore status", "database_id", database.ID, "err", err)
+	}
+	status.Replica, err = s.managedPostgres.ReplicaStatus(r.Context(), database)
+	if err != nil {
+		s.log.Warn("could not read database replica status", "database_id", database.ID, "err", err)
+	}
+	writeJSON(w, http.StatusOK, conditions.WithDatabaseStorage(status, volume))
 }
 
 // getDomainStatus is GET /v1/domains/{domain}/status: the domain's

@@ -9,10 +9,12 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 )
 
 // Importing another PostgreSQL database (ADR-1027 migration off Neon). The
@@ -348,15 +350,24 @@ func filterImportTOC(list string, skip []string) string {
 
 // Import checks, as psql -tA queries.
 const (
-	importSourceMajorQuery = `SELECT current_setting('server_version_num')::int / 10000`
-	importExtensionsQuery  = `SELECT coalesce(string_agg(extname, ',' ORDER BY extname), '') FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql'`
-	importTrustedQuery     = `SELECT coalesce(string_agg(DISTINCT name, ','), '') FROM pg_catalog.pg_available_extension_versions WHERE trusted`
-	importSourceSizeQuery  = `SELECT pg_catalog.pg_database_size(pg_catalog.current_database())`
-	importTargetUsedQuery  = `SELECT (SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+	importSourceMajorQuery  = `SELECT current_setting('server_version_num')::int / 10000`
+	importSourceSizeQuery   = `SELECT pg_catalog.pg_database_size(pg_catalog.current_database())`
+	importVectorSchemaQuery = `SELECT n.nspname FROM pg_catalog.pg_extension e
+		JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'`
+	importTargetUsedBase = `SELECT (SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\_toast%' AND n.nspname NOT LIKE 'pg\_temp%')
  + (SELECT count(*) FROM pg_catalog.pg_namespace WHERE nspname NOT IN ('public', 'pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg\_%')
- + (SELECT count(*) FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql')`
+ + (SELECT count(*) FROM pg_catalog.pg_extension WHERE extname <> 'plpgsql'`
 )
+
+func importTargetUsedSQL(allowVector bool) string {
+	if allowVector {
+		return importTargetUsedBase + ` AND NOT (
+			extname = 'vector' AND extversion = '` + pgextension.VectorVersion + `'
+			AND extnamespace = 'public'::regnamespace AND extowner = current_user::regrole))`
+	}
+	return importTargetUsedBase + ")"
+}
 
 // The dump and the restored copy share the target volume, and a full
 // volume stops PostgreSQL itself. An import starts only when the source
@@ -401,17 +412,37 @@ func watchImportSpace(ctx context.Context, stop context.CancelCauseFunc, floor u
 	}
 }
 
-// missingExtensions lists the source's extensions, less the skipped ones,
-// that the target cannot create as a non-superuser (not trusted, or not
-// installed). Both lists are comma-separated.
-func missingExtensions(source, trusted string, skip []string) []string {
-	have := strings.Split(trusted, ",")
-	var missing []string
-	for _, ext := range strings.Split(source, ",") {
-		if ext == "" || slices.Contains(skip, ext) || slices.Contains(have, ext) {
-			continue
+// A portable restore ignores the provider-installed vector objects when
+// checking whether an earlier failed attempt left the target reusable.
+// The normal import inventory checks relations, schemas, and extensions.
+// This extra check finds standalone objects in public and large objects.
+const archivePublicObjectsSQL = `SELECT EXISTS (
+	SELECT FROM pg_catalog.pg_depend d
+	WHERE d.refclassid = 'pg_catalog.pg_namespace'::regclass
+	  AND d.refobjid = 'public'::regnamespace AND d.deptype = 'n'
+	  AND d.classid <> 'pg_catalog.pg_extension'::regclass
+	  AND NOT EXISTS (SELECT FROM pg_catalog.pg_depend e
+	    WHERE e.classid=d.classid AND e.objid=d.objid AND e.deptype='e')
+) OR EXISTS (SELECT FROM pg_catalog.pg_largeobject_metadata)`
+
+func archiveTOCMatches(list string, major int, extensions []pgextension.Installed) bool {
+	var archiveMajor int
+	var names []string
+	for line := range strings.SplitSeq(list, "\n") {
+		if version, ok := strings.CutPrefix(line, ";     Dumped from database version: "); ok {
+			// The version may be followed by a distributor's identifier.
+			prefix, _, _ := strings.Cut(version, ".")
+			archiveMajor, _ = strconv.Atoi(prefix)
 		}
-		missing = append(missing, ext)
+		if match := tocExtensionEntry.FindStringSubmatch(line); match != nil && match[1] != "" && match[1] != "plpgsql" {
+			names = append(names, match[1])
+		}
 	}
-	return missing
+	want := make([]string, 0, len(extensions))
+	for _, extension := range extensions {
+		want = append(want, extension.Name)
+	}
+	slices.Sort(names)
+	slices.Sort(want)
+	return archiveMajor == major && slices.Equal(names, want)
 }

@@ -70,6 +70,9 @@ func (w *Worker) stage(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 			Scope: sw.Scope, SourceDatabaseID: sw.SourceDatabaseID, TargetDatabaseID: sw.TargetDatabaseID})
 		switch {
 		case err == nil:
+			if sw.MigrationOperationID != "" && c.ID != sw.ID {
+				return w.beginAbort(sw, codeStagingFailed, "Another cutover already owns the app environment.")
+			}
 			sw.CutoverID = c.ID
 		case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 			return w.beginAbort(sw, codeProvisioningClosed, "Managed PostgreSQL provisioning is not open for this account.")
@@ -82,6 +85,12 @@ func (w *Worker) stage(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 	c, err := w.Cutovers.Get(ctx, sw.AccountID, sw.CutoverID)
 	if err != nil {
 		return w.retry(sw, errorCode(err))
+	}
+	if sw.MigrationOperationID != "" && (c.State == managedpostgres.CutoverPrepared ||
+		c.State == managedpostgres.CutoverVerifying || c.State == managedpostgres.CutoverVerified) {
+		if next, done := w.sealMigrationTarget(ctx, sw, c); !done {
+			return next
+		}
 	}
 	switch c.State {
 	case managedpostgres.CutoverPrepared:
@@ -247,6 +256,9 @@ func (w *Worker) switchOver(ctx context.Context, sw state.DatabaseSwitch) state.
 	if c.State == managedpostgres.CutoverActivated {
 		return w.activated(sw)
 	}
+	if w.migrationActivationExpired(sw) {
+		return w.abortExpiredMigration(sw)
+	}
 	if c.State == managedpostgres.CutoverVerifying || (c.State == managedpostgres.CutoverVerified && !c.VerificationFresh(w.now())) {
 		if c.State == managedpostgres.CutoverVerified {
 			if _, err := w.Cutovers.Verify(ctx, sw.AccountID, sw.CutoverID); err != nil {
@@ -254,6 +266,11 @@ func (w *Worker) switchOver(ctx context.Context, sw state.DatabaseSwitch) state.
 			}
 		}
 		return w.wait(sw)
+	}
+	if sw.MigrationOperationID != "" {
+		if next, done := w.sealMigrationTarget(ctx, sw, c); !done {
+			return next
+		}
 	}
 	_, err = w.Cutovers.Activate(ctx, managedpostgres.CutoverActivation{AccountID: sw.AccountID, CutoverID: sw.CutoverID,
 		FencedAt: *sw.FencedAt, LiveDeploymentID: sw.TargetDeploymentID, Now: w.now()})
@@ -275,6 +292,22 @@ func (w *Worker) switchOver(ctx context.Context, sw state.DatabaseSwitch) state.
 	}
 	sw.RetryAt = w.now().Add(api.DatabaseSwitchCheckInterval)
 	return sw
+}
+
+func (w *Worker) sealMigrationTarget(ctx context.Context, sw state.DatabaseSwitch, c managedpostgres.Cutover) (state.DatabaseSwitch, bool) {
+	if w.MigrationTargets == nil {
+		return w.beginAbort(sw, "migration_seal_unavailable", "The native target cannot be sealed on this platform."), false
+	}
+	if _, err := w.currentLease(ctx, sw); err != nil {
+		return sw, false
+	}
+	if err := w.MigrationTargets.SealMigrationTarget(ctx, c, sw.MigrationOperationID); err != nil {
+		if errors.Is(err, managedpostgres.ErrUnsupported) || errors.Is(err, managedpostgres.ErrConflict) || errors.Is(err, managedpostgres.ErrInvalid) {
+			return w.beginAbort(sw, "migration_seal_refused", "The source endpoint, verification receipt, or native target could not be matched. Keep source writers paused and check migration status."), false
+		}
+		return w.retry(sw, "migration_seal_"+errorCode(err)), false
+	}
+	return sw, true
 }
 
 func (w *Worker) activated(sw state.DatabaseSwitch) state.DatabaseSwitch {
@@ -327,10 +360,26 @@ func (w *Worker) switchRelease(ctx context.Context, sw state.DatabaseSwitch) sta
 	return sw
 }
 
-// resume invalidates the app's snapshots and lifts the fence, then revokes
-// the source bindings' provider credentials while the app already serves.
+// resume invalidates the app's snapshots and lifts admission fences. A
+// migration also revokes its retired credentials before opening the target.
 // Every step is idempotent, so a crash or a provider error repeats them.
 func (w *Worker) resume(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
+	if sw.MigrationOperationID != "" {
+		if _, err := w.currentLease(ctx, sw); err != nil {
+			return sw
+		}
+		if w.MigrationTargets == nil {
+			return w.retry(sw, "migration_open_unavailable")
+		}
+		// After the durable binding switch, revoke the retired source
+		// credentials before lifting either target or app admission.
+		if err := w.Cutovers.RevokeRetiredSources(ctx, sw.AccountID, sw.CutoverID); err != nil {
+			return w.retry(sw, "source_revoke_"+errorCode(err))
+		}
+		if err := w.MigrationTargets.OpenMigrationTarget(ctx, sw.AccountID, sw.CutoverID, sw.TargetDatabaseID, sw.MigrationOperationID); err != nil {
+			return w.retry(sw, "migration_open_"+errorCode(err))
+		}
+	}
 	if w.InvalidateSnapshots != nil {
 		if err := w.InvalidateSnapshots(ctx, sw.AppID); err != nil {
 			return w.retry(sw, errorCode(err))
@@ -341,6 +390,9 @@ func (w *Worker) resume(ctx context.Context, sw state.DatabaseSwitch) state.Data
 	}
 	if w.AppChanged != nil && sw.LastErrorCode == "" {
 		w.AppChanged(ctx, sw.AppID)
+	}
+	if sw.MigrationOperationID != "" {
+		return w.finish(sw, state.DatabaseSwitchCompleted)
 	}
 	if err := w.Cutovers.RevokeRetiredSources(ctx, sw.AccountID, sw.CutoverID); err != nil {
 		// The app serves; only the old credentials wait. Keep retrying.
@@ -366,12 +418,22 @@ func (w *Worker) resume(ctx context.Context, sw state.DatabaseSwitch) state.Data
 func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
 	var c managedpostgres.Cutover
 	var cutoverErr error
-	if sw.CutoverID != "" {
-		c, cutoverErr = w.Cutovers.Get(ctx, sw.AccountID, sw.CutoverID)
+	cutoverID := sw.CutoverID
+	recoveringCutover := cutoverID == "" && sw.MigrationOperationID != ""
+	if recoveringCutover {
+		// Preparation and the guest seal may commit before the switch save.
+		cutoverID = sw.ID
+	}
+	if cutoverID != "" {
+		c, cutoverErr = w.Cutovers.Get(ctx, sw.AccountID, cutoverID)
 		if cutoverErr != nil && !errors.Is(cutoverErr, managedpostgres.ErrNotFound) {
 			return w.retry(sw, errorCode(cutoverErr))
 		}
-		if cutoverErr == nil && c.State == managedpostgres.CutoverActivated {
+		if recoveringCutover && cutoverErr == nil && c.ID == sw.ID && c.AccountID == sw.AccountID &&
+			c.AppID == sw.AppID && c.Scope == sw.Scope && c.Source.ID == sw.SourceDatabaseID && c.Target.ID == sw.TargetDatabaseID {
+			sw.CutoverID = c.ID
+		}
+		if sw.CutoverID != "" && cutoverErr == nil && c.State == managedpostgres.CutoverActivated {
 			if err := w.restoreTarget(ctx, sw); err != nil {
 				return w.retry(sw, errorCode(err))
 			}
@@ -406,6 +468,17 @@ func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 			}
 		}
 		return w.wait(sw)
+	}
+	if sw.MigrationOperationID != "" && sw.CutoverID != "" && w.MigrationTargets != nil {
+		// Only unwind the guest's seal after cancellation won the
+		// catalog race against the binding commit.
+		if _, err := w.currentLease(ctx, sw); err != nil {
+			return sw
+		}
+		if err := w.MigrationTargets.AbortMigrationTarget(ctx, sw.AccountID, sw.CutoverID, sw.TargetDatabaseID, sw.MigrationOperationID); err != nil &&
+			!errors.Is(err, managedpostgres.ErrNotFound) && !errors.Is(err, managedpostgres.ErrUnsupported) {
+			return w.retry(sw, "migration_abort_"+errorCode(err))
+		}
 	}
 	if sw.FailureCode == codeCancelled {
 		return w.finish(sw, state.DatabaseSwitchCancelled)

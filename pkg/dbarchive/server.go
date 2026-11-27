@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,14 +41,17 @@ type Server struct {
 	Store Store
 	// Backups holds base backups; nil refuses backup ops.
 	Backups BackupStore
+	// Recovery reads an incoming mirror independently of the local archive.
+	Recovery *TieredStore
 	// Retention records windows and serves OpDrop; nil refuses OpDrop.
 	Retention RetentionStore
 	// Handoff serves OpSync and OpRelease; nil (no bucket) refuses them.
-	Handoff Handoff
-	Log     *slog.Logger
-	now     func() time.Time
-	quotaMu sync.Mutex
-	quotas  map[string]*quotaState
+	Handoff       Handoff
+	Log           *slog.Logger
+	now           func() time.Time
+	quotaMu       sync.Mutex
+	quotas        map[string]*quotaState
+	restoreChecks atomic.Int32
 }
 
 // log is Log, or slog.Default when unset. Serve never writes Log: one
@@ -133,11 +137,12 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 				return
 			}
 		case OpGetWAL:
-			source := header.DatabaseID
-			if header.RestoreSource != "" {
-				source = header.RestoreSource
+			source, wal, _ := s.archiveForRead(header)
+			if wal == nil {
+				_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+				return
 			}
-			rc, size, err := s.Store.OpenWAL(ctx, source, req.Name)
+			rc, size, err := wal.OpenWAL(ctx, source, req.Name)
 			if err != nil {
 				if WriteLine(conn, Response{Error: codeFor(err)}) != nil {
 					return
@@ -164,6 +169,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reader, header Header) {
 	var req Request
 	if err := ReadLine(br, &req); err != nil {
+		return
+	}
+	if req.Op == OpCheckRestore || req.Op == OpCheckRecovery {
+		s.handleRestoreCheck(ctx, conn, header.DatabaseID, req)
 		return
 	}
 	if req.Op == OpSync || req.Op == OpRelease {
@@ -358,6 +367,17 @@ func admin(ctx context.Context, socketPath, databaseID string, req Request) (Res
 
 // handleBackup serves one backup op and reports whether the stream is still
 // usable.
+func (s *Server) archiveForRead(header Header) (string, Store, BackupStore) {
+	source, recovery := header.restoreArchive()
+	if !recovery {
+		return source, s.Store, s.Backups
+	}
+	if s.Recovery == nil {
+		return source, nil, nil
+	}
+	return source, s.Recovery, s.Recovery
+}
+
 func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Reader, header Header, req Request) bool {
 	if s.Backups == nil {
 		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
@@ -402,20 +422,21 @@ func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Read
 		s.log().Info("dbarchive: base backup stored", "database_id", header.DatabaseID, "backup", m.ID, "bytes", m.Bytes)
 		return WriteLine(conn, Response{Name: m.ID}) == nil
 	}
-	source := header.DatabaseID
-	if header.RestoreSource != "" {
-		source = header.RestoreSource
+	source, wal, backups := s.archiveForRead(header)
+	if wal == nil || backups == nil {
+		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return false
 	}
 	target, err := time.Parse(time.RFC3339Nano, req.Target)
 	if err != nil {
 		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
 		return false
 	}
-	m, err := s.Backups.SelectBackup(ctx, s.Store, source, target)
+	m, err := backups.SelectBackup(ctx, wal, source, target)
 	if err != nil {
 		return WriteLine(conn, Response{Error: codeFor(err)}) == nil
 	}
-	rc, err := s.Backups.OpenBackup(ctx, source, m.ID)
+	rc, err := backups.OpenBackup(ctx, source, m.ID)
 	if err != nil {
 		return WriteLine(conn, Response{Error: codeFor(err)}) == nil
 	}

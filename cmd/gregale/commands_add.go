@@ -413,7 +413,7 @@ func cmdAddPostgres(args []string) int {
 			return printErr("Could not find managed PostgreSQL database", fmt.Errorf("no managed database named or identified %q", reference))
 		}
 		*region = defaultPostgresRegion(ctx, client, *region)
-		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, true); err != nil {
+		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, *serviceClass, true); err != nil {
 			return printErr("Cannot create managed PostgreSQL database", err)
 		}
 		// Every create field joins the key: a retry after a refused request
@@ -446,7 +446,7 @@ func cmdAddPostgres(args []string) int {
 		return printErr("Managed PostgreSQL database is not ready", err)
 	}
 	if !databaseCreated {
-		if err := addPostgresUnsupported(ctx, client, database.Region, *access, *availability, false); err != nil {
+		if err := addPostgresUnsupported(ctx, client, database.Region, *access, *availability, database.ServiceClass, false); err != nil {
 			return printErr("Cannot attach managed PostgreSQL database", err)
 		}
 	}

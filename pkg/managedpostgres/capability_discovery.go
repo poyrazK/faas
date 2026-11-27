@@ -1,6 +1,9 @@
 package managedpostgres
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // CapabilityContractVersion versions customer-visible PostgreSQL behavior.
 // Provider identities and placement fingerprints never belong in this view.
@@ -33,6 +36,9 @@ func (s *Service) DiscoverCapabilities(ctx context.Context, accountID, region st
 	c.ServiceClasses = append([]ServiceClass(nil), c.ServiceClasses...)
 	c.Availability = append([]Availability(nil), c.Availability...)
 	c.CredentialAccess = append([]CredentialAccess(nil), c.CredentialAccess...)
+	if slices.Contains(c.ServiceClasses, ClassProduction) && backend.SupportsBindingAccess(Spec{Class: ClassProduction}, CredentialReplicaOnly) == nil {
+		c.CredentialAccess = append(c.CredentialAccess, CredentialReplicaOnly)
+	}
 	c.UsageMeters = nil
 	return CapabilityDiscovery{Region: region, Capabilities: c, DatabaseLimit: s.registry.MaxDatabasesPerAccount(),
 		ProvisioningEnabled: s.provisioningEnabled() && s.provisioningAllowed(ctx, accountID)}, nil

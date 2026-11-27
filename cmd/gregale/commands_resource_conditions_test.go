@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -49,6 +50,10 @@ func TestResourceStatusCommands(t *testing.T) {
 		api.Condition{Type: "Ready", Status: "True", Reason: "suspended", Message: "Compute scaled to zero; the next connection wakes it."},
 		api.Condition{Type: "Progressing", Status: "False", Reason: "complete", Message: "Nothing is in progress."},
 		api.Condition{Type: "Degraded", Status: "False", Reason: "healthy", Message: "fine"})
+	database.Storage = &api.ManagedPostgresStorageStatus{AllocatedBytes: 1 << 30, Alerts: []api.ManagedPostgresStorageAlert{{
+		IncidentID: conditionsRunID, State: "low_space", SampledAt: time.Date(2026, 10, 30, 14, 50, 0, 0, time.UTC),
+		FreeBytes: 64 << 20, TotalBytes: 1 << 30,
+	}}}
 	domain := kindStatus("domain", "shop.example.com",
 		api.Condition{Type: "Ready", Status: "False", Reason: "dns_pending", Message: "Ownership is not verified yet."},
 		api.Condition{Type: "Verified", Status: "False", Reason: "dns_pending", Message: "Ownership is not verified yet."},
@@ -67,7 +72,7 @@ func TestResourceStatusCommands(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{[]string{"postgres", "status", "orders"}, []string{"database orders", "Ready", "suspended", "Degraded"}},
+		{[]string{"postgres", "status", "orders"}, []string{"database orders", "Ready", "suspended", "Degraded", "Storage alert history", "2026-10-30T14:50:00Z  Low storage"}},
 		{[]string{"domain", "status", "shop.example.com"}, []string{"domain shop.example.com", "Verified", "dns_pending", "CertificateReady"}},
 		// The listing writes to the process stdout; its exit code shows it ran.
 		{[]string{"domain", "status"}, nil},

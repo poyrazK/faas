@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbmigration"
 )
 
 // Database mode (ADR-1027): PostgreSQL is the VM's only workload. The guest
@@ -65,7 +67,8 @@ type databaseGuest struct {
 	archive bool
 	// restoreTarget, when set, makes an empty volume a point-in-time
 	// restore of the relay's restore source.
-	restoreTarget time.Time
+	restoreTarget   time.Time
+	restoreTimeline uint32
 	// restoreUntilEnd lets the restore recover to the end of the archive
 	// when the archive ends before the target; targetDropped records that
 	// it had to, recoveredTo the last replayed commit.
@@ -94,6 +97,25 @@ type databaseGuest struct {
 	importOnce sync.Once
 	importErr  error
 
+	migrationMu            sync.Mutex
+	migrationOnce          sync.Once
+	migrationBridgeErr     error
+	migrationFence         atomic.Bool
+	diagnosticsRunning     atomic.Bool
+	queryInsights          bool
+	queryInsightsSupported bool
+	queryInsightsRunning   atomic.Bool
+	queryInsightsInstalled bool
+	migrationRunning       atomic.Bool
+	migrationAdmission     atomic.Pointer[migrationAdmission]
+	migrationPublic        atomic.Pointer[dbmigration.Progress]
+	migrationFeed          atomic.Pointer[migrationFeed]
+	migrationConnectMu     sync.Mutex
+	migrationPrepareCancel context.CancelFunc
+	migrationGeneration    uint64
+	migration              *liveMigration
+	primarySessions        replicaSessions
+
 	mu         sync.Mutex
 	storage    storageGuard
 	state      dbguest.State
@@ -109,9 +131,11 @@ type databaseGuest struct {
 
 // databaseBoot is what the kernel command line asks of database mode.
 type databaseBoot struct {
+	queryInsights   bool
 	major           int
 	archive         bool
 	restoreTarget   time.Time
+	restoreTimeline uint32
 	restoreUntilEnd bool
 	spare           bool
 	standby         bool
@@ -123,8 +147,9 @@ func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &databaseGuest{log: log, major: boot.major, archive: boot.archive, restoreTarget: boot.restoreTarget, restoreUntilEnd: boot.restoreUntilEnd,
+	g := &databaseGuest{log: log, queryInsights: boot.queryInsights, major: boot.major, archive: boot.archive, restoreTarget: boot.restoreTarget, restoreTimeline: boot.restoreTimeline, restoreUntilEnd: boot.restoreUntilEnd,
 		standby: boot.standby, promoteOnBoot: boot.promote, upgradeFrom: boot.upgradeFrom, exited: make(chan struct{}), done: make(chan struct{})}
+	g.queryInsightsSupported = queryInsightsModulePresent(boot.major)
 	if boot.spare {
 		// The volume drive is a placeholder until OpAdopt.
 		if g.prepareRuntime() {
@@ -152,8 +177,28 @@ func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 		return errors.Join(err, poweroffDatabase())
 	}
 	go g.serveControl(control)
-	go g.serveData(data)
+	go g.serveData(data, false)
+	if replica, err := listenGuestVsockBacklog(dbguest.ReplicaDataPort, 128); err != nil {
+		log.Warn("database standby-only listener unavailable", "err", err)
+	} else {
+		defer func() { _ = replica.Close() }()
+		go g.serveData(replica, true)
+	}
 	go g.serveReplication(replication)
+	export, err := listenGuestVsockBacklog(dbguest.ExportPort, 2)
+	if err != nil {
+		log.Warn("database export listener unavailable", "err", err)
+	} else {
+		defer func() { _ = export.Close() }()
+		go g.serveExports(export)
+	}
+	archiveImport, err := listenGuestVsockBacklog(dbguest.ArchiveImportPort, 2)
+	if err != nil {
+		log.Warn("database archive import listener unavailable", "err", err)
+	} else {
+		defer func() { _ = archiveImport.Close() }()
+		go g.serveArchiveImports(archiveImport)
+	}
 	go g.guardStorage()
 	state := g.currentState()
 	switch {
@@ -375,6 +420,16 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 		resp.Error = dbguest.ErrCodeInvalidRequest
 	case req.Op == dbguest.OpBootstrap:
 		resp = g.bootstrap()
+	case req.Op == dbguest.OpQueryInsights:
+		resp = g.collectQueryInsights(req.DiagnosticDatabase, resp)
+	case req.Op == dbguest.OpSessions:
+		resp = g.collectSessions(req.DiagnosticDatabase, resp)
+	case req.Op == dbguest.OpAutovacuum:
+		resp = g.autovacuum(req, resp)
+	case req.Op == dbguest.OpDiagnostics:
+		resp = g.collectDiagnostics(req, resp)
+	case req.Op == dbguest.OpExtensions:
+		resp = g.manageExtensions(req, resp)
 	case req.Op == dbguest.OpAdminSQL:
 		resp = g.adminSQL(req.SQL)
 	case req.Op == dbguest.OpStop:
@@ -391,8 +446,22 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 		resp = g.promote()
 	case req.Op == dbguest.OpReplication:
 		resp = g.replication(req.Replication)
-	case req.Op == dbguest.OpImport:
-		resp = g.startImport(req.Import)
+	case req.Op == dbguest.OpImport || req.Op == dbguest.OpCustomerImport:
+		if g.migrationFence.Load() {
+			resp.Error = dbguest.ErrCodeImportOperationMismatch
+		} else {
+			resp = g.startImport(req.Import)
+		}
+	case req.Op == dbguest.OpImportCheck:
+		resp = g.checkImport(*req.Import)
+	case req.Op == dbguest.OpMigrationCheck:
+		resp = g.checkMigration(*req.Import)
+	case req.Op.IsMigrationActivation():
+		resp = g.controlMigrationActivation(req)
+	case req.Op.IsMigrationMutation():
+		resp = g.controlLiveMigration(req)
+	case req.Op == dbguest.OpMigrationStatus:
+		resp = g.liveMigrationStatus()
 	case req.Op == dbguest.OpImportStatus:
 		resp = g.importResponse()
 	case req.Op == dbguest.OpMarkDrill:
@@ -571,6 +640,7 @@ func (g *databaseGuest) startPostgres() {
 		return
 	}
 	args := append(databaseServerArgs(g.major, g.memKiB, g.archive), slotWALKeepSetting()...)
+	args = append(args, g.queryInsightsSettings()...)
 	g.mu.Lock()
 	target, dropped, standby := g.restoreTarget, g.targetDropped, g.standby
 	g.mu.Unlock()
@@ -581,7 +651,7 @@ func (g *databaseGuest) startPostgres() {
 		if dropped {
 			target = time.Time{}
 		}
-		args = append(args, recoverySettings(target)...)
+		args = append(args, recoverySettings(target, g.restoreTimeline)...)
 	}
 	cmd := g.asDatabaseUser(exec.Command(args[0], args[1:]...))
 	cmd.Stdout = os.Stderr
@@ -646,6 +716,9 @@ func (g *databaseGuest) awaitReady(exited chan struct{}) {
 		// A hot standby reports ready once it takes read-only
 		// connections; it stays a standby until promoted.
 		if status := postmasterStatus(data); g.standby && (status == "ready" || status == "standby") {
+			if !g.restoreMigrationFence() {
+				continue
+			}
 			g.mu.Lock()
 			if g.state == dbguest.StateStarting {
 				g.state = dbguest.StateStandby
@@ -678,6 +751,9 @@ func (g *databaseGuest) awaitReady(exited chan struct{}) {
 			if err := g.resetSynchronousOnBoot(); err != nil {
 				g.fail(dbguest.ErrCodeStartFailed, "reset synchronous replication", err)
 				return
+			}
+			if !g.restoreMigrationFence() {
+				continue
 			}
 			g.mu.Lock()
 			if g.state == dbguest.StateStarting {
@@ -863,17 +939,30 @@ func (g *databaseGuest) query(ctx context.Context, sql string) (string, error) {
 // host waits for the ready state on the control port first. A hot standby
 // serves read sessions as the database's replica (ADR-1027 amendment
 // 2026-11-11) until it is promoted.
-func (g *databaseGuest) serveData(ln net.Listener) {
+func (g *databaseGuest) serveData(ln net.Listener, replicaOnly bool) {
 	socket := filepath.Join(databaseSocketDir, ".s.PGSQL.5432")
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
+		gate := g.migrationAdmission.Load()
 		switch state := g.currentState(); {
-		case state == dbguest.StateReady:
-			go bridgeDatabaseSession(conn, socket)
-		case state == dbguest.StateStandby && g.replicas.add(conn):
+		case !replicaOnly && (!g.migrationFence.Load() || gate != nil) && state == dbguest.StateReady && g.primarySessions.add(conn):
+			go func() {
+				defer g.primarySessions.remove(conn)
+				if gate == nil {
+					bridgeDatabaseSession(conn, socket)
+					return
+				}
+				startup := gate.startup(conn)
+				if len(startup) == 0 || g.migrationAdmission.Load() != gate {
+					_ = conn.Close()
+					return
+				}
+				bridgeDatabaseStartupSession(conn, socket, startup)
+			}()
+		case !g.migrationFence.Load() && state == dbguest.StateStandby && g.replicas.add(conn):
 			go func() {
 				defer g.replicas.remove(conn)
 				bridgeDatabaseSession(conn, socket)
@@ -885,12 +974,21 @@ func (g *databaseGuest) serveData(ln net.Listener) {
 }
 
 func bridgeDatabaseSession(client net.Conn, socket string) {
+	bridgeDatabaseStartupSession(client, socket, nil)
+}
+
+func bridgeDatabaseStartupSession(client net.Conn, socket string, startup []byte) {
 	defer func() { _ = client.Close() }()
 	server, err := net.Dial("unix", socket)
 	if err != nil {
 		return
 	}
 	defer func() { _ = server.Close() }()
+	if len(startup) != 0 {
+		if _, err := server.Write(startup); err != nil {
+			return
+		}
+	}
 	done := make(chan struct{}, 2)
 	go func() { _, _ = io.Copy(server, client); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(client, server); done <- struct{}{} }()
@@ -911,7 +1009,7 @@ func (g *databaseGuest) setState(state dbguest.State) {
 
 func (g *databaseGuest) response() dbguest.Response {
 	g.mu.Lock()
-	resp := dbguest.Response{State: g.state, Major: g.major, Error: g.errCode, RecoveredTo: g.recoveredTo}
+	resp := dbguest.Response{QueryInsightsSupported: g.queryInsightsSupported, QueryInsightsConfigured: g.queryInsights, State: g.state, Major: g.major, Error: g.errCode, RecoveredTo: g.recoveredTo, RestoreTimeline: g.restoreTimeline, MigrationFenced: g.migrationFence.Load(), MigrationRunning: g.migrationRunning.Load()}
 	g.mu.Unlock()
 	if resp.State == dbguest.StateReady || resp.State == dbguest.StateStandby {
 		resp.Storage = g.storageStatus()

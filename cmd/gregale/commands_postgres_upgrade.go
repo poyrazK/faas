@@ -5,21 +5,33 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 )
 
 func cmdPostgresUpgrade(args []string) int {
 	fs := newFlagSet("postgres upgrade", flag.ContinueOnError)
 	major := fs.Int("major", 0, "target PostgreSQL major, later than the database's")
+	check := fs.Bool("check", false, "check installed extensions against the target major")
 	request := fs.String("request-id", "", "stable nonzero UUID; reuse after an uncertain response")
+	args = slices.Clone(args)
+	for i, arg := range args {
+		if arg == "--check" || arg == "-check" {
+			args[i] = "--check=true"
+		}
+	}
 	if err := fs.Parse(normalizePostgresAttachArgs(args)); err != nil {
 		return 1
 	}
+	if *check && fs.NArg() == 1 && *major > 0 && *request == "" {
+		return runPostgresExtensions(fs.Arg(0), "", *major)
+	}
 	id, err := uuid.Parse(*request)
-	if fs.NArg() != 1 || *major <= 0 || err != nil || id == uuid.Nil || id.String() != *request {
-		PrintUsage(os.Stderr, "usage: gregale postgres upgrade DATABASE --major N --request-id UUID", "postgres")
+	if *check || fs.NArg() != 1 || *major <= 0 || err != nil || id == uuid.Nil || id.String() != *request {
+		PrintUsage(os.Stderr, "usage: gregale postgres upgrade DATABASE --major N (--check | --request-id UUID)", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -69,6 +81,8 @@ func cmdPostgresUpgradeStatus(args []string) int {
 func renderPostgresUpgrade(result api.ManagedPostgresMajorUpgrade) {
 	_, _ = fmt.Fprintf(osStdout, "upgrade %s: PostgreSQL %d → %d (%s, generation %d)\n", result.ID, result.FromPostgresMajor, result.TargetPostgresMajor, result.State, result.Generation)
 	switch {
+	case result.State == "failed" && result.LastErrorCode == pgextension.UpgradeUnavailable:
+		_, _ = fmt.Fprintf(osStdout, "An installed extension version is unavailable on PostgreSQL %d. Run gregale postgres upgrade DATABASE --major %d --check for the extension names and versions.\n", result.TargetPostgresMajor, result.TargetPostgresMajor)
 	case result.State == "failed" && result.LastErrorCode == "upgrade_refused":
 		_, _ = fmt.Fprintf(osStdout, "PostgreSQL refused the upgrade; the database stays on %d, unchanged. Remove what it reported, then request a new upgrade.\n", result.FromPostgresMajor)
 	case result.State == "failed":

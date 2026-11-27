@@ -4,8 +4,11 @@ package main
 import (
 	"bytes"
 	"os"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestSDKSpecInSync(t *testing.T) {
@@ -19,6 +22,38 @@ func TestSDKSpecInSync(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatal("sdk/openapi.yaml is stale; run 'make sdk-spec' and regenerate the SDKs ('make sdk-gen-node sdk-gen-python')")
+	}
+}
+
+func TestSDKSpecKeepsNativePostgresOperationsInPreview(t *testing.T) {
+	spec, err := render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"\n  /v1/postgres/databases/{id}/restore:", "\n  /v1/apps/{slug}/database-switches:"} {
+		if !strings.Contains(string(spec), path) {
+			t.Errorf("public PostgreSQL path %q is missing", strings.TrimSpace(path))
+		}
+	}
+	for _, token := range []string{
+		"/query-insights:", "/masked-branches:", "/upgrade-rehearsals:", "/backup-schedule:",
+		"/database-switches/migration:", "/database-switches/migration/", "MigrationDatabaseSwitch:", "replica_only", "migration_operation_id:", "masked_branch:",
+		"ManagedPostgresStorageStatus:", "ManagedPostgresBackupStatus:", "ManagedPostgresReplicaStatus:",
+	} {
+		if strings.Contains(string(spec), token) {
+			t.Errorf("native PostgreSQL preview token %q leaked into the default SDK", token)
+		}
+	}
+	var doc struct {
+		Components struct {
+			Schemas map[string]struct{ Required []string }
+		}
+	}
+	if err := yaml.Unmarshal(spec, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(doc.Components.Schemas["DatabaseSwitch"].Required, "restore_point") {
+		t.Fatal("the stable database switch requires a restore point")
 	}
 }
 

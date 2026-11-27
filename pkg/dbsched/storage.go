@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbstorage"
 )
 
 // storageProbeTimeout bounds one guest's answer to a sample.
@@ -37,26 +38,62 @@ type StorageSample struct {
 
 // SampleStorage asks every running database's guest, and its standby's,
 // for its volume and its node whether it is stale, and records the
-// counts. It never wakes a database, and a guest that does not answer is
-// left out. Each read-only database, and each database whose standby is
+// counts. A guest that does not answer is left out. Each read-only database, and each database whose standby is
 // low while it is not, is logged with its id; the metric carries counts
-// only. Stale always-on databases idle for StaleIdle restart onto the
-// current base, a few per sample; scale-to-zero ones do on their next
-// idle park. A stale standby of a primary that is current restarts alone,
+// only. Stale always-on databases restart in their maintenance window
+// or after StaleIdle under the default policy, a few per sample;
+// scale-to-zero databases refresh on their next wake. A stale standby of a primary that is current restarts alone,
 // busy or not, a few per sample (RestartStandby): the primary runs on.
 func (s *Scheduler) SampleStorage(ctx context.Context) (StorageSample, error) {
+	store, persist := s.store.(*PgStore)
+	if persist {
+		active, err := store.activeBaseRefreshes(ctx)
+		if err != nil {
+			s.log.Warn("dbsched: could not read active base refreshes", "err", err)
+		} else {
+			s.settleBaseRefreshes(ctx, store, active)
+		}
+	}
 	running, err := s.store.List(ctx, StateRunning)
 	if err != nil {
 		return StorageSample{}, err
 	}
+	var queryConfiguration, rollingPolicies map[string]bool
+	if persist {
+		rollingPolicies, err = store.rollingPolicies(ctx)
+		if err != nil {
+			return StorageSample{}, err
+		}
+		queryConfiguration, err = store.maintenanceQuerySettings(ctx)
+		if err != nil {
+			s.log.Warn("dbsched: could not read query insights maintenance policies", "err", err)
+		}
+	}
 	var sample StorageSample
-	var stale, staleStandbys []VM
+	var stale, staleStandbys, rolling []VM
+	var volumes []dbstorage.Sample
+	var observations []baseRefreshObservation
 	for _, vm := range running {
+		primaryAt := s.now()
 		resp, ok := s.sampleStatus(ctx, vm.NodeID, vm.DatabaseID)
 		if !ok {
 			continue
 		}
+		standbyAt := s.now()
 		standby, standbyOK := s.sampleStandby(ctx, vm)
+		if persist {
+			if vm.AlwaysOn && refreshReady(resp) && (!vm.Replicated || rollingPolicies[vm.DatabaseID]) {
+				stale := resp.Stale || standbyOK && standby.Stale
+				// An unanswered standby cannot clear its earlier stale observation.
+				if !vm.Replicated || stale || standbyOK && standby.State == dbguest.StateStandby {
+					observations = append(observations, baseRefreshObservation{vm: vm, stale: stale})
+				}
+			}
+			volumes = appendVolumeSample(volumes, vm, "primary", vm.NodeID, resp.Storage, primaryAt)
+			if standbyOK {
+				volumes = appendVolumeSample(volumes, vm, "standby", vm.StandbyNode, standby.Storage, standbyAt)
+			}
+		}
 		if st := standby.Storage; standbyOK && st != nil && st.Low && (resp.Storage == nil || !resp.Storage.Low) {
 			sample.StandbyLow++
 			s.log.Warn("dbsched: standby is short of storage, its primary is not", "database_id", vm.DatabaseID,
@@ -71,16 +108,38 @@ func (s *Scheduler) SampleStorage(ctx context.Context) (StorageSample, error) {
 				sample.ReadOnly++
 				s.log.Warn("dbsched: database is read-only, short of storage", "database_id", vm.DatabaseID,
 					"free_bytes", resp.Storage.FreeBytes, "total_bytes", resp.Storage.TotalBytes)
+			} else if resp.Storage.Low {
+				s.log.Warn("dbsched: primary is low on storage", "database_id", vm.DatabaseID,
+					"free_bytes", resp.Storage.FreeBytes, "total_bytes", resp.Storage.TotalBytes)
 			}
 		}
+		desired, scheduled := queryConfiguration[vm.DatabaseID]
+		queryRestart := scheduled && vm.AlwaysOn && !vm.Replicated && vm.StandbyNode == "" &&
+			resp.QueryInsightsSupported && resp.QueryInsightsConfigured != desired
 		switch {
-		case resp.Stale:
-			sample.Stale++
+		case rollingPolicies[vm.DatabaseID]:
+			if resp.Stale || standbyOK && standby.Stale {
+				sample.Stale++
+				rolling = append(rolling, vm)
+			}
+		case resp.Stale || queryRestart:
+			if resp.Stale {
+				sample.Stale++
+			}
 			stale = append(stale, vm)
 		case standbyOK && standby.Stale:
 			sample.Stale++
 			staleStandbys = append(staleStandbys, vm)
 		}
+	}
+	if persist {
+		s.recordStorageSamples(ctx, store, volumes)
+		if err := store.recordBaseRefreshObservations(ctx, observations); err != nil {
+			s.log.Warn("dbsched: could not record base refresh observations", "err", err)
+		}
+	}
+	if persist {
+		s.admitRollingRefreshes(ctx, store, rolling)
 	}
 	sample.Restarted = s.restartStale(ctx, stale)
 	sample.StandbyRestarted = s.restartStaleStandbys(ctx, staleStandbys)
@@ -152,21 +211,36 @@ func (s *Scheduler) restartStaleStandbys(ctx context.Context, stale []VM) int {
 	return restarted
 }
 
-// restartStale parks and wakes stale always-on databases that have been
-// idle for StaleIdle, at most StaleRestarts of them. A park stops a
+// restartStale parks and wakes stale always-on databases according to
+// their refresh policy, at most StaleRestarts of them. A park stops a
 // replicated database's standby after its primary, so both boot the
 // current base. It returns how many restarted.
 func (s *Scheduler) restartStale(ctx context.Context, stale []VM) int {
 	cutoff := s.now().Add(-s.cfg.StaleIdle)
-	restarted := 0
+	attempts, restarted := 0, 0
 	for _, vm := range stale {
-		if restarted >= s.cfg.StaleRestarts {
+		if attempts >= s.cfg.StaleRestarts {
 			break
+		}
+		if store, ok := s.store.(*PgStore); ok && vm.AlwaysOn && !vm.Replicated && vm.StandbyNode == "" {
+			attempted, completed, err := s.restartStaleSingle(ctx, store, vm, cutoff)
+			if attempted {
+				attempts++
+				s.cfg.Metrics.restartedStale(err)
+			}
+			if err != nil {
+				s.log.Warn("dbsched: stale restart failed", "database_id", vm.DatabaseID, "err", err)
+			}
+			if completed {
+				restarted++
+			}
+			continue
 		}
 		if !vm.AlwaysOn || vm.LastActiveAt.After(cutoff) || s.importing(ctx, vm) {
 			continue
 		}
 		s.log.Info("dbsched: restarting a stale database onto the current base", "database_id", vm.DatabaseID)
+		attempts++
 		_, err := s.Restart(ctx, vm.DatabaseID)
 		s.cfg.Metrics.restartedStale(err)
 		if err != nil {

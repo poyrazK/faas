@@ -1186,8 +1186,8 @@ export class DeploymentsService {
     });
   }
   /**
-   * Read a rollback that restores the database.
-   * The switch's phase, restore point, databases, drain counts and outcome.
+   * Read a managed PostgreSQL binding switch.
+   * The switch's phase, databases, drain counts and outcome.
    * @returns DatabaseSwitch The switch.
    * @throws ApiError
    */
