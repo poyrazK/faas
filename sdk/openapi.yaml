@@ -13804,7 +13804,7 @@ paths:
       - name: environment
         in: query
         required: false
-        description: Project environment slug (ADR-20261104120000). Starts the run on that stage's live deployment with the stage's own stored workflows; omitted or production is production.
+        description: Project environment slug. Starts the run on that stage's live deployment with the stage's own stored workflows; omitted or production is production.
         schema:
           type: string
       - name: name
@@ -28409,7 +28409,7 @@ components:
       in: query
       required: false
       schema: {type: string}
-      description: Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+      description: Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
     ReleaseSandboxID:
       name: sandbox
       in: path

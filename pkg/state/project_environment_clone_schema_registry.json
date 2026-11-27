@@ -23896,5 +23896,22 @@
       "warning"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "stage_workflow_schedule_cursors",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "environment_id",
+      "last_admitted_at",
+      "last_evaluated_at",
+      "last_run_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
+    ],
+    "kind": "operational"
   }
 ]

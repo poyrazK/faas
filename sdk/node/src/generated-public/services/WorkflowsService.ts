@@ -80,7 +80,7 @@ export class WorkflowsService {
      */
     slug: string,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
   }): CancelablePromise<ListStoredWorkflowsResponse> {
@@ -227,7 +227,7 @@ export class WorkflowsService {
      */
     name: string,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
@@ -280,7 +280,7 @@ export class WorkflowsService {
     name: string,
     requestBody: SaveStoredWorkflowDraftRequest,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
@@ -340,7 +340,7 @@ export class WorkflowsService {
      */
     expectedVersion: number,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
     /**
@@ -577,7 +577,7 @@ export class WorkflowsService {
      */
     name: string,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
     /**
@@ -639,7 +639,7 @@ export class WorkflowsService {
      */
     version: number,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
   }): CancelablePromise<StoredWorkflowRevisionResponse> {
@@ -974,7 +974,7 @@ export class WorkflowsService {
     name: string,
     requestBody: PublishStoredWorkflowRequest,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
     /**
@@ -1039,7 +1039,7 @@ export class WorkflowsService {
     name: string,
     requestBody: SetStoredWorkflowEnabledRequest,
     /**
-     * Project environment slug (ADR-20261104120000). Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
+     * Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
      */
     environment?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
@@ -1316,7 +1316,7 @@ export class WorkflowsService {
      */
     name: string,
     /**
-     * Project environment slug (ADR-20261104120000). Starts the run on that stage's live deployment with the stage's own stored workflows; omitted or production is production.
+     * Project environment slug. Starts the run on that stage's live deployment with the stage's own stored workflows; omitted or production is production.
      */
     environment?: string,
     /**
