@@ -471,9 +471,8 @@ gregale alert create --app shop --name "Boot failures" \
 ```
 
 The `boot_failing` preset fires at 3 failed boots in 15 minutes; the
-`job_failures` preset fires on any failed run in an hour. Both wait 60
-minutes before firing again. For cron failures, use `failed_invocations` with
-`--failure-source cron` (see [crons](crons.md)).
+`job_failures` preset fires on any failed run within 60 minutes. Both wait 60
+minutes before firing again.
 
 ## AI budget alerts
 
