@@ -83,7 +83,12 @@ environment branch created, of an app that is not a rehearsal member.
    capture happens at its first idle park, through the normal park path, which
    uploads synchronously as ADR-063 requires before the snapshot row is
    written. Nothing is recorded as a usable snapshot before its blobs are in
-   the shared store, so ADR-063's durability rule is unchanged.
+   the shared store, so ADR-063's durability rule is unchanged. With clean
+   recapture on (the default, ADR-20261115113000) that park does not capture
+   the used instance: it queues a fresh boot, capture and park in the
+   background, off the developer's path. A manual park leaves the app
+   inactive, which clean recapture skips; the next wake then cold boots
+   (metal run 2026-11-27).
 3. **Cold boot stays the fallback (ADR-005).** Until the first park
    succeeds, the deployment has no snapshot. A second instance (scale-out),
    a restart of the promoted one, or a wake after a failed first park
