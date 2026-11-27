@@ -238,6 +238,10 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	// (Hunt 14 H14-25). A positional directory still works.
 	pathFlag := fs.String("path", "", "source directory (default: current directory)")
 	appFlag := fs.String("app", "", "app whose env and secret names count as declared (defaults to linked context)")
+	// The checks must inspect the file set the upload will contain. auto
+	// mirrors deploy's default: committed HEAD when the directory is in a
+	// repository with an origin remote, the working tree otherwise.
+	sourceFlag := fs.String("source", string(deploySourceAuto), "packaging mode to match: auto, head, or worktree")
 	imageFlags := registerDoctorImageFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -266,10 +270,19 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if _, err := os.ReadDir(abs); err != nil {
 		return printErr("Could not read source directory", err)
 	}
+	mode, err := resolveDeploySourceMode(*sourceFlag, *sourceFlag != "", false, false, false)
+	if err != nil {
+		PrintUsage(osStderr, err.Error()+"\n"+doctorUsage, "doctor")
+		return 1
+	}
+	scope, err := doctorPackagingScope(abs, mode)
+	if err != nil {
+		return printErr("Invalid source mode", err)
+	}
 	var report doctorReport
 	if hasDeployableSource(abs) {
 		appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
-		report = runDoctorChecksForApp(abs, detectShape(abs), &appEnv)
+		report = runDoctorChecksForAppScoped(abs, detectShape(abs), &appEnv, scope)
 		replaceDoctorCheck(&report, doctorRuntimeOOMForApp(context.Background(), appEnv.App))
 	} else {
 		report = noSourceDoctorReport(abs)
@@ -310,21 +323,33 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 
 // runDoctorChecksForApp is runDoctorChecksForShape with the app's env and
 // secret names for the env-required check; nil means they were not read.
+//
+// It scans everything under path. deploy's own preflight uses it because the
+// deploy pipeline materializes the payload first (HEAD archive in Git mode,
+// the working tree in worktree mode), so path is already the exact file set
+// packaging will upload.
 func runDoctorChecksForApp(path string, deploymentShape shape, appEnv *doctorAppEnv) doctorReport {
+	return runDoctorChecksForAppScoped(path, deploymentShape, appEnv, nil)
+}
+
+// runDoctorChecksForAppScoped is runDoctorChecksForApp with an optional scope
+// excluding the paths packaging leaves out (doctorPackagingScope). scope is
+// nil wherever path is already the uploaded payload.
+func runDoctorChecksForAppScoped(path string, deploymentShape shape, appEnv *doctorAppEnv, scope *doctorScanScope) doctorReport {
 	rep := doctorReport{Path: path}
 	// Framework profiles describe app-shaped deployments. A single
 	// handler.* tree is a valid zero-config function and should not be
 	// reported as an "unknown framework" during its automatic preflight.
 	if deploymentShape != shapeFunction {
 		if profile, err := frameworkprofile.AnalyzeDir(path); err == nil {
-			rep.Profile = &profile
+			rep.Profile = filterDoctorProfileWarnings(profile, scope)
 		}
 	}
-	rep.Checks = append(rep.Checks, doctorCheckPortBind(path))
-	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path))
-	rep.Checks = append(rep.Checks, doctorCheckArch(path))
-	rep.Checks = append(rep.Checks, doctorCheckEnvRequiredForApp(path, appEnv))
-	rep.Checks = append(rep.Checks, doctorCheckStatelessOnly(path))
+	rep.Checks = append(rep.Checks, doctorCheckPortBind(path, scope))
+	rep.Checks = append(rep.Checks, doctorCheckLoopbackBind(path, scope))
+	rep.Checks = append(rep.Checks, doctorCheckArch(path, scope))
+	rep.Checks = append(rep.Checks, doctorCheckEnvRequiredForApp(path, appEnv, scope))
+	rep.Checks = append(rep.Checks, doctorCheckStatelessOnly(path, scope))
 	if check, present := doctorCheckDurableEntities(path); present {
 		rep.Checks = append(rep.Checks, check)
 	}
@@ -337,6 +362,35 @@ func runDoctorChecksForApp(path string, deploymentShape shape, appEnv *doctorApp
 	rep.Checks = append(rep.Checks, doctorCheckDepInstall())
 	rep.Checks = append(rep.Checks, doctorCheckStartupTimeout())
 	return rep
+}
+
+// filterDoctorProfileWarnings drops profile sources the selected packer
+// leaves out. #2669's first symptom was loopback_bind_possible for an ignored
+// fixture: frameworkprofile walks the tree on its own, so it needs the same
+// scope as the checks. A warning whose sources are all excluded disappears;
+// one with no sources (framework_not_detected, ...) is kept.
+func filterDoctorProfileWarnings(profile frameworkprofile.Profile, scope *doctorScanScope) *frameworkprofile.Profile {
+	if scope == nil {
+		return &profile
+	}
+	warnings := make([]frameworkprofile.Warning, 0, len(profile.Warnings))
+	for _, warning := range profile.Warnings {
+		if len(warning.Sources) > 0 {
+			sources := make([]string, 0, len(warning.Sources))
+			for _, source := range warning.Sources {
+				if scope.allows(filepath.ToSlash(source), false) {
+					sources = append(sources, source)
+				}
+			}
+			warning.Sources = sources
+			if len(warning.Sources) == 0 {
+				continue
+			}
+		}
+		warnings = append(warnings, warning)
+	}
+	profile.Warnings = warnings
+	return &profile
 }
 
 // hasDeployableSource reports whether deploy would accept dir: an app marker,
@@ -383,8 +437,8 @@ var hardCodedPortBindRegex = regexp.MustCompile(`(?:\b(?:app|application|server|
 // cannot verify the effective listener without a deployed app. If static
 // source inspection finds nothing, retain the explicit skipped result instead
 // of implying that runtime port binding was checked.
-func doctorCheckPortBind(path string) doctorCheck {
-	sources := scanSourceExtensions(path, hardCodedPortBindRegex, 5, ".js", ".ts", ".py", ".go")
+func doctorCheckPortBind(path string, scope *doctorScanScope) doctorCheck {
+	sources := scanSourceExtensions(path, hardCodedPortBindRegex, 5, scope, ".js", ".ts", ".py", ".go")
 	if len(sources) > 0 {
 		return doctorCheck{
 			Name:    "port-bind",
@@ -423,8 +477,8 @@ var loopbackBindRegex = regexp.MustCompile(
 // so loopback-only binds never receive gateway traffic even
 // though the readiness probe passes. Detected here → customer
 // gets the fix BEFORE the failed wake.
-func doctorCheckLoopbackBind(path string) doctorCheck {
-	sources := scanLoopbackBinds(path, 5)
+func doctorCheckLoopbackBind(path string, scope *doctorScanScope) doctorCheck {
+	sources := scanLoopbackBindsScoped(path, 5, scope)
 	if len(sources) == 0 {
 		return doctorCheck{Name: "loopback-bind", Status: "ok"}
 	}
@@ -444,8 +498,8 @@ func doctorCheckLoopbackBind(path string) doctorCheck {
 // Gregale's current function microVM ABI is Linux/amd64: ELF x86-64 is valid;
 // Mach-O, PE, and ELF for another e_machine are local build artifacts that
 // cannot execute in the guest.
-func doctorCheckArch(path string) doctorCheck {
-	sources := scanArchitecture(path, 5)
+func doctorCheckArch(path string, scope *doctorScanScope) doctorCheck {
+	sources := scanArchitectureScoped(path, 5, scope)
 	if len(sources) == 0 {
 		return doctorCheck{Name: "arch", Status: "ok"}
 	}
@@ -509,8 +563,8 @@ func platformProvidedEnvVar(name string) bool {
 // files may be incomplete, so a finding is a warning. A reference still missing after that comparison is an error; one
 // missing only from the local files is a warning, because values set with
 // `env set` or `secrets set` never appear there (CLI audit 2026-10-31).
-func doctorCheckEnvRequiredForApp(path string, app *doctorAppEnv) doctorCheck {
-	refs := scanEnvRefs(path, envVarRefRegex)
+func doctorCheckEnvRequiredForApp(path string, app *doctorAppEnv, scope *doctorScanScope) doctorCheck {
+	refs := scanEnvRefsScoped(path, envVarRefRegex, scope)
 	if len(refs) == 0 {
 		return doctorCheck{Name: "env-required", Status: "ok"}
 	}
@@ -521,7 +575,7 @@ func doctorCheckEnvRequiredForApp(path string, app *doctorAppEnv) doctorCheck {
 		}
 	}
 	optional := loadOptionalEnv(path)
-	for _, r := range scanOptionalEnvRefs(path, envVarRefRegex) {
+	for _, r := range scanOptionalEnvRefsScoped(path, envVarRefRegex, scope) {
 		optional[r] = true
 	}
 	missing := []string{}
@@ -563,8 +617,8 @@ func doctorCheckEnvRequiredForApp(path string, app *doctorAppEnv) doctorCheck {
 // (postgres, redis, mongo, mysql). The runtime path is the same;
 // preflight surfaces the finding before the build eats the
 // customer's 10-minute slot.
-func doctorCheckStatelessOnly(path string) doctorCheck {
-	matched := scanStatelessShape(path)
+func doctorCheckStatelessOnly(path string, scope *doctorScanScope) doctorCheck {
+	matched := scanStatelessShapeScoped(path, scope)
 	if len(matched) == 0 {
 		return doctorCheck{Name: "stateless-only", Status: "ok"}
 	}
@@ -598,19 +652,6 @@ func doctorCheckStartupTimeout() doctorCheck {
 	return doctorCheck{Name: "startup-timeout", Status: "skipped", Reason: "requires a deployed-app cold-boot probe"}
 }
 
-// doctorIgnorePatterns is the exclusion set doctor applies when it walks a
-// checkout: the root .gitignore first, then .gregaleignore, so a
-// project-specific override wins. Packaging ships a git archive, which
-// carries only tracked files; doctor walks the working tree and must apply
-// .gitignore itself to inspect the same file set (issue #2669).
-func doctorIgnorePatterns(root string) []gregaleignorePattern {
-	var patterns []gregaleignorePattern
-	if data, err := os.ReadFile(filepath.Join(root, ".gitignore")); err == nil {
-		patterns = append(patterns, parseIgnoreFile(data, ".gitignore")...)
-	}
-	return append(patterns, loadGregaleignore(root)...)
-}
-
 // scanSource walks path looking for files matching re. The match
 // is per-line and capped at maxHits results to keep the report
 // readable on large repos. Returns "file:line" strings (line is
@@ -620,12 +661,12 @@ func scanSource(root string, re *regexp.Regexp, maxHits int) []string {
 	return scanSourceFiltered(root, re, maxHits, nil)
 }
 
-func scanSourceExtensions(root string, re *regexp.Regexp, maxHits int, extensions ...string) []string {
+func scanSourceExtensions(root string, re *regexp.Regexp, maxHits int, scope *doctorScanScope, extensions ...string) []string {
 	allowed := make(map[string]struct{}, len(extensions))
 	for _, extension := range extensions {
 		allowed[strings.ToLower(extension)] = struct{}{}
 	}
-	return scanSourceFiltered(root, re, maxHits, allowed)
+	return scanSourceSkipping(root, re, maxHits, allowed, "", scope)
 }
 
 // localOnlyMarker on a listener line declares it deliberately local, such as
@@ -635,20 +676,25 @@ func scanSourceExtensions(root string, re *regexp.Regexp, maxHits int, extension
 const localOnlyMarker = "gregale:local-only"
 
 // scanLoopbackBinds is scanSource for loopbackBindRegex, skipping lines that
-// carry localOnlyMarker.
+// carry localOnlyMarker. It scans every file; the doctor walk uses
+// scanLoopbackBindsScoped to apply the packaging scope.
 func scanLoopbackBinds(root string, maxHits int) []string {
-	return scanSourceSkipping(root, loopbackBindRegex, maxHits, nil, localOnlyMarker)
+	return scanLoopbackBindsScoped(root, maxHits, nil)
+}
+
+func scanLoopbackBindsScoped(root string, maxHits int, scope *doctorScanScope) []string {
+	return scanSourceSkipping(root, loopbackBindRegex, maxHits, nil, localOnlyMarker, scope)
 }
 
 func scanSourceFiltered(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}) []string {
-	return scanSourceSkipping(root, re, maxHits, extensions, "")
+	return scanSourceSkipping(root, re, maxHits, extensions, "", nil)
 }
 
 // scanSourceSkipping is scanSourceFiltered that also ignores lines containing
-// skip, when skip is not empty.
-func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}, skip string) []string {
+// skip, when skip is not empty, and paths the selected packer leaves out.
+func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions map[string]struct{}, skip string, scope *doctorScanScope) []string {
 	out := []string{}
-	patterns := doctorIgnorePatterns(root)
+	patterns := loadGregaleignore(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		// filepath.Walk delivers (path, nil, err) when it can't even
 		// stat the entry (permission-denied, broken symlink, mid-walk
@@ -659,7 +705,7 @@ func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions 
 			return nil
 		}
 		if err != nil || info.IsDir() {
-			if info.IsDir() && doctorPathExcluded(root, p, info, patterns) {
+			if info.IsDir() && doctorPathExcluded(root, p, info, patterns, scope) {
 				return filepath.SkipDir
 			}
 			// (err != nil with info != nil is rare — it means the
@@ -669,7 +715,7 @@ func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions 
 			// unreadable node.)
 			return nil
 		}
-		if doctorPathExcluded(root, p, info, patterns) {
+		if doctorPathExcluded(root, p, info, patterns, scope) {
 			return nil
 		}
 		if extensions != nil {
@@ -711,7 +757,11 @@ func scanSourceSkipping(root string, re *regexp.Regexp, maxHits int, extensions 
 // we deduplicate by name and return sorted. Multiple references on one source
 // line are all considered so a compact config expression cannot hide a key.
 func scanEnvRefs(root string, re *regexp.Regexp) []string {
-	return scanEnvRefsMatching(root, re, nil)
+	return scanEnvRefsMatching(root, re, nil, nil)
+}
+
+func scanEnvRefsScoped(root string, re *regexp.Regexp, scope *doctorScanScope) []string {
+	return scanEnvRefsMatching(root, re, nil, scope)
 }
 
 // scanOptionalEnvRefs returns references that have an obvious source-level
@@ -719,14 +769,18 @@ func scanEnvRefs(root string, re *regexp.Regexp) []string {
 // default). These variables are optional by construction and should not be
 // reported as missing when the project has not supplied a value.
 func scanOptionalEnvRefs(root string, re *regexp.Regexp) []string {
-	return scanEnvRefsMatching(root, re, func(line string, match []int) bool {
-		return envRefHasFallback(line, match)
-	})
+	return scanOptionalEnvRefsScoped(root, re, nil)
 }
 
-func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []int) bool) []string {
+func scanOptionalEnvRefsScoped(root string, re *regexp.Regexp, scope *doctorScanScope) []string {
+	return scanEnvRefsMatching(root, re, func(line string, match []int) bool {
+		return envRefHasFallback(line, match)
+	}, scope)
+}
+
+func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []int) bool, scope *doctorScanScope) []string {
 	seen := map[string]bool{}
-	patterns := doctorIgnorePatterns(root)
+	patterns := loadGregaleignore(root)
 	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
 		// Mirror scanSource's nil-info guard: filepath.Walk delivers
 		// (path, nil, err) for unreadable nodes (permission-denied,
@@ -736,12 +790,12 @@ func scanEnvRefsMatching(root string, re *regexp.Regexp, accept func(string, []i
 			return nil
 		}
 		if err != nil || info.IsDir() {
-			if info.IsDir() && doctorPathExcluded(root, p, info, patterns) {
+			if info.IsDir() && doctorPathExcluded(root, p, info, patterns, scope) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if doctorPathExcluded(root, p, info, patterns) {
+		if doctorPathExcluded(root, p, info, patterns, scope) {
 			return nil
 		}
 		if envRefDocumentationFile(p) {
@@ -788,7 +842,7 @@ var doctorNoiseDirs = map[string]bool{
 // doctorPathExcluded applies the archive's real exclusions plus source-only
 // paths that do not describe production behavior. The explicit path argument
 // remains the workload-root mechanism for monorepos.
-func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregaleignorePattern) bool {
+func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregaleignorePattern, scope *doctorScanScope) bool {
 	if info == nil || path == root {
 		return false
 	}
@@ -797,6 +851,9 @@ func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregalei
 		return true
 	}
 	rel = filepath.ToSlash(rel)
+	if !scope.allows(rel, info.IsDir()) {
+		return true
+	}
 	if shouldExclude(rel, info.IsDir(), patterns) {
 		return true
 	}
@@ -818,19 +875,23 @@ func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregalei
 }
 
 func scanArchitecture(root string, maxHits int) []string {
-	patterns := doctorIgnorePatterns(root)
+	return scanArchitectureScoped(root, maxHits, nil)
+}
+
+func scanArchitectureScoped(root string, maxHits int, scope *doctorScanScope) []string {
+	patterns := loadGregaleignore(root)
 	out := make([]string, 0, maxHits)
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if info == nil {
 			return nil //nolint:nilerr // unreadable entries are skipped by this best-effort advisory scan.
 		}
 		if info.IsDir() {
-			if doctorPathExcluded(root, path, info, patterns) {
+			if doctorPathExcluded(root, path, info, patterns, scope) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if err != nil || doctorPathExcluded(root, path, info, patterns) || !info.Mode().IsRegular() {
+		if err != nil || doctorPathExcluded(root, path, info, patterns, scope) || !info.Mode().IsRegular() {
 			return nil //nolint:nilerr // unreadable files are skipped by this best-effort advisory scan.
 		}
 		if len(out) >= maxHits {
@@ -1072,6 +1133,10 @@ func isDeclaredEnvKey(k string) bool {
 // applies at accept time (pkg/statelessshape). Migrations and other
 // source in those directories are fine.
 func scanStatelessShape(path string) []string {
+	return scanStatelessShapeScoped(path, nil)
+}
+
+func scanStatelessShapeScoped(path string, scope *doctorScanScope) []string {
 	out := []string{}
 	_ = filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -1081,10 +1146,16 @@ func scanStatelessShape(path string) []string {
 			return err
 		}
 		if info.IsDir() {
+			if rel, relErr := filepath.Rel(path, p); relErr == nil && !scope.allows(filepath.ToSlash(rel), true) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if rel, relErr := filepath.Rel(path, p); relErr == nil && info.Mode().IsRegular() {
 			rel = filepath.ToSlash(rel)
+			if !scope.allows(rel, false) {
+				return nil
+			}
 			if statelessshape.StateDirOf(rel) != "" && statelessshape.DatabaseFile(rel, readFileHeader(p, statelessshape.HeaderBytes)) {
 				out = append(out, p)
 				return nil

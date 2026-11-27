@@ -214,12 +214,6 @@ func loadGregaleignore(srcDir string) []gregaleignorePattern {
 // Pure function so pack_test.go can drive it without touching the
 // filesystem.
 func parseGregaleignore(data []byte) []gregaleignorePattern {
-	return parseIgnoreFile(data, gregaleignoreFile)
-}
-
-// parseIgnoreFile parses an ignore file with the .gregaleignore grammar and
-// records source as the file it came from. .gitignore uses the same grammar.
-func parseIgnoreFile(data []byte, source string) []gregaleignorePattern {
 	var out []gregaleignorePattern
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	lineNumber := 0
@@ -235,7 +229,7 @@ func parseIgnoreFile(data []byte, source string) []gregaleignorePattern {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		p := gregaleignorePattern{source: source, line: lineNumber}
+		p := gregaleignorePattern{source: gregaleignoreFile, line: lineNumber}
 		if strings.HasPrefix(line, "!") {
 			p.negate = true
 			line = line[1:]
