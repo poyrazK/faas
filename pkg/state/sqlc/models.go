@@ -17774,6 +17774,20 @@ type SpendCapNoticeOutbox struct {
 	DeliveredAt   pgtype.Timestamptz
 }
 
+type StageWorkflowScheduleCursor struct {
+	EnvironmentID   pgtype.UUID
+	WorkflowName    string
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	LastAdmittedAt  pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type StaticEgressProvisioningGrant struct {
 	SourceID   string
 	AccountID  pgtype.UUID

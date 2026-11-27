@@ -64389,6 +64389,28 @@ CREATE TABLE public.spend_cap_notice_outbox (
 
 
 --
+-- Name: stage_workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.stage_workflow_schedule_cursors (
+    environment_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    last_admitted_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT stage_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT stage_workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT stage_workflow_schedule_cursors_workflow_name_check CHECK (((length(workflow_name) >= 1) AND (length(workflow_name) <= 128)))
+);
+
+
+--
 -- Name: static_egress_provisioning_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -81181,6 +81203,14 @@ ALTER TABLE ONLY public.spend_cap_notice_outbox
 
 
 --
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_pkey PRIMARY KEY (environment_id, workflow_name);
+
+
+--
 -- Name: static_egress_provisioning_grants static_egress_provisioning_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81365,11 +81395,11 @@ ALTER TABLE ONLY public.stored_workflow_revisions
 
 
 --
--- Name: stored_workflows stored_workflows_environment_disabled_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+-- Name: stored_workflows stored_workflows_environment_enabled_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE public.stored_workflows
-    ADD CONSTRAINT stored_workflows_environment_disabled_chk CHECK (((environment_id IS NULL) OR (NOT enabled))) NOT VALID;
+    ADD CONSTRAINT stored_workflows_environment_enabled_chk CHECK (((environment_id IS NULL) OR (NOT enabled) OR ((published IS NOT NULL) AND (COALESCE(((published -> 'trigger'::text) ->> 'type'::text), 'manual'::text) = ANY (ARRAY['manual'::text, 'schedule'::text]))))) NOT VALID;
 
 
 --
@@ -93687,6 +93717,13 @@ CREATE INDEX snapshots_sealed_capture_idx ON public.snapshots USING btree (seale
 --
 
 CREATE INDEX spend_cap_notice_pending_idx ON public.spend_cap_notice_outbox USING btree (next_attempt_at, id) WHERE (state <> 'delivered'::text);
+
+
+--
+-- Name: stage_workflow_schedule_cursors_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX stage_workflow_schedule_cursors_app_idx ON public.stage_workflow_schedule_cursors USING btree (app_id, workflow_name);
 
 
 --
@@ -119966,6 +120003,22 @@ ALTER TABLE ONLY public.source_build_rootfs
 
 ALTER TABLE ONLY public.spend_cap_notice_outbox
     ADD CONSTRAINT spend_cap_notice_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

@@ -16595,6 +16595,20 @@ func (q *Queries) DeleteReadinessSubscription(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const deleteStageWorkflowScheduleCursor = `-- name: DeleteStageWorkflowScheduleCursor :exec
+DELETE FROM stage_workflow_schedule_cursors WHERE app_id = $1 AND workflow_name = $2
+`
+
+type DeleteStageWorkflowScheduleCursorParams struct {
+	AppID        pgtype.UUID
+	WorkflowName string
+}
+
+func (q *Queries) DeleteStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg DeleteStageWorkflowScheduleCursorParams) error {
+	_, err := db.Exec(ctx, deleteStageWorkflowScheduleCursor, arg.AppID, arg.WorkflowName)
+	return err
+}
+
 const deleteStaticEgressProvisioningSource = `-- name: DeleteStaticEgressProvisioningSource :exec
 DELETE FROM static_egress_provisioning_grants
 WHERE source_id = $1::text
@@ -31155,6 +31169,34 @@ func (q *Queries) GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, depl
 	var artifact_id pgtype.UUID
 	err := row.Scan(&artifact_id)
 	return artifact_id, err
+}
+
+const getStageWorkflowScheduleCursor = `-- name: GetStageWorkflowScheduleCursor :one
+SELECT environment_id, workflow_name, app_id, deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at, updated_at FROM stage_workflow_schedule_cursors WHERE environment_id = $1 AND workflow_name = $2
+`
+
+type GetStageWorkflowScheduleCursorParams struct {
+	EnvironmentID pgtype.UUID
+	WorkflowName  string
+}
+
+func (q *Queries) GetStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetStageWorkflowScheduleCursorParams) (StageWorkflowScheduleCursor, error) {
+	row := db.QueryRow(ctx, getStageWorkflowScheduleCursor, arg.EnvironmentID, arg.WorkflowName)
+	var i StageWorkflowScheduleCursor
+	err := row.Scan(
+		&i.EnvironmentID,
+		&i.WorkflowName,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.TriggerSnapshot,
+		&i.LastEvaluatedAt,
+		&i.ScheduledFor,
+		&i.Status,
+		&i.LastRunID,
+		&i.LastAdmittedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getStoredWorkflowFailurePolicy = `-- name: GetStoredWorkflowFailurePolicy :one
@@ -58850,6 +58892,66 @@ func (q *Queries) ListStageStoredWorkflows(ctx context.Context, db DBTX, arg Lis
 	return items, nil
 }
 
+const listStageWorkflowScheduleCandidates = `-- name: ListStageWorkflowScheduleCandidates :many
+SELECT a.id AS app_id, e.id AS environment_id, d.id AS deployment_id
+FROM (SELECT DISTINCT w.app_id, w.environment_id FROM stored_workflows w
+      WHERE w.environment_id IS NOT NULL AND w.enabled AND w.published->'trigger'->>'type' = 'schedule') s
+JOIN apps a ON a.id = s.app_id
+JOIN project_environments e ON e.id = s.environment_id AND e.project_id = a.project_id AND e.account_id = a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
+JOIN LATERAL (
+    SELECT dep.id FROM deployments dep
+    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = e.slug
+    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+) d ON true
+WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND ($1::uuid IS NULL OR a.node_id = $1::uuid)
+  AND ($2::uuid IS NULL
+       OR (a.id, e.id) > ($2::uuid, COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)))
+ORDER BY a.id, e.id LIMIT $4
+`
+
+type ListStageWorkflowScheduleCandidatesParams struct {
+	OwnerNodeID        pgtype.UUID
+	AfterAppID         pgtype.UUID
+	AfterEnvironmentID pgtype.UUID
+	BatchLimit         int32
+}
+
+type ListStageWorkflowScheduleCandidatesRow struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	DeploymentID  pgtype.UUID
+}
+
+// A stage's enabled schedule workflows run on the stage's live deployment
+// (ADR-20261104120000). One row per (app, stage), keyset by both.
+func (q *Queries) ListStageWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListStageWorkflowScheduleCandidatesParams) ([]ListStageWorkflowScheduleCandidatesRow, error) {
+	rows, err := db.Query(ctx, listStageWorkflowScheduleCandidates,
+		arg.OwnerNodeID,
+		arg.AfterAppID,
+		arg.AfterEnvironmentID,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStageWorkflowScheduleCandidatesRow{}
+	for rows.Next() {
+		var i ListStageWorkflowScheduleCandidatesRow
+		if err := rows.Scan(&i.AppID, &i.EnvironmentID, &i.DeploymentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStoredWorkflowFailurePauses = `-- name: ListStoredWorkflowFailurePauses :many
 SELECT name FROM stored_workflow_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
 `
@@ -66695,6 +66797,47 @@ func (q *Queries) LockSourceBuildRuntimeRootfs(ctx context.Context, db DBTX, arg
 	var inputs []byte
 	err := row.Scan(&inputs)
 	return inputs, err
+}
+
+const lockStageWorkflowScheduleTarget = `-- name: LockStageWorkflowScheduleTarget :one
+SELECT a.account_id, d.id AS deployment_id, ac.plan,
+  (SELECT coalesce(jsonb_agg(jsonb_set(w.published, '{trigger,enabled}', to_jsonb(w.enabled), true) ORDER BY w.name), '[]'::jsonb)
+   FROM stored_workflows w WHERE w.app_id = a.id AND w.environment_id = e.id AND w.published IS NOT NULL)::jsonb AS workflows
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
+JOIN project_environments e ON e.id = $1::uuid AND e.project_id = a.project_id AND e.account_id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = $2::uuid AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = e.slug
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a,d
+`
+
+type LockStageWorkflowScheduleTargetParams struct {
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+}
+
+type LockStageWorkflowScheduleTargetRow struct {
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Plan         string
+	Workflows    []byte
+}
+
+func (q *Queries) LockStageWorkflowScheduleTarget(ctx context.Context, db DBTX, arg LockStageWorkflowScheduleTargetParams) (LockStageWorkflowScheduleTargetRow, error) {
+	row := db.QueryRow(ctx, lockStageWorkflowScheduleTarget, arg.EnvironmentID, arg.AppID)
+	var i LockStageWorkflowScheduleTargetRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.DeploymentID,
+		&i.Plan,
+		&i.Workflows,
+	)
+	return i, err
 }
 
 const lockTenantWorkflowScheduleConsumerLink = `-- name: LockTenantWorkflowScheduleConsumerLink :one
@@ -82485,6 +82628,25 @@ type PruneRuntimeUpgradeGatewayReceiptsParams struct {
 
 func (q *Queries) PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error {
 	_, err := db.Exec(ctx, pruneRuntimeUpgradeGatewayReceipts, arg.AppID, arg.MaxAgeSeconds)
+	return err
+}
+
+const pruneStageWorkflowScheduleCursors = `-- name: PruneStageWorkflowScheduleCursors :exec
+DELETE FROM stage_workflow_schedule_cursors c WHERE c.environment_id = $1::uuid
+AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements($2::jsonb) definition
+    WHERE definition->>'name' = c.workflow_name AND definition->'trigger'->>'type' = 'schedule'
+      AND (definition->'trigger'->>'enabled')::boolean IS DISTINCT FROM false
+)
+`
+
+type PruneStageWorkflowScheduleCursorsParams struct {
+	EnvironmentID pgtype.UUID
+	Workflows     []byte
+}
+
+func (q *Queries) PruneStageWorkflowScheduleCursors(ctx context.Context, db DBTX, arg PruneStageWorkflowScheduleCursorsParams) error {
+	_, err := db.Exec(ctx, pruneStageWorkflowScheduleCursors, arg.EnvironmentID, arg.Workflows)
 	return err
 }
 
@@ -117816,6 +117978,46 @@ func (q *Queries) UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourP
 		arg.Hour,
 		arg.Good,
 		arg.Total,
+	)
+	return err
+}
+
+const upsertStageWorkflowScheduleCursor = `-- name: UpsertStageWorkflowScheduleCursor :exec
+INSERT INTO stage_workflow_schedule_cursors (environment_id, workflow_name, app_id, deployment_id, trigger_snapshot,
+    last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at)
+VALUES ($1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10)
+ON CONFLICT (environment_id, workflow_name) DO UPDATE SET
+    app_id = EXCLUDED.app_id, deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
+    last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, last_admitted_at = EXCLUDED.last_admitted_at, updated_at = now()
+`
+
+type UpsertStageWorkflowScheduleCursorParams struct {
+	EnvironmentID   pgtype.UUID
+	WorkflowName    string
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	LastAdmittedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertStageWorkflowScheduleCursorParams) error {
+	_, err := db.Exec(ctx, upsertStageWorkflowScheduleCursor,
+		arg.EnvironmentID,
+		arg.WorkflowName,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.TriggerSnapshot,
+		arg.LastEvaluatedAt,
+		arg.ScheduledFor,
+		arg.Status,
+		arg.LastRunID,
+		arg.LastAdmittedAt,
 	)
 	return err
 }

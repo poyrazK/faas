@@ -18,12 +18,13 @@ DO $$ BEGIN
     ALTER TABLE stored_workflow_revisions ADD CONSTRAINT stored_workflow_revisions_environment_fkey
       FOREIGN KEY (environment_id) REFERENCES project_environments(id) ON DELETE CASCADE NOT VALID;
   END IF;
-  -- Nothing runs a stage's workflow yet: every reader of the app's runnable
-  -- workflows is production's. A stage workflow stays disabled until a later
-  -- release runs it on the stage's own deployment.
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='stored_workflows'::regclass AND conname='stored_workflows_environment_disabled_chk') THEN
-    ALTER TABLE stored_workflows ADD CONSTRAINT stored_workflows_environment_disabled_chk
-      CHECK (environment_id IS NULL OR NOT enabled) NOT VALID;
+  -- A stage runs its workflows on its own deployment for manual starts and
+  -- schedules only; any other stage workflow (a clone copies every one)
+  -- stays disabled.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='stored_workflows'::regclass AND conname='stored_workflows_environment_enabled_chk') THEN
+    ALTER TABLE stored_workflows ADD CONSTRAINT stored_workflows_environment_enabled_chk
+      CHECK (environment_id IS NULL OR NOT enabled OR (published IS NOT NULL
+        AND COALESCE(published->'trigger'->>'type', 'manual') IN ('manual', 'schedule'))) NOT VALID;
   END IF;
 END $$;
 
@@ -109,7 +110,7 @@ DROP TRIGGER IF EXISTS stored_workflow_environment_guard ON stored_workflows;
 DROP FUNCTION IF EXISTS guard_stored_workflow_environment();
 DELETE FROM stored_workflow_revisions WHERE environment_id IS NOT NULL;
 DELETE FROM stored_workflows WHERE environment_id IS NOT NULL;
-ALTER TABLE stored_workflows DROP CONSTRAINT IF EXISTS stored_workflows_environment_disabled_chk;
+ALTER TABLE stored_workflows DROP CONSTRAINT IF EXISTS stored_workflows_environment_enabled_chk;
 ALTER TABLE stored_workflows DROP CONSTRAINT IF EXISTS stored_workflows_environment_fkey;
 ALTER TABLE stored_workflow_revisions DROP CONSTRAINT IF EXISTS stored_workflow_revisions_environment_fkey;
 ALTER TABLE stored_workflow_revisions DROP COLUMN IF EXISTS environment_id;

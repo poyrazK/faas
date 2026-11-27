@@ -21,10 +21,16 @@ import (
 
 const (
 	featureFlagLifecycleInterval = time.Hour
-	featureFlagLifecycleBatch    = 100
-	featureFlagLifecycleTimeout  = 30 * time.Second
-	featureFlagLifecycleActor    = "system:flags-lifecycle"
-	featureFlagLifecycleKind     = "flags.lifecycle_attention"
+	// featureFlagLifecycleStartDelay is when the first pass runs after apid
+	// starts. apid restarts more often than hourly when releases land, and a
+	// pass that waited a full interval after each start could never run.
+	// Every message and audit event a pass records is keyed, so passes that
+	// run more often than hourly record nothing twice.
+	featureFlagLifecycleStartDelay = 2 * time.Minute
+	featureFlagLifecycleBatch      = 100
+	featureFlagLifecycleTimeout    = 30 * time.Second
+	featureFlagLifecycleActor      = "system:flags-lifecycle"
+	featureFlagLifecycleKind       = "flags.lifecycle_attention"
 )
 
 type featureFlagLifecycleResponse struct {
@@ -130,13 +136,12 @@ func (s *server) getFeatureFlagLifecycle(w http.ResponseWriter, r *http.Request,
 }
 
 type featureFlagLifecycleReconciler struct {
-	server             *server
-	log                *slog.Logger
-	afterEnvironmentID string
+	server *server
+	log    *slog.Logger
 }
 
-// startFeatureFlagLifecycleReconciler checks one page of environments per
-// interval and records one flags.lifecycle_attention audit event per
+// startFeatureFlagLifecycleReconciler checks every environment shortly after
+// start and then once per interval, and records one flags.lifecycle_attention audit event per
 // environment, flag, reason and configuration version. Like auto-advance, the
 // customer_flags platform flag is checked on every pass.
 func startFeatureFlagLifecycleReconciler(ctx context.Context, s *server, log *slog.Logger) {
@@ -151,6 +156,14 @@ func startFeatureFlagLifecycleReconciler(ctx context.Context, s *server, log *sl
 	}
 	r := &featureFlagLifecycleReconciler{server: s, log: log}
 	go func() {
+		first := time.NewTimer(featureFlagLifecycleStartDelay)
+		select {
+		case <-ctx.Done():
+			first.Stop()
+			return
+		case <-first.C:
+			r.runPass(ctx, time.Now())
+		}
 		ticker := time.NewTicker(featureFlagLifecycleInterval)
 		defer ticker.Stop()
 		for {
@@ -171,25 +184,40 @@ func (r *featureFlagLifecycleReconciler) runPass(ctx context.Context, now time.T
 	}
 	lister := s.store.(state.FeatureFlagEnvironmentLister)
 	outbox := s.store.(state.AuditEventOutboxStore)
-	envs, err := lister.ListFeatureFlagEnvironments(ctx, r.afterEnvironmentID, featureFlagLifecycleBatch)
-	if err != nil {
-		if r.log != nil && !errors.Is(err, context.Canceled) {
-			r.log.WarnContext(ctx, "flags lifecycle: list environments failed", "err", err)
-		}
-		return
-	}
-	if len(envs) < featureFlagLifecycleBatch {
-		r.afterEnvironmentID = ""
-	} else {
-		r.afterEnvironmentID = envs[len(envs)-1].Scope.EnvironmentID
-	}
-	for _, env := range envs {
-		if ctx.Err() != nil {
-			return
-		}
+	err := forEachFeatureFlagEnvironment(ctx, lister, func(env state.FeatureFlagAutoRolloutCandidate) {
 		envCtx, cancel := context.WithTimeout(ctx, featureFlagLifecycleTimeout)
 		r.checkEnvironment(envCtx, outbox, env, now)
 		cancel()
+	})
+	if err != nil && r.log != nil && !errors.Is(err, context.Canceled) {
+		r.log.WarnContext(ctx, "flags lifecycle: list environments failed", "err", err)
+	}
+}
+
+// forEachFeatureFlagEnvironment calls fn for every environment with a
+// published flag configuration, a page at a time. Each pass starts from the
+// first page: a cursor kept between passes would start over at every apid
+// restart and never reach the later pages.
+func forEachFeatureFlagEnvironment(ctx context.Context, lister state.FeatureFlagEnvironmentLister, fn func(state.FeatureFlagAutoRolloutCandidate)) error {
+	after := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		envs, err := lister.ListFeatureFlagEnvironments(ctx, after, featureFlagLifecycleBatch)
+		if err != nil {
+			return err
+		}
+		for _, env := range envs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			fn(env)
+		}
+		if len(envs) < featureFlagLifecycleBatch {
+			return nil
+		}
+		after = envs[len(envs)-1].Scope.EnvironmentID
 	}
 }
 

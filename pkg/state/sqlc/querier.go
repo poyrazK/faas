@@ -1423,6 +1423,7 @@ type Querier interface {
 	DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error)
 	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
 	DeleteSavedInsight(ctx context.Context, db DBTX, arg DeleteSavedInsightParams) (int64, error)
+	DeleteStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg DeleteStageWorkflowScheduleCursorParams) error
 	DeleteStaticEgressProvisioningSource(ctx context.Context, db DBTX, sourceID string) error
 	DeleteStoredWorkflow(ctx context.Context, db DBTX, arg DeleteStoredWorkflowParams) error
 	DeleteStoredWorkflowLiveSuites(ctx context.Context, db DBTX, arg DeleteStoredWorkflowLiveSuitesParams) error
@@ -2869,6 +2870,7 @@ type Querier interface {
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)
 	GetSourceBuildRootfsByID(ctx context.Context, db DBTX, id pgtype.UUID) (SourceBuildRootf, error)
 	GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
+	GetStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetStageWorkflowScheduleCursorParams) (StageWorkflowScheduleCursor, error)
 	GetStoredWorkflowFailurePolicy(ctx context.Context, db DBTX, arg GetStoredWorkflowFailurePolicyParams) ([]byte, error)
 	GetStoredWorkflowForLiveVerification(ctx context.Context, db DBTX, arg GetStoredWorkflowForLiveVerificationParams) (StoredWorkflow, error)
 	GetStoredWorkflowHealthSummary(ctx context.Context, db DBTX, arg GetStoredWorkflowHealthSummaryParams) (GetStoredWorkflowHealthSummaryRow, error)
@@ -4770,6 +4772,9 @@ type Querier interface {
 	// soonest expiry first: the source of the certificate-expiry alerts.
 	ListSoonestExpiringCustomDomainCerts(ctx context.Context, db DBTX, limit int32) ([]ListSoonestExpiringCustomDomainCertsRow, error)
 	ListStageStoredWorkflows(ctx context.Context, db DBTX, arg ListStageStoredWorkflowsParams) ([]StoredWorkflow, error)
+	// A stage's enabled schedule workflows run on the stage's live deployment
+	// (ADR-20261104120000). One row per (app, stage), keyset by both.
+	ListStageWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListStageWorkflowScheduleCandidatesParams) ([]ListStageWorkflowScheduleCandidatesRow, error)
 	ListStoredWorkflowFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ListStoredWorkflowFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListStoredWorkflowFailurePolicyCandidatesParams) ([]ListStoredWorkflowFailurePolicyCandidatesRow, error)
 	ListStoredWorkflowHealthFailedSteps(ctx context.Context, db DBTX, arg ListStoredWorkflowHealthFailedStepsParams) ([]ListStoredWorkflowHealthFailedStepsRow, error)
@@ -5347,6 +5352,7 @@ type Querier interface {
 	LockSnapshotRuntimeSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (LockSnapshotRuntimeSourceRow, error)
 	LockSourceBuildRootfs(ctx context.Context, db DBTX, input []byte) ([]byte, error)
 	LockSourceBuildRuntimeRootfs(ctx context.Context, db DBTX, arg LockSourceBuildRuntimeRootfsParams) ([]byte, error)
+	LockStageWorkflowScheduleTarget(ctx context.Context, db DBTX, arg LockStageWorkflowScheduleTargetParams) (LockStageWorkflowScheduleTargetRow, error)
 	LockStoredWorkflowForLiveSuite(ctx context.Context, db DBTX, arg LockStoredWorkflowForLiveSuiteParams) (StoredWorkflow, error)
 	LockStoredWorkflowLiveRunState(ctx context.Context, db DBTX, id pgtype.UUID) (LockStoredWorkflowLiveRunStateRow, error)
 	// Link rows are locked separately so unlink/revocation cannot race a schedule
@@ -6689,6 +6695,7 @@ type Querier interface {
 	PruneRouteProbeRounds(ctx context.Context, db DBTX, before pgtype.Timestamptz) error
 	PruneRuntimeUpgradeGatewayDrains(ctx context.Context, db DBTX, limit int32) (int64, error)
 	PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error
+	PruneStageWorkflowScheduleCursors(ctx context.Context, db DBTX, arg PruneStageWorkflowScheduleCursorsParams) error
 	PruneStoredWorkflowLiveBaselineHistory(ctx context.Context, db DBTX, arg PruneStoredWorkflowLiveBaselineHistoryParams) error
 	PruneStoredWorkflowLiveSuites(ctx context.Context, db DBTX, arg PruneStoredWorkflowLiveSuitesParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
@@ -9383,6 +9390,7 @@ type Querier interface {
 	// (ADR-20261020161310).
 	UpsertRouteInsight(ctx context.Context, db DBTX, arg UpsertRouteInsightParams) error
 	UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error
+	UpsertStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertStageWorkflowScheduleCursorParams) error
 	UpsertStoredWorkflowFailurePolicy(ctx context.Context, db DBTX, arg UpsertStoredWorkflowFailurePolicyParams) error
 	UpsertStoredWorkflowPublishPolicy(ctx context.Context, db DBTX, arg UpsertStoredWorkflowPublishPolicyParams) error
 	UpsertStoredWorkflowPublishReceipt(ctx context.Context, db DBTX, arg UpsertStoredWorkflowPublishReceiptParams) error
