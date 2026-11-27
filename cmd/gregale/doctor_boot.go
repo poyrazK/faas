@@ -35,6 +35,10 @@ type doctorBootOptions struct {
 	image   string
 	port    int
 	envFile string
+	// memoryMB caps the container's memory, swap included, at the RAM the
+	// app would get on Gregale; memorySource says where the number came from.
+	memoryMB     int
+	memorySource string
 }
 
 // doctorDocker runs the local Docker client. GREGALE_DOCKER selects a
@@ -113,6 +117,12 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 	portSpec := strconv.Itoa(opts.port)
 	args := []string{"run", "--detach", "--name", name, "--platform", "linux/amd64", "--label", "dev.gregale.doctor=boot",
 		"--env", "PORT=" + portSpec, "--publish", "127.0.0.1::" + portSpec}
+	if opts.memoryMB > 0 {
+		// Without --memory-swap Docker allows as much swap again, and an app
+		// over its RAM would slow down instead of being killed as on Gregale.
+		limit := strconv.Itoa(opts.memoryMB) + "m"
+		args = append(args, "--memory", limit, "--memory-swap", limit)
+	}
 	if opts.envFile != "" {
 		args = append(args, "--env-file", opts.envFile)
 	}
@@ -148,12 +158,12 @@ func (b doctorBoot) check(ctx context.Context) []doctorCheck {
 	}
 	if status == 0 {
 		return []doctorCheck{
-			{Name: "boot-start", Status: "ok", Detail: "container running"},
+			{Name: "boot-start", Status: "ok", Detail: "container running" + b.memoryNote()},
 			b.listenerProblem(ctx),
 		}
 	}
 	checks := []doctorCheck{
-		{Name: "boot-start", Status: "ok", Detail: fmt.Sprintf("answered in %s", bootSeconds(time.Since(b.started)))},
+		{Name: "boot-start", Status: "ok", Detail: fmt.Sprintf("answered in %s", bootSeconds(time.Since(b.started))) + b.memoryNote()},
 		{Name: "boot-listener", Status: "ok", Detail: fmt.Sprintf("listening on 0.0.0.0:%d ($PORT)", b.opts.port)},
 	}
 	if status >= 500 {
@@ -248,6 +258,10 @@ func (b doctorBoot) exitedCheck(ctx context.Context, name string, st doctorBootS
 		Fix:  "Read the container output; an app that needs env vars to start can get them with --env-file. A request-serving app must keep running and serve HTTP on 0.0.0.0:$PORT; a one-off task belongs in `gregale run`."}
 	if st.oomKilled {
 		c.Code, c.Hint = "boot_oom_killed", fmt.Sprintf("The container was killed for running out of memory after %s.", bootSeconds(time.Since(b.started)))
+		if b.opts.memoryMB > 0 {
+			c.Hint = fmt.Sprintf("The container ran out of its %d MB of memory (%s) after %s; on Gregale the app would crash the same way.", b.opts.memoryMB, b.opts.memorySource, bootSeconds(time.Since(b.started)))
+			c.Fix = "Lower the app's memory use (heap or worker settings), or give the app more RAM with `gregale app update APP --ram MB`, up to your plan's limit; check again with `--ram MB`."
+		}
 	}
 	if tail := b.docker.logTail(ctx, b.name); tail != "" {
 		c.Output = tail
@@ -348,6 +362,14 @@ func procNetIP(s string) (net.IP, error) {
 		return v4, nil
 	}
 	return ip, nil
+}
+
+// memoryNote names the memory limit on a passed start check.
+func (b doctorBoot) memoryNote() string {
+	if b.opts.memoryMB <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" within %d MB (%s)", b.opts.memoryMB, b.opts.memorySource)
 }
 
 func doctorBootContainerName() string {

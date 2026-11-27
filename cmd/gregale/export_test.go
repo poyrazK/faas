@@ -3287,3 +3287,11 @@ func RunDoctorImageChecksWithLocal(ctx context.Context, ref string, inspector do
 		return img, err == nil
 	})
 }
+
+// SetDoctorBootMemorySources stubs where `doctor --boot` reads the plan and an
+// app's RAM for its memory limit.
+func SetDoctorBootMemorySources(cleanup func(func()), plan func(context.Context) (api.Limits, bool), appRAM func(context.Context, string) (int, error)) {
+	oldPlan, oldApp := doctorImagePlanLimits, doctorBootAppRAM
+	doctorImagePlanLimits, doctorBootAppRAM = plan, appRAM
+	cleanup(func() { doctorImagePlanLimits, doctorBootAppRAM = oldPlan, oldApp })
+}
