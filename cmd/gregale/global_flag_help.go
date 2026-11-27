@@ -42,7 +42,7 @@ func globalFlagHelpDefinitions() []globalFlagHelpDefinition {
 		{name: "http-retries", value: "N", placement: globalFlagBeforeCommand, spellings: []string{"--http-retries"},
 			description: []string{"Retry selected read-only API requests up to N times (0–5; before the command)."}},
 		{name: "org", value: "SLUG", placement: globalFlagBeforeCommand, spellings: []string{"--org"},
-			description: []string{"Run project commands on a company's projects (before", "the command), e.g. gregale --org acme deploy --project."}},
+			description: []string{"Act for an organization (before the command): projects,", "new apps, managed Postgres, buckets, plan and billing,", "e.g. gregale --org acme billing plan pro."}},
 		{name: "profile", value: "NAME", placement: globalFlagBeforeCommand, spellings: []string{"--profile"},
 			description: []string{"Select a connection profile (before the command)."}},
 		{name: "wait-for-approval", placement: globalFlagBeforeCommand, spellings: []string{"--wait-for-approval"},

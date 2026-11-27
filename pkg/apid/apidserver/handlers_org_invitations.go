@@ -241,10 +241,19 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrOrgAlreadyMember(existingRole))
 		return
 	case errors.Is(err, state.ErrOrgMemberCapExceeded):
-		// The store reads the live cap; the dashboard can render
-		// "the plan caps this org at N members" via the seat_usage
-		// endpoint if the customer needs the numeric details.
-		api.WriteProblem(w, api.ErrOrgMemberCapExceeded(0, 0))
+		// The store reads the live cap. Name it when the organization can
+		// be read: a plan with no seats (Free) asks for an upgrade rather
+		// than reporting "0 of 0".
+		limit := 0
+		if reFetched, lookupErr := s.store.OrgInvitationByTokenHash(r.Context(), hash[:]); lookupErr == nil {
+			if org, orgErr := s.store.OrgByID(r.Context(), reFetched.OrgID); orgErr == nil {
+				if limit = org.Plan.OrgMembersMax(); limit <= 0 {
+					api.WriteProblem(w, api.ErrOrgSeatsUnavailable())
+					return
+				}
+			}
+		}
+		api.WriteProblem(w, api.ErrOrgMemberCapExceeded(limit, limit))
 		return
 	case err != nil:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,

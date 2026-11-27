@@ -356,7 +356,7 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
 		).WithDocs(docsBase + "/cli")
 	}
-	path, err := c.projectRoute(path)
+	path, err := c.orgRoute(method, path)
 	if err != nil {
 		return err
 	}
@@ -600,7 +600,7 @@ func (c *Client) doBytesWithHeader(ctx context.Context, method, path string, bod
 		}
 		r = bytes.NewReader(b)
 	}
-	path, err := c.projectRoute(path)
+	path, err := c.orgRoute(method, path)
 	if err != nil {
 		return nil, err
 	}

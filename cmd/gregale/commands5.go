@@ -1311,6 +1311,15 @@ func cmdPlan(args []string) int {
 	if err != nil {
 		return printErr("Could not fetch account", err)
 	}
+	if org := client.ProjectOrganization(); org != "" {
+		// gregale --org <slug> billing plan: the client sends the change to
+		// the organization, so compare against the organization's plan.
+		current, err := client.GetOrg(context.Background(), org)
+		if err != nil {
+			return printErr("Could not fetch organization", err)
+		}
+		acct.Plan = current.Plan
+	}
 	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
 		question := fmt.Sprintf("Downgrade from %s to %s: existing apps may exceed the new plan's limits. Continue?", acct.Plan, target)
 		if code := confirmYesNo(question, "--yes", "the plan downgrade"); code != 0 {

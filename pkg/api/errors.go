@@ -7726,6 +7726,31 @@ func ErrOrgInvitationCapExceeded(limit, observed int) *Problem {
 		WithDocs(docsBase + "/orgs#member-limits")
 }
 
+// ErrOrgPlanHasNoSeats is the 403 an organization whose plan has no member
+// seats (Free) answers to an invitation. It keeps the invitation-cap code so
+// clients that branch on it still do, and names the upgrade instead of a
+// "0 of 0" limit (ADR-20261127200000).
+func ErrOrgPlanHasNoSeats(slug string, plan Plan) *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgInvitationCapExceeded,
+		"Organization plan has no member seats",
+		fmt.Sprintf("organization %s is on the %s plan, which has no seats for other members; upgrade the organization before inviting.",
+			slug, plan)).
+		WithLimit(0, 0).
+		WithFix("gregale --org " + slug + " billing plan hobby").
+		WithDocs(docsBase + "/orgs#member-limits")
+}
+
+// ErrOrgSeatsUnavailable is the 403 an invitation accept answers when the
+// organization's plan has no member seats: the invitation stays pending until
+// an owner upgrades the organization.
+func ErrOrgSeatsUnavailable() *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgMemberCapExceeded,
+		"Organization plan has no member seats",
+		"this organization's plan has no seats for other members; ask its owner to upgrade the organization, then accept the invitation again.").
+		WithLimit(0, 0).
+		WithDocs(docsBase + "/orgs#member-limits")
+}
+
 // ErrOrgRoleForbidden is the 403 returned when the authenticated
 // member lacks the role required for this action. The action
 // rides in the detail so the dashboard can render "you need to
