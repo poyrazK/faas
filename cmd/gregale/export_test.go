@@ -3224,3 +3224,6 @@ var LinkedAppAsArgument = linkedAppAsArgument
 
 // JobReplayCommandNote exposes jobReplayCommandNote.
 var JobReplayCommandNote = jobReplayCommandNote
+
+// MCPListingKeep exposes mcpListingKeep.
+var MCPListingKeep = mcpListingKeep

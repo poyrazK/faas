@@ -137,6 +137,10 @@ var featureRouteActions = map[string]authz.OrgAction{
 	// mcp-stats (ADR-20261126082046) names customers and revenue, like
 	// monetization-funnel.
 	"GET /v1/apps/{slug}/mcp-stats": authz.OrgActionManageAppSecurity,
+	// mcp-listing (ADR-20261126175800) publishes a public page for the app.
+	"GET /v1/apps/{slug}/mcp-listing":    authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/mcp-listing":    authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/mcp-listing": authz.OrgActionManageAppSecurity,
 	// consumers
 	"POST /v1/apps/{slug}/consumers":                                                        authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/credits":                                   authz.OrgActionManageAppSecurity,

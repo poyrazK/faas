@@ -10254,6 +10254,66 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-signup/{slug}/listing:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose public listing to read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getPublicMCPListing
+      summary: Read a sold MCP server's public listing.
+      description: |
+        Needs no credential. Serves while the seller has published a listing
+        and the app takes sign-ups: the tools as of the last publish, the
+        offered plans and their current prices, the sign-up link and install
+        links for MCP clients.
+      security: []
+      responses:
+        '200':
+          description: The public listing with plans, sign-up and install links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicMCPListingResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: Too many listing reads from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/server.json:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose registry server.json to read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getMCPListingServerJSON
+      summary: Read a listed MCP server's registry server.json.
+      description: |
+        Needs no credential. The MCP registry server.json (schema
+        2025-12-11) of a listing with a registry name, with one
+        streamable-http remote at the listed endpoint; submit it with
+        mcp-publisher.
+      security: []
+      responses:
+        '200':
+          description: The server.json document.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: Too many server.json reads from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/consumer-signup/{slug}/signups/{signup}/complete:
     parameters:
       - name: slug
@@ -25683,6 +25743,64 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/mcp-listing:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getMCPListing
+      summary: Read a sold MCP server's published listing.
+      responses:
+        '200':
+          description: The app's published listing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPListingResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putMCPListing
+      summary: Publish or refresh a sold MCP server's public listing.
+      description: |
+        Publishes the server's title, summary, endpoint and tools as they are
+        now; the page shows this snapshot until the next publish, which bumps
+        version. The endpoint must be https on the app's own host. The page
+        serves while the app takes sign-ups. With registry_name set, the
+        listing also serves an MCP registry server.json.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutMCPListingRequest' }
+      responses:
+        '200':
+          description: The published listing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPListingResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: The request body is above 512 KiB (`request_too_large`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [consumers]
+      operationId: deleteMCPListing
+      summary: Take a sold MCP server's public listing down.
+      responses:
+        '204': { description: Unpublished. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: The app does not exist or has no published listing.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/consumer-identities:
     parameters:
@@ -135340,6 +135458,76 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    MCPListingTool:
+      description: "One tool of a listed MCP server, as of the last publish."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 128 }
+        title: { type: string, maxLength: 128 }
+        description: { type: string, maxLength: 1024 }
+    PutMCPListingRequest:
+      description: "A sold MCP server's listing to publish: the tools are those the server lists now."
+      type: object
+      required: [title, endpoint, tools]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        summary: { type: string, maxLength: 500, description: "One or two sentences on what the server does." }
+        endpoint: { type: string, maxLength: 2048, description: "The MCP endpoint, https on the app's own host." }
+        tools:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/MCPListingTool' }
+        registry_name: { type: string, description: "MCP registry name, such as io.github.<user>/<server>; enables server.json." }
+        show_usage: { type: boolean, description: "Show the open customer count on the page." }
+    MCPListingResponse:
+      description: "A sold MCP server's published listing, as its owner sees it."
+      type: object
+      required: [app, title, summary, endpoint, tools, show_usage, version, published_at, page_url]
+      properties:
+        app: { type: string }
+        title: { type: string }
+        summary: { type: string, description: "What the server does, as the seller wrote it." }
+        endpoint: { type: string }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPListingTool' }
+        registry_name: { type: string }
+        show_usage: { type: boolean }
+        version: { type: integer, description: "Bumped on every publish." }
+        published_at: { type: string, format: date-time }
+        page_url: { type: string, description: "The public listing page." }
+        server_json_url: { type: string, description: "The registry server.json, when registry_name is set." }
+    MCPListingInstall:
+      description: "Ways to add a listed MCP server to a client."
+      type: object
+      required: [cursor_url, vscode_url, client_config]
+      properties:
+        cursor_url: { type: string }
+        vscode_url: { type: string }
+        client_config: { type: object, additionalProperties: true, description: "An mcpServers client configuration." }
+    PublicMCPListingResponse:
+      description: "A sold MCP server's public listing."
+      type: object
+      required: [app, title, endpoint, summary, tools, plans, livemode, signup_open, install, published_at]
+      properties:
+        app: { type: string }
+        title: { type: string }
+        summary: { type: string, description: "What the listed server does." }
+        endpoint: { type: string }
+        tools:
+          type: array
+          items: { $ref: '#/components/schemas/MCPListingTool' }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+        trial_days: { type: integer }
+        livemode: { type: boolean }
+        signup_open: { type: boolean }
+        signup_url: { type: string, description: "The sign-up page, while sign-up is open." }
+        install: { $ref: '#/components/schemas/MCPListingInstall' }
+        published_at: { type: string, format: date-time }
+        customers: { type: integer, format: int64, description: "Open customers, when the seller shows usage." }
     MCPSellerStatsResponse:
       description: "A sold MCP server's customers, tools and revenue over UTC calendar months."
       type: object
