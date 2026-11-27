@@ -30,6 +30,10 @@ type agentActivityNote struct {
 	// binding is taken before the handler reads the body on routes that
 	// charge the agent budget (ADR-20261111114059).
 	binding *state.AgentApprovalBinding
+	// reservedBudget is agent budget reserved for this request and not yet
+	// committed by its handler; the middleware releases it once the handler
+	// returns (cost-control review 2026-11-19, N9).
+	reservedBudget int64
 }
 
 type agentActivityNoteKey struct{}

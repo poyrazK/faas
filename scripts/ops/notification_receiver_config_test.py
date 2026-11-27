@@ -31,6 +31,8 @@ class ReceiverConfigTest(unittest.TestCase):
             {"am_smtp_smarthost": "smtp.example:587"},
             {"am_slack_webhook_url_file": "  ", "am_slack_warn_webhook_url_file": "  "},
             {"am_heartbeat_url_file": " /unread/heartbeat "},
+            {"am_delivery_pagerduty_key_file": "  "},
+            {"am_delivery_pagerduty_key_file": " /unread/pagerduty ", "am_fleet_name": "dev-test"},
             {"am_slack_webhook_url_file": "/unread/slack", "am_discord_webhook_url_file": "/unread/discord",
              "am_slack_warn_webhook_url_file": "/unread/warn", "am_heartbeat_url_file": "/unread/heartbeat",
              "am_smtp_smarthost": "smtp.example:587", "am_smtp_password_file": "/unread/smtp",

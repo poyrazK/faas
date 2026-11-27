@@ -209,6 +209,15 @@ func (a storeAuthAdapter) AddAgentBudgetSpend(ctx context.Context, keyID string,
 	return nil
 }
 
+// ReserveAgentBudget forwards an atomic reservation; a store without
+// budgets reserves nothing and refuses nothing.
+func (a storeAuthAdapter) ReserveAgentBudget(ctx context.Context, keyID string, millicents, limitMillicents int64) (bool, error) {
+	if store, ok := a.agentBudgets(); ok {
+		return store.ReserveAgentBudget(ctx, keyID, millicents, limitMillicents)
+	}
+	return true, nil
+}
+
 // OrgAgentPolicy forwards the organization's agent policy; a store without
 // it has the default policy, with no approval floor.
 func (a storeAuthAdapter) OrgAgentPolicy(ctx context.Context, orgID string) (state.OrgAgentPolicy, error) {

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone.
+ * Crons, event subscriptions and bucket notifications enabled by resuming a stage's automation after a full environment clone.
  */
 export type ResumeEnvironmentAutomationResponse = {
   /**
@@ -26,5 +26,13 @@ export type ResumeEnvironmentAutomationResponse = {
    * Event subscriptions enabled by this call.
    */
   event_subscription_ids: Array<string>;
+  /**
+   * Number of buckets whose copied notification rules were resumed.
+   */
+  bucket_notifications_resumed: number;
+  /**
+   * Buckets whose notification rules this call resumed.
+   */
+  bucket_ids: Array<string>;
 };
 

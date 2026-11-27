@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // MaxLogGrepPatternBytes caps LogFilter.Grep. It lives here, not in
@@ -236,4 +237,41 @@ func (c *Client) stream(ctx context.Context, path string) (io.ReadCloser, error)
 		return nil, apiErrorFromResponse(resp, data)
 	}
 	return resp.Body, nil
+}
+
+// ParkedLogsSelection picks the archive that holds a parked app's most recent
+// output: its newest instance and the UTC day that instance started. A
+// scale-to-zero app is parked most of the time, so `gregale logs <slug>` (the
+// documented `--since 1h --level error` example included) used to answer only
+// "No running instance … read a parked instance's retained logs with --archive
+// --instance <id> --date <day>" (H10-72), and the management MCP server's
+// gregale_get_logs only "Log backend is degraded". ok is false when no
+// instance is known or the newest one had no activity since `since`.
+func ParkedLogsSelection(instances []InstanceResponse, since time.Time) (InstanceResponse, ArchiveLogSelector, bool) {
+	var newest InstanceResponse
+	var newestStart time.Time
+	for _, ins := range instances {
+		started, err := time.Parse(time.RFC3339, ins.StartedAt)
+		if err != nil {
+			continue
+		}
+		if newestStart.IsZero() || started.After(newestStart) {
+			newest, newestStart = ins, started
+		}
+	}
+	if newestStart.IsZero() {
+		return InstanceResponse{}, ArchiveLogSelector{}, false
+	}
+	if !since.IsZero() {
+		lastActive := newestStart
+		for _, raw := range []string{newest.LastRequestAt, newest.ParkedAt} {
+			if at, err := time.Parse(time.RFC3339, raw); err == nil && at.After(lastActive) {
+				lastActive = at
+			}
+		}
+		if lastActive.Before(since) {
+			return InstanceResponse{}, ArchiveLogSelector{}, false
+		}
+	}
+	return newest, ArchiveLogSelector{InstanceID: newest.ID, Date: newestStart.UTC().Format("2006-01-02")}, true
 }

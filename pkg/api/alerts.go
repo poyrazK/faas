@@ -111,6 +111,7 @@ var AllowedAlertRuleMetrics = []string{
 	AlertMetricRouteInsightsDetected,
 	AlertMetricRouteMonitorIncidents, AlertMetricRouteHealthHolds,
 	AlertMetricAIBudgetAlerts,
+	AlertMetricOOMKills,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -389,6 +390,8 @@ type CreateAlertRuleRequest struct {
 	PostDeployRollbackWindowSeconds *int    `json:"post_deploy_rollback_window_seconds,omitempty"`
 	Name                            string  `json:"name"`
 	Enabled                         *bool   `json:"enabled,omitempty"`
+	ObserveOnly                     bool    `json:"observe_only,omitempty"`
+	EnvironmentScope                string  `json:"environment_scope,omitempty"`
 	Metric                          string  `json:"metric"`
 	Comparison                      string  `json:"comparison"`
 	Threshold                       float64 `json:"threshold"`
@@ -404,11 +407,12 @@ type CreateAlertRuleRequest struct {
 	SyntheticCheckID   string            `json:"synthetic_check_id,omitempty"`
 	// ChannelIDs are ADR-749 notification channels the rule delivers to.
 	// With at least one channel, webhook_url and webhook_secret may be omitted.
-	ChannelIDs      []string `json:"channel_ids,omitempty"`
-	Action          *string  `json:"action,omitempty"`
-	WebhookURL      string   `json:"webhook_url"`
-	WebhookSecret   string   `json:"webhook_secret"`
-	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
+	ChannelIDs                 []string `json:"channel_ids,omitempty"`
+	Action                     *string  `json:"action,omitempty"`
+	WebhookURL                 string   `json:"webhook_url"`
+	WebhookSecret              string   `json:"webhook_secret"`
+	CooldownMinutes            *int     `json:"cooldown_minutes,omitempty"`
+	RecoveryConfirmationChecks *int     `json:"recovery_confirmation_checks,omitempty"`
 	// NotifyResolved also sends the webhook a signed resolve event when the
 	// rule recovers (ADR-20261029203000). Needs webhook_url.
 	NotifyResolved bool `json:"notify_resolved,omitempty"`
@@ -432,18 +436,21 @@ type UpdateAlertRuleRequest struct {
 	PostDeployRollbackWindowSeconds *int     `json:"post_deploy_rollback_window_seconds,omitempty"`
 	Name                            *string  `json:"name,omitempty"`
 	Enabled                         *bool    `json:"enabled,omitempty"`
+	ObserveOnly                     *bool    `json:"observe_only,omitempty"`
+	EnvironmentScope                *string  `json:"environment_scope,omitempty"`
 	Metric                          *string  `json:"metric,omitempty"`
 	Comparison                      *string  `json:"comparison,omitempty"`
 	Threshold                       *float64 `json:"threshold,omitempty"`
 	WindowSpec                      *string  `json:"window_spec,omitempty"`
 	// ChannelIDs replaces the rule's notification channels; an empty list
 	// clears them (allowed only while the rule has a webhook).
-	ChannelIDs      *[]string `json:"channel_ids,omitempty"`
-	Action          *string   `json:"action,omitempty"`
-	WebhookURL      *string   `json:"webhook_url,omitempty"`
-	WebhookSecret   *string   `json:"webhook_secret,omitempty"`
-	CooldownMinutes *int      `json:"cooldown_minutes,omitempty"`
-	NotifyResolved  *bool     `json:"notify_resolved,omitempty"`
+	ChannelIDs                 *[]string `json:"channel_ids,omitempty"`
+	Action                     *string   `json:"action,omitempty"`
+	WebhookURL                 *string   `json:"webhook_url,omitempty"`
+	WebhookSecret              *string   `json:"webhook_secret,omitempty"`
+	CooldownMinutes            *int      `json:"cooldown_minutes,omitempty"`
+	RecoveryConfirmationChecks *int      `json:"recovery_confirmation_checks,omitempty"`
+	NotifyResolved             *bool     `json:"notify_resolved,omitempty"`
 }
 
 // RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
@@ -464,37 +471,47 @@ type RotateAlertRuleSecretRequest struct {
 // state.* typed values at the boundary (handles the import cycle
 // for us).
 type AlertRuleResponse struct {
-	MCPReadinessScope               string            `json:"mcp_readiness_scope,omitempty"`
-	MCPMinCalls                     int               `json:"mcp_min_calls,omitempty"`
-	MCPForMinutes                   int               `json:"mcp_for_minutes,omitempty"`
-	EventSubscriptionID             string            `json:"event_subscription_id,omitempty"`
-	EdgeRuleID                      string            `json:"edge_rule_id,omitempty"`
-	PostDeployRollbackWindowSeconds int               `json:"post_deploy_rollback_window_seconds,omitempty"`
-	ID                              string            `json:"id"`
-	AppID                           string            `json:"app_id"`
-	Name                            string            `json:"name"`
-	Enabled                         bool              `json:"enabled"`
-	Metric                          string            `json:"metric"`
-	Comparison                      string            `json:"comparison"`
-	Threshold                       float64           `json:"threshold"`
-	WindowSpec                      string            `json:"window_spec"`
-	FailureSource                   string            `json:"failure_source,omitempty"`
-	CustomMetricName                string            `json:"custom_metric_name,omitempty"`
-	CustomMetricLabels              map[string]string `json:"custom_metric_labels,omitempty"`
-	LogQuery                        string            `json:"log_query,omitempty"`
-	SLOID                           string            `json:"slo_id,omitempty"`
-	SyntheticCheckID                string            `json:"synthetic_check_id,omitempty"`
-	ChannelIDs                      []string          `json:"channel_ids,omitempty"`
-	Action                          string            `json:"action"`
-	WebhookURL                      string            `json:"webhook_url"`
-	WebhookSecretSealedMasked       string            `json:"webhook_secret_sealed_masked"`
-	NotifyResolved                  bool              `json:"notify_resolved,omitempty"`
-	CooldownMinutes                 int               `json:"cooldown_minutes"`
-	State                           string            `json:"state"`
-	LastFiredAt                     string            `json:"last_fired_at,omitempty"`
-	LastEvaluatedAt                 string            `json:"last_evaluated_at,omitempty"`
-	CreatedAt                       string            `json:"created_at"`
-	UpdatedAt                       string            `json:"updated_at"`
+	AnomalyEvaluation   *AlertAnomalyEvaluation   `json:"anomaly_evaluation,omitempty"`
+	ObservedIncidents   []AlertObservedIncident   `json:"observed_incidents,omitempty"`
+	ObservationCoverage *AlertObservationCoverage `json:"observation_coverage,omitempty"`
+
+	MCPReadinessScope               string `json:"mcp_readiness_scope,omitempty"`
+	MCPMinCalls                     int    `json:"mcp_min_calls,omitempty"`
+	MCPForMinutes                   int    `json:"mcp_for_minutes,omitempty"`
+	EventSubscriptionID             string `json:"event_subscription_id,omitempty"`
+	EdgeRuleID                      string `json:"edge_rule_id,omitempty"`
+	PostDeployRollbackWindowSeconds int    `json:"post_deploy_rollback_window_seconds,omitempty"`
+	ID                              string `json:"id"`
+	AppID                           string `json:"app_id"`
+	// EnvironmentID is the stage the rule belongs to; omitted for
+	// production.
+	EnvironmentID              string            `json:"environment_id,omitempty"`
+	Name                       string            `json:"name"`
+	Enabled                    bool              `json:"enabled"`
+	ObserveOnly                bool              `json:"observe_only,omitempty"`
+	EnvironmentScope           string            `json:"environment_scope,omitempty"`
+	Metric                     string            `json:"metric"`
+	Comparison                 string            `json:"comparison"`
+	Threshold                  float64           `json:"threshold"`
+	WindowSpec                 string            `json:"window_spec"`
+	FailureSource              string            `json:"failure_source,omitempty"`
+	CustomMetricName           string            `json:"custom_metric_name,omitempty"`
+	CustomMetricLabels         map[string]string `json:"custom_metric_labels,omitempty"`
+	LogQuery                   string            `json:"log_query,omitempty"`
+	SLOID                      string            `json:"slo_id,omitempty"`
+	SyntheticCheckID           string            `json:"synthetic_check_id,omitempty"`
+	ChannelIDs                 []string          `json:"channel_ids,omitempty"`
+	Action                     string            `json:"action"`
+	WebhookURL                 string            `json:"webhook_url"`
+	WebhookSecretSealedMasked  string            `json:"webhook_secret_sealed_masked"`
+	NotifyResolved             bool              `json:"notify_resolved,omitempty"`
+	CooldownMinutes            int               `json:"cooldown_minutes"`
+	RecoveryConfirmationChecks int               `json:"recovery_confirmation_checks,omitempty"`
+	State                      string            `json:"state"`
+	LastFiredAt                string            `json:"last_fired_at,omitempty"`
+	LastEvaluatedAt            string            `json:"last_evaluated_at,omitempty"`
+	CreatedAt                  string            `json:"created_at"`
+	UpdatedAt                  string            `json:"updated_at"`
 }
 
 // AlertRuleRow is the closed-set-typed counterpart of AlertRuleResponse,
@@ -514,6 +531,8 @@ type AlertRuleRow struct {
 	AppID                           string
 	Name                            string
 	Enabled                         bool
+	ObserveOnly                     bool
+	EnvironmentScope                string
 	Metric                          string
 	Comparison                      string
 	Threshold                       float64
@@ -528,6 +547,7 @@ type AlertRuleRow struct {
 	WebhookURL                      string
 	NotifyResolved                  bool
 	CooldownMinutes                 int
+	RecoveryConfirmationChecks      int
 	State                           string
 	LastFiredAt                     time.Time
 	LastEvaluatedAt                 time.Time
@@ -554,6 +574,8 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		AppID:                           r.AppID,
 		Name:                            r.Name,
 		Enabled:                         r.Enabled,
+		ObserveOnly:                     r.ObserveOnly,
+		EnvironmentScope:                r.EnvironmentScope,
 		Metric:                          r.Metric,
 		Comparison:                      r.Comparison,
 		Threshold:                       r.Threshold,
@@ -569,6 +591,7 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,
 		NotifyResolved:                  r.NotifyResolved,
 		CooldownMinutes:                 r.CooldownMinutes,
+		RecoveryConfirmationChecks:      r.RecoveryConfirmationChecks,
 		State:                           r.State,
 		LastFiredAt:                     FormatAlertTime(r.LastFiredAt),
 		LastEvaluatedAt:                 FormatAlertTime(r.LastEvaluatedAt),
@@ -714,6 +737,9 @@ func IsRouteAlertMetric(metric string) bool {
 // window. Mirrors the alert_rules_route_alerts_chk constraint. AI budget
 // alerts share the same scope and windows and are checked here too.
 func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
+	if metric == AlertMetricOOMKills && appID == "" {
+		return ErrAlertRuleInvalid(metric + " alerts require an app")
+	}
 	if metric == AlertMetricAIBudgetAlerts {
 		return ValidateAIBudgetAlert(metric, windowSpec, appID)
 	}
@@ -735,6 +761,12 @@ func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
 // carry what the outbound.ai_budget.threshold webhook carried alone before
 // (ADR 20261027132936 amendment 2).
 const AlertMetricAIBudgetAlerts = "ai_budget_alerts"
+
+// AlertMetricOOMKills counts the app's instances killed for running out of
+// memory within the window: the kills `gregale debug status` lists. A crash
+// loop on a too-small plan was visible only there, with no alert a customer
+// could set (Observe audit 2026-11-21, finding 18). App-scoped.
+const AlertMetricOOMKills = "oom_kills"
 
 // AIBudgetAlertNotes caps how many crossings one notification lists.
 const AIBudgetAlertNotes = 5

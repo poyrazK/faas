@@ -13,6 +13,10 @@ export type FinancialBudgetEvaluation = {
   evidence_through_id: number;
   known_millicents?: number;
   coverage_complete: boolean;
+  /**
+   * Every selected meter was sampled enough to project the month: complete coverage, or at least 99% of the elapsed minutes with the last hour complete. Projected-overrun alerts need it.
+   */
+  projectable?: boolean;
   fresh: boolean;
   reasons: Array<string>;
   /**

@@ -1,6 +1,9 @@
 # ADR-20261029171525 · Export the dependency cache after the image handoff
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19, owner). Amendment 2 lifts amendment 1's
+  refusal. Rollout step 2 canary ran 2026-11-21 on OVH (about 17 s, 28%, off a
+  heavy app's build); step 3 turns it on in `perf_switches.yml`. Results under
+  "Canary 2026-11-21".
 - **Date:** 2026-10-29
 - **Amends:** when ADR-190's production BuildKit dependency cache is exported.
   What the cache holds, its keys and its import are unchanged. ADR-003, under
@@ -144,3 +147,53 @@ export inputs (CacheExportOnly manifest, fresh entropy seed, cleared result) rea
 the second VM without a host-side edit: staged by vmmd through pkg/guestdisk as it
 stages secrets.env, which needs a delete operation and a BuildSpec field, or
 delivered on a fresh read-only config drive.
+
+## Amendment 2 (2026-11-19): vmmd stages the export run's inputs
+
+The cache export run now gets its inputs the way amendment 1 asks, without a
+host-side edit of the build's drive.
+
+- **builderd** marshals the run's manifest (`cache_export_only`, the build's
+  plan, `dependency_cache`) and sends it in the new
+  `BuildSpec.cache_export_manifest`. It no longer replays the drive's journal
+  with e2fsck or rewrites it with debugfs; `prepareCacheExportDrive` is gone,
+  and `TestBuilderdDoesNotParseGuestDrivesOnTheHost` no longer allows
+  e2fsck in builderd.
+- **vmmd** validates the manifest (a builder VM only; `cache_export_only` and
+  `dependency_cache` set, `defer_cache_export` not; at most
+  `api.BuildCacheExportManifestMaxBytes`). Before boot it opens drive1 in the
+  vmmd-guestdisk sandbox as the jail uid, as it does for a job's manifest:
+  the session replays the journal, removes `/etc/faas/build-done.json`, and
+  writes `/etc/faas/build.json` and a fresh 256-byte `/etc/faas/entropy.seed`.
+- **Compatibility:** vmmd's Ping reports `supports_cache_export_staging`.
+  builderd defers a build's cache export only when it is set, and checks it
+  again before booting the run. An older vmmd therefore never gets a build
+  whose export it cannot stage; the build exports inline.
+- **The switch:** `ParseDeferCacheExport` accepts `true` again. The default
+  stays off until the canary.
+
+The warm builder refresh still edits a retained drive with debugfs on the
+host; warm builders stay off (H104) and are not part of this amendment.
+
+## Canary 2026-11-21
+
+Hand drop-in on OVH bhs-3, then bhs-2 (release 5f2ead4713). One app, a
+dependency changed before every build so each build exported a new cache;
+inline and deferred runs compared on the same node.
+
+| App | vm_build inline | vm_build deferred | Deferred save after handoff |
+|---|---|---|---|
+| Node, Next + AWS SDK + Prisma + sharp (153 KB lockfile) | 59.0, 60.9, 59.0 s | 42.7, 39.8, 43.1 s | ~24.5 s |
+| Express + 7 small packages | 13.9-15.3 s | 9.7-14.8 s | 5.2-8.2 s |
+
+The inline `cache_export_ms` (16.4-17.5 s for the heavy app) runs inside
+`build_command_ms`, so the saving is that export time, about 17 s, not the
+whole deferred run. Warm deploy wall time for the heavy app fell from
+177-197 s to 154-169 s.
+
+10 of 11 deferred exports saved, and the next build restored the cache. The
+11th was refused by vmmd's base scan gate (`scan_failed`) while a prepared
+release rescanned `base/runner-builder-amd64.ext4`. That failure only skips
+the cache save, and the build and deploy succeeded. Only the deferred path
+boots a second VM, so it is the only path that meets this window.
+

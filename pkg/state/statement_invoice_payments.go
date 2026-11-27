@@ -43,6 +43,9 @@ type StatementInvoicePayment struct {
 	HostedInvoiceURL     string
 }
 
+// ErrStatementInvoicePaymentStale means a newer provider observation was already stored.
+var ErrStatementInvoicePaymentStale = errors.New("state: older statement invoice payment observation")
+
 // StatementInvoicePaymentStore follows exported invoices' payment status.
 type StatementInvoicePaymentStore interface {
 	// ClaimStatementInvoiceSyncs returns completed exports due for a status
@@ -51,8 +54,12 @@ type StatementInvoicePaymentStore interface {
 	// RecordStatementInvoicePayment stores a synced status and returns the
 	// previous one; a nil next stops syncing.
 	RecordStatementInvoicePayment(ctx context.Context, exportID string, payment StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error)
-	// DeferStatementInvoiceSync retries a failed sync at next.
-	DeferStatementInvoiceSync(ctx context.Context, exportID string, next time.Time) error
+	// RecordStatementInvoicePaymentIfFresh rejects an observation that began before a newer one.
+	// An older observation returns ErrStatementInvoicePaymentStale.
+	RecordStatementInvoicePaymentIfFresh(ctx context.Context, exportID string, payment StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error)
+	// SetStatementInvoiceNextSync schedules the next check without changing
+	// the recorded payment or balance-check timestamp. Nil stops polling.
+	SetStatementInvoiceNextSync(ctx context.Context, exportID string, next *time.Time) error
 	// ListStatementInvoices pages an account's completed exports, newest
 	// first, after the given cursor; filter is a payment status, unpaid,
 	// overdue, or empty for all.
@@ -134,6 +141,14 @@ func (m *MemStore) ClaimStatementInvoiceSyncs(_ context.Context, now time.Time, 
 }
 
 func (m *MemStore) RecordStatementInvoicePayment(_ context.Context, exportID string, p StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error) {
+	return m.recordStatementInvoicePayment(exportID, p, syncedAt, next, false)
+}
+
+func (m *MemStore) RecordStatementInvoicePaymentIfFresh(_ context.Context, exportID string, p StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error) {
+	return m.recordStatementInvoicePayment(exportID, p, syncedAt, next, true)
+}
+
+func (m *MemStore) recordStatementInvoicePayment(exportID string, p StatementInvoicePayment, syncedAt time.Time, next *time.Time, requireFresh bool) (string, error) {
 	if err := validateInvoicePayment(p); err != nil {
 		return "", err
 	}
@@ -143,6 +158,9 @@ func (m *MemStore) RecordStatementInvoicePayment(_ context.Context, exportID str
 	if !ok {
 		return "", ErrNotFound
 	}
+	if requireFresh && e.StatusSyncedAt != nil && syncedAt.Before(*e.StatusSyncedAt) {
+		return "", ErrStatementInvoicePaymentStale
+	}
 	prev := e.PaymentStatus
 	paid, remaining, synced := p.AmountPaidMinor, p.AmountRemainingMinor, syncedAt.UTC()
 	e.PaymentStatus, e.AmountPaidMinor, e.AmountRemainingMinor = p.Status, &paid, &remaining
@@ -151,15 +169,18 @@ func (m *MemStore) RecordStatementInvoicePayment(_ context.Context, exportID str
 	return prev, nil
 }
 
-func (m *MemStore) DeferStatementInvoiceSync(_ context.Context, exportID string, next time.Time) error {
+func (m *MemStore) SetStatementInvoiceNextSync(_ context.Context, exportID string, next *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.statementInvoiceExports[exportID]
 	if !ok {
 		return ErrNotFound
 	}
-	at := next.UTC()
-	e.NextStatusSyncAt = &at
+	e.NextStatusSyncAt = nil
+	if next != nil {
+		at := next.UTC()
+		e.NextStatusSyncAt = &at
+	}
 	m.statementInvoiceExports[exportID] = e
 	return nil
 }
@@ -255,32 +276,48 @@ func (s *PgStore) ClaimStatementInvoiceSyncs(ctx context.Context, now time.Time,
 }
 
 func (s *PgStore) RecordStatementInvoicePayment(ctx context.Context, exportID string, p StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error) {
+	return s.recordStatementInvoicePayment(ctx, exportID, p, syncedAt, next, false)
+}
+
+func (s *PgStore) RecordStatementInvoicePaymentIfFresh(ctx context.Context, exportID string, p StatementInvoicePayment, syncedAt time.Time, next *time.Time) (string, error) {
+	return s.recordStatementInvoicePayment(ctx, exportID, p, syncedAt, next, true)
+}
+
+func (s *PgStore) recordStatementInvoicePayment(ctx context.Context, exportID string, p StatementInvoicePayment, syncedAt time.Time, next *time.Time, requireFresh bool) (string, error) {
 	if err := validateInvoicePayment(p); err != nil {
 		return "", err
 	}
 	var prev string
+	var updated bool
 	err := s.pool.QueryRow(ctx, `with prev as (
-			select coalesce(payment_status, '') as status from usage_statement_invoice_exports where id = $1::uuid for update)
-		update usage_statement_invoice_exports
-		   set payment_status = $2, amount_paid_minor = $3, amount_remaining_minor = $4, due_at = $5, paid_at = $6,
-		       hosted_invoice_url = nullif($7, ''), status_synced_at = $8, next_status_sync_at = $9
-		  from prev
-		 where id = $1::uuid
-		returning prev.status`, exportID, p.Status, p.AmountPaidMinor, p.AmountRemainingMinor, p.DueAt, p.PaidAt,
-		p.HostedInvoiceURL, syncedAt, next).Scan(&prev)
+			select coalesce(payment_status, '') as status, status_synced_at
+			  from usage_statement_invoice_exports where id = $1::uuid for update),
+		written as (
+			update usage_statement_invoice_exports
+			   set payment_status = $2, amount_paid_minor = $3, amount_remaining_minor = $4, due_at = $5, paid_at = $6,
+			       hosted_invoice_url = nullif($7, ''), status_synced_at = $8, next_status_sync_at = $9
+			  from prev
+			 where id = $1::uuid and (not $10::boolean or prev.status_synced_at is null or prev.status_synced_at <= $8)
+			returning id)
+		select prev.status, exists (select 1 from written) from prev`,
+		exportID, p.Status, p.AmountPaidMinor, p.AmountRemainingMinor, p.DueAt, p.PaidAt,
+		p.HostedInvoiceURL, syncedAt, next, requireFresh).Scan(&prev, &updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
 	if err != nil {
 		return "", fmt.Errorf("record statement invoice payment: %w", err)
 	}
+	if !updated {
+		return "", ErrStatementInvoicePaymentStale
+	}
 	return prev, nil
 }
 
-func (s *PgStore) DeferStatementInvoiceSync(ctx context.Context, exportID string, next time.Time) error {
+func (s *PgStore) SetStatementInvoiceNextSync(ctx context.Context, exportID string, next *time.Time) error {
 	tag, err := s.pool.Exec(ctx, `update usage_statement_invoice_exports set next_status_sync_at = $2 where id = $1::uuid`, exportID, next)
 	if err != nil {
-		return fmt.Errorf("defer statement invoice sync: %w", err)
+		return fmt.Errorf("set next statement invoice sync: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

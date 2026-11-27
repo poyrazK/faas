@@ -19,7 +19,10 @@
     # split-box registrations, so select compute rows with the gateway
     # endpoint required by the current deployment contract rather than the
     # active=true routing subset. Rows without that endpoint are legacy
-    # single-box/daemon compatibility registrations, not fleet hosts.
+    # single-box/daemon compatibility registrations, not fleet hosts. A
+    # retired node keeps its row for history but has no host left to renew;
+    # after the 2026-11-20 GCP-free cutover the retired fsn-2/fsn-3 rows
+    # blocked every renewal of the live fleet.
     - name: pki renewal — read the registered compute fleet
       ansible.builtin.command:
         argv:
@@ -38,6 +41,7 @@
              | selectattr('role', 'defined')
              | selectattr('role', 'equalto', 'compute-only')
              | selectattr('gateway_target_url', 'defined')
+             | rejectattr('lifecycle', 'equalto', 'retired')
              | map(attribute='name') | list | sort }}
         faas_pki_inventory_nodes: >-
           {{ groups['compute_nodes']
@@ -102,6 +106,13 @@
           - faas_box_role in ['control-plane', 'compute-only', 'database']
           - faas_node_name is defined
           - faas_node_name | length > 0
+
+    # The control plane's transport SAN is its private address.
+    - name: pki renewal — resolve the private transport address
+      ansible.builtin.include_tasks: tasks/resolve_private_address.yml
+      when:
+        - faas_box_role == 'control-plane'
+        - faas_private_dns_address is not defined
 
   roles:
     - role: internal_pki_renewal

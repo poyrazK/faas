@@ -44,12 +44,21 @@ type ExecutionNetworkPolicy struct {
 
 // ExecutionLimitRequest contains optional caller-selected resource limits.
 // Zero values select the account plan defaults.
+type ExecutionClass string
+
+const (
+	ExecutionClassStandard ExecutionClass = "standard"
+	ExecutionClassExtended ExecutionClass = "extended"
+)
+
 type ExecutionLimitRequest struct {
-	TimeoutMS       int `json:"timeout_ms,omitempty"`
-	MemoryMB        int `json:"memory_mb,omitempty"`
-	CPUMillicores   int `json:"cpu_millicores,omitempty"`
-	EphemeralDiskMB int `json:"ephemeral_disk_mb,omitempty"`
-	MaxOutputBytes  int `json:"max_output_bytes,omitempty"`
+	Class            ExecutionClass `json:"execution_class,omitempty"`
+	MaxArtifactBytes int64          `json:"max_artifact_bytes,omitempty"`
+	TimeoutMS        int            `json:"timeout_ms,omitempty"`
+	MemoryMB         int            `json:"memory_mb,omitempty"`
+	CPUMillicores    int            `json:"cpu_millicores,omitempty"`
+	EphemeralDiskMB  int            `json:"ephemeral_disk_mb,omitempty"`
+	MaxOutputBytes   int            `json:"max_output_bytes,omitempty"`
 }
 
 // ExecutionFile is a regular file in an ephemeral execution bundle. Content
@@ -89,6 +98,7 @@ type RevokeExecutionArtifactGrantResponse struct {
 
 // ExecutionArtifact is an explicitly exported output file; Content is base64 in JSON.
 type ExecutionArtifact struct {
+	FileID    string `json:"file_id,omitempty"`
 	Name      string `json:"name"`
 	SizeBytes int    `json:"size_bytes"`
 	SHA256    string `json:"sha256"`
@@ -99,29 +109,37 @@ type ExecutionArtifact struct {
 // Set either Source or Entrypoint + Files; source and input are never echoed
 // by the execution read APIs.
 type CreateExecutionRequest struct {
-	WorkflowID     string                   `json:"workflow_id,omitempty"`
-	StepLabel      string                   `json:"step_label,omitempty"`
-	IntegrationIDs []string                 `json:"integration_ids,omitempty"`
-	Profile        ExecutionProfile         `json:"profile,omitempty"`
-	Runtime        ExecutionRuntime         `json:"runtime"`
-	Source         string                   `json:"source,omitempty"`
-	Entrypoint     string                   `json:"entrypoint,omitempty"`
-	Files          []ExecutionFile          `json:"files,omitempty"`
-	ArtifactInputs []ExecutionArtifactInput `json:"artifact_inputs,omitempty"`
-	OutputFiles    []string                 `json:"output_files,omitempty"`
-	Input          json.RawMessage          `json:"input,omitempty"`
-	Limits         *ExecutionLimitRequest   `json:"limits,omitempty"`
-	Network        *ExecutionNetworkPolicy  `json:"network,omitempty"`
+	CustomerRef     string                   `json:"customer_ref,omitempty"`
+	EnvironmentID   string                   `json:"environment_id,omitempty"`
+	InputSchema     json.RawMessage          `json:"input_schema,omitempty"`
+	ResultSchema    json.RawMessage          `json:"result_schema,omitempty"`
+	InputFiles      []ExecutionFileInput     `json:"input_files,omitempty"`
+	ArtifactStorage ExecutionArtifactStorage `json:"artifact_storage,omitempty"`
+	WorkflowID      string                   `json:"workflow_id,omitempty"`
+	StepLabel       string                   `json:"step_label,omitempty"`
+	IntegrationIDs  []string                 `json:"integration_ids,omitempty"`
+	Profile         ExecutionProfile         `json:"profile,omitempty"`
+	Runtime         ExecutionRuntime         `json:"runtime"`
+	Source          string                   `json:"source,omitempty"`
+	Entrypoint      string                   `json:"entrypoint,omitempty"`
+	Files           []ExecutionFile          `json:"files,omitempty"`
+	ArtifactInputs  []ExecutionArtifactInput `json:"artifact_inputs,omitempty"`
+	OutputFiles     []string                 `json:"output_files,omitempty"`
+	Input           json.RawMessage          `json:"input,omitempty"`
+	Limits          *ExecutionLimitRequest   `json:"limits,omitempty"`
+	Network         *ExecutionNetworkPolicy  `json:"network,omitempty"`
 }
 
 // ResolvedExecutionLimits are the immutable limits admitted for one run.
 type ResolvedExecutionLimits struct {
-	TimeoutMS       int `json:"timeout_ms"`
-	MemoryMB        int `json:"memory_mb"`
-	CPUMillicores   int `json:"cpu_millicores"`
-	EphemeralDiskMB int `json:"ephemeral_disk_mb"`
-	MaxOutputBytes  int `json:"max_output_bytes"`
-	PIDsMax         int `json:"pids_max"`
+	Class            ExecutionClass `json:"execution_class,omitempty"`
+	MaxArtifactBytes int64          `json:"max_artifact_bytes,omitempty"`
+	TimeoutMS        int            `json:"timeout_ms"`
+	MemoryMB         int            `json:"memory_mb"`
+	CPUMillicores    int            `json:"cpu_millicores"`
+	EphemeralDiskMB  int            `json:"ephemeral_disk_mb"`
+	MaxOutputBytes   int            `json:"max_output_bytes"`
+	PIDsMax          int            `json:"pids_max"`
 }
 
 // ExecutionProfileCapability describes a profile recognized by the Runs
@@ -158,15 +176,24 @@ type ExecutionCapabilityLimits struct {
 // contract. AdmissionAvailable covers plan entitlement and the control-plane
 // API gate; it does not indicate scheduler or image readiness.
 type ExecutionCapabilitiesResponse struct {
-	Plan                string                       `json:"plan"`
-	AdmissionAvailable  bool                         `json:"admission_available"`
-	PlanEntitled        bool                         `json:"plan_entitled"`
-	ControlPlaneEnabled bool                         `json:"control_plane_enabled"`
-	UnavailableReasons  []string                     `json:"unavailable_reasons,omitempty"`
-	Runtimes            []ExecutionRuntime           `json:"runtimes"`
-	Profiles            []ExecutionProfileCapability `json:"profiles"`
-	NetworkModes        []ExecutionNetworkMode       `json:"network_modes"`
-	Limits              *ExecutionCapabilityLimits   `json:"limits,omitempty"`
+	TaskPipelines          bool                         `json:"task_pipelines,omitempty"`
+	RunControls            *RunControlCapabilities      `json:"run_controls,omitempty"`
+	EnvironmentRuntimes    []ExecutionRuntime           `json:"environment_runtimes,omitempty"`
+	EnvironmentLimits      *ExecutionEnvironmentLimits  `json:"environment_limits,omitempty"`
+	CustomEnvironments     bool                         `json:"custom_environments,omitempty"`
+	ExecutionClasses       []ExecutionClassCapability   `json:"execution_classes,omitempty"`
+	ExtendedAdmissions     bool                         `json:"extended_admissions,omitempty"`
+	FileLimits             *ExecutionFileLimits         `json:"file_limits,omitempty"`
+	MaxContractSchemaBytes int                          `json:"max_contract_schema_bytes,omitempty"`
+	Plan                   string                       `json:"plan"`
+	AdmissionAvailable     bool                         `json:"admission_available"`
+	PlanEntitled           bool                         `json:"plan_entitled"`
+	ControlPlaneEnabled    bool                         `json:"control_plane_enabled"`
+	UnavailableReasons     []string                     `json:"unavailable_reasons,omitempty"`
+	Runtimes               []ExecutionRuntime           `json:"runtimes"`
+	Profiles               []ExecutionProfileCapability `json:"profiles"`
+	NetworkModes           []ExecutionNetworkMode       `json:"network_modes"`
+	Limits                 *ExecutionCapabilityLimits   `json:"limits,omitempty"`
 }
 
 // ExecutionUsage contains bounded host-measured usage for a terminal run.
@@ -212,26 +239,30 @@ func (s ExecutionStatus) Terminal() bool {
 // access. Source and input are intentionally absent. A terminal receipt is persisted only after the
 // disposable VM has been destroyed.
 type ExecutionResponse struct {
-	WorkflowID         string                  `json:"workflow_id,omitempty"`
-	StepLabel          string                  `json:"step_label,omitempty"`
-	Profile            ExecutionProfile        `json:"profile"`
-	RuntimeImageDigest string                  `json:"runtime_image_digest,omitempty"`
-	Packages           map[string]string       `json:"packages,omitempty"`
-	ID                 string                  `json:"id"`
-	Status             ExecutionStatus         `json:"status"`
-	Runtime            ExecutionRuntime        `json:"runtime"`
-	Limits             ResolvedExecutionLimits `json:"limits"`
-	Artifacts          []ExecutionArtifact     `json:"artifacts,omitempty"`
-	Result             json.RawMessage         `json:"result,omitempty"`
-	Stdout             string                  `json:"stdout,omitempty"`
-	Stderr             string                  `json:"stderr,omitempty"`
-	OutputTruncated    bool                    `json:"output_truncated"`
-	ExitCode           *int                    `json:"exit_code,omitempty"`
-	Usage              *ExecutionUsage         `json:"usage,omitempty"`
-	Failure            *ExecutionFailure       `json:"failure,omitempty"`
-	CreatedAt          string                  `json:"created_at"`
-	StartedAt          *string                 `json:"started_at,omitempty"`
-	FinishedAt         *string                 `json:"finished_at,omitempty"`
+	Attribution        *RunAttribution            `json:"attribution,omitempty"`
+	Task               *ExecutionTaskRef          `json:"task,omitempty"`
+	EnvironmentID      string                     `json:"environment_id,omitempty"`
+	ResultValidation   *ExecutionResultValidation `json:"result_validation,omitempty"`
+	WorkflowID         string                     `json:"workflow_id,omitempty"`
+	StepLabel          string                     `json:"step_label,omitempty"`
+	Profile            ExecutionProfile           `json:"profile"`
+	RuntimeImageDigest string                     `json:"runtime_image_digest,omitempty"`
+	Packages           map[string]string          `json:"packages,omitempty"`
+	ID                 string                     `json:"id"`
+	Status             ExecutionStatus            `json:"status"`
+	Runtime            ExecutionRuntime           `json:"runtime"`
+	Limits             ResolvedExecutionLimits    `json:"limits"`
+	Artifacts          []ExecutionArtifact        `json:"artifacts,omitempty"`
+	Result             json.RawMessage            `json:"result,omitempty"`
+	Stdout             string                     `json:"stdout,omitempty"`
+	Stderr             string                     `json:"stderr,omitempty"`
+	OutputTruncated    bool                       `json:"output_truncated"`
+	ExitCode           *int                       `json:"exit_code,omitempty"`
+	Usage              *ExecutionUsage            `json:"usage,omitempty"`
+	Failure            *ExecutionFailure          `json:"failure,omitempty"`
+	CreatedAt          string                     `json:"created_at"`
+	StartedAt          *string                    `json:"started_at,omitempty"`
+	FinishedAt         *string                    `json:"finished_at,omitempty"`
 }
 
 type ExecutionWorkflowStatusCounts struct {
@@ -253,10 +284,11 @@ type ExecutionWorkflowUsage struct {
 }
 
 type ExecutionWorkflowResponse struct {
-	WorkflowID   string                        `json:"workflow_id"`
-	RunCount     int64                         `json:"run_count"`
-	StatusCounts ExecutionWorkflowStatusCounts `json:"status_counts"`
-	Usage        ExecutionWorkflowUsage        `json:"usage"`
+	Managed      []ManagedExecutionWorkflowResponse `json:"managed,omitempty"`
+	WorkflowID   string                             `json:"workflow_id"`
+	RunCount     int64                              `json:"run_count"`
+	StatusCounts ExecutionWorkflowStatusCounts      `json:"status_counts"`
+	Usage        ExecutionWorkflowUsage             `json:"usage"`
 }
 
 // ExecutionListResponse is one page of execution receipts visible to the caller.
@@ -656,9 +688,20 @@ func (c *PreviewClient) Run(ctx context.Context, req CreateExecutionRequest, opt
 
 // Bytes validates an inline artifact and returns an independent content copy.
 func (a ExecutionArtifact) Bytes() ([]byte, error) {
+	if a.FileID != "" {
+		return nil, fmt.Errorf("stored artifact bytes require authenticated DownloadExecutionFile")
+	}
 	hash := sha256.Sum256(a.Content)
 	if a.SizeBytes != len(a.Content) || a.SHA256 != "sha256:"+hex.EncodeToString(hash[:]) {
 		return nil, fmt.Errorf("execution artifact content failed integrity verification")
 	}
 	return append([]byte{}, a.Content...), nil
+}
+
+type ExecutionClassCapability struct {
+	Class              ExecutionClass `json:"execution_class"`
+	DefaultTimeoutMS   int            `json:"default_timeout_ms"`
+	MaxTimeoutMS       int            `json:"max_timeout_ms"`
+	MaxConcurrent      int            `json:"max_concurrent_runs"`
+	AdmissionAvailable bool           `json:"admission_available"`
 }

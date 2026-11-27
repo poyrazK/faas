@@ -16,6 +16,7 @@ on:
   pull_request:
     paths:
       - "deploy/ansible/**"
+      - "deploy/grafana/runtime-diagnostics.json"
       - "deploy/systemd/**"
       - "deploy/scripts/**"
       - "pkg/promqlrules/**"
@@ -31,6 +32,7 @@ on:
       - "scripts/ops/obs_gate_test.py"
       - "scripts/ops/faas_serving_probe_test.py"
       - "scripts/ops/serving_probe_coverage_test.py"
+      - "scripts/ops/runtime_diagnostics_dashboard_test.py"
       - "scripts/ops/notification_drill.py"
       - "scripts/ops/notification_drill_test.py"
       - "scripts/ops/notification_receiver_metrics_test.py"

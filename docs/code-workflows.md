@@ -1,7 +1,8 @@
 # Code-first workflows
 
-Write a durable workflow as an ordinary async function. Each `step` runs at
-least once and its result is recorded; `sleep` and `waitForEvent` park the run
+Write a durable workflow with retries as an ordinary async function. Each `step` runs at
+least once, retries on failure (3 attempts with exponential back-off unless
+you set a policy) and has its result recorded; `sleep` and `waitForEvent` park the run
 for seconds or months without keeping a VM alive. When the run resumes, your
 function is replayed: recorded steps return their stored result instantly and
 execution continues where it stopped.

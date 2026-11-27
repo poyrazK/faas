@@ -266,6 +266,9 @@ func scanLoaders(root string) (map[string]int, error) {
 				return fmt.Errorf("parse %s: %w", rel, err)
 			}
 			n := countLoaderCalls(f)
+			if rel == "pkg/runfilestore/keys.go" {
+				n -= countRunFileDataKeyParses(f)
+			}
 			if n > 0 {
 				out[rel] = n
 			}
@@ -402,4 +405,34 @@ func render(found map[string]bool) string {
 	}
 	sort.Strings(lines)
 	return baselineHeader + strings.Join(lines, "\n") + "\n"
+}
+
+// ADR 20261114030000: the single scoped fileIdentity helper handles delegated
+// object keys, like crashcrypt's per-capture identity, without loading a daemon
+// credential. Keep all other loaders and every other function in this package
+// subject to the ordinary gate. This does not grow the baseline.
+func countRunFileDataKeyParses(f *ast.File) int {
+	n := 0
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "fileIdentity" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if ok && pkg.Name == "age" && sel.Sel.Name == "ParseX25519Identity" {
+				n++
+			}
+			return true
+		})
+	}
+	return min(n, 1)
 }

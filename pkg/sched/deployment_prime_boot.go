@@ -70,6 +70,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 	if err != nil {
 		return result, fmt.Errorf("sched: prime: %w", err)
 	}
+	app = app.WithAPISandboxEgress()
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: primeLayer,
 		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),
@@ -90,10 +91,10 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
+		APIEnv: e.withWorkloadS3Env(app, e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		)),
+		))),
 		// ADR-031: see the Wake builder above. Prime is the
 		// deploy-pipeline first boot — same wire shape, same
 		// per-netns ruleset; a freshly-deployed app starts under
@@ -118,6 +119,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// inferred profile starts Node/Python apps on their framework port.
 		Port:                     deploymentRuntimePort(dep),
 		HealthcheckPath:          healthcheckPath,
+		ProbeHost:                e.probeHostFor(app, dep),
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		RoutedPortRawTCP:         routedPortRawTCPForApp(dep, app, healthcheckPath, healthcheckGRPC),

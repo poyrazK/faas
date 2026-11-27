@@ -58,6 +58,13 @@ func validateQueueBindingClass(class string) *api.Problem {
 // therefore consume a push binding without pretending to be a long-lived
 // worker; pull bindings retain their worker/job contract.
 func validateQueueBindingTarget(mode, class string, app state.App) *api.Problem {
+	// prod 2026-11-20: an HTTP app got "workload_class \"worker\" does not
+	// match app workload class \"http\"", then, with --workload-class http,
+	// "requires push mode and a function app": no binding can succeed, so say
+	// that once.
+	if app.Type != state.AppTypeFunction && queueBindingAppClass(app) == state.WorkloadClassHTTP {
+		return queueBindingProblem("an HTTP app cannot consume a queue: a push binding needs a function app and a pull binding a worker or job app; send this queue's work to one of those (docs/queue-pull-leases.md)")
+	}
 	if class == string(state.WorkloadClassHTTP) {
 		if mode != "push" || app.Type != state.AppTypeFunction {
 			return queueBindingProblem(`workload_class "http" requires push mode and a function app`)

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
@@ -320,6 +321,9 @@ type ColdBootSpec struct {
 	// health.v1 Check action. Both probe types target <HostIP>:8080.
 	// Forwarded from WakeRequest by Manager.bringUp.
 	HealthcheckPath string
+	// ProbeHost (ADR-20261119140000) is the Host header readiness GETs
+	// send; empty sends the instance address.
+	ProbeHost string
 	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
@@ -341,6 +345,10 @@ type ColdBootSpec struct {
 	// only for functions) with api.FunctionRunnerBootArg so guest-init skips
 	// characterization's L7 probes, which would run the customer's handler.
 	FunctionRunner bool
+	// RawTCPListener boots a guest whose routed port is a raw TCP server
+	// (WakeRequest.RoutedPortRawTCP) with api.RawTCPListenerBootArg so
+	// guest-init does not send its HTTP and gRPC probes to it.
+	RawTCPListener bool
 	// WorkerPushDelivery lets a worker-mode app with a push queue binding
 	// bind its private delivery port at startup (WakeRequest field).
 	WorkerPushDelivery bool
@@ -388,6 +396,11 @@ type ColdBootSpec struct {
 	// drive2 after its scratch layer (ADR-20261030122204); the guest mounts it
 	// as BuildKit's root. Empty: no drive2. Only builder VMs take one.
 	BuildKitSeedDrive string
+	// SandboxVolume attaches a persistent sandbox session's workspace volume
+	// (ADR-20261122132055 §4), a host path, as a writable drive2 after its
+	// sandbox layer; guest-init mounts it at /workspace. The file is bound
+	// into the jail, never copied.
+	SandboxVolume string
 	// Backing is the ADR-510 backing check that ran before this boot, when a
 	// restore was attempted first; it rides wake.cold_boot_breakdown.
 	Backing BackingCheckTimings
@@ -533,6 +546,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	if s.BuildKitSeedDrive != "" {
 		drives = append(drives, Drive{DriveID: DriveBuildKitSeed, PathOnHost: s.BuildKitSeedDrive})
 	}
+	if s.SandboxVolume != "" {
+		drives = append(drives, Drive{DriveID: DriveSandboxVolume, PathOnHost: s.SandboxVolume})
+	}
 	if s.AgentInput {
 		drives = append(drives, Drive{DriveID: DriveAgentInput, PathOnHost: s.InputKey, IsReadOnly: true})
 	}
@@ -551,6 +567,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	}
 	if s.FunctionRunner && !s.Networkless {
 		bootArgs = strings.TrimSpace(bootArgs) + " " + api.FunctionRunnerBootArg
+	}
+	if s.RawTCPListener && !s.Networkless {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.RawTCPListenerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},
@@ -618,6 +637,8 @@ func (s ColdBootSpec) Validate() error {
 		return fmt.Errorf("fcvm: cold boot: an input drive needs a networkless single-layer guest")
 	case s.BuildKitSeedDrive != "" && (!s.SkipReady || s.AgentInput || s.AppTask || s.Networkless || len(s.Workloads) > 0):
 		return fmt.Errorf("fcvm: cold boot: a buildkit seed drive needs a single-layer builder guest")
+	case s.SandboxVolume != "" && (s.AgentInput || s.BuildKitSeedDrive != "" || s.AppTask || len(s.Workloads) > 0):
+		return fmt.Errorf("fcvm: cold boot: a sandbox volume needs a single-layer sandbox guest")
 	}
 	return nil
 }
@@ -653,6 +674,11 @@ const (
 	// lets the privileged supervisor apply the per-build fence after jailer
 	// creates the instance scope.
 	BuilderCgroupParent = "faas.slice/faas-cp.slice/faas-cp-build.slice"
+	// BorrowedBuilderCgroupParent holds builder VMs on borrowed builder
+	// slots (ADR-20261118154632). It sits beside faas-cp.slice, so a
+	// borrowed build is outside the control-plane fence and uses memory the
+	// tenant slice is not using; builderd and vmmd take it back for tenants.
+	BorrowedBuilderCgroupParent = builderslots.BorrowedSlice
 	// defaultParentCgroup is the legacy 2-level hierarchy (free / hobby /
 	// pro / scale unaware) — kept as a non-empty fallback for callers
 	// that don't pass a plan through (e.g. unit tests that mock the

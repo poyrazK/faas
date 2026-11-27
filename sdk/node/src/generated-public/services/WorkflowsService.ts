@@ -2,10 +2,18 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AdvanceStoredWorkflowLiveSuiteRequest } from '../models/AdvanceStoredWorkflowLiveSuiteRequest.js';
+import type { CheckStoredWorkflowPublicationRequest } from '../models/CheckStoredWorkflowPublicationRequest.js';
+import type { CheckStoredWorkflowPublicationResponse } from '../models/CheckStoredWorkflowPublicationResponse.js';
 import type { CompleteWorkflowCallbackResponse } from '../models/CompleteWorkflowCallbackResponse.js';
 import type { CreateWorkflowCallbackWebhookBindingRequest } from '../models/CreateWorkflowCallbackWebhookBindingRequest.js';
 import type { InjectWorkflowEventRequest } from '../models/InjectWorkflowEventRequest.js';
 import type { InjectWorkflowEventResponse } from '../models/InjectWorkflowEventResponse.js';
+import type { ListStoredWorkflowLiveBaselinesResponse } from '../models/ListStoredWorkflowLiveBaselinesResponse.js';
+import type { ListStoredWorkflowLiveSuitesResponse } from '../models/ListStoredWorkflowLiveSuitesResponse.js';
+import type { ListStoredWorkflowLiveVerificationsResponse } from '../models/ListStoredWorkflowLiveVerificationsResponse.js';
+import type { ListStoredWorkflowRevisionsResponse } from '../models/ListStoredWorkflowRevisionsResponse.js';
+import type { ListStoredWorkflowsResponse } from '../models/ListStoredWorkflowsResponse.js';
 import type { ListWorkflowCallbacksResponse } from '../models/ListWorkflowCallbacksResponse.js';
 import type { ListWorkflowResumesResponse } from '../models/ListWorkflowResumesResponse.js';
 import type { ListWorkflowRunsResponse } from '../models/ListWorkflowRunsResponse.js';
@@ -13,12 +21,43 @@ import type { ListWorkflowScheduleOccurrencesResponse } from '../models/ListWork
 import type { ListWorkflowSchedulesResponse } from '../models/ListWorkflowSchedulesResponse.js';
 import type { ListWorkflowStepAttemptsResponse } from '../models/ListWorkflowStepAttemptsResponse.js';
 import type { ListWorkflowStepsResponse } from '../models/ListWorkflowStepsResponse.js';
+import type { PromoteStoredWorkflowLiveBaselineRequest } from '../models/PromoteStoredWorkflowLiveBaselineRequest.js';
+import type { PublishStoredWorkflowRequest } from '../models/PublishStoredWorkflowRequest.js';
+import type { RestoreStoredWorkflowRevisionRequest } from '../models/RestoreStoredWorkflowRevisionRequest.js';
+import type { ResumeStoredWorkflowFailurePauseRequest } from '../models/ResumeStoredWorkflowFailurePauseRequest.js';
 import type { ResumeWorkflowRunRequest } from '../models/ResumeWorkflowRunRequest.js';
+import type { RetireStoredWorkflowLiveBaselineRequest } from '../models/RetireStoredWorkflowLiveBaselineRequest.js';
+import type { RunStoredWorkflowTestsRequest } from '../models/RunStoredWorkflowTestsRequest.js';
+import type { SaveStoredWorkflowDraftRequest } from '../models/SaveStoredWorkflowDraftRequest.js';
+import type { SaveStoredWorkflowLiveSuiteRequest } from '../models/SaveStoredWorkflowLiveSuiteRequest.js';
+import type { SaveStoredWorkflowTestSuiteRequest } from '../models/SaveStoredWorkflowTestSuiteRequest.js';
+import type { SetStoredWorkflowEnabledRequest } from '../models/SetStoredWorkflowEnabledRequest.js';
+import type { SetStoredWorkflowFailurePolicyRequest } from '../models/SetStoredWorkflowFailurePolicyRequest.js';
+import type { SetStoredWorkflowPublishPolicyRequest } from '../models/SetStoredWorkflowPublishPolicyRequest.js';
+import type { SimulateStoredWorkflowRequest } from '../models/SimulateStoredWorkflowRequest.js';
+import type { SimulateStoredWorkflowResponse } from '../models/SimulateStoredWorkflowResponse.js';
+import type { StartStoredWorkflowLiveSuiteRequest } from '../models/StartStoredWorkflowLiveSuiteRequest.js';
+import type { StartStoredWorkflowLiveVerificationRequest } from '../models/StartStoredWorkflowLiveVerificationRequest.js';
+import type { StoredWorkflowFailurePolicyResponse } from '../models/StoredWorkflowFailurePolicyResponse.js';
+import type { StoredWorkflowHealthResponse } from '../models/StoredWorkflowHealthResponse.js';
+import type { StoredWorkflowLiveBaseline } from '../models/StoredWorkflowLiveBaseline.js';
+import type { StoredWorkflowLiveBaselineHistory } from '../models/StoredWorkflowLiveBaselineHistory.js';
+import type { StoredWorkflowLiveBaselineRetirement } from '../models/StoredWorkflowLiveBaselineRetirement.js';
+import type { StoredWorkflowLiveSuite } from '../models/StoredWorkflowLiveSuite.js';
+import type { StoredWorkflowLiveSuiteComparison } from '../models/StoredWorkflowLiveSuiteComparison.js';
+import type { StoredWorkflowLiveVerification } from '../models/StoredWorkflowLiveVerification.js';
+import type { StoredWorkflowPublishPolicy } from '../models/StoredWorkflowPublishPolicy.js';
+import type { StoredWorkflowResponse } from '../models/StoredWorkflowResponse.js';
+import type { StoredWorkflowRevisionResponse } from '../models/StoredWorkflowRevisionResponse.js';
+import type { StoredWorkflowTestReport } from '../models/StoredWorkflowTestReport.js';
+import type { ValidateStoredWorkflowRequest } from '../models/ValidateStoredWorkflowRequest.js';
+import type { ValidateStoredWorkflowResponse } from '../models/ValidateStoredWorkflowResponse.js';
 import type { WorkflowCallbackWebhookBindingResponse } from '../models/WorkflowCallbackWebhookBindingResponse.js';
 import type { WorkflowQueuedRunCancelRequest } from '../models/WorkflowQueuedRunCancelRequest.js';
 import type { WorkflowQueuedRunCancelResponse } from '../models/WorkflowQueuedRunCancelResponse.js';
 import type { WorkflowRunDiagnosticsResponse } from '../models/WorkflowRunDiagnosticsResponse.js';
 import type { WorkflowRunResponse } from '../models/WorkflowRunResponse.js';
+import type { WorkflowRunStartLookupResponse } from '../models/WorkflowRunStartLookupResponse.js';
 import type { WorkflowSchedulePreviewResponse } from '../models/WorkflowSchedulePreviewResponse.js';
 import type { WorkflowScheduleReplayRequest } from '../models/WorkflowScheduleReplayRequest.js';
 import type { WorkflowScheduleReplayResponse } from '../models/WorkflowScheduleReplayResponse.js';
@@ -27,6 +66,950 @@ import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class WorkflowsService {
   protected static readonly clientConfig?: typeof OpenAPI;
+  /**
+   * List drafts and published stored workflows, including YAML definitions.
+   * @returns ListStoredWorkflowsResponse listStoredWorkflows result.
+   * @throws ApiError
+   */
+  public static listStoredWorkflows({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListStoredWorkflowsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Simulate stored workflow data flow with sample input and successful action mocks.
+   * Returns a deterministic hypothetical trace without saving a definition,
+   * creating runs, invoking handlers, publishing events or calling integrations.
+   * Requires ownership, MFA and read scope. Works without a live deployment
+   * or enabled workflow runtime. Definition validation uses the account plan
+   * and checks managed integration bindings without opening credentials.
+   * Missing action results block dependent steps. Waits remain unresolved;
+   * failure and timeout outcomes cannot be injected. Action mocks using the
+   * reserved exact {"timeout":true} output with an on_timeout route return
+   * 400. Loop mocks form a
+   * sequential prefix. A complete trace means all roots resolved or skipped
+   * under the supplied successful mocks, not that live execution will succeed.
+   * Limits: 3 MiB request, 1 MiB definition and each sample value, 128 roots,
+   * 1024 trace entries and 4 MiB response, plus existing loop bounds.
+   * Invalid definitions return 200 with definition_valid=false and no trace.
+   *
+   * @returns SimulateStoredWorkflowResponse Definition validation and the bounded hypothetical execution trace.
+   * @throws ApiError
+   */
+  public static simulateStoredWorkflow({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Candidate definition, workflow input and hypothetical successful action results.
+     */
+    requestBody: SimulateStoredWorkflowRequest,
+  }): CancelablePromise<SimulateStoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored:simulate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Validate a definition without saving it or executing any steps.
+   * @returns ValidateStoredWorkflowResponse validateStoredWorkflow result.
+   * @throws ApiError
+   */
+  public static validateStoredWorkflow({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ValidateStoredWorkflowRequest,
+  }): CancelablePromise<ValidateStoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored:validate',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read a stored workflow draft and its published definition.
+   * @returns StoredWorkflowResponse getStoredWorkflow result.
+   * @throws ApiError
+   */
+  public static getStoredWorkflow({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow name, shared with workflow run endpoints.
+     */
+    name: string,
+  }): CancelablePromise<StoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Save a draft with optimistic version checking; running definitions stay unchanged.
+   * @returns StoredWorkflowResponse saveStoredWorkflowDraft result.
+   * @throws ApiError
+   */
+  public static saveStoredWorkflowDraft({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow name, shared with workflow run endpoints.
+     */
+    name: string,
+    requestBody: SaveStoredWorkflowDraftRequest,
+  }): CancelablePromise<StoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Remove a dashboard definition; restoring YAML ownership requires explicit confirmation.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteStoredWorkflow({
+    slug,
+    name,
+    expectedVersion,
+    restoreManifest = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow name, shared with workflow run endpoints.
+     */
+    name: string,
+    /**
+     * Revision returned by the most recent read or save.
+     */
+    expectedVersion: number,
+    /**
+     * Explicitly return ownership to the current YAML definition after deletion.
+     */
+    restoreManifest?: boolean,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/workflows/stored/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'expected_version': expectedVersion,
+        'restore_manifest': restoreManifest,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect failure pause policy and resume preview.
+   * Returns aggregate terminal outcomes since monitoring began or resumed, current pause generation, active run counts, retained event count and the latest 100 pause/resume transitions. Counts are advisory; no run payloads or error messages are included.
+   * @returns StoredWorkflowFailurePolicyResponse Current monitoring policy, failure pause, retained work preview and recent transitions.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowFailurePolicy({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Published stored workflow whose failure admission guard is inspected or changed.
+     */
+    name: string,
+  }): CancelablePromise<StoredWorkflowFailurePolicyResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/failure-policy',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code stored_workflow_failure_policy_conflict; reload failure guard state before a conflicting operation.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+      },
+    });
+  }
+  /**
+   * Configure automatic pausing after repeated failures.
+   * Opt-in policy for a published YAML or dashboard stored workflow; requires deploy write scope. Compare-and-set expected_version starts at zero. Scheduler ticks latch a runtime pause when both failure count and minimum completed-run count are met. Policy edits, disabling monitoring, publishing, and ordinary enabled changes do not clear an existing failure pause.
+   * @returns StoredWorkflowFailurePolicyResponse Updated failure monitoring configuration with the current independent admission guard.
+   * @throws ApiError
+   */
+  public static setStoredWorkflowFailurePolicy({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Published stored workflow whose failure admission guard is inspected or changed.
+     */
+    name: string,
+    requestBody: SetStoredWorkflowFailurePolicyRequest,
+  }): CancelablePromise<StoredWorkflowFailurePolicyResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/failure-policy',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code stored_workflow_failure_policy_conflict; the expected failure policy version changed.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+      },
+    });
+  }
+  /**
+   * Explicitly clear a failure pause after inspecting retained work.
+   * Requires deploy write scope and the current positive pause generation. Starts a fresh monitoring epoch and re-arms schedules without catch-up for the paused interval. Existing runs continue and captured events remain subject to their routing retention; events received without an eligible recipient are not replayed. This action does not change manual pause intent.
+   * @returns StoredWorkflowFailurePolicyResponse Explicitly resumed guard state with fresh monitoring counts and transition history.
+   * @throws ApiError
+   */
+  public static resumeStoredWorkflowFailurePause({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Published stored workflow whose current failure pause is explicitly resumed.
+     */
+    name: string,
+    requestBody: ResumeStoredWorkflowFailurePauseRequest,
+  }): CancelablePromise<StoredWorkflowFailurePolicyResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/failure-policy/resume',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code stored_workflow_failure_policy_conflict; the reviewed pause generation is stale or no pause remains.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+      },
+    });
+  }
+  /**
+   * Get bounded execution health for one stored workflow.
+   * Returns run counts by status, the completed-run success rate, median
+   * and p95 duration, recent run identities and the most common failed
+   * steps. Inputs, outputs, and error text are never included. The default
+   * window is the previous seven days; the maximum window is 30 days.
+   * created_after and created_before are inclusive RFC3339 timestamps, and
+   * created_before may not be in the future. Failed loop items are grouped
+   * under their parent step; at most ten failed steps are returned.
+   *
+   * @returns StoredWorkflowHealthResponse Safe operational summary for the selected stored workflow and time window.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowHealth({
+    slug,
+    name,
+    createdAfter,
+    createdBefore,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose recent execution health is summarized.
+     */
+    name: string,
+    /**
+     * Inclusive start of the summary window; defaults to seven days before created_before or now.
+     */
+    createdAfter?: string,
+    /**
+     * Inclusive end of the summary window; defaults to now.
+     */
+    createdBefore?: string,
+  }): CancelablePromise<StoredWorkflowHealthResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/health',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'created_after': createdAfter,
+        'created_before': createdBefore,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List published stored workflow revisions, newest first.
+   * @returns ListStoredWorkflowRevisionsResponse Immutable published definitions and pagination metadata.
+   * @throws ApiError
+   */
+  public static listStoredWorkflowRevisions({
+    slug,
+    name,
+    limit = 50,
+    offset,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose immutable published revisions are listed.
+     */
+    name: string,
+    /**
+     * Maximum number of revisions to return (1–100; defaults to 50).
+     */
+    limit?: number,
+    /**
+     * Number of newest revisions to skip before returning results (maximum 2147483647).
+     */
+    offset?: number,
+  }): CancelablePromise<ListStoredWorkflowRevisionsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/revisions',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      query: {
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read one immutable published stored workflow revision.
+   * @returns StoredWorkflowRevisionResponse The selected published definition and its canonical hash.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowRevision({
+    slug,
+    name,
+    version,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow that owns the requested published revision.
+     */
+    name: string,
+    /**
+     * Published revision identifier returned by the revision list.
+     */
+    version: number,
+  }): CancelablePromise<StoredWorkflowRevisionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/revisions/{version}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'version': version,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Restore a published revision as a new draft using optimistic version checking.
+   * Copies the selected immutable revision into the stored workflow's draft. It
+   * does not publish the copy or change running and accepted workflows.
+   * Send expected_version from the latest stored workflow read; use zero when
+   * creating a draft after the stored workflow was deleted. YAML ownership still
+   * requires explicit takeover when the restored draft is later published.
+   *
+   * @returns StoredWorkflowResponse The updated stored workflow draft; publishing remains a separate operation.
+   * @throws ApiError
+   */
+  public static restoreStoredWorkflowRevision({
+    slug,
+    name,
+    version,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow that receives the restored draft.
+     */
+    name: string,
+    /**
+     * Published revision to copy into the current draft.
+     */
+    version: number,
+    requestBody: RestoreStoredWorkflowRevisionRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<StoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/revisions/{version}/restore',
+      path: {
+        'slug': slug,
+        'name': name,
+        'version': version,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Inspect required publishing checks.
+   * @returns StoredWorkflowPublishPolicy Publishing policy currently configured for this app.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowPublishPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<StoredWorkflowPublishPolicy> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored:publish-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Set required publishing checks using admin scope and the current policy version.
+   * @returns StoredWorkflowPublishPolicy Publishing policy after the requested versioned update.
+   * @throws ApiError
+   */
+  public static setStoredWorkflowPublishPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetStoredWorkflowPublishPolicyRequest,
+  }): CancelablePromise<StoredWorkflowPublishPolicy> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored:publish-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Save or clear reusable test data using the current draft version.
+   * @returns StoredWorkflowResponse Versioned saved test data.
+   * @throws ApiError
+   */
+  public static saveStoredWorkflowTestSuite({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose reusable test suite is replaced or cleared.
+     */
+    name: string,
+    requestBody: SaveStoredWorkflowTestSuiteRequest,
+  }): CancelablePromise<StoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/tests',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Simulate all saved cases against the saved draft and retain safe results.
+   * @returns StoredWorkflowTestReport Case and assertion summaries without payloads or publishing authority.
+   * @throws ApiError
+   */
+  public static runStoredWorkflowTests({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose saved test cases are simulated.
+     */
+    name: string,
+    requestBody: RunStoredWorkflowTestsRequest,
+  }): CancelablePromise<StoredWorkflowTestReport> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/tests/run',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Evaluate scenario assertions and coverage on the server and issue a bound receipt.
+   * @returns CheckStoredWorkflowPublicationResponse Server-issued publishing receipt and verified check metadata.
+   * @throws ApiError
+   */
+  public static checkStoredWorkflowPublication({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved stored workflow draft to check.
+     */
+    name: string,
+    requestBody: CheckStoredWorkflowPublicationRequest,
+  }): CancelablePromise<CheckStoredWorkflowPublicationResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/publish-check',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
+   * Published definitions survive future YAML deployments. A live default deployment is required. Runtime execution also requires workflows to be enabled on the platform. Events accepted before publication retain their captured definition.
+   * @returns StoredWorkflowResponse publishStoredWorkflow result.
+   * @throws ApiError
+   */
+  public static publishStoredWorkflow({
+    slug,
+    name,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose saved draft will be published.
+     */
+    name: string,
+    requestBody: PublishStoredWorkflowRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<StoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/publish',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Pause or resume automatic starts without cancelling existing runs.
+   * @returns StoredWorkflowResponse setStoredWorkflowEnabled result.
+   * @throws ApiError
+   */
+  public static setStoredWorkflowEnabled({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose automatic starts will be paused or resumed.
+     */
+    name: string,
+    requestBody: SetStoredWorkflowEnabledRequest,
+  }): CancelablePromise<StoredWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/enabled',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
   /**
    * Inspect scheduled workflow admission history
    * Started and skipped due minutes retained for 30 days. Requires app read access. History includes all linked tenants; optionally filter by tenant. No missed-minute catch-up is inferred.
@@ -292,6 +1275,57 @@ export class WorkflowsService {
         403: `code: plan_workflows_quota | forbidden — the concurrent-run cap is exhausted or the caller lacks scope.`,
         404: `code: workflow_definition_not_found | app_not_found — the app or named live workflow definition does not exist.`,
         409: `Tenant-required apps need a tenant-scoped run route, or the Idempotency-Key was already used with different workflow input.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Find a retained workflow run by its original pipeline-tool start key.
+   * Reads the existing workflow admission binding for this app and workflow.
+   * A successful response contains only the native run ID. This operation
+   * applies to non-tenant pipeline-tool starts while the run is retained.
+   *
+   * @returns WorkflowRunStartLookupResponse An accepted run for this key.
+   * @throws ApiError
+   */
+  public static lookupWorkflowRunStart({
+    slug,
+    name,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Workflow name used for the original start.
+     */
+    name: string,
+    /**
+     * The pipeline tool start receipt's original native idempotency key.
+     */
+    idempotencyKey: string,
+  }): CancelablePromise<WorkflowRunStartLookupResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/run-starts/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: workflow_run_not_found | app_not_found — no retained scoped start matches this key.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -1001,6 +2035,758 @@ export class WorkflowsService {
       errors: {
         401: `code: unauthorized`,
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Discover named baseline heads and current retained evidence health.
+   * Read-only coherent snapshot, sorted by baseline name and bounded by the 20-name quota. Requires app read scope. Never runs workflows, checks assertions, repairs evidence or promotes. Evidence availability and renewal readiness are separate observations, not CI gate verdicts: historical baseline targets and baseline age remain allowed by CI. Renewal evaluates original run age and the current target against each promoted policy.
+   * @returns ListStoredWorkflowLiveBaselinesResponse Current heads and current retained evidence observations; historical audit receipts remain immutable.
+   * @throws ApiError
+   */
+  public static listStoredWorkflowLiveBaselines({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose baseline catalog is being listed.
+     */
+    name: string,
+  }): CancelablePromise<ListStoredWorkflowLiveBaselinesResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read the current named stored workflow baseline promotion receipt.
+   * Read-only; requires app read scope. Records the exact suite, revision, actor, promotion time and reviewed coverage/age policy.
+   * @returns StoredWorkflowLiveBaseline Current immutable promotion receipt; inspect retained evidence separately for current validity.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowLiveBaseline({
+    slug,
+    name,
+    baseline,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose current baseline receipt is being read.
+     */
+    name: string,
+    /**
+     * Baseline name whose current promotion receipt is requested.
+     */
+    baseline: string,
+  }): CancelablePromise<StoredWorkflowLiveBaseline> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'baseline': baseline,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        410: `This baseline name is permanently retired; its retirement audit remains available from history.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read the last 100 promotions for a named stored workflow baseline.
+   * Newest revision first. History is immutable until bounded retention or stored workflow deletion. Requires app read scope.
+   * @returns StoredWorkflowLiveBaselineHistory Bounded immutable promotion history, including the permanent retirement receipt when present.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowLiveBaselineHistory({
+    slug,
+    name,
+    baseline,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose baseline audit history is being read.
+     */
+    name: string,
+    /**
+     * Baseline name whose immutable promotion and retirement history is requested.
+     */
+    baseline: string,
+  }): CancelablePromise<StoredWorkflowLiveBaselineHistory> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/history',
+      path: {
+        'slug': slug,
+        'name': name,
+        'baseline': baseline,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Deliberately promote passing retained evidence to a named baseline.
+   * Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates. An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes or checks assertions. At most 20 active and 100 lifetime names per stored workflow, with 100 receipts per name; active current suite groups are pinned within the existing suite limit, while linked run retention still applies. Retired names cannot be reused; original promotion retries return historical receipts without reactivation.
+   * @returns StoredWorkflowLiveBaseline Attributed promotion receipt for this request, replayed unchanged on an identical retained retry.
+   * @throws ApiError
+   */
+  public static promoteStoredWorkflowLiveBaseline({
+    slug,
+    name,
+    baseline,
+    promotionId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose passing suite is being promoted.
+     */
+    name: string,
+    /**
+     * Release track to promote within this stored workflow; execution routing is unchanged.
+     */
+    baseline: string,
+    /**
+     * Stable caller-selected UUID. Retry uncertain requests only with the original ID and identical semantic request.
+     */
+    promotionId: string,
+    requestBody: PromoteStoredWorkflowLiveBaselineRequest,
+  }): CancelablePromise<StoredWorkflowLiveBaseline> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/promotions/{promotion_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'baseline': baseline,
+        'promotion_id': promotionId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        410: `Promotion cannot reuse a retired baseline name. Choose a different active name explicitly.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Permanently retire a named baseline and release its evidence pin.
+   * Requires deploy write scope and verified email. Atomically compares the positive expected revision and records the authenticated actor. Retirement permanently reserves the name, frees an active-name slot and releases its suite pin for normal retention; no evidence is immediately deleted. Promotion history remains available. Exact retries return the original retirement receipt. Old promotion retries never reactivate the name. At most 20 active and 100 lifetime names per stored workflow.
+   * @returns StoredWorkflowLiveBaselineRetirement Attributed immutable retirement receipt.
+   * @throws ApiError
+   */
+  public static retireStoredWorkflowLiveBaseline({
+    slug,
+    name,
+    baseline,
+    retirementId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose named baseline is being retired.
+     */
+    name: string,
+    /**
+     * Baseline name to retire permanently within this stored workflow.
+     */
+    baseline: string,
+    /**
+     * Stable caller-selected retirement UUID; preserve this ID and expected revision for uncertain retries.
+     */
+    retirementId: string,
+    requestBody: RetireStoredWorkflowLiveBaselineRequest,
+  }): CancelablePromise<StoredWorkflowLiveBaselineRetirement> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/retirements/{retirement_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'baseline': baseline,
+        'retirement_id': retirementId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        410: `The requested baseline was previously retired by another retirement request. Read its audit history.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Start a durable live suite with explicit real-action confirmation.
+   * Creates an immutable ordered selection and admits its first case atomically with the saved run link. Retry this same suite ID and body after a lost response. A retained start replay only reads progress; it never advances later cases. New IDs must be UUIDv7 generated within the last ten minutes. Existing metadata-only suites cannot be taken over.
+   * @returns StoredWorkflowLiveSuite startStoredWorkflowLiveSuite returns the original suite identities and current server-derived observations.
+   * @throws ApiError
+   */
+  public static startStoredWorkflowLiveSuite({
+    slug,
+    name,
+    suiteId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved stored workflow whose managed suite is being started.
+     */
+    name: string,
+    /**
+     * Fresh UUIDv7 for creation; reuse the original ID for start recovery.
+     */
+    suiteId: string,
+    /**
+     * Frozen target, saved-case names and real-action confirmation.
+     */
+    requestBody: StartStoredWorkflowLiveSuiteRequest,
+  }): CancelablePromise<StoredWorkflowLiveSuite> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/start',
+      path: {
+        'slug': slug,
+        'name': name,
+        'suite_id': suiteId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Check retained results and admit at most one next case of a managed suite.
+   * Requires explicit real-action confirmation on every call. Checks earlier original run IDs and stops on failed, unavailable, outdated or nonterminal results. The next admission and its immutable link commit together. Never recreates missing suites, replaces runs, resumes workflows or cancels them. Repeat while pending to observe execution; reopening history is read-only.
+   * @returns StoredWorkflowLiveSuite advanceStoredWorkflowLiveSuite returns the original suite identities and current server-derived observations.
+   * @throws ApiError
+   */
+  public static advanceStoredWorkflowLiveSuite({
+    slug,
+    name,
+    suiteId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved stored workflow whose managed suite is being continued.
+     */
+    name: string,
+    /**
+     * Original retained managed suite ID; missing records are never recreated.
+     */
+    suiteId: string,
+    /**
+     * Explicit authorization to check and continue the original suite.
+     */
+    requestBody: AdvanceStoredWorkflowLiveSuiteRequest,
+  }): CancelablePromise<StoredWorkflowLiveSuite> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/advance',
+      path: {
+        'slug': slug,
+        'name': name,
+        'suite_id': suiteId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List recent shared suite identities without executing or checking workflows.
+   * @returns ListStoredWorkflowLiveSuitesResponse listStoredWorkflowLiveSuites returns safe retained suite metadata and server-derived observations.
+   * @throws ApiError
+   */
+  public static listStoredWorkflowLiveSuites({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved stored workflow whose shared verification suites are accessed.
+     */
+    name: string,
+  }): CancelablePromise<ListStoredWorkflowLiveSuitesResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Compare recorded results in one read-only snapshot without executing or checking runs.
+   * Cases match by name and require equal frozen definition/input/assertion hashes for regression or recovery classification. Historical target drift alone does not invalidate a report. Pending, missing, unchecked and stale reports are unknown. Added and removed refer to the suite selection. No release approval or CI gate is implied.
+   * @returns StoredWorkflowLiveSuiteComparison Safe comparison of retained evidence, ordered by candidate cases followed by removed baseline cases.
+   * @throws ApiError
+   */
+  public static compareStoredWorkflowLiveSuites({
+    slug,
+    name,
+    suiteId,
+    baselineId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow owning both retained suites.
+     */
+    name: string,
+    /**
+     * Candidate suite UUID; direction is baseline to candidate.
+     */
+    suiteId: string,
+    /**
+     * Baseline suite UUID within the same app and stored workflow.
+     */
+    baselineId: string,
+  }): CancelablePromise<StoredWorkflowLiveSuiteComparison> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/compare/{baseline_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'suite_id': suiteId,
+        'baseline_id': baselineId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read current retained suite results in a consistent database snapshot.
+   * @returns StoredWorkflowLiveSuite getStoredWorkflowLiveSuite returns safe retained suite metadata and server-derived observations.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowLiveSuite({
+    slug,
+    name,
+    suiteId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow owning the retained shared suite record.
+     */
+    name: string,
+    /**
+     * Stable caller-selected suite UUID. Retry the same immutable selection and ID to attach progress.
+     */
+    suiteId: string,
+  }): CancelablePromise<StoredWorkflowLiveSuite> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'suite_id': suiteId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Save a frozen suite selection and monotonically attach existing run IDs; never execute workflows.
+   * @returns StoredWorkflowLiveSuite saveStoredWorkflowLiveSuite returns safe retained suite metadata and server-derived observations.
+   * @throws ApiError
+   */
+  public static saveStoredWorkflowLiveSuite({
+    slug,
+    name,
+    suiteId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow owning the retained shared suite record.
+     */
+    name: string,
+    /**
+     * Stable caller-selected suite UUID. Retry the same immutable selection and ID to attach progress.
+     */
+    suiteId: string,
+    /**
+     * The frozen selection and existing run links to retain. No execution or verdict fields are accepted. Managed execution records cannot be modified here.
+     */
+    requestBody: SaveStoredWorkflowLiveSuiteRequest,
+  }): CancelablePromise<StoredWorkflowLiveSuite> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'suite_id': suiteId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * List recent live verifications and the current published deployment target.
+   * @returns ListStoredWorkflowLiveVerificationsResponse listStoredWorkflowLiveVerifications returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static listStoredWorkflowLiveVerifications({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose recent live verification history is requested.
+     */
+    name: string,
+  }): CancelablePromise<ListStoredWorkflowLiveVerificationsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Explicitly execute one saved case input with atomic target fences and idempotency.
+   * @returns StoredWorkflowLiveVerification startStoredWorkflowLiveVerification returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static startStoredWorkflowLiveVerification({
+    slug,
+    name,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose recent live verification history is requested.
+     */
+    name: string,
+    /**
+     * Stable request key; retry the same key and body to recover the original run.
+     */
+    idempotencyKey: string,
+    requestBody: StartStoredWorkflowLiveVerificationRequest,
+  }): CancelablePromise<StoredWorkflowLiveVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Read one verification without starting a run or evaluating live assertions.
+   * @returns StoredWorkflowLiveVerification getStoredWorkflowLiveVerification returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static getStoredWorkflowLiveVerification({
+    slug,
+    name,
+    runId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow containing the retained live verification to read.
+     */
+    name: string,
+    /**
+     * Specific workflow run whose live provenance is requested.
+     */
+    runId: string,
+  }): CancelablePromise<StoredWorkflowLiveVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications/{run_id}',
+      path: {
+        'slug': slug,
+        'name': name,
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity — server-side error; retry with backoff.`,
+      },
+    });
+  }
+  /**
+   * Check terminal run outcomes against frozen live assertions and retain a safe summary.
+   * @returns StoredWorkflowLiveVerification checkStoredWorkflowLiveVerification returns safe verification identities and observations.
+   * @throws ApiError
+   */
+  public static checkStoredWorkflowLiveVerification({
+    slug,
+    name,
+    runId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stored workflow whose frozen live assertions will be checked.
+     */
+    name: string,
+    /**
+     * Retained live run whose terminal outcomes will be evaluated.
+     */
+    runId: string,
+  }): CancelablePromise<StoredWorkflowLiveVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications/{run_id}/check',
+      path: {
+        'slug': slug,
+        'name': name,
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: stored_workflow_version_conflict | stored_workflow_ownership_conflict — reload a stale revision or explicitly confirm transfer of YAML ownership.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        422: `code: stored_workflow_invalid | validation_failed — the definition, revision, or request fields are invalid.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

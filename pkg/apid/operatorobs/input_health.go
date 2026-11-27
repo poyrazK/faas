@@ -100,14 +100,18 @@ func readInputJob(ctx context.Context, client *promql.Client, spec inputJobSpec,
 	return api.ObsInputJob{Job: spec.job, State: inputOverallState(expect.State, targets.State, metric.State), Expectation: expect, Targets: targets, Metrics: []api.ObsInputMetric{metric}}
 }
 
-func inputVector(ctx context.Context, client *promql.Client, expr string, now time.Time) ([]promql.VectorSample, error) {
+func inputVector(ctx context.Context, client *promql.Client, expr string, now time.Time) (rows []promql.VectorSample, err error) {
+	if observation, ok := ctx.Value(runtimeQueryObservationKey{}).(runtimeQueryObservation); ok {
+		started := time.Now()
+		defer func() { observation.record(started, err) }()
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	if client == nil || client.BaseURL() == "" {
 		return nil, errNotificationNotConfigured
 	}
-	rows, err := client.QueryVectorStrictAt(ctx, expr, now)
+	rows, err = client.QueryVectorStrictAt(ctx, expr, now)
 	if err == nil {
 		err = ctx.Err()
 	}

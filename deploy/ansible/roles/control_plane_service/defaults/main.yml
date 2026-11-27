@@ -44,6 +44,39 @@ faas_meterd_egress_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # transition to activate provider delivery and reconciliation paging.
 faas_billing_mode: disabled
 
+# meterd's quiet pause billing mode (ADR-20261023171905): off, shadow or on.
+# group_vars/control_plane/quiet_pause_billing.yml sets the fleet's value.
+meterd_quiet_pause_unbilled: "off"
+
+# Release commands (Procfile release:, gregale.yaml release.command): apid
+# admits them (FAAS_RELEASE_PHASE_ENABLED) and this host's schedd dispatches
+# release tasks (FAAS_APP_TASK_DISPATCH). Off, a deployment that declares one
+# fails with release_phase_unavailable, and managed PostgreSQL migration
+# credentials, which only release tasks receive, are unusable. Compute nodes
+# turn on imaged and their schedds from the same switch (node_join.yml).
+# group_vars/{control_plane,compute_nodes}/release_commands.yml set the fleet's value.
+faas_release_commands: false
+
+# The public app-task API (ADR-230: POST /v1/apps/{slug}/tasks, `gregale app
+# exec`, binding verification probes). apid's unit sets it to 0; on renders
+# a drop-in setting FAAS_APP_TASK_API_ENABLED=1. Needs schedd's task dispatch
+# (faas_release_commands) to run anything. The app_tasks platform flag still
+# decides which accounts see it.
+faas_app_task_api: false
+
+# Bill the response bytes gatewayd-internal forwards from an instance as app
+# egress (ADR-20261121210517). For compute nodes on the namespace-local
+# bridge, whose public responses never cross the instance veth.
+# group_vars/control_plane/gateway_response_egress.yml sets the fleet's value.
+meterd_gateway_response_egress: false
+
+# Leave the guest's own traffic to Gregale-internal destinations (object
+# storage, services, managed databases, the host bridge) out of billed egress
+# (ADR-20261114100000). Needs every compute node's vmmd to install and report
+# the per-namespace faas_internal_tx counter.
+# group_vars/control_plane/internal_egress_unbilled.yml sets the fleet's value.
+meterd_internal_egress_unbilled: false
+
 # FAAS_ENVIRONMENT for apid. CD sets "production" for production
 # environments; apid then refuses new object storage buckets while the
 # operator safety policy is smaller than the largest plan
@@ -163,6 +196,8 @@ faas_credential_data_api_plain_lookup: true
 faas_sales_enabled: false
 faas_sales_emails: []
 faas_sales_manager_emails: []
+# Owner admins manage the team, agreements, credit moves and payout records.
+faas_sales_admin_emails: []
 faas_referral_currency: usd
 faas_referral_reward_cents: 0
 faas_referral_new_customer_reward_cents: 0

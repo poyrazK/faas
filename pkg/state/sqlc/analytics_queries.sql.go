@@ -33,6 +33,164 @@ func (q *Queries) AddAnalyticsPropertyKey(ctx context.Context, db DBTX, arg AddA
 	return result.RowsAffected(), nil
 }
 
+const analyticsCohortDid = `-- name: AnalyticsCohortDid :many
+SELECT customer_id::uuid AS customer_id
+FROM analytics_events
+WHERE environment_id = $1::uuid
+  AND name = $2::text
+  AND properties @> $3::jsonb
+  AND at >= $4::timestamptz
+GROUP BY customer_id
+HAVING count(*) >= $5::bigint
+ORDER BY customer_id
+LIMIT $6::int
+`
+
+type AnalyticsCohortDidParams struct {
+	EnvironmentID pgtype.UUID
+	Name          string
+	Filter        []byte
+	SinceAt       pgtype.Timestamptz
+	MinCount      int64
+	MaxRows       int32
+}
+
+// Customers with at least min_count matching events since since_at, in
+// customer order, at most max_rows (ADR 20261119102741 §3).
+func (q *Queries) AnalyticsCohortDid(ctx context.Context, db DBTX, arg AnalyticsCohortDidParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, analyticsCohortDid,
+		arg.EnvironmentID,
+		arg.Name,
+		arg.Filter,
+		arg.SinceAt,
+		arg.MinCount,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var customer_id pgtype.UUID
+		if err := rows.Scan(&customer_id); err != nil {
+			return nil, err
+		}
+		items = append(items, customer_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const analyticsCohortDidNot = `-- name: AnalyticsCohortDidNot :many
+SELECT DISTINCT e.customer_id::uuid AS customer_id
+FROM analytics_events e
+WHERE e.environment_id = $1::uuid
+  AND e.at >= $2::timestamptz
+  AND NOT EXISTS (
+    SELECT 1 FROM analytics_events x
+    WHERE x.environment_id = $1::uuid AND x.customer_id = e.customer_id
+      AND x.name = $3::text AND x.properties @> $4::jsonb
+      AND x.at >= $5::timestamptz)
+ORDER BY 1
+LIMIT $6::int
+`
+
+type AnalyticsCohortDidNotParams struct {
+	EnvironmentID pgtype.UUID
+	ActiveSince   pgtype.Timestamptz
+	Name          string
+	Filter        []byte
+	SinceAt       pgtype.Timestamptz
+	MaxRows       int32
+}
+
+// Customers with any event since active_since that sent no matching event
+// since since_at, in customer order, at most max_rows.
+func (q *Queries) AnalyticsCohortDidNot(ctx context.Context, db DBTX, arg AnalyticsCohortDidNotParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, analyticsCohortDidNot,
+		arg.EnvironmentID,
+		arg.ActiveSince,
+		arg.Name,
+		arg.Filter,
+		arg.SinceAt,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var customer_id pgtype.UUID
+		if err := rows.Scan(&customer_id); err != nil {
+			return nil, err
+		}
+		items = append(items, customer_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const analyticsCustomerTotals = `-- name: AnalyticsCustomerTotals :many
+SELECT customer_id::uuid AS customer_id, count(*)::bigint AS events, COALESCE(sum(value), 0)::float8 AS total
+FROM analytics_events
+WHERE environment_id = $1::uuid
+  AND name = $2::text
+  AND properties @> $3::jsonb
+  AND at >= $4::timestamptz AND at < $5::timestamptz
+  AND customer_id = ANY($6::uuid[])
+GROUP BY customer_id
+`
+
+type AnalyticsCustomerTotalsParams struct {
+	EnvironmentID pgtype.UUID
+	Name          string
+	Filter        []byte
+	FromAt        pgtype.Timestamptz
+	UntilAt       pgtype.Timestamptz
+	CustomerIds   []pgtype.UUID
+}
+
+type AnalyticsCustomerTotalsRow struct {
+	CustomerID pgtype.UUID
+	Events     int64
+	Total      float64
+}
+
+// Each listed customer's matching events in [from, until): how many and
+// the sum of their values (CUPED pre-period, ADR 20261119102741 §2).
+func (q *Queries) AnalyticsCustomerTotals(ctx context.Context, db DBTX, arg AnalyticsCustomerTotalsParams) ([]AnalyticsCustomerTotalsRow, error) {
+	rows, err := db.Query(ctx, analyticsCustomerTotals,
+		arg.EnvironmentID,
+		arg.Name,
+		arg.Filter,
+		arg.FromAt,
+		arg.UntilAt,
+		arg.CustomerIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AnalyticsCustomerTotalsRow{}
+	for rows.Next() {
+		var i AnalyticsCustomerTotalsRow
+		if err := rows.Scan(&i.CustomerID, &i.Events, &i.Total); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const analyticsEntriesByCustomer = `-- name: AnalyticsEntriesByCustomer :many
 SELECT DISTINCT ON (e.customer_id) e.customer_id, e.at, e.properties, e.flags
 FROM analytics_events e

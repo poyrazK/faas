@@ -124,6 +124,7 @@ func serveMCPStdio(ctx context.Context, opts mcpServeOptions) error {
 		Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, Profile: connection.Profile, APIBase: connection.APIBase,
 		Version: wire.Version, Token: c.Token(), Timeout: opts.timeout, AllowWrites: opts.allowWrites,
 		LocalCLI: mcpLocalCLI(connection.Profile, connection.APIBase, c.Token()), Toolsets: opts.toolsets,
+		MaxListedTools: mcpmanagement.DefaultMaxListedTools, HideUnavailableCapabilities: true,
 	})
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func serveMCPHTTP(ctx context.Context, opts mcpServeOptions) error {
 		}
 		invocationRunner = mcpmanagement.HostedCLIRunner(executable, connection.APIBase, "")
 	}
-	handlerOptions := mcpmanagement.HTTPOptions{AllowToolInvocation: opts.allowToolInvocation, CLIRunner: invocationRunner, Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets}
+	handlerOptions := mcpmanagement.HTTPOptions{AllowToolInvocation: opts.allowToolInvocation, CLIRunner: invocationRunner, Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, AuditLogger: slog.New(slog.NewJSONHandler(osStderr, nil)), Onboarding: opts.onboarding, APIBase: connection.APIBase, ResourceURL: opts.resourceURL, RedirectURIs: opts.redirects, Version: wire.Version, Timeout: opts.timeout, AllowWrites: opts.allowWrites, Toolsets: opts.toolsets, MaxListedTools: mcpmanagement.DefaultMaxListedTools, HideUnavailableCapabilities: true}
 	if opts.stateFile != "" {
 		store, err := mcpmanagement.OpenStateStore(opts.stateFile, opts.stateKeyFile)
 		if err != nil {

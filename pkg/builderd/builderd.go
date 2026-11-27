@@ -7,7 +7,9 @@
 // produced app layer to imaged via the existing snapshot_prime handshake.
 //
 // Build slots (CLAUDE.md "Builder slots"):
-//   - 1 slot — lives in the 5 GiB faas-cp-build.slice parent fence.
+//   - The node's provisioned reserved slots (FAAS_BUILDER_RESERVED_SLOTS,
+//     default 1) — they live in faas-cp-build.slice, which node_join sizes
+//     for exactly that many builders (ADR-20261118154632 amendment 1).
 //   - Local overcommit is disabled; another compute node adds capacity.
 //
 // The VM spawn itself is `//go:build metal`; this file holds the pure-Go
@@ -24,12 +26,17 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -45,8 +52,8 @@ type Notifier interface {
 
 // ResidencyProbe reports live tenant-RAM residency. schedd's Ledger is the
 // authoritative source; builderd retains this probe for admission telemetry
-// and future capacity-aware placement. A nil probe is safe for the current
-// single-slot allocator.
+// and future capacity-aware placement. A nil probe is safe: it keeps only the
+// reserved slots open.
 type ResidencyProbe interface {
 	ResidentMB() int
 }
@@ -63,8 +70,8 @@ type ResidencyProbe interface {
 var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in unit tests")
 
 // ErrNoSlot is returned when the slot allocator (DecideSlot) rules
-// the build out — the single local builder slot is fully
-// consumed by other in-flight builds (spec §14). processClaimedBuild
+// the build out — every local builder slot is consumed by other
+// in-flight builds (spec §14). processClaimedBuild
 // REQUEUES the row (preserving FIFO position) before returning
 // ErrNoSlot, so the durability-net worker (cmd/builderd/main.go::workerLoop)
 // and any later LISTEN-driven caller both observe the row as
@@ -100,6 +107,12 @@ type Config struct {
 	// SourceSpoolDir mirrors apid's source and build-log spool. When set,
 	// persisted source/log paths must remain below this root.
 	SourceSpoolDir string `toml:"source_spool_dir"`
+	// ImageExportDir is the build export root (cmd/builderd's
+	// build_export_dir). An uploaded prebuilt image is placed there in the
+	// canonical <root>/<build-id>/build/out/image.tar shape, so the export
+	// sweeper and imaged's reader lease treat it like a VM build's output
+	// (ADR-20261127120000). Empty refuses uploaded images.
+	ImageExportDir string `toml:"-"`
 	// BuildLogMaxBytes bounds each persisted build log. Zero uses the safe
 	// default; values above the hard ceiling are clamped in New.
 	BuildLogMaxBytes int64 `toml:"build_log_max_bytes"`
@@ -170,6 +183,8 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	executionEnvironmentsEnabled bool
+	executionEnvironmentStorage  storage.StorageBackend
 	// releasePaused reports the break-glass release pause (ADR
 	// 20261022140000); while it is true no queued build is claimed.
 	releasePaused  func() bool
@@ -207,11 +222,29 @@ type Builderd struct {
 	// ResidencyProbe rig. nil falls back to DecideSlot(b.resid, …)
 	// inside processClaimedBuild.
 	slotDecide func(ResidencyProbe, int) SlotDecision
-	// slotMu and activeSlots enforce the process-wide single builder budget
-	// required by the 5 GiB production parent cgroup. DecideSlot still reports
-	// future opportunistic eligibility but cannot bypass this host fence.
+	// slotMu and activeSlots enforce the process-wide builder budget the
+	// node's faas-cp-build.slice is sized for (its reserved slots).
+	// DecideSlot still reports opportunistic eligibility but cannot bypass
+	// this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
+	// activeReserved counts the slots in faas-cp-build.slice (the fixed
+	// allocator's slots and the BuildKit seed run count here too) and
+	// activeBorrowed those in faas-borrowed.slice; borrowedBuilds tracks the
+	// borrowed ones for the give-back (ADR-20261118154632). All under slotMu.
+	activeReserved int
+	activeBorrowed int
+	borrowedBuilds map[string]*borrowedBuild
+	// provisionedReserved is the node's reserved builder slots
+	// (FAAS_BUILDER_RESERVED_SLOTS; 0 means one), and sliceBuilds marks the
+	// builds in faas-cp-build.slice that shared it with another builder, whose
+	// slice-wide oom_kill delta is then not theirs alone
+	// (ADR-20261118154632 amendment 1). sliceBuilds is under slotMu.
+	provisionedReserved int
+	sliceBuilds         map[string]*atomic.Bool
+	// elastic is elastic builder slots; nil or off keeps the fixed
+	// allocator.
+	elastic *ElasticSlots
 	// sliceFreeMB overrides the builder-slice memory read in tests.
 	sliceFreeMB func() (int, bool)
 	// sourceStorage is the optional remote source handoff used by split-box
@@ -651,7 +684,7 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 	b.pipeline.observeClaim(ctx, "poll", err)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return BuildResult{}, state.ErrNotFound
+			return b.processNextEnvironment(ctx)
 		}
 		return BuildResult{}, fmt.Errorf("builderd: claim next build: %w", err)
 	}
@@ -795,7 +828,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, msg, time.Now())
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}
-	maxSourceBytes := int64(lim.SourceTarballMaxMB) * 1024 * 1024
+	maxSourceBytes := sourceCapBytes(lim, dep)
 	if sourceBytes > maxSourceBytes {
 		msg := fmt.Sprintf("source archive %d bytes exceeds %s plan cap of %d bytes", sourceBytes, acct.Plan, maxSourceBytes)
 		b.markFailed(ctx, build, state.FailureUserError, msg, time.Now())
@@ -900,6 +933,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "source integrity: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	if uploaded := uploadedImage(dep); uploaded != nil {
+		return b.completeUploadedImage(ctx, build, dep, app, acct, srcHash, uploaded, buildStart)
+	}
 
 	if b.validatorBuild != nil {
 		if err := b.validatorBuild(ctx, app.ID, dep.ID, dep.SourcePath, dep.SourceRoot); err != nil {
@@ -942,6 +978,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// A reviewed source selection replaces the shared app build setting,
 		// including clearing a Dockerfile for autodetected source builds.
 		dockerfilePath = frozen.Source.Dockerfile
+	}
+	if fw == FrameworkNode && dockerfilePath == "" {
+		if problem := markers.NodePackageJSONProblemAtRoot(dep.SourcePath, dep.SourceRoot); problem != "" {
+			err := fmt.Errorf("builderd: %s", problem)
+			b.markFailed(ctx, build, state.FailureUserError, problem+"; fix the file and deploy again", buildStart)
+			return BuildResult{}, err
+		}
 	}
 	goCommand, goCommandErr := selectGoCommand(app, dockerfilePath, fw)
 	if goCommandErr != nil {
@@ -1145,7 +1188,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
-	slot, releaseSlot, acquired := b.acquireSlot()
+	slot, releaseSlot, acquired := b.acquireBuildSlot(ctx, build)
 	if !acquired {
 		// Requeue the row (NOT markFailed) so a later tick / notify
 		// can re-attempt it. RequeueBuild clears started_at but
@@ -1189,6 +1232,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		dependencyCacheSeedKey = dependencyCacheFamilyKey(app, fw, runtimeBaseRef)
 	}
 	vmReq := VMRequest{
+		Borrowed:               slot.Label == slotLabelBorrowed,
+		SliceShared:            b.sliceSharedProbe(build.ID),
 		BuildDependencyDigest:  buildDependencyDigest,
 		PublicBuildURLs:        publicURLs,
 		DockerfileBuild:        dockerfileBuild,
@@ -1208,6 +1253,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		IssueSourceMaps:        sourceMaps,
 		Function:               app.Type == state.AppTypeFunction,
 		SharedRuntime:          sharedRuntime != "",
+		NextStandalone:         nextStandaloneBuild(sharedRuntime, os.Getenv),
 		DevWatchCommand:        watch.Command,
 		DevWatchHost:           watch.Host,
 		DependencyCacheKey:     dependencyCacheKey,
@@ -1308,6 +1354,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.markFailed(ctx, build, state.FailureInfra, "vm spawn: "+err.Error(), buildStart)
 			return BuildResult{}, err
 		}
+		// vmmd stopped running borrowed builders since it last said it did
+		// (ADR-20261118154632): the build waits in the queue, it did not fail.
+		if vmReq.Borrowed && status.Code(err) == codes.FailedPrecondition {
+			cancel()
+			if vm, ok := b.vm.(borrowedVM); ok {
+				vm.ForgetBorrowedCapability()
+			}
+			if rqErr := b.requeueClaim(ctx, build, requeueNoSlot); rqErr != nil {
+				b.log.Warn("builderd: requeue after vmmd refused a borrowed builder", "build", build.ID, "err", rqErr)
+			}
+			b.emitBuildLog(ctx, build.ID, "borrowed builder slot unavailable on this node — requeued\n")
+			return BuildResult{}, ErrNoSlot
+		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -1363,14 +1422,26 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			}
 		}
 	}()
+	stopSteps := b.followBuildSteps(ctx, build.ID, handle)
 	var out BuildOutcome
 	if warmStarted {
 		out, warmCaptured, err = warmVM.WaitForWarmCompletion(ctx, handle)
 	} else {
 		out, err = b.vm.WaitForCompletion(ctx, handle)
 	}
+	stopSteps()
 	stopWatch()
 	<-watchDone
+	// A borrowed slot that gave its memory back to tenants returns the build
+	// to the queue at its place (ADR-20261118154632). A build that finished
+	// before its VM stopped keeps its result.
+	if actor, preempted := b.preemptionActor(build.ID, out); preempted && (err != nil || out.ExitCode != 0) {
+		if rqErr := b.requeuePreempted(ctx, build, actor); rqErr != nil && !errors.Is(rqErr, state.ErrNotFound) {
+			b.markFailed(ctx, build, state.FailureInfra, "borrowed build given back to tenants; requeue failed: "+rqErr.Error(), buildStart)
+			return BuildResult{}, rqErr
+		}
+		return BuildResult{}, ErrPreempted
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			// Cancelling the wait context does not necessarily terminate the
@@ -1541,8 +1612,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "validate produced layer: "+statErr.Error(), buildStart)
 		return BuildResult{}, statErr
 	}
-	if sizeMB := (artifactBytes + (1 << 20) - 1) >> 20; sizeMB > int64(lim.AppLayerMaxMB) {
-		msg := fmt.Sprintf("app layer %d MB exceeds plan cap %d MB", sizeMB, lim.AppLayerMaxMB)
+	if msg := artifactOverPlanCap(lim, artifactBytes, sharedRuntime); msg != "" {
 		b.markFailed(ctx, build, state.FailureUserError, msg, buildStart)
 		return BuildResult{}, errors.New("builderd: " + msg)
 	}

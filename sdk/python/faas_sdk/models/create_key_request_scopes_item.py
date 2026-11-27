@@ -3,6 +3,7 @@ from typing import Literal
 CreateKeyRequestScopesItem = Literal[
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",
@@ -33,6 +34,7 @@ CreateKeyRequestScopesItem = Literal[
 CREATE_KEY_REQUEST_SCOPES_ITEM_VALUES: set[CreateKeyRequestScopesItem] = {
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Models kernel identities and metadata; this supplies no native mount evidence.
@@ -547,5 +549,42 @@ func TestNativeImageNewEpochReadsBaselineAfterPreviousEpochRetirement(t *testing
 	}
 	if b.metadata.Mode != 0o600 {
 		t.Fatal("new epoch did not restore the original source baseline")
+	}
+}
+
+// adr: 20261114010000 — a concurrent, durably owned epoch must not become an invented orphan.
+func TestNativeImageInventoryLoadsAnEpochPublishedAfterItsDirectorySnapshot(t *testing.T) {
+	j, owner, _, root := nativeImageJournalFixture(t)
+	if _, err := j.stage(t.Context(), owner, root, "/source.img", "kernel", true, 0o044, true); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := j.records()
+	if err != nil || len(stale) != 1 {
+		t.Fatalf("initial epoch: %v", err)
+	}
+	next := stale[0]
+	next.Epoch = uuid.NewString()
+	next.Identity.Inode++
+	next.References = append([]nativeImageReference(nil), next.References...)
+	next.References[0].ID = uuid.NewString()
+	next.References[0].Name = "base"
+	if err := j.write(next); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(j.anchor(next), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	epochs := map[string]bool{stale[0].Epoch: true}
+	active := map[string]bool{nativeImageSourceKey(stale[0].Identity): true}
+	records, err := j.withAnchoredEpochs(owner.KernelBootID, stale, epochs, active)
+	if err != nil || len(records) != 2 || records[1].Epoch != next.Epoch {
+		t.Fatalf("concurrent owned epoch rejected: %v", err)
+	}
+	orphan := filepath.Join(j.root(), "points", uuid.NewString())
+	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.records(); err == nil {
+		t.Fatal("unowned anchor was accepted")
 	}
 }

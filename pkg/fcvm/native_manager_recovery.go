@@ -66,6 +66,19 @@ func (m *Manager) RecoverNativeProcesses(ctx context.Context) error {
 	m.mu.Unlock()
 	leases, err := v.nativeRecoveryLeases(ctx)
 	if err == nil {
+		if templates, ok := m.vmm.(interface {
+			recoverExecutionTemplateFlights(context.Context, func(context.Context, Lease) error) (bool, error)
+		}); ok {
+			var changed bool
+			changed, err = templates.recoverExecutionTemplateFlights(ctx, func(cleanup context.Context, lease Lease) error {
+				return m.cleanup(cleanup, lease, nativeLeaseNetwork(lease), nil)
+			})
+			if err == nil && changed {
+				leases, err = v.nativeRecoveryLeases(ctx)
+			}
+		}
+	}
+	if err == nil {
 		if recovery, ok := m.vmm.(nativeQualificationArtifactRecoveryVMM); ok {
 			err = recovery.RecoverNativeQualificationArtifactRetirements(ctx)
 		}

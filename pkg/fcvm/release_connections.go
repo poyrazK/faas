@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/connreleaseproto"
@@ -172,10 +173,39 @@ func (m *Manager) releaseInheritedConnections(ctx context.Context, l Lease, skip
 	}
 	n, err := releaser.ReleaseGuestConnections(ctx, l)
 	if err != nil {
-		m.log.Debug("release inherited connections after restore", "instance", l.Instance, "err", err)
+		// Unlike the reset before destroy, a failure here is customer-visible:
+		// the restored app keeps sockets whose state the new netns lacks, and
+		// its next call on a pooled connection hangs until its own timeout.
+		// Surface it (rate-limited) instead of hiding it at debug.
+		if inheritedReleaseWarnLimiter.allow(time.Now()) {
+			m.log.Warn("release inherited connections after restore failed; restored apps may hang on pooled outbound connections",
+				"instance", l.Instance, "err", err)
+		} else {
+			m.log.Debug("release inherited connections after restore", "instance", l.Instance, "err", err)
+		}
 		return
 	}
 	if n > 0 {
 		m.log.Info("released inherited guest connections after restore", "instance", l.Instance, "reset", n)
 	}
+}
+
+// inheritedReleaseWarnLimiter keeps a node whose guests cannot reset (an old
+// guest-init, a kernel without INET_DIAG_DESTROY) to one warning a minute.
+var inheritedReleaseWarnLimiter = &warnLimiter{every: time.Minute}
+
+type warnLimiter struct {
+	mu    sync.Mutex
+	every time.Duration
+	last  time.Time
+}
+
+func (w *warnLimiter) allow(now time.Time) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.last.IsZero() && now.Sub(w.last) < w.every {
+		return false
+	}
+	w.last = now
+	return true
 }

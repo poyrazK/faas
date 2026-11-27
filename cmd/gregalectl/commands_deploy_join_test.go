@@ -769,17 +769,22 @@ func TestNodeJoinTakesTheDrainedEdgeOutOfTheTunnel(t *testing.T) {
 	}
 	// The connector leaves first, so Cloudflare stops sending before the
 	// socket refuses; closing the socket is what stops socket activation.
-	connector := strings.Index(outBlock, "- faas-cloudflared.service")
-	socket := strings.Index(outBlock, "- faas-gatewayd-public-edge.socket")
+	// public_edge.entry direct runs no connector (ADR-20261102081618 step 6),
+	// so both loops name it only behind faas_edge_tunnel.
+	connector := strings.Index(outBlock, "'faas-cloudflared.service'")
+	socket := strings.Index(outBlock, "'faas-gatewayd-public-edge.socket'")
 	if connector < 0 || socket < 0 || connector > socket {
 		t.Fatalf("edge take-out must stop the connector, then the socket: connector=%d socket=%d", connector, socket)
+	}
+	if !strings.Contains(outBlock, "if (faas_edge_tunnel | default(true) | bool)") {
+		t.Error("edge take-out stops the connector even without a tunnel")
 	}
 	backEnd := strings.Index(playbook[back:], "\n    - name: ")
 	if backEnd < 0 {
 		t.Fatal("edge return task has no successor")
 	}
 	backBlock := playbook[back : back+backEnd]
-	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "- faas-gatewayd-public-edge.socket", "- faas-cloudflared.service"} {
+	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "'faas-gatewayd-public-edge.socket'", "'faas-cloudflared.service'", "if (faas_edge_tunnel | default(true) | bool)"} {
 		if !strings.Contains(backBlock, token) {
 			t.Errorf("edge return missing %q", token)
 		}
@@ -1250,7 +1255,7 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err != nil {
+	if err := validateSharedStorageEnv(path, false); err != nil {
 		t.Fatalf("valid storage env rejected: %v", err)
 	}
 	gcsMigration := "FAAS_STORAGE_BACKEND=gcs\n" +
@@ -1263,7 +1268,7 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	if err := os.WriteFile(path, []byte(gcsMigration), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err != nil {
+	if err := validateSharedStorageEnv(path, false); err != nil {
 		t.Fatalf("valid GCS migration env rejected: %v", err)
 	}
 	s3Env := "FAAS_STORAGE_BACKEND=s3\n" +
@@ -1280,7 +1285,7 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	if err := os.WriteFile(path, []byte(s3Env), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err != nil {
+	if err := validateSharedStorageEnv(path, false); err != nil {
 		t.Fatalf("valid S3 env with GCS migration fallback rejected: %v", err)
 	}
 	for name, body := range map[string]string{
@@ -1292,44 +1297,44 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := validateSharedStorageEnv(path); err == nil {
+		if err := validateSharedStorageEnv(path, false); err == nil {
 			t.Fatalf("%s: invalid S3 storage env accepted", name)
 		}
 	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=gcs\nFAAS_GCS_BUCKET=b-test\nFAAS_STORAGE_FALLBACK_BACKEND=gcs\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err == nil {
+	if err := validateSharedStorageEnv(path, false); err == nil {
 		t.Fatal("gcs fallback under gcs accepted")
 	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=local\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "BACKEND=oci") {
+	if err := validateSharedStorageEnv(path, false); err == nil || !strings.Contains(err.Error(), "BACKEND=oci") {
 		t.Fatalf("local storage env error = %v", err)
 	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=snap/,base/\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "snap/") {
+	if err := validateSharedStorageEnv(path, false); err == nil || !strings.Contains(err.Error(), "snap/") {
 		t.Fatalf("snap prefix error = %v", err)
 	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\nFAAS_STORAGE_CACHE_DIR=\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "CACHE_DIR") {
+	if err := validateSharedStorageEnv(path, false); err == nil || !strings.Contains(err.Error(), "CACHE_DIR") {
 		t.Fatalf("empty cache dir error = %v", err)
 	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\nFAAS_OCI_REGISTRY=https://registry.example\nFAAS_STORAGE_CACHE_DIR=/srv/custom-cache\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "managed systemd units") {
+	if err := validateSharedStorageEnv(path, false); err == nil || !strings.Contains(err.Error(), "managed systemd units") {
 		t.Fatalf("non-canonical cache path error = %v, want managed-unit guard", err)
 	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=oci\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateSharedStorageEnv(path); err == nil || !strings.Contains(err.Error(), "LOCAL_PREFIXES=none") {
+	if err := validateSharedStorageEnv(path, false); err == nil || !strings.Contains(err.Error(), "LOCAL_PREFIXES=none") {
 		t.Fatalf("incomplete strict contract error = %v", err)
 	}
 }
@@ -1339,13 +1344,13 @@ func TestValidateImagedStorageEnv(t *testing.T) {
 	if err := os.WriteFile(path, []byte("FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateImagedStorageEnv(path); err != nil {
+	if err := validateImagedStorageEnv(path, false); err != nil {
 		t.Fatalf("valid S3 lifecycle env rejected: %v", err)
 	}
 	if err := os.WriteFile(path, []byte("FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateImagedStorageEnv(path); err != nil {
+	if err := validateImagedStorageEnv(path, false); err != nil {
 		t.Fatalf("valid lifecycle env rejected: %v", err)
 	}
 	for _, body := range []string{
@@ -1359,9 +1364,145 @@ func TestValidateImagedStorageEnv(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := validateImagedStorageEnv(path); err == nil {
+		if err := validateImagedStorageEnv(path, false); err == nil {
 			t.Fatalf("invalid lifecycle env accepted: %q", body)
 		}
+	}
+}
+
+func TestJoinStorageGrantsFromAnsibleVars(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	for _, tc := range []struct {
+		name, vars string
+		flag, want bool
+		wantErr    bool
+	}{
+		{name: "flag", flag: true, want: true},
+		{name: "no vars file"},
+		{name: "vars true", vars: "faas_storage_grants: true\n", want: true},
+		{name: "vars string", vars: "faas_storage_grants: \"yes\"\n", wantErr: true},
+		{name: "vars string bool", vars: "faas_storage_grants: \"true\"\n", want: true},
+		{name: "vars false", vars: "faas_storage_grants: false\n"},
+		{name: "vars absent", vars: "faas_other: 1\n"},
+		{name: "vars json", vars: `{"faas_storage_grants": true}`, want: true},
+		{name: "vars not bool", vars: "faas_storage_grants: [1]\n", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := deployJoinOptions{StorageGrants: tc.flag}
+			if tc.vars != "" {
+				opts.AnsibleVarsFile = write("vars.yml", tc.vars)
+			}
+			got, err := joinStorageGrants(opts)
+			if (err != nil) != tc.wantErr || (err == nil && got != tc.want) {
+				t.Fatalf("got %v, %v; want %v (err %v)", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestGrantableStorageEnvBackends(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "storage.env")
+	for backend, want := range map[string]bool{"s3": true, "gcs": true, "\"S3\"": true, "oci": false, "": false} {
+		body := "FAAS_STORAGE_LOCAL_PREFIXES=none\n"
+		if backend != "" {
+			body += "FAAS_STORAGE_BACKEND=" + backend + "\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := grantableStorageEnv(path, true); err != nil || got != want {
+			t.Fatalf("backend %q: got %v, %v; want %v", backend, got, err, want)
+		}
+		if got, _ := grantableStorageEnv(path, false); got {
+			t.Fatalf("backend %q: grantable without grants", backend)
+		}
+	}
+}
+
+func TestValidateSharedStorageEnvRefusesEmptyKeyLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "storage.env")
+	body := "FAAS_STORAGE_BACKEND=s3\nFAAS_S3_BUCKET=gregale-artifacts-bhs\nFAAS_S3_ENDPOINT=https://s3.bhs.io.cloud.ovh.net\nFAAS_S3_REGION=bhs\n" +
+		"FAAS_S3_ACCESS_KEY_ID=\nFAAS_S3_SECRET_ACCESS_KEY=\n" +
+		"FAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path, true); err == nil || !strings.Contains(err.Error(), "set but empty") {
+		t.Fatalf("empty key lines under grants: err = %v", err)
+	}
+}
+
+func TestGrantedLifecycleSkip(t *testing.T) {
+	dir := t.TempDir()
+	storageEnv := filepath.Join(dir, "storage.env")
+	lifecycleEnv := filepath.Join(dir, "imaged-storage.env")
+	for _, tc := range []struct {
+		name, backend, lifecycle string
+		want                     bool
+	}{
+		{"empty on s3", "s3", "", true},
+		{"comments only on gcs", "gcs", "# granted\n\n", true},
+		{"empty on oci", "oci", "", false},
+		{"keyed on s3", "s3", "FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(storageEnv, []byte("FAAS_STORAGE_BACKEND="+tc.backend+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(lifecycleEnv, []byte(tc.lifecycle), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := grantedLifecycleSkip(storageEnv, lifecycleEnv); err != nil || got != tc.want {
+				t.Fatalf("got %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateStorageEnvUnderGrants(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "storage.env")
+	imaged := filepath.Join(dir, "imaged-storage.env")
+	keyless := "FAAS_STORAGE_BACKEND=s3\n" +
+		"FAAS_S3_BUCKET=gregale-artifacts-bhs\n" +
+		"FAAS_S3_ENDPOINT=https://s3.bhs.io.cloud.ovh.net\n" +
+		"FAAS_S3_REGION=bhs\n" +
+		"FAAS_STORAGE_LOCAL_PREFIXES=none\n" +
+		"FAAS_REQUIRE_SHARED_ARTIFACTS=1\n" +
+		"FAAS_STORAGE_CACHE_SERVE_STALE=0\n"
+	for _, tc := range []struct {
+		name, shared, imaged string
+		grants, ok           bool
+	}{
+		{"keyless with grants", keyless, "", true, true},
+		{"keyless without grants", keyless, "", false, false},
+		{"half key with grants", keyless + "FAAS_S3_ACCESS_KEY_ID=AK\n", "", true, false},
+		{"keyed with grants", keyless + "FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\n", "FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\n", true, true},
+		{"half imaged pair with grants", keyless, "FAAS_S3_ACCESS_KEY_ID=AK\n", true, false},
+		{"imaged topology with grants", keyless, "FAAS_STORAGE_BACKEND=s3\n", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(shared, []byte(tc.shared), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(imaged, []byte(tc.imaged), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := validateSharedStorageEnv(shared, tc.grants)
+			if err == nil {
+				err = validateImagedStorageEnv(imaged, tc.grants)
+			}
+			if (err == nil) != tc.ok {
+				t.Fatalf("grants=%v: err = %v, want ok=%v", tc.grants, err, tc.ok)
+			}
+		})
 	}
 }
 

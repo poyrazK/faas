@@ -176,6 +176,12 @@ func run(args []string) (status int) {
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.
 	typed := args
+	previousTypedNoun := typedNoun
+	typedNoun = ""
+	if len(typed) > 0 {
+		typedNoun = typed[0]
+	}
+	defer func() { typedNoun = previousTypedNoun }()
 	args, err := rewriteCliTree(args)
 	if err != nil {
 		if errors.As(err, new(errFoldFlagRequired)) {
@@ -232,6 +238,11 @@ func run(args []string) (status int) {
 	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
+			if len(args) > 1 {
+				if path := nestedVerbPath(noun, args[1]); path != "" {
+					return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; did you mean 'gregale %s'? Run 'gregale %s --help' for its usage", leadingWords(args), path, path), cliUnknownCommand, strings.Fields(leadingWords(args))))
+				}
+			}
 			return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name), cliUnknownCommand, strings.Fields(leadingWords(args))))
 		}
 	}
@@ -291,7 +302,8 @@ func run(args []string) (status int) {
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
-	args = rewritten
+	// …and in a linked checkout the app may be left out entirely.
+	args = linkedAppAsArgument(rewritten)
 	// Help and version must remain available when saved configuration is broken.
 	switch args[0] {
 	case "version", "--version", "-v":
@@ -377,6 +389,8 @@ func run(args []string) (status int) {
 			return 1
 		}
 		return cmdLogout()
+	case "claim":
+		return cmdClaim(args[1:])
 	case "whoami":
 		if len(args) > 1 {
 			PrintUsage(os.Stderr, "usage: gregale whoami", "auth")
@@ -535,6 +549,8 @@ func run(args []string) (status int) {
 		return cmdAuth(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
+	case "redis":
+		return cmdRedis(args[1:])
 	case "realtime":
 		return cmdRealtime(args[1:])
 	case dispatchDeploys:
@@ -576,6 +592,8 @@ func run(args []string) (status int) {
 		return cmdEnv(args[1:])
 	case "freeze":
 		return cmdFreeze(args[1:])
+	case "verify":
+		return cmdVerify(args[1:])
 	case "release-gates":
 		return cmdReleaseGates(args[1:])
 	case "approvals":
@@ -622,6 +640,9 @@ func run(args []string) (status int) {
 		return cmdDeployTokens(args[1:])
 	case "sandbox-templates":
 		return cmdSandboxTemplates(args[1:])
+	case "agents":
+		// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+		return cmdAgents(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
@@ -834,6 +855,10 @@ func run(args []string) (status int) {
 		// Tier C: --account flips to GET /v1/account/metrics
 		// (account-wide aggregate).
 		return cmdMetrics(args[1:])
+	case "route-resources":
+		// Which routes an app's memory and CPU peaks come from
+		// (ADR-20261121170000).
+		return cmdRouteResources(args[1:])
 	case "analytics":
 		// Customer-facing historical request analytics with bounded
 		// route/country/referrer/client/status groupings.

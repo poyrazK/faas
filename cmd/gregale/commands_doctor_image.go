@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"time"
@@ -16,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
-const doctorUsage = "usage: gregale doctor [--strict] [--json] [--app SLUG] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin]"
+const doctorUsage = "usage: gregale doctor [--strict] [--json] [--app SLUG] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin | --docker-config PATH] [--boot [--env-file FILE]]"
 
 type doctorImageInspector interface {
 	InspectImage(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error)
@@ -25,6 +27,13 @@ type doctorImageInspector interface {
 type doctorImageFlags struct {
 	image, user   string
 	passwordStdin bool
+	// dockerConfig names a Docker config whose credentials for the image's
+	// registry the inspection uses, credential helpers included.
+	dockerConfig string
+	// boot runs the image with the local Docker client and checks that it
+	// starts, serves HTTP on 0.0.0.0:$PORT and stays up (doctor_boot.go).
+	boot    bool
+	envFile string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -32,6 +41,9 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.image, "image", "", "inspect OCI image metadata without downloading layers")
 	fs.StringVar(&f.user, "registry-user", "", "registry username (requires --registry-password-stdin)")
 	fs.BoolVar(&f.passwordStdin, "registry-password-stdin", false, "read registry password or token from stdin")
+	fs.StringVar(&f.dockerConfig, "docker-config", "", "use the image registry's credentials from this Docker config.json or its directory")
+	fs.BoolVar(&f.boot, "boot", false, "with --image, run the image with local Docker and check it starts, serves HTTP on 0.0.0.0:$PORT and stays up")
+	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
 	return f
 }
 
@@ -45,6 +57,20 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 		if _, err := reference.ParseNormalizedNamed(f.image); err != nil {
 			return errors.New("invalid image reference; use registry/repository:tag or registry/repository@sha256:digest")
 		}
+	}
+	if visited["docker-config"] {
+		if f.image == "" || strings.TrimSpace(f.dockerConfig) == "" {
+			return errors.New("--docker-config requires --image and a Docker config path")
+		}
+		if visited["registry-user"] || visited["registry-password-stdin"] {
+			return errors.New("--docker-config cannot be combined with --registry-user: choose one source of registry credentials")
+		}
+	}
+	if visited["boot"] && f.boot && f.image == "" {
+		return errors.New("--boot requires --image: it runs that image with your local Docker")
+	}
+	if visited["env-file"] && (!f.boot || strings.TrimSpace(f.envFile) == "") {
+		return errors.New("--env-file requires --boot and a file path")
 	}
 	if visited["registry-user"] || visited["registry-password-stdin"] {
 		if f.image == "" || f.user == "" || !f.passwordStdin {
@@ -78,6 +104,8 @@ type doctorImage struct {
 	VolumePaths     []string                    `json:"volume_paths,omitempty"`
 	// Layers summarizes compressed layer sizes from the image manifest.
 	Layers *doctorImageLayers `json:"layers,omitempty"`
+	// Booted is set when --boot ran the image with local Docker.
+	Booted bool `json:"booted,omitempty"`
 }
 
 func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspector, strict, asJSON bool) int {
@@ -93,7 +121,17 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(api.OCIPullTimeoutSeconds)*time.Second)
 	defer cancel()
+	if flags.dockerConfig != "" {
+		cred, err := dockerConfigRegistryAuth(ctx, flags.dockerConfig, flags.image, runDockerCredentialHelper)
+		if err != nil {
+			return printErr("Could not read registry credentials", err)
+		}
+		auth = &oci.BasicAuth{Username: cred.Username, Password: cred.Password}
+	}
 	report := runDoctorImageChecks(ctx, flags.image, auth, inspector)
+	if flags.boot {
+		addDoctorBootChecks(&report, flags)
+	}
 	if asJSON {
 		if err := writeJSON(report); err != nil {
 			return 1
@@ -138,8 +176,32 @@ func runDoctorImageChecks(ctx context.Context, ref string, auth *oci.BasicAuth, 
 	return rep
 }
 
+// addDoctorBootChecks runs the image locally and replaces the skipped
+// startup-and-port check with what the run found. It boots even when registry
+// metadata could not be read, so an image that exists only in the local Docker
+// store can be checked too; PORT is then the default serving port.
+func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
+	port := api.DefaultAppPort
+	if report.Image != nil && report.Image.ServingPort > 0 {
+		port = report.Image.ServingPort
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	boot := runDoctorBootChecks(ctx, doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile})
+	checks := report.Checks[:0]
+	for _, c := range report.Checks {
+		if c.Name != "startup-and-port" {
+			checks = append(checks, c)
+		}
+	}
+	report.Checks = append(checks, boot...)
+	if report.Image != nil {
+		report.Image.Booted = true
+	}
+}
+
 func doctorImageAccessError(err error) doctorCheck {
-	c := doctorCheck{Name: "registry-metadata", Status: "error", Code: "image_inspection_failed", Hint: "Could not read image metadata from this machine.", Fix: "Check the image reference, registry connectivity and pull permissions; supply private-registry credentials with --registry-user and --registry-password-stdin."}
+	c := doctorCheck{Name: "registry-metadata", Status: "error", Code: "image_inspection_failed", Hint: "Could not read image metadata from this machine.", Fix: "Check the image reference, registry connectivity and pull permissions; supply private-registry credentials with --docker-config ~/.docker, or --registry-user and --registry-password-stdin."}
 	// Never print arbitrary registry response bodies: they can echo credentials.
 	var selection *oci.PlatformSelectionError
 	if errors.As(err, &selection) {
@@ -257,6 +319,9 @@ func describeDoctorImage(result oci.ImageInspection) *doctorImage {
 func renderDoctorImage(w io.Writer, img *doctorImage) {
 	_, _ = fmt.Fprintf(w, "gregale doctor — image %q\n", img.Reference)
 	if img.Digest == "" {
+		if img.Booted {
+			_, _ = fmt.Fprintf(w, "  booted with local Docker as linux/amd64, PORT=%d (registry metadata unavailable)\n", api.DefaultAppPort)
+		}
 		return
 	}
 	if img.InputReference != "" {
@@ -280,6 +345,14 @@ func renderDoctorImage(w io.Writer, img *doctorImage) {
 				doctorImageDuration(int64(hc.IntervalS)*int64(time.Second)), doctorImageDuration(int64(hc.TimeoutS)*int64(time.Second)), time.Duration(hc.StartPeriodS)*time.Second, doctorImageRetries(hc.Retries))
 		}
 
+	}
+	if img.Booted {
+		port := img.ServingPort
+		if port == 0 {
+			port = api.DefaultAppPort
+		}
+		_, _ = fmt.Fprintf(w, "Metadata checks, then a boot with local Docker as linux/amd64 with PORT=%d. Values precede deployment overrides.\n", port)
+		return
 	}
 	_, _ = fmt.Fprintln(w, "Metadata checks only; no layers downloaded or containers executed. Values precede deployment overrides.")
 }

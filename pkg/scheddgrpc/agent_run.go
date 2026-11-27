@@ -82,6 +82,7 @@ func (s *Server) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
 			return send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Usage{Usage: agentRunUsageToProto(u)}})
 		},
+		Extend: frames.extend,
 	}
 	result, err := s.agentRuns.Run(ctx, admission, run, placed, hooks, frames.cancel)
 	if err != nil {
@@ -110,7 +111,8 @@ func agentRunStartFromProto(start *scheddpb.AgentRunStart) (sched.AgentRunAdmiss
 	}
 	admission := sched.AgentRunAdmission{RunID: start.GetRunId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
-		PauseDuringModelCalls: start.GetPauseDuringModelCalls(), HistoryPeakMB: int(start.GetHistoryPeakPrivateMb())}
+		PauseDuringModelCalls: start.GetPauseDuringModelCalls(), HistoryPeakMB: int(start.GetHistoryPeakPrivateMb()),
+		DeadlineSec: int(start.GetDeadlineSec())}
 	var run agentrunproto.Request
 	if err := json.Unmarshal(start.GetRun(), &run); err != nil {
 		return sched.AgentRunAdmission{}, agentrunproto.Request{}, status.Error(codes.InvalidArgument, "run is not an agent run request")
@@ -170,13 +172,17 @@ var errAgentRunNotProceeded = errors.New("scheddgrpc: agent run was not told to 
 type agentRunFrames struct {
 	proceed <-chan struct{}
 	cancel  <-chan struct{}
+	// extend holds the latest credit agentd sent (ADR-20261027090016
+	// amendment 3); an older credit not yet forwarded is replaced.
+	extend <-chan time.Duration
 }
 
 // watchAgentRunFrames reads agentd's frames after start: proceed lets the
-// placed run boot; cancel, or the stream breaking, cancels. A clean
-// half-close is neither.
+// placed run boot; cancel, or the stream breaking, cancels; extend carries
+// the run's credit on to vmmd. A clean half-close is none of them.
 func watchAgentRunFrames(stream scheddpb.Schedd_RunAgentServer) agentRunFrames {
 	proceed, cancel := make(chan struct{}), make(chan struct{})
+	extend := make(chan time.Duration, 1)
 	var proceedOnce, cancelOnce sync.Once
 	go func() {
 		for {
@@ -192,8 +198,28 @@ func watchAgentRunFrames(stream scheddpb.Schedd_RunAgentServer) agentRunFrames {
 				proceedOnce.Do(func() { close(proceed) })
 			case frame.GetCancel() != nil:
 				cancelOnce.Do(func() { close(cancel) })
+			case frame.GetExtend() != nil:
+				latestCredit(extend, time.Duration(frame.GetExtend().GetCreditMs())*time.Millisecond)
 			}
 		}
 	}()
-	return agentRunFrames{proceed: proceed, cancel: cancel}
+	return agentRunFrames{proceed: proceed, cancel: cancel, extend: extend}
+}
+
+// latestCredit offers credit on a one-slot channel, replacing an older value
+// the reader has not taken. Credit only grows, so the newest frame is the
+// only one worth forwarding.
+func latestCredit(ch chan time.Duration, credit time.Duration) {
+	for {
+		select {
+		case ch <- credit:
+			return
+		default:
+		}
+		select {
+		case old := <-ch:
+			credit = max(credit, old)
+		default:
+		}
+	}
 }

@@ -125,9 +125,14 @@ func TestInitSnapshotPrime_UnsupportedVMM(t *testing.T) {
 func TestInitPrimePath(t *testing.T) {
 	for _, tc := range []struct {
 		name string
+		dep  state.Deployment
 		app  state.App
 		want string
 	}{
+		// prod 2026-11-19: a function's handler ran 20 times per deploy.
+		{name: "function is not primed", dep: state.Deployment{Handler: "handler.handler"}, want: ""},
+		{name: "config-in-code function is not primed", app: state.App{Type: state.AppTypeFunction}, want: ""},
+		{name: "function with warmup is primed", dep: state.Deployment{Handler: "handler.handler"}, app: state.App{Manifest: state.AppManifest{Warmup: &api.WarmupHook{Path: "/warm"}}}, want: "/warm"},
 		{name: "TCP readiness primes /", want: "/"},
 		{name: "image health path", app: state.App{Manifest: state.AppManifest{Healthz: "/status"}}, want: "/status"},
 		{name: "http2 app with TCP readiness is not primed", app: state.App{AppProtocol: api.AppProtocolHTTP2}, want: ""},
@@ -137,7 +142,7 @@ func TestInitPrimePath(t *testing.T) {
 		{name: "grpc app with warmup is primed", app: state.App{AppProtocol: api.AppProtocolGRPC, Manifest: state.AppManifest{Warmup: &api.WarmupHook{Path: "/warm"}}}, want: "/warm"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sched.XInitPrimePath(state.Deployment{}, tc.app); got != tc.want {
+			if got := sched.XInitPrimePath(tc.dep, tc.app); got != tc.want {
 				t.Fatalf("path = %q, want %q", got, tc.want)
 			}
 		})

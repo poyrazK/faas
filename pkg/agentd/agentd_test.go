@@ -63,19 +63,34 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 	for _, name := range []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
 		"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql",
 		"20261030205907043_agent_version_pause_during_model_calls.sql",
+		"20261119124526531_agent_capability_policy.sql",
 		"20261031122245453_agent_run_usage.sql", "20261110153935524_sandbox_sessions.sql",
 		"20261110153935557_sandbox_workspace_snapshots.sql", "20261110153935586_sandbox_ports.sql",
 		"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
 		"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql",
 		"20261117075028100_sandbox_sessions_browser.sql", "20261117075028200_sandbox_tasks.sql",
 		"20261117075028300_sandbox_actions.sql", "20261117084816832_sandbox_action_screenshots.sql",
-		"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql"} {
+		"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql",
+		"20261119101645200_sandbox_sessions_placed_node.sql", "20261119171603970_agent_run_approvals.sql",
+		"20261120021243382_agent_run_approval_deadline_credit.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		up, _, _ := strings.Cut(string(raw), "-- +goose Down")
 		if _, err := pool.Exec(ctx, up); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	// Persistent sessions (ADR-20261122132055): the first is NO TRANSACTION,
+	// so each runs statement by statement as goose runs it.
+	for _, name := range []string{"20261126171607100_sandbox_sessions_persistent.sql", "20261126171607200_sandbox_session_captures.sql",
+		"20261126171607300_sandbox_volumes.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pgtest.ExecMigration(ctx, t, pool, string(raw), true); err != nil {
 			t.Fatalf("apply %s: %v", name, err)
 		}
 	}
@@ -123,6 +138,10 @@ type fakeSchedd struct {
 	// usage, when set, is sent after the output: before the result, or
 	// before the error of the "drop-measured" script.
 	usage *scheddpb.AgentRunUsage
+	// running, when set, is called once the run proceeds; credit is the
+	// first approval-wait credit the "wait-extend" script received.
+	running func(runID string)
+	credit  int64
 }
 
 func (f *fakeSchedd) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
@@ -152,7 +171,11 @@ func (f *fakeSchedd) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 	}
 	f.mu.Lock()
 	f.proceededFirst = true
+	running := f.running
 	f.mu.Unlock()
+	if running != nil {
+		running(run.RunID)
+	}
 	if run.Command[0] == "drop" {
 		return status.Error(codes.Unavailable, "vmmd went away")
 	}
@@ -169,6 +192,20 @@ func (f *fakeSchedd) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 	if run.Command[0] == "comment" {
 		result.Result = json.RawMessage(`{"verdict":"ok","comment":"Looks good."}`)
 	}
+	if run.Command[0] == "wait-extend" {
+		for {
+			frame, err := stream.Recv()
+			if err != nil {
+				return status.Error(codes.Internal, "expected an extend")
+			}
+			if frame.GetExtend() != nil {
+				f.mu.Lock()
+				f.credit = frame.GetExtend().GetCreditMs()
+				f.mu.Unlock()
+				break
+			}
+		}
+	}
 	if run.Command[0] == "wait-cancel" {
 		frame, err := stream.Recv()
 		if err != nil || frame.GetCancel() == nil {
@@ -183,6 +220,11 @@ func (f *fakeSchedd) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 
 func newAgentd(t *testing.T, store *agentstore.Store, fake *fakeSchedd) *agentd.Agentd {
 	t.Helper()
+	return newAgentdWith(t, store, fake, func(*agentd.Config) {})
+}
+
+func newAgentdWith(t *testing.T, store *agentstore.Store, fake *fakeSchedd, tune func(*agentd.Config)) *agentd.Agentd {
+	t.Helper()
 	srv := grpc.NewServer()
 	scheddpb.RegisterScheddServer(srv, fake)
 	lis := bufconn.Listen(1 << 20)
@@ -194,8 +236,9 @@ func newAgentd(t *testing.T, store *agentstore.Store, fake *fakeSchedd) *agentd.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return agentd.New(store, scheddpb.NewScheddClient(conn), agentd.Config{Owner: "agentd-test", LeaseTTL: 300 * time.Millisecond,
-		PollInterval: 10 * time.Millisecond}, nil)
+	cfg := agentd.Config{Owner: "agentd-test", LeaseTTL: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}
+	tune(&cfg)
+	return agentd.New(store, scheddpb.NewScheddClient(conn), cfg, nil)
 }
 
 func runState(t *testing.T, s *agentstore.Store, id string) agentstore.Run {
@@ -482,5 +525,82 @@ func TestRunRecordsUsage(t *testing.T) {
 		if got := counterValue(t, reg, "agent_run_memory_gb_seconds_total", map[string]string{"measure": measure}); got != gbSeconds {
 			t.Errorf("%s = %v GB-s, want %v", measure, got, gbSeconds)
 		}
+	}
+}
+
+// ADR-20261027090016 amendment 3: with the switch on, a version with an
+// approve tool gets a guest ceiling above its timeout, schedd gets the
+// seller deadline, the run row records its credit cap, and approval waits
+// reach schedd as credit.
+func TestApprovalWaitsExtendTheDeadline(t *testing.T) {
+	pool, store := openStore(t)
+	ctx := context.Background()
+	fake := &fakeSchedd{}
+	fake.running = func(runID string) {
+		if _, err := pool.Exec(ctx, `INSERT INTO agent_run_approvals (run_id, account_id, tool, arguments_sha256, created_at, expires_at)
+			VALUES ($1, $2, 'web_fetch', $3, now() - interval '30 seconds', now() + interval '1 hour')`,
+			runID, account, strings.Repeat("a", 64)); err != nil {
+			t.Error(err)
+		}
+	}
+	a := newAgentdWith(t, store, fake, func(c *agentd.Config) {
+		c.ApprovalDeadlineCredit, c.CreditPoll = true, 10*time.Millisecond
+	})
+	spec := agentstore.VersionSpec{Harness: agentstore.Harness{Image: "ghcr.io/acme/agent:1", Run: []string{"wait-extend", "{prompt}"}},
+		PromptTemplate: "go", RAMMB: 1024, TimeoutSec: 60,
+		CapabilityPolicy: &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityApprove}}}}
+	if _, _, err := store.CreateAgent(ctx, account, "approver", "", spec, 10); err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := store.AdmitRun(ctx, agentstore.Admission{AccountID: account, Agent: "approver", Trigger: "api",
+		Limits: agentstore.AdmitLimits{RunsPerDay: 100, QueuedMax: 100, TimeoutMaxSec: 3600, RAMMBMax: 4096}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ClaimOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	start, req, credit := fake.start, fake.run, fake.credit
+	fake.mu.Unlock()
+	if start.GetDeadlineSec() != 60 || req.TimeoutSec != 60+api.AgentRunApprovalCreditMaxSec {
+		t.Errorf("deadline %d s, guest timeout %d s; want 60 and 60 + %d", start.GetDeadlineSec(), req.TimeoutSec, api.AgentRunApprovalCreditMaxSec)
+	}
+	if credit < 30_000 || credit > 40_000 {
+		t.Errorf("credit %d ms, want about 30 s", credit)
+	}
+	var capSec int
+	if err := pool.QueryRow(ctx, `SELECT deadline_credit_max_sec FROM agent_runs WHERE id = $1`, run.ID).Scan(&capSec); err != nil ||
+		capSec != api.AgentRunApprovalCreditMaxSec {
+		t.Errorf("credit cap %d %v", capSec, err)
+	}
+	if got := runState(t, store, run.ID); got.State != agentstore.StateSucceeded {
+		t.Errorf("run %+v", got)
+	}
+}
+
+// With the switch off, nothing changes for an approve-mode version.
+func TestApprovalCreditOffKeepsTheTimeout(t *testing.T) {
+	_, store := openStore(t)
+	ctx := context.Background()
+	fake := &fakeSchedd{}
+	a := newAgentd(t, store, fake)
+	spec := agentstore.VersionSpec{Harness: agentstore.Harness{Image: "ghcr.io/acme/agent:1", Run: []string{"ok", "{prompt}"}},
+		PromptTemplate: "go", RAMMB: 1024, TimeoutSec: 60,
+		CapabilityPolicy: &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityApprove}}}}
+	if _, _, err := store.CreateAgent(ctx, account, "approver", "", spec, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.AdmitRun(ctx, agentstore.Admission{AccountID: account, Agent: "approver", Trigger: "api",
+		Limits: agentstore.AdmitLimits{RunsPerDay: 100, QueuedMax: 100, TimeoutMaxSec: 3600, RAMMBMax: 4096}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ClaimOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.start.GetDeadlineSec() != 0 || fake.run.TimeoutSec != 60 {
+		t.Errorf("deadline %d, guest timeout %d; want 0 and 60", fake.start.GetDeadlineSec(), fake.run.TimeoutSec)
 	}
 }

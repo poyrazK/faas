@@ -35,8 +35,9 @@ never readable through the API.
 
 The default delivery format is Gregale JSON. `cloudevents` sends CloudEvents
 1.0 structured mode (`application/cloudevents+json`), retaining the same
-signed headers. Every delivery records the source `app_id` even though the
-subscription itself has no app ID. If both an app receiver and an account
+signed headers. Release deliveries record the source `app_id` even though the
+subscription itself has no app ID. Account-only events such as Run completion
+have no app ID. If both an app receiver and an account
 receiver match an event, each gets an independent delivery ID and retry state.
 
 ## Verify each delivery
@@ -81,3 +82,26 @@ The same operations are available under
 `/v1/account/release-webhooks[/{id}]`, with `/rotate-secret`, `/deliveries`,
 and `/deliveries/{did}/retry` subroutes. These are active-account routes; IDs
 from another account or app-scoped webhooks are not exposed through them.
+
+## Run completion preview
+
+When the Run API and V2 preview writers are enabled, an account administrator
+can also select `execution.finished` on these same account receiver routes:
+
+```sh
+gregale webhooks account add \
+  --target-url https://agents.example.com/gregale/completions \
+  --event execution.finished --delivery-format cloudevents
+```
+
+Completion and delivery enqueueing commit atomically, including cancellation,
+timeout, out-of-memory and recovery outcomes. The payload contains receipt
+metadata and an API-relative `receipt_url`, without code, inputs, results or
+artifact bytes. Verify the signature and timestamp, then deduplicate the payload's
+stable `event_id` (the Run ID) before applying effects. Retries, scheduler restarts
+and dead-letter redrive preserve this ID and never submit another Run.
+Delivery remains at least once. Subscribe before the Run finishes; historical
+receipts are not backfilled. Disabling new Run writers preserves pending delivery
+obligations and receiver reads. Runs-only keys cannot administer account receivers.
+See [Run callbacks](executions.md#durable-completion-callbacks) for the payload
+contract and scoped receipt retrieval.

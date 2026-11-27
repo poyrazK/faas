@@ -12,3 +12,10 @@ SELECT d.id,COALESCE(c.urls,'{}'::jsonb) FROM deployments d
 LEFT JOIN deployment_public_build_urls c ON c.deployment_id=sqlc.arg(source_deployment_id)::uuid
 WHERE d.id=sqlc.arg(deployment_id)::uuid
 ON CONFLICT(deployment_id) DO UPDATE SET urls=EXCLUDED.urls;
+
+-- name: SetProjectEnvironmentCloneDeploymentPublicBuildURLs :exec
+-- A clone's target deployment carries the build URLs captured from its source
+-- deployment (ADR-20261104120000 amendment 2026-11-21).
+INSERT INTO deployment_public_build_urls(deployment_id,urls)
+VALUES (sqlc.arg(deployment_id)::uuid, sqlc.arg(urls)::jsonb)
+ON CONFLICT(deployment_id) DO UPDATE SET urls=EXCLUDED.urls;

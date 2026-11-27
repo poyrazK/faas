@@ -122,14 +122,18 @@ func (q *Queries) AdvanceSalesIntake(ctx context.Context, db DBTX, lastOwnerID p
 }
 
 const attributeCheckout = `-- name: AttributeCheckout :execrows
-INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days,attribution_source)
+INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days,attribution_source,subject_kind,selected_by)
 SELECT $1::uuid,l.code,$2::text,
  $3::bigint,$4::bigint,
- $5::integer,$6::integer,$7::integer,'checkout'
+ COALESCE((SELECT g.commission_bps FROM sales_commission_agreements g
+  WHERE g.account_id=l.owner_id AND g.effective_from<=now() ORDER BY g.effective_from DESC,g.created_at DESC LIMIT 1),$5::integer),
+ $6::integer,$7::integer,'checkout',
+ $8::text,$9::uuid
 FROM referral_links l JOIN accounts owner ON owner.id=l.owner_id
-WHERE l.share_code=$8::text AND l.kind='sales' AND l.active
+WHERE l.share_code=$10::text AND l.kind='sales' AND l.active
  AND owner.status='active' AND owner.email_verified_at IS NOT NULL AND owner.mfa_enrolled_at IS NOT NULL
- AND lower(owner.email)=ANY($9::text[]) AND l.owner_id<>$1::uuid
+ AND lower(owner.email)=ANY($11::text[]) AND l.owner_id<>$1::uuid
+ AND l.owner_id IS DISTINCT FROM $9::uuid
 ON CONFLICT (account_id) DO NOTHING
 `
 
@@ -141,6 +145,8 @@ type AttributeCheckoutParams struct {
 	CommissionBps       int32
 	HoldDays            int32
 	ConversionDays      int32
+	SubjectKind         string
+	SelectedBy          pgtype.UUID
 	Code                string
 	MemberEmails        []string
 }
@@ -154,6 +160,8 @@ func (q *Queries) AttributeCheckout(ctx context.Context, db DBTX, arg AttributeC
 		arg.CommissionBps,
 		arg.HoldDays,
 		arg.ConversionDays,
+		arg.SubjectKind,
+		arg.SelectedBy,
 		arg.Code,
 		arg.MemberEmails,
 	)
@@ -167,7 +175,10 @@ const attributeSignup = `-- name: AttributeSignup :execrows
 INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days)
 SELECT $1::uuid,l.code,$2::text,
  $3::bigint,$4::bigint,
- $5::integer,$6::integer,$7::integer
+ CASE WHEN l.kind='sales' THEN COALESCE((SELECT g.commission_bps FROM sales_commission_agreements g
+  WHERE g.account_id=l.owner_id AND g.effective_from<=now() ORDER BY g.effective_from DESC,g.created_at DESC LIMIT 1),$5::integer)
+  ELSE $5::integer END,
+ $6::integer,$7::integer
 FROM referral_links l JOIN accounts a ON a.id=l.owner_id
 WHERE l.share_code=$8::text AND l.active AND a.status='active' AND l.owner_id<>$1::uuid
 ON CONFLICT (account_id) DO NOTHING
@@ -399,6 +410,18 @@ func (q *Queries) CreateSalesTask(ctx context.Context, db DBTX, arg CreateSalesT
 	return id, err
 }
 
+const currentCommissionBps = `-- name: CurrentCommissionBps :one
+SELECT commission_bps FROM sales_commission_agreements
+WHERE account_id=$1 AND effective_from<=now() ORDER BY effective_from DESC,created_at DESC LIMIT 1
+`
+
+func (q *Queries) CurrentCommissionBps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error) {
+	row := db.QueryRow(ctx, currentCommissionBps, accountID)
+	var commission_bps int32
+	err := row.Scan(&commission_bps)
+	return commission_bps, err
+}
+
 const deleteProspect = `-- name: DeleteProspect :execrows
 DELETE FROM sales_leads WHERE id=$1 AND version=$2
  AND (owner_id=$3::uuid OR $4::boolean)
@@ -526,6 +549,62 @@ func (q *Queries) GetQualification(ctx context.Context, db DBTX, leadID pgtype.U
 	return i, err
 }
 
+const insertCommissionAgreement = `-- name: InsertCommissionAgreement :exec
+INSERT INTO sales_commission_agreements(id,account_id,commission_bps,effective_from,note,created_by)
+VALUES ($1,$2,$3,$4,$5,$6)
+`
+
+type InsertCommissionAgreementParams struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	CommissionBps int32
+	EffectiveFrom pgtype.Timestamptz
+	Note          string
+	CreatedBy     pgtype.UUID
+}
+
+func (q *Queries) InsertCommissionAgreement(ctx context.Context, db DBTX, arg InsertCommissionAgreementParams) error {
+	_, err := db.Exec(ctx, insertCommissionAgreement,
+		arg.ID,
+		arg.AccountID,
+		arg.CommissionBps,
+		arg.EffectiveFrom,
+		arg.Note,
+		arg.CreatedBy,
+	)
+	return err
+}
+
+const insertCreditChange = `-- name: InsertCreditChange :exec
+INSERT INTO referral_credit_changes(id,account_id,from_owner_id,to_owner_id,from_commission_bps,to_commission_bps,reason,changed_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type InsertCreditChangeParams struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	FromOwnerID       pgtype.UUID
+	ToOwnerID         pgtype.UUID
+	FromCommissionBps int32
+	ToCommissionBps   int32
+	Reason            string
+	ChangedBy         pgtype.UUID
+}
+
+func (q *Queries) InsertCreditChange(ctx context.Context, db DBTX, arg InsertCreditChangeParams) error {
+	_, err := db.Exec(ctx, insertCreditChange,
+		arg.ID,
+		arg.AccountID,
+		arg.FromOwnerID,
+		arg.ToOwnerID,
+		arg.FromCommissionBps,
+		arg.ToCommissionBps,
+		arg.Reason,
+		arg.ChangedBy,
+	)
+	return err
+}
+
 const insertMessageTemplate = `-- name: InsertMessageTemplate :one
 INSERT INTO sales_message_templates(id,title,category,stage,status,subject,body,updated_by)
 SELECT $1,$2,$3,$4,$5,$6,$7,$8::uuid
@@ -559,6 +638,38 @@ func (q *Queries) InsertMessageTemplate(ctx context.Context, db DBTX, arg Insert
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertPayout = `-- name: InsertPayout :exec
+INSERT INTO sales_commission_payouts(id,account_id,owner_id,amount_cents,currency,paid_on,reference,note,recorded_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+`
+
+type InsertPayoutParams struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OwnerID     pgtype.UUID
+	AmountCents int64
+	Currency    string
+	PaidOn      pgtype.Date
+	Reference   string
+	Note        string
+	RecordedBy  pgtype.UUID
+}
+
+func (q *Queries) InsertPayout(ctx context.Context, db DBTX, arg InsertPayoutParams) error {
+	_, err := db.Exec(ctx, insertPayout,
+		arg.ID,
+		arg.AccountID,
+		arg.OwnerID,
+		arg.AmountCents,
+		arg.Currency,
+		arg.PaidOn,
+		arg.Reference,
+		arg.Note,
+		arg.RecordedBy,
+	)
+	return err
 }
 
 const insertQualification = `-- name: InsertQualification :exec
@@ -696,6 +807,25 @@ func (q *Queries) InsertSalesOutcome(ctx context.Context, db DBTX, arg InsertSal
 	return err
 }
 
+const insertSalesTeamMember = `-- name: InsertSalesTeamMember :execrows
+INSERT INTO sales_team_members(account_id,role,active,updated_by) VALUES ($1,$2,true,$3)
+ON CONFLICT (account_id) DO NOTHING
+`
+
+type InsertSalesTeamMemberParams struct {
+	AccountID pgtype.UUID
+	Role      string
+	UpdatedBy pgtype.UUID
+}
+
+func (q *Queries) InsertSalesTeamMember(ctx context.Context, db DBTX, arg InsertSalesTeamMemberParams) (int64, error) {
+	result, err := db.Exec(ctx, insertSalesTeamMember, arg.AccountID, arg.Role, arg.UpdatedBy)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const intakeLead = `-- name: IntakeLead :one
 SELECT id,owner_id,email FROM sales_leads WHERE id=$1 FOR UPDATE
 `
@@ -795,6 +925,100 @@ func (q *Queries) LeadAlertCounts(ctx context.Context, db DBTX, arg LeadAlertCou
 		&i.OverdueTasks,
 	)
 	return i, err
+}
+
+const listCommissionAgreements = `-- name: ListCommissionAgreements :many
+SELECT g.id,g.commission_bps,g.effective_from,g.note,g.created_at,COALESCE(c.email,'')::text AS created_by_email
+FROM sales_commission_agreements g LEFT JOIN accounts c ON c.id=g.created_by
+WHERE g.account_id=$1 ORDER BY g.effective_from DESC,g.created_at DESC LIMIT 100
+`
+
+type ListCommissionAgreementsRow struct {
+	ID             pgtype.UUID
+	CommissionBps  int32
+	EffectiveFrom  pgtype.Timestamptz
+	Note           string
+	CreatedAt      pgtype.Timestamptz
+	CreatedByEmail string
+}
+
+func (q *Queries) ListCommissionAgreements(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListCommissionAgreementsRow, error) {
+	rows, err := db.Query(ctx, listCommissionAgreements, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCommissionAgreementsRow{}
+	for rows.Next() {
+		var i ListCommissionAgreementsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.CommissionBps,
+			&i.EffectiveFrom,
+			&i.Note,
+			&i.CreatedAt,
+			&i.CreatedByEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCreditChanges = `-- name: ListCreditChanges :many
+SELECT c.id,c.from_owner_id,c.to_owner_id,c.from_commission_bps,c.to_commission_bps,c.reason,c.created_at,
+ COALESCE(f.email,'')::text AS from_email,COALESCE(t.email,'')::text AS to_email,COALESCE(b.email,'')::text AS changed_by_email
+FROM referral_credit_changes c
+LEFT JOIN accounts f ON f.id=c.from_owner_id LEFT JOIN accounts t ON t.id=c.to_owner_id LEFT JOIN accounts b ON b.id=c.changed_by
+WHERE c.account_id=$1 ORDER BY c.created_at DESC LIMIT 50
+`
+
+type ListCreditChangesRow struct {
+	ID                pgtype.UUID
+	FromOwnerID       pgtype.UUID
+	ToOwnerID         pgtype.UUID
+	FromCommissionBps int32
+	ToCommissionBps   int32
+	Reason            string
+	CreatedAt         pgtype.Timestamptz
+	FromEmail         string
+	ToEmail           string
+	ChangedByEmail    string
+}
+
+func (q *Queries) ListCreditChanges(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListCreditChangesRow, error) {
+	rows, err := db.Query(ctx, listCreditChanges, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCreditChangesRow{}
+	for rows.Next() {
+		var i ListCreditChangesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromOwnerID,
+			&i.ToOwnerID,
+			&i.FromCommissionBps,
+			&i.ToCommissionBps,
+			&i.Reason,
+			&i.CreatedAt,
+			&i.FromEmail,
+			&i.ToEmail,
+			&i.ChangedByEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listLeadAlerts = `-- name: ListLeadAlerts :many
@@ -928,6 +1152,86 @@ func (q *Queries) ListMessageTemplates(ctx context.Context, db DBTX, arg ListMes
 	return items, nil
 }
 
+const listPayouts = `-- name: ListPayouts :many
+SELECT p.id,p.account_id,p.owner_id,p.amount_cents,p.currency,p.paid_on,p.reference,p.note,p.created_at,
+ p.voided_at,p.void_reason,COALESCE(o.email,'')::text AS owner_email,COALESCE(v.email,'')::text AS customer_email,
+ COALESCE(v.org_name,'')::text AS customer_org,COALESCE(rb.email,'')::text AS recorded_by_email
+FROM sales_commission_payouts p
+LEFT JOIN accounts o ON o.id=p.owner_id
+LEFT JOIN sales_referral_overview v ON v.account_id=p.account_id
+LEFT JOIN accounts rb ON rb.id=p.recorded_by
+WHERE (p.owner_id=$1::uuid OR $2::boolean)
+ AND ($3::text='' OR p.owner_id::text=$3::text)
+ AND ($4::boolean OR p.voided_at IS NULL)
+ORDER BY p.paid_on DESC,p.created_at DESC,p.id LIMIT 200
+`
+
+type ListPayoutsParams struct {
+	ActorID       pgtype.UUID
+	AllOwners     bool
+	OwnerFilter   string
+	IncludeVoided bool
+}
+
+type ListPayoutsRow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	OwnerID         pgtype.UUID
+	AmountCents     int64
+	Currency        string
+	PaidOn          pgtype.Date
+	Reference       string
+	Note            string
+	CreatedAt       pgtype.Timestamptz
+	VoidedAt        pgtype.Timestamptz
+	VoidReason      string
+	OwnerEmail      string
+	CustomerEmail   string
+	CustomerOrg     string
+	RecordedByEmail string
+}
+
+func (q *Queries) ListPayouts(ctx context.Context, db DBTX, arg ListPayoutsParams) ([]ListPayoutsRow, error) {
+	rows, err := db.Query(ctx, listPayouts,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.OwnerFilter,
+		arg.IncludeVoided,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPayoutsRow{}
+	for rows.Next() {
+		var i ListPayoutsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.OwnerID,
+			&i.AmountCents,
+			&i.Currency,
+			&i.PaidOn,
+			&i.Reference,
+			&i.Note,
+			&i.CreatedAt,
+			&i.VoidedAt,
+			&i.VoidReason,
+			&i.OwnerEmail,
+			&i.CustomerEmail,
+			&i.CustomerOrg,
+			&i.RecordedByEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProspects = `-- name: ListProspects :many
 SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email,
  EXISTS(SELECT 1 FROM sales_referral_overview v WHERE v.owner_id=l.owner_id AND v.kind='sales' AND lower(v.email)=l.email) AS registered,
@@ -1014,7 +1318,7 @@ func (q *Queries) ListProspects(ctx context.Context, db DBTX, arg ListProspectsP
 }
 
 const listReferrals = `-- name: ListReferrals :many
-SELECT v.account_id, v.owner_id, v.kind, v.email, v.plan, v.account_status, v.created_at, v.stage, v.note, v.follow_up, v.currency, v.apps, v.paid, v.paid_cents, v.eligible_at, v.reward_status, v.reward_cents, v.referred_reward_cents,r.attribution_source FROM sales_referral_overview v
+SELECT v.account_id, v.owner_id, v.kind, v.email, v.plan, v.account_status, v.created_at, v.stage, v.note, v.follow_up, v.currency, v.apps, v.paid, v.paid_cents, v.eligible_at, v.reward_status, v.reward_cents, v.referred_reward_cents, v.subject_kind, v.org_name, v.commission_bps, v.payout_id, v.payout_cents, v.payout_paid_on,r.attribution_source FROM sales_referral_overview v
 JOIN referral_attributions r ON r.account_id=v.account_id
 WHERE (v.owner_id=$1::uuid OR $2::boolean)
  AND ($3::text='' OR v.kind=$3::text)
@@ -1049,6 +1353,12 @@ type ListReferralsRow struct {
 	RewardStatus        string
 	RewardCents         int64
 	ReferredRewardCents int64
+	SubjectKind         string
+	OrgName             string
+	CommissionBps       int32
+	PayoutID            pgtype.UUID
+	PayoutCents         int64
+	PayoutPaidOn        pgtype.Date
 	AttributionSource   string
 }
 
@@ -1086,6 +1396,12 @@ func (q *Queries) ListReferrals(ctx context.Context, db DBTX, arg ListReferralsP
 			&i.RewardStatus,
 			&i.RewardCents,
 			&i.ReferredRewardCents,
+			&i.SubjectKind,
+			&i.OrgName,
+			&i.CommissionBps,
+			&i.PayoutID,
+			&i.PayoutCents,
+			&i.PayoutPaidOn,
 			&i.AttributionSource,
 		); err != nil {
 			return nil, err
@@ -1340,6 +1656,64 @@ func (q *Queries) ListSalesTasks(ctx context.Context, db DBTX, arg ListSalesTask
 	return items, nil
 }
 
+const listSalesTeamMembers = `-- name: ListSalesTeamMembers :many
+SELECT a.id,a.email,a.status,(a.email_verified_at IS NOT NULL)::boolean AS verified,
+ (a.mfa_enrolled_at IS NOT NULL)::boolean AS mfa_enrolled,
+ COALESCE(m.role,'')::text AS stored_role,COALESCE(m.active,false)::boolean AS stored_active,
+ COALESCE(m.version,0)::bigint AS version,
+ COALESCE(g.commission_bps,-1)::integer AS agreement_bps,g.effective_from AS agreement_from
+FROM accounts a
+LEFT JOIN sales_team_members m ON m.account_id=a.id
+LEFT JOIN LATERAL (SELECT ag.commission_bps,ag.effective_from FROM sales_commission_agreements ag
+ WHERE ag.account_id=a.id AND ag.effective_from<=now() ORDER BY ag.effective_from DESC,ag.created_at DESC LIMIT 1) g ON true
+WHERE m.account_id IS NOT NULL OR lower(a.email)=ANY($1::text[])
+ORDER BY lower(a.email),a.id
+`
+
+type ListSalesTeamMembersRow struct {
+	ID            pgtype.UUID
+	Email         string
+	Status        string
+	Verified      bool
+	MfaEnrolled   bool
+	StoredRole    string
+	StoredActive  bool
+	Version       int64
+	AgreementBps  int32
+	AgreementFrom pgtype.Timestamptz
+}
+
+func (q *Queries) ListSalesTeamMembers(ctx context.Context, db DBTX, configEmails []string) ([]ListSalesTeamMembersRow, error) {
+	rows, err := db.Query(ctx, listSalesTeamMembers, configEmails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSalesTeamMembersRow{}
+	for rows.Next() {
+		var i ListSalesTeamMembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Status,
+			&i.Verified,
+			&i.MfaEnrolled,
+			&i.StoredRole,
+			&i.StoredActive,
+			&i.Version,
+			&i.AgreementBps,
+			&i.AgreementFrom,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockActivityLead = `-- name: LockActivityLead :one
 SELECT id,version FROM sales_leads
 WHERE id=$1 AND (owner_id=$2::uuid OR $3::boolean) FOR UPDATE
@@ -1396,6 +1770,34 @@ func (q *Queries) LockReferralBillingAccount(ctx context.Context, db DBTX, accou
 	return err
 }
 
+const lockSalesCredit = `-- name: LockSalesCredit :one
+SELECT r.account_id,r.commission_bps,l.kind,l.owner_id,
+ EXISTS(SELECT 1 FROM sales_commission_payouts p WHERE p.account_id=r.account_id AND p.voided_at IS NULL)::boolean AS has_payout
+FROM referral_attributions r JOIN referral_links l ON l.code=r.code
+WHERE r.account_id=$1 FOR UPDATE OF r
+`
+
+type LockSalesCreditRow struct {
+	AccountID     pgtype.UUID
+	CommissionBps int32
+	Kind          string
+	OwnerID       pgtype.UUID
+	HasPayout     bool
+}
+
+func (q *Queries) LockSalesCredit(ctx context.Context, db DBTX, accountID pgtype.UUID) (LockSalesCreditRow, error) {
+	row := db.QueryRow(ctx, lockSalesCredit, accountID)
+	var i LockSalesCreditRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.CommissionBps,
+		&i.Kind,
+		&i.OwnerID,
+		&i.HasPayout,
+	)
+	return i, err
+}
+
 const lockSalesIntake = `-- name: LockSalesIntake :one
 INSERT INTO sales_intake_routing(id) VALUES(1)
 ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING last_owner_id
@@ -1406,6 +1808,69 @@ func (q *Queries) LockSalesIntake(ctx context.Context, db DBTX) (pgtype.UUID, er
 	var last_owner_id pgtype.UUID
 	err := row.Scan(&last_owner_id)
 	return last_owner_id, err
+}
+
+const moveSalesCredit = `-- name: MoveSalesCredit :execrows
+UPDATE referral_attributions SET code=$1,commission_bps=$2,updated_by=$3,updated_at=now() WHERE account_id=$4
+`
+
+type MoveSalesCreditParams struct {
+	Code          string
+	CommissionBps int32
+	UpdatedBy     pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) MoveSalesCredit(ctx context.Context, db DBTX, arg MoveSalesCreditParams) (int64, error) {
+	result, err := db.Exec(ctx, moveSalesCredit,
+		arg.Code,
+		arg.CommissionBps,
+		arg.UpdatedBy,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const orgCheckoutReferralState = `-- name: OrgCheckoutReferralState :one
+SELECT o.plan,o.status,COALESCE(o.stripe_subscription_item,'')::text AS subscription,
+ (o.personal_org OR o.deleted_pending)::boolean AS excluded,
+ (r.account_id IS NOT NULL)::boolean AS attributed,COALESCE(l.share_code,'')::text AS code,
+ COALESCE(l.kind,'')::text AS kind,
+ EXISTS (SELECT 1 FROM invoices i WHERE i.account_id=o.id
+  AND (i.amount_paid_cents>0 OR i.amount_refunded_cents>0 OR i.amount_refund_pending_cents>0))::boolean AS paid
+FROM orgs o LEFT JOIN referral_attributions r ON r.account_id=o.id
+ LEFT JOIN referral_links l ON l.code=r.code
+WHERE o.id=$1::uuid
+`
+
+type OrgCheckoutReferralStateRow struct {
+	Plan         string
+	Status       string
+	Subscription string
+	Excluded     bool
+	Attributed   bool
+	Code         string
+	Kind         string
+	Paid         bool
+}
+
+func (q *Queries) OrgCheckoutReferralState(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgCheckoutReferralStateRow, error) {
+	row := db.QueryRow(ctx, orgCheckoutReferralState, orgID)
+	var i OrgCheckoutReferralStateRow
+	err := row.Scan(
+		&i.Plan,
+		&i.Status,
+		&i.Subscription,
+		&i.Excluded,
+		&i.Attributed,
+		&i.Code,
+		&i.Kind,
+		&i.Paid,
+	)
+	return i, err
 }
 
 const ownLink = `-- name: OwnLink :one
@@ -1427,6 +1892,31 @@ func (q *Queries) OwnLink(ctx context.Context, db DBTX, arg OwnLinkParams) (Refe
 		&i.Active,
 		&i.CreatedAt,
 		&i.ShareCode,
+	)
+	return i, err
+}
+
+const payoutCandidate = `-- name: PayoutCandidate :one
+SELECT v.owner_id,v.kind,v.currency,v.reward_status,v.reward_cents FROM sales_referral_overview v WHERE v.account_id=$1
+`
+
+type PayoutCandidateRow struct {
+	OwnerID      pgtype.UUID
+	Kind         string
+	Currency     string
+	RewardStatus string
+	RewardCents  int64
+}
+
+func (q *Queries) PayoutCandidate(ctx context.Context, db DBTX, accountID pgtype.UUID) (PayoutCandidateRow, error) {
+	row := db.QueryRow(ctx, payoutCandidate, accountID)
+	var i PayoutCandidateRow
+	err := row.Scan(
+		&i.OwnerID,
+		&i.Kind,
+		&i.Currency,
+		&i.RewardStatus,
+		&i.RewardCents,
 	)
 	return i, err
 }
@@ -1686,15 +2176,21 @@ func (q *Queries) RecordReferralPayment(ctx context.Context, db DBTX, invoiceID 
 }
 
 const referralSummary = `-- name: ReferralSummary :many
-SELECT kind,currency,count(*)::bigint AS signups,
- count(*) FILTER (WHERE paid)::bigint AS paid,
- count(*) FILTER (WHERE reward_status='eligible')::bigint AS eligible,
- COALESCE(sum(reward_cents) FILTER (WHERE reward_status='eligible'),0)::bigint AS reward_cents,
- COALESCE(sum(paid_cents) FILTER (WHERE paid AND reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents
-FROM sales_referral_overview
-WHERE (owner_id=$1::uuid OR $2::boolean)
- AND ($3::text='' OR kind=$3::text)
-GROUP BY kind,currency ORDER BY kind,currency
+SELECT v.kind,v.currency,count(*)::bigint AS signups,
+ count(*) FILTER (WHERE v.paid)::bigint AS paid,
+ count(*) FILTER (WHERE v.reward_status='eligible')::bigint AS eligible,
+ COALESCE(sum(v.reward_cents) FILTER (WHERE v.reward_status='eligible'),0)::bigint AS reward_cents,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch'))::bigint AS sales,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::bigint AS sales_this_month,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::bigint AS paid_this_month_cents
+FROM sales_referral_overview v
+JOIN referral_attributions r ON r.account_id=v.account_id
+WHERE (v.owner_id=$1::uuid OR $2::boolean)
+ AND ($3::text='' OR v.kind=$3::text)
+GROUP BY v.kind,v.currency ORDER BY v.kind,v.currency
 `
 
 type ReferralSummaryParams struct {
@@ -1704,15 +2200,20 @@ type ReferralSummaryParams struct {
 }
 
 type ReferralSummaryRow struct {
-	Kind        string
-	Currency    string
-	Signups     int64
-	Paid        int64
-	Eligible    int64
-	RewardCents int64
-	PaidCents   int64
+	Kind               string
+	Currency           string
+	Signups            int64
+	Paid               int64
+	Eligible           int64
+	RewardCents        int64
+	PaidCents          int64
+	Sales              int64
+	SalesThisMonth     int64
+	PaidThisMonthCents int64
 }
 
+// A sale is a paid first invoice that was not refunded or paid in another
+// currency; "this month" is the calendar month in UTC of that first payment.
 func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSummaryParams) ([]ReferralSummaryRow, error) {
 	rows, err := db.Query(ctx, referralSummary, arg.OwnerID, arg.AllOwners, arg.Kind)
 	if err != nil {
@@ -1730,6 +2231,9 @@ func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSumm
 			&i.Eligible,
 			&i.RewardCents,
 			&i.PaidCents,
+			&i.Sales,
+			&i.SalesThisMonth,
+			&i.PaidThisMonthCents,
 		); err != nil {
 			return nil, err
 		}
@@ -1776,6 +2280,22 @@ func (q *Queries) RouteSalesInquiry(ctx context.Context, db DBTX, arg RouteSales
 		arg.TaskID,
 	)
 	return err
+}
+
+const salesAccountByEmail = `-- name: SalesAccountByEmail :one
+SELECT id,email FROM accounts WHERE lower(email)=lower($1::text) ORDER BY id LIMIT 1
+`
+
+type SalesAccountByEmailRow struct {
+	ID    pgtype.UUID
+	Email string
+}
+
+func (q *Queries) SalesAccountByEmail(ctx context.Context, db DBTX, email string) (SalesAccountByEmailRow, error) {
+	row := db.QueryRow(ctx, salesAccountByEmail, email)
+	var i SalesAccountByEmailRow
+	err := row.Scan(&i.ID, &i.Email)
+	return i, err
 }
 
 const salesInquiryByID = `-- name: SalesInquiryByID :one
@@ -2084,6 +2604,36 @@ func (q *Queries) SalesTeam(ctx context.Context, db DBTX, emails []string) ([]Sa
 	return items, nil
 }
 
+const salesTeamRoster = `-- name: SalesTeamRoster :many
+SELECT lower(a.email)::text AS email,m.role FROM sales_team_members m
+JOIN accounts a ON a.id=m.account_id WHERE m.active ORDER BY 1
+`
+
+type SalesTeamRosterRow struct {
+	Email string
+	Role  string
+}
+
+func (q *Queries) SalesTeamRoster(ctx context.Context, db DBTX) ([]SalesTeamRosterRow, error) {
+	rows, err := db.Query(ctx, salesTeamRoster)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SalesTeamRosterRow{}
+	for rows.Next() {
+		var i SalesTeamRosterRow
+		if err := rows.Scan(&i.Email, &i.Role); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setLinkActive = `-- name: SetLinkActive :execrows
 UPDATE referral_links SET active=$1
 WHERE share_code=$2 AND (owner_id=$3::uuid OR $4::boolean)
@@ -2331,4 +2881,50 @@ func (q *Queries) UpdateSalesTask(ctx context.Context, db DBTX, arg UpdateSalesT
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const updateSalesTeamMember = `-- name: UpdateSalesTeamMember :execrows
+UPDATE sales_team_members SET role=$1,active=$2,updated_by=$3,version=version+1,updated_at=now()
+WHERE account_id=$4 AND version=$5::bigint
+`
+
+type UpdateSalesTeamMemberParams struct {
+	Role            string
+	Active          bool
+	UpdatedBy       pgtype.UUID
+	AccountID       pgtype.UUID
+	ExpectedVersion int64
+}
+
+func (q *Queries) UpdateSalesTeamMember(ctx context.Context, db DBTX, arg UpdateSalesTeamMemberParams) (int64, error) {
+	result, err := db.Exec(ctx, updateSalesTeamMember,
+		arg.Role,
+		arg.Active,
+		arg.UpdatedBy,
+		arg.AccountID,
+		arg.ExpectedVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const voidPayout = `-- name: VoidPayout :execrows
+UPDATE sales_commission_payouts SET voided_at=now(),voided_by=$1,void_reason=$2
+WHERE id=$3 AND voided_at IS NULL
+`
+
+type VoidPayoutParams struct {
+	VoidedBy   pgtype.UUID
+	VoidReason string
+	ID         pgtype.UUID
+}
+
+func (q *Queries) VoidPayout(ctx context.Context, db DBTX, arg VoidPayoutParams) (int64, error) {
+	result, err := db.Exec(ctx, voidPayout, arg.VoidedBy, arg.VoidReason, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

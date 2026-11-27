@@ -114,8 +114,20 @@ type BillingRunItem struct {
 	Attempts         int
 	NextAttemptAt    time.Time
 	UpdatedAt        time.Time
+	UsageGapHours    []BillingRunUsageGapHour
+	UsageHeldAt      *time.Time
+	UsageRecoveredAt *time.Time
 	// PaymentStatus is read from the statement's invoice export (ADR-1504).
 	PaymentStatus string
+}
+
+// BillingRunUsageGapHour keeps the first observed counts and the highest
+// telemetry count since observed for that hour.
+type BillingRunUsageGapHour struct {
+	Hour              time.Time `json:"hour"`
+	LedgerRequests    int64     `json:"ledger_requests"`
+	TelemetryRequests int64     `json:"telemetry_requests"`
+	RequiredRequests  int64     `json:"required_requests"`
 }
 
 // Key orders items within a run and is the item list cursor. A tenant can
@@ -140,6 +152,11 @@ type BillingRunSchedule struct {
 	UpdatedAt       time.Time
 }
 
+// DraftOnly reports whether the schedule leaves statements in draft.
+func (s BillingRunSchedule) DraftOnly() bool {
+	return !s.Finalize && s.Export == BillingRunExportNone
+}
+
 // BillingRunStore persists billing runs, their items and schedules.
 type BillingRunStore interface {
 	// CreateBillingRun returns the account's active run with ErrConflict
@@ -150,6 +167,13 @@ type BillingRunStore interface {
 	// ListBillingRunItems pages a run's items in Key order after the given
 	// key; outcome filters when set.
 	ListBillingRunItems(ctx context.Context, accountID, runID, outcome, after string, limit int) ([]BillingRunItem, error)
+	GetBillingRunAppConsumerItem(ctx context.Context, accountID, runID, consumerID string) (BillingRunItem, error)
+	// TryLockBillingRunUsageRecheck serializes a customer's recovery through
+	// statement drafting and the run item update.
+	TryLockBillingRunUsageRecheck(ctx context.Context, runID, consumerID string) (release func(context.Context), acquired bool, err error)
+	// SaveBillingRunUsageRecheck updates a completed draft run's held app
+	// customer only if its UpdatedAt still matches the original read.
+	SaveBillingRunUsageRecheck(ctx context.Context, accountID string, item BillingRunItem) error
 
 	// ClaimBillingRun leases the oldest queued or running run whose lease is
 	// free or expired; ErrNotFound when there is none.
@@ -170,6 +194,10 @@ type BillingRunStore interface {
 	ReleaseBillingRun(ctx context.Context, runID, owner string, now time.Time) (BillingRun, error)
 
 	PutBillingRunSchedule(ctx context.Context, schedule BillingRunSchedule) (BillingRunSchedule, error)
+	// A zero version creates only. A nonzero version changes only the
+	// delay of the matching draft schedule. Both conflict on a stale version.
+	PutDraftBillingRunSchedule(ctx context.Context, schedule BillingRunSchedule, expected time.Time) (BillingRunSchedule, error)
+	DeleteDraftBillingRunSchedule(ctx context.Context, accountID string, expected time.Time) error
 	GetBillingRunSchedule(ctx context.Context, accountID string) (BillingRunSchedule, error)
 	DeleteBillingRunSchedule(ctx context.Context, accountID string) error
 	ListDueBillingRunSchedules(ctx context.Context, now time.Time, limit int) ([]BillingRunSchedule, error)
@@ -336,6 +364,53 @@ func (m *MemStore) ListBillingRunItems(_ context.Context, accountID, runID, outc
 	return out, nil
 }
 
+func (m *MemStore) GetBillingRunAppConsumerItem(_ context.Context, accountID, runID, consumerID string) (BillingRunItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.billingRuns[runID]
+	if !ok || run.AccountID != accountID {
+		return BillingRunItem{}, ErrNotFound
+	}
+	item, ok := m.billingRunItems[runID][StatementSourceAppConsumer+"/"+consumerID]
+	if !ok {
+		return BillingRunItem{}, ErrNotFound
+	}
+	return item, nil
+}
+
+func (m *MemStore) TryLockBillingRunUsageRecheck(_ context.Context, runID, consumerID string) (func(context.Context), bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := runID + "/" + consumerID
+	if m.billingRunUsageRechecks[key] {
+		return nil, false, nil
+	}
+	if m.billingRunUsageRechecks == nil {
+		m.billingRunUsageRechecks = make(map[string]bool)
+	}
+	m.billingRunUsageRechecks[key] = true
+	return func(context.Context) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.billingRunUsageRechecks, key)
+	}, true, nil
+}
+
+func (m *MemStore) SaveBillingRunUsageRecheck(_ context.Context, accountID string, item BillingRunItem) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run := m.billingRuns[item.RunID]
+	current, ok := m.billingRunItems[item.RunID][item.Key()]
+	if run.AccountID != accountID || run.Status != BillingRunCompleted || run.Finalize || run.Export != BillingRunExportNone ||
+		!ok || current.SourceKind != StatementSourceAppConsumer || current.Outcome != BillingRunItemHeld ||
+		current.Completeness != "gaps_detected" || !current.UpdatedAt.Equal(item.UpdatedAt) {
+		return ErrConflict
+	}
+	item.UpdatedAt = time.Now().UTC()
+	m.billingRunItems[item.RunID][item.Key()] = item
+	return nil
+}
+
 func (m *MemStore) ClaimBillingRun(_ context.Context, owner string, now time.Time, ttl time.Duration) (BillingRun, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -465,6 +540,7 @@ func (m *MemStore) discoverUsageCustomersLocked(run BillingRun, tenantReason str
 // Control app with a published catalog that has receipts in the run's month
 // (ADR-20261018212918).
 func (m *MemStore) discoverProductCustomersLocked(run BillingRun, add func(BillingRunItem)) {
+	m.resolveProductPlanSchedulesLocked(time.Now())
 	d := m.productLocked()
 	period := run.PeriodStart.UTC().Format("2006-01")
 	for _, r := range d.receipts {
@@ -594,21 +670,54 @@ func (m *MemStore) ReleaseBillingRun(_ context.Context, runID, owner string, now
 }
 
 func (m *MemStore) PutBillingRunSchedule(_ context.Context, s BillingRunSchedule) (BillingRunSchedule, error) {
+	return m.putBillingRunSchedule(s, nil)
+}
+
+func (m *MemStore) PutDraftBillingRunSchedule(_ context.Context, s BillingRunSchedule, expected time.Time) (BillingRunSchedule, error) {
+	if !s.DraftOnly() {
+		return BillingRunSchedule{}, ErrInvalidArgument
+	}
+	return m.putBillingRunSchedule(s, &expected)
+}
+
+func (m *MemStore) putBillingRunSchedule(s BillingRunSchedule, expected *time.Time) (BillingRunSchedule, error) {
 	if err := validateBillingRunSchedule(s); err != nil {
 		return BillingRunSchedule{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.billingRunMapsLocked()
-	now := time.Now().UTC()
+	existing, exists := m.billingRunSchedules[s.AccountID]
+	if expected != nil {
+		if expected.IsZero() {
+			if exists {
+				return BillingRunSchedule{}, ErrConflict
+			}
+		} else {
+			if !exists || !existing.DraftOnly() || !existing.UpdatedAt.Equal(*expected) {
+				return BillingRunSchedule{}, ErrConflict
+			}
+			existing.DelayHours, existing.NextRunAt = s.DelayHours, s.NextRunAt
+			s = existing
+		}
+	}
+	now := nextScheduleVersion(existing.UpdatedAt)
 	s.Sources, s.UpdatedAt = slices.Clone(s.Sources), now
-	if existing, ok := m.billingRunSchedules[s.AccountID]; ok {
+	if exists {
 		s.CreatedAt, s.LastPeriodStart = existing.CreatedAt, existing.LastPeriodStart
 	} else {
 		s.CreatedAt, s.LastPeriodStart = now, nil
 	}
 	m.billingRunSchedules[s.AccountID] = s
 	return s, nil
+}
+
+func nextScheduleVersion(previous time.Time) time.Time {
+	now := time.Now().UTC()
+	if !now.After(previous) {
+		return previous.Add(time.Nanosecond)
+	}
+	return now
 }
 
 func (m *MemStore) GetBillingRunSchedule(_ context.Context, accountID string) (BillingRunSchedule, error) {
@@ -624,10 +733,22 @@ func (m *MemStore) GetBillingRunSchedule(_ context.Context, accountID string) (B
 }
 
 func (m *MemStore) DeleteBillingRunSchedule(_ context.Context, accountID string) error {
+	return m.deleteBillingRunSchedule(accountID, nil)
+}
+
+func (m *MemStore) DeleteDraftBillingRunSchedule(_ context.Context, accountID string, expected time.Time) error {
+	return m.deleteBillingRunSchedule(accountID, &expected)
+}
+
+func (m *MemStore) deleteBillingRunSchedule(accountID string, expected *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.billingRunMapsLocked()
-	if _, ok := m.billingRunSchedules[accountID]; !ok {
+	current, exists := m.billingRunSchedules[accountID]
+	if expected != nil && (!exists || !current.DraftOnly() || !current.UpdatedAt.Equal(*expected)) {
+		return ErrConflict
+	}
+	if !exists {
 		return ErrNotFound
 	}
 	delete(m.billingRunSchedules, accountID)
@@ -663,7 +784,7 @@ func (m *MemStore) StartScheduledBillingRun(_ context.Context, schedule BillingR
 	defer m.mu.Unlock()
 	m.billingRunMapsLocked()
 	current, ok := m.billingRunSchedules[schedule.AccountID]
-	if !ok || !current.NextPeriodStart.Equal(schedule.NextPeriodStart) {
+	if !ok || !current.NextPeriodStart.Equal(schedule.NextPeriodStart) || !current.UpdatedAt.Equal(schedule.UpdatedAt) {
 		return BillingRun{}, ErrConflict
 	}
 	var created BillingRun
@@ -679,7 +800,7 @@ func (m *MemStore) StartScheduledBillingRun(_ context.Context, schedule BillingR
 		}
 	}
 	last := schedule.NextPeriodStart
-	current.NextPeriodStart, current.NextRunAt, current.LastPeriodStart, current.UpdatedAt = next.NextPeriodStart, next.NextRunAt, &last, time.Now().UTC()
+	current.NextPeriodStart, current.NextRunAt, current.LastPeriodStart, current.UpdatedAt = next.NextPeriodStart, next.NextRunAt, &last, nextScheduleVersion(current.UpdatedAt)
 	m.billingRunSchedules[schedule.AccountID] = current
 	return created, nil
 }

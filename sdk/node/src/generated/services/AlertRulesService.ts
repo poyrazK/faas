@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AlertAnomalyPreviewResponse } from '../models/AlertAnomalyPreviewResponse.js';
 import type { AlertDeliveryResponse } from '../models/AlertDeliveryResponse.js';
 import type { AlertPresetResponse } from '../models/AlertPresetResponse.js';
 import type { AlertRollback } from '../models/AlertRollback.js';
@@ -254,24 +255,33 @@ export class AlertRulesService {
    * List alert rules visible at this app.
    * Returns both app-scoped rules (app_id == <slug>) and
    * account-wide rules (app_id == ""). Account-wide rules
-   * apply to every app on the account.
+   * apply to every app on the account. With `environment` set to a
+   * stage, returns that stage's rules instead.
    *
    * @returns AlertRuleResponse Alert rules on the account, filtered to those visible at this app.
    * @throws ApiError
    */
   public static listAlertRules({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Project environment slug. Omitted or production lists production's rules; a stage's rules are its own.
+     */
+    environment?: string,
   }): CancelablePromise<Array<AlertRuleResponse>> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         401: `code: unauthorized`,
@@ -292,6 +302,11 @@ export class AlertRulesService {
    * response. webhook_url is SSRF-guarded at write time
    * (loopback + metadata ranges denied).
    *
+   * With `environment` set to a stage, the rule watches that stage's own
+   * requests, errors, latency, cold starts or failed invocations, with
+   * gt, gte, lt or lte and a webhook action. Other rules stay in
+   * production. Stage rules answer 501 until the platform enables them.
+   *
    * @returns AlertRuleResponse The new alert rule (carries the masked secret).
    * @throws ApiError
    */
@@ -299,6 +314,7 @@ export class AlertRulesService {
     slug,
     requestBody,
     idempotencyKey,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -314,6 +330,10 @@ export class AlertRulesService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Project environment slug the rule belongs to. Omitted or production creates a production rule.
+     */
+    environment?: string,
   }): CancelablePromise<AlertRuleResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
@@ -323,6 +343,9 @@ export class AlertRulesService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -337,6 +360,106 @@ export class AlertRulesService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Test a request-count, error-rate, or p95 latency anomaly rule on recent traffic.
+   * Previews seven days of hourly checkpoints by default. An incident replay previews a selected two-hour period at one-minute resolution and groups breaches into incidents with notification eligibility. Either mode can compare a different multiplier. Request-count rules can compare a same-weekday baseline. Error-rate rules can compare a zero-baseline fallback. Error-rate and p95 latency rules use the live traffic and minimum-value guards. P95 uses successful requests only. An incident replay can also compare two-check recovery confirmation. The preview is read-only.
+   * @returns AlertAnomalyPreviewResponse Historical checks and threshold breaches, with incidents for a minute-level replay.
+   * @throws ApiError
+   */
+  public static previewAlertAnomaly({
+    slug,
+    comparison,
+    threshold,
+    windowSpec,
+    metric = 'request_count',
+    candidateThreshold,
+    candidateBaseline,
+    incidentReplayStart,
+    environmentScope,
+    cooldownMinutes,
+    recoveryConfirmationChecks,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Direction in which the observed metric must cross the baseline multiplier.
+     */
+    comparison: 'above_baseline' | 'below_baseline',
+    /**
+     * Baseline multiplier for the selected comparison.
+     */
+    threshold: number,
+    /**
+     * Rolling window length at each checkpoint.
+     */
+    windowSpec: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
+    /**
+     * Anomaly metric to replay. Error rate and p95 latency require above_baseline.
+     */
+    metric?: 'request_count' | 'error_rate_pct' | 'latency_p95_ms',
+    /**
+     * Optional second baseline multiplier for the same comparison and window.
+     */
+    candidateThreshold?: number,
+    /**
+     * Compare the same multiplier with a baseline experiment. same_weekday requires a 5m or 15m request_count window. zero_baseline_fallback requires an above_baseline error_rate_pct rule and tests a 5 percent and five-failure threshold when the qualified median is zero. Mutually exclusive with candidate_threshold.
+     */
+    candidateBaseline?: 'same_weekday' | 'zero_baseline_fallback',
+    /**
+     * Minute-aligned start of a completed two-hour period in the past week.
+     */
+    incidentReplayStart?: string,
+    /**
+     * Replay only this app's default or named project environment. Requires incident_replay_start. Omitted uses app-wide telemetry.
+     */
+    environmentScope?: string,
+    /**
+     * Minutes between eligible notifications for the same incident. Only supported with incident_replay_start and defaults to 15.
+     */
+    cooldownMinutes?: number,
+    /**
+     * Compare recovery after two consecutive healthy checks against the default one-check recovery. A skipped check clears the healthy streak. Requires incident_replay_start.
+     */
+    recoveryConfirmationChecks?: 2,
+  }): CancelablePromise<AlertAnomalyPreviewResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/alerts/anomaly-preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'metric': metric,
+        'comparison': comparison,
+        'threshold': threshold,
+        'candidate_threshold': candidateThreshold,
+        'candidate_baseline': candidateBaseline,
+        'incident_replay_start': incidentReplayStart,
+        'environment_scope': environmentScope,
+        'cooldown_minutes': cooldownMinutes,
+        'recovery_confirmation_checks': recoveryConfirmationChecks,
+        'window_spec': windowSpec,
+      },
+      errors: {
+        400: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
+        401: `code: unauthorized`,
+        402: `code: alert_rule_invalid | plan_alert_rules_not_allowed | plan_alert_rule_quota | image_egress_denied`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -420,6 +543,7 @@ export class AlertRulesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }

@@ -705,7 +705,7 @@ func (q *Queries) ActiveGraphBlocksAppRollback(ctx context.Context, db DBTX, arg
 }
 
 const activeManagedPostgresResize = `-- name: ActiveManagedPostgresResize :one
-SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code, automatic, auto_grow_idle_at FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
 `
 
 type ActiveManagedPostgresResizeParams struct {
@@ -734,6 +734,8 @@ func (q *Queries) ActiveManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		&i.TargetStorageLimitBytes,
 		&i.TargetPostgresMajor,
 		&i.ErrorCode,
+		&i.Automatic,
+		&i.AutoGrowIdleAt,
 	)
 	return i, err
 }
@@ -1371,6 +1373,70 @@ func (q *Queries) AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const alertChannelStandDownPending = `-- name: AlertChannelStandDownPending :one
+WITH superseded AS (
+    DELETE FROM alert_channel_stand_downs
+     WHERE rule_id = $1::uuid AND channel_id = $2::uuid
+       AND NOT observation_transition AND $3::boolean
+)
+SELECT EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs
+     WHERE rule_id = $1::uuid AND channel_id = $2::uuid AND observation_transition
+)::boolean AS pending
+`
+
+type AlertChannelStandDownPendingParams struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+	Supersede bool
+}
+
+// A new fire can supersede ordinary stand-downs. On entering Observe only,
+// the old episode's terminal notice must go out before the channel opens another.
+func (q *Queries) AlertChannelStandDownPending(ctx context.Context, db DBTX, arg AlertChannelStandDownPendingParams) (bool, error) {
+	row := db.QueryRow(ctx, alertChannelStandDownPending, arg.RuleID, arg.ChannelID, arg.Supersede)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
+const alertDeferredFireRecipients = `-- name: AlertDeferredFireRecipients :many
+SELECT coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE d.rule_id = $1::uuid AND d.fired_at = $2::timestamptz
+   AND (f.channel_id IS NOT NULL OR (NOT f.started AND d.status = 'pending'))
+`
+
+type AlertDeferredFireRecipientsParams struct {
+	RuleID  pgtype.UUID
+	FiredAt pgtype.Timestamptz
+}
+
+type AlertDeferredFireRecipientsRow struct {
+	ChannelID  string
+	WebhookUrl string
+}
+
+func (q *Queries) AlertDeferredFireRecipients(ctx context.Context, db DBTX, arg AlertDeferredFireRecipientsParams) ([]AlertDeferredFireRecipientsRow, error) {
+	rows, err := db.Query(ctx, alertDeferredFireRecipients, arg.RuleID, arg.FiredAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertDeferredFireRecipientsRow{}
+	for rows.Next() {
+		var i AlertDeferredFireRecipientsRow
+		if err := rows.Scan(&i.ChannelID, &i.WebhookUrl); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const alertRuleEpisodeOpen = `-- name: AlertRuleEpisodeOpen :one
 SELECT EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $1::uuid AND e.resolved_at IS NULL)::boolean AS open
 `
@@ -1793,7 +1859,7 @@ JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.d
 JOIN orgs o ON o.id = d.org_id AND o.personal_org AND o.personal_owner_account_id = b.account_id
 WHERE b.account_id = $1 AND b.app_id = $2
   AND b.scope IN ('default', 'production') AND b.state IN ('provisioning', 'ready')
-  AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
+  AND d.previews IN ('empty', 'copy', 'masked') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key
 `
@@ -2267,13 +2333,14 @@ func (q *Queries) ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg A
 
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
-select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, $6::bigint, 0, $5::int, 0
   from instances i
   join apps a on a.id = i.app_id
  where i.id = $1
 on conflict (instance_id, minute) do update
    set requests        = usage_minutes.requests        + EXCLUDED.requests,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count
 `
 
@@ -2283,8 +2350,12 @@ type ApplyGatewayUsageEventParams struct {
 	Column3 int32
 	Column4 int64
 	Column5 int32
+	Column6 int64
 }
 
+// $6 is the frame's billed egress: its response bytes when meterd counts
+// gateway responses as app egress (ADR-20261121210517, compute nodes whose
+// public responses do not cross the instance veth), otherwise 0.
 func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error) {
 	result, err := db.Exec(ctx, applyGatewayUsageEvent,
 		arg.ID,
@@ -2292,6 +2363,7 @@ func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg Apply
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	if err != nil {
 		return 0, err
@@ -3087,7 +3159,7 @@ UPDATE managed_postgres_databases SET state='updating',desired_generation=desire
     last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$1::timestamptz,updated_at=$1::timestamptz
 WHERE id=$2::uuid AND state='ready' AND desired_generation=$3::bigint
     AND desired_generation=observed_generation AND clone_resource_role='target' AND environment_clone_operation_id IS NULL
-    AND cutover_id IS NULL AND provider_resource_id IS NOT NULL AND data_resource_id IS NOT NULL AND deleted_at IS NULL RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND cutover_id IS NULL AND provider_resource_id IS NOT NULL AND data_resource_id IS NOT NULL AND deleted_at IS NULL RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type BeginManagedPostgresResizeDatabaseParams struct {
@@ -3141,6 +3213,10 @@ func (q *Queries) BeginManagedPostgresResizeDatabase(ctx context.Context, db DBT
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -3706,6 +3782,9 @@ with subject as (
     join builds b on b.deployment_id = d.id
    where b.started_at >= $3::timestamptz
      and b.coalesced_with is null
+     -- A build the platform failed (builder VM, node or registry outage)
+     -- used no customer build minutes (ADR-20261121231500).
+     and b.failure_class is distinct from 'infra'
 )
 select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
        (select seconds from used)::bigint as used_seconds
@@ -3944,7 +4023,7 @@ const cancelManagedPostgresScheduledDelete = `-- name: CancelManagedPostgresSche
 UPDATE managed_postgres_databases SET state='ready',purge_after=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,
     last_error_code=NULL,retry_at=$1::timestamptz,updated_at=$1::timestamptz
 WHERE id=$2::uuid AND state='deleting' AND purge_after IS NOT NULL
-    AND lease_token=$3::text AND lease_until>$1::timestamptz RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND lease_token=$3::text AND lease_until>$1::timestamptz RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type CancelManagedPostgresScheduledDeleteParams struct {
@@ -3998,6 +4077,10 @@ func (q *Queries) CancelManagedPostgresScheduledDelete(ctx context.Context, db D
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -5711,7 +5794,7 @@ func (q *Queries) ClaimDatabaseVMProvision(ctx context.Context, db DBTX, arg Cla
 const claimDatabaseVMRestore = `-- name: ClaimDatabaseVMRestore :one
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => $1::double precision)
-WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NOT NULL
+WHERE database_id = $2 AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
   AND (restore_lease_until IS NULL OR restore_lease_until < now()
        OR restore_lease_until = $3::timestamptz)
 RETURNING restore_lease_until
@@ -6317,7 +6400,7 @@ func (q *Queries) ClaimManagedPostgresBindingRetirement(ctx context.Context, db 
 
 const claimManagedPostgresComputeHold = `-- name: ClaimManagedPostgresComputeHold :one
 WITH locked AS MATERIALIZED (
-    SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
+    SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases
     WHERE id=$9::uuid AND account_id=$10::uuid FOR UPDATE
 )
 UPDATE managed_postgres_databases d SET lease_token=$1::text,
@@ -6329,7 +6412,7 @@ FROM locked l WHERE d.id=l.id
     AND l.provider_resource_id=$7::text
     AND COALESCE(l.data_resource_id,l.provider_resource_id)=$8::text
     AND (l.lease_until IS NULL OR l.lease_until<=clock_timestamp())
-RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type ClaimManagedPostgresComputeHoldParams struct {
@@ -6401,6 +6484,10 @@ func (q *Queries) ClaimManagedPostgresComputeHold(ctx context.Context, db DBTX, 
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -6459,7 +6546,7 @@ func (q *Queries) ClaimManagedPostgresCutover(ctx context.Context, db DBTX, arg 
 
 const claimManagedPostgresHealthCheck = `-- name: ClaimManagedPostgresHealthCheck :one
 WITH candidate AS (
- SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d
+ SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d
  LEFT JOIN managed_postgres_health h ON h.database_id = d.id
  WHERE d.state = 'ready' AND d.provider_resource_id IS NOT NULL
  AND (h.database_id IS NULL OR h.next_check_at <= $1::timestamptz
@@ -6557,7 +6644,7 @@ UPDATE managed_postgres_databases SET state='deleting',purge_after=NULL,lease_to
     last_error_code=CASE WHEN state<>'deleting' THEN NULL ELSE last_error_code END,retry_at=$3::timestamptz
 WHERE account_id=$4::uuid AND id=$5::uuid AND clone_resource_role='target'
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type ClaimManagedPostgresLifecycleDeleteParams struct {
@@ -6621,6 +6708,10 @@ func (q *Queries) ClaimManagedPostgresLifecycleDelete(ctx context.Context, db DB
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -6633,7 +6724,7 @@ UPDATE managed_postgres_databases SET state='provisioning',lease_token=$1::text,
 WHERE account_id=$4::uuid AND id=$5::uuid AND clone_resource_role='target' AND state IN ('provisioning','failed')
     AND (lease_until IS NULL OR lease_until<=$3::timestamptz) AND retry_at<=$3::timestamptz
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type ClaimManagedPostgresLifecycleProvisionParams struct {
@@ -6695,6 +6786,10 @@ func (q *Queries) ClaimManagedPostgresLifecycleProvision(ctx context.Context, db
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -6705,7 +6800,7 @@ UPDATE managed_postgres_databases SET lease_token=$1::text,lease_until=$2::times
 WHERE id=$4::uuid AND account_id=$5::uuid AND state='updating'
     AND (lease_until IS NULL OR lease_until<=$3::timestamptz) AND retry_at<=$3::timestamptz
     AND EXISTS(SELECT 1 FROM managed_postgres_resizes r WHERE r.database_id=managed_postgres_databases.id AND r.state='pending'
-        AND r.generation=managed_postgres_databases.desired_generation) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+        AND r.generation=managed_postgres_databases.desired_generation) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type ClaimManagedPostgresResizeParams struct {
@@ -6767,6 +6862,10 @@ func (q *Queries) ClaimManagedPostgresResize(ctx context.Context, db DBTX, arg C
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -6778,7 +6877,7 @@ UPDATE managed_postgres_databases SET state='deleting',purge_after=$1::timestamp
 WHERE account_id=$5::uuid AND id=$6::uuid AND clone_resource_role='target' AND state='ready'
     AND (lease_until IS NULL OR lease_until<=$4::timestamptz)
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type ClaimManagedPostgresScheduledDeleteParams struct {
@@ -6847,6 +6946,10 @@ func (q *Queries) ClaimManagedPostgresScheduledDelete(ctx context.Context, db DB
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -6855,7 +6958,7 @@ const claimManagedPostgresUndelete = `-- name: ClaimManagedPostgresUndelete :one
 UPDATE managed_postgres_databases SET lease_token=$1::text,lease_until=$2::timestamptz,
     last_error_code='deletion_hold_pending',updated_at=$3::timestamptz
 WHERE account_id=$4::uuid AND id=$5::uuid AND state='deleting'
-    AND purge_after>$3::timestamptz AND (lease_until IS NULL OR lease_until<=$3::timestamptz) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND purge_after>$3::timestamptz AND (lease_until IS NULL OR lease_until<=$3::timestamptz) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type ClaimManagedPostgresUndeleteParams struct {
@@ -6917,6 +7020,10 @@ func (q *Queries) ClaimManagedPostgresUndelete(ctx context.Context, db DBTX, arg
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -8414,7 +8521,7 @@ func (q *Queries) ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, 
 }
 
 const clearAlertChannelStandDowns = `-- name: ClearAlertChannelStandDowns :exec
-DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid
+DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid AND NOT observation_transition
 `
 
 // A new fire of the rule supersedes the recovery notices it still owed.
@@ -9513,6 +9620,21 @@ func (q *Queries) CloseLegacyWorkflowOutboundUnknownAttempts(ctx context.Context
 	return err
 }
 
+const closeLiveAlertEpisodeForObservation = `-- name: CloseLiveAlertEpisodeForObservation :exec
+UPDATE alert_episodes AS episode SET resolved_at=greatest(episode.opened_at,$1::timestamptz)
+WHERE episode.rule_id=$2 AND episode.resolved_at IS NULL
+`
+
+type CloseLiveAlertEpisodeForObservationParams struct {
+	EndedAt pgtype.Timestamptz
+	ID      pgtype.UUID
+}
+
+func (q *Queries) CloseLiveAlertEpisodeForObservation(ctx context.Context, db DBTX, arg CloseLiveAlertEpisodeForObservationParams) error {
+	_, err := db.Exec(ctx, closeLiveAlertEpisodeForObservation, arg.EndedAt, arg.ID)
+	return err
+}
+
 const closeWorkflowOutboundUnknownAttempts = `-- name: CloseWorkflowOutboundUnknownAttempts :exec
 UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),
 error=CASE WHEN s.status='dead' THEN s.error
@@ -9957,37 +10079,57 @@ func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg Commit
 
 const commitRelayObservationSummary = `-- name: CommitRelayObservationSummary :one
 WITH observations AS (
- SELECT relay_status,pending_events,blocked_events,oldest_pending_at,COALESCE(last_checked_at>=$1::timestamptz
-   AND last_checked_at<=now()+interval '1 minute',false) AS fresh
+ SELECT relay_status,pending_events,blocked_events,oldest_pending_at,cleanup_eligible_events,COALESCE(last_checked_at>=$1::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND last_checked_at<=now()+interval '1 minute',false) AS fresh,
+ -- Keep the failure visible through the scheduled retry and one lease window.
+ -- relay_next_poll_at also stores active leases, so use the last completed poll.
+ COALESCE(relay_poll_backoff_ms>0 AND last_checked_at<=now()+interval '1 minute'
+   AND last_checked_at + (poll_interval_ms::bigint + relay_poll_backoff_ms + $2::bigint)
+     * interval '1 millisecond'>=now(),false) AS failure_retry_fresh,
+ COALESCE(cleanup_observed_at>=$1::timestamptz
+   - (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END) * interval '1 millisecond'
+   AND cleanup_observed_at<=now()+interval '1 minute',false) AS cleanup_fresh
  FROM commit_sources WHERE enabled
 ), snapshots AS (
- SELECT relay_status, pending_events, blocked_events, oldest_pending_at, fresh,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
+ SELECT relay_status, pending_events, blocked_events, oldest_pending_at, cleanup_eligible_events, fresh, failure_retry_fresh, cleanup_fresh,fresh AND pending_events IS NOT NULL AND blocked_events IS NOT NULL AS known
  FROM observations
 )
 SELECT count(*)::bigint AS enabled_sources,
  count(*) FILTER(WHERE NOT known)::bigint AS unknown_sources,
- count(*) FILTER(WHERE fresh AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
+ count(*) FILTER(WHERE NOT cleanup_fresh OR cleanup_eligible_events IS NULL)::bigint AS cleanup_unknown_sources,
+ COALESCE(sum(cleanup_eligible_events) FILTER(WHERE cleanup_fresh),0)::bigint AS cleanup_eligible_events,
+ count(*) FILTER(WHERE (fresh OR failure_retry_fresh) AND relay_status NOT IN ('healthy','blocked_events'))::bigint AS failing_sources,
  COALESCE(sum(pending_events) FILTER(WHERE known),0)::bigint AS pending_events,
  COALESCE(sum(blocked_events) FILTER(WHERE known),0)::bigint AS blocked_events,
  COALESCE(extract(epoch FROM min(oldest_pending_at) FILTER(WHERE known AND (pending_events>0 OR blocked_events>0))),0)::double precision AS oldest_pending_timestamp
 FROM snapshots
 `
 
+type CommitRelayObservationSummaryParams struct {
+	FreshAfter    pgtype.Timestamptz
+	SourceLeaseMs int64
+}
+
 type CommitRelayObservationSummaryRow struct {
 	EnabledSources         int64
 	UnknownSources         int64
+	CleanupUnknownSources  int64
+	CleanupEligibleEvents  int64
 	FailingSources         int64
 	PendingEvents          int64
 	BlockedEvents          int64
 	OldestPendingTimestamp float64
 }
 
-func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, freshAfter pgtype.Timestamptz) (CommitRelayObservationSummaryRow, error) {
-	row := db.QueryRow(ctx, commitRelayObservationSummary, freshAfter)
+func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, arg CommitRelayObservationSummaryParams) (CommitRelayObservationSummaryRow, error) {
+	row := db.QueryRow(ctx, commitRelayObservationSummary, arg.FreshAfter, arg.SourceLeaseMs)
 	var i CommitRelayObservationSummaryRow
 	err := row.Scan(
 		&i.EnabledSources,
 		&i.UnknownSources,
+		&i.CleanupUnknownSources,
+		&i.CleanupEligibleEvents,
 		&i.FailingSources,
 		&i.PendingEvents,
 		&i.BlockedEvents,
@@ -10036,7 +10178,8 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 
 const commitSourceIdentity = `-- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at,
+ (CASE WHEN queue_name IS NOT NULL THEN poll_interval_ms ELSE 0 END)::integer AS poll_interval_ms
 FROM commit_sources WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
 
@@ -10059,6 +10202,7 @@ type CommitSourceIdentityRow struct {
 	PendingEvents        pgtype.Int8
 	BlockedEvents        pgtype.Int8
 	OldestPendingAt      pgtype.Timestamptz
+	PollIntervalMs       int32
 }
 
 func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error) {
@@ -10078,6 +10222,7 @@ func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitS
 		&i.PendingEvents,
 		&i.BlockedEvents,
 		&i.OldestPendingAt,
+		&i.PollIntervalMs,
 	)
 	return i, err
 }
@@ -11627,6 +11772,70 @@ func (q *Queries) CountExclusiveWorkPending(ctx context.Context, db DBTX, accoun
 	return count, err
 }
 
+const countFailedInvocationsInEnvironmentSince = `-- name: CountFailedInvocationsInEnvironmentSince :one
+SELECT count(*)::bigint FROM invocations
+ WHERE account_id = $1::uuid AND app_id = $2::uuid
+   AND environment_id = $3::uuid
+   AND state IN ('failed', 'dead_letter')
+   AND coalesce(completed_at, created_at) >= $4::timestamptz
+   AND ($5::text IS NULL OR source = $5::text)
+`
+
+type CountFailedInvocationsInEnvironmentSinceParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Since         pgtype.Timestamptz
+	Source        pgtype.Text
+}
+
+// One stage's failed invocations of one app, for the stage's alert rules.
+func (q *Queries) CountFailedInvocationsInEnvironmentSince(ctx context.Context, db DBTX, arg CountFailedInvocationsInEnvironmentSinceParams) (int64, error) {
+	row := db.QueryRow(ctx, countFailedInvocationsInEnvironmentSince,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
+		arg.Since,
+		arg.Source,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countFailedProductionInvocationsSince = `-- name: CountFailedProductionInvocationsSince :one
+SELECT count(*)::bigint FROM invocations v
+ WHERE v.account_id = $1::uuid
+   AND v.state IN ('failed', 'dead_letter')
+   AND v.environment_id IS NULL
+   AND coalesce(v.completed_at, v.created_at) >= $2::timestamptz
+   AND ($3::uuid IS NULL OR v.app_id IS NOT DISTINCT FROM $3::uuid)
+   AND ($3::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = v.app_id))
+   AND ($4::text IS NULL OR v.source = $4::text)
+`
+
+type CountFailedProductionInvocationsSinceParams struct {
+	AccountID pgtype.UUID
+	Since     pgtype.Timestamptz
+	AppID     pgtype.UUID
+	Source    pgtype.Text
+}
+
+// CountFailedInvocationsSince over production's invocations only: a stage's
+// failures are its own alert rules' (ADR-20261104120000 amendment
+// 2026-11-22). A NULL app_id counts every app of the account.
+func (q *Queries) CountFailedProductionInvocationsSince(ctx context.Context, db DBTX, arg CountFailedProductionInvocationsSinceParams) (int64, error) {
+	row := db.QueryRow(ctx, countFailedProductionInvocationsSince,
+		arg.AccountID,
+		arg.Since,
+		arg.AppID,
+		arg.Source,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countLiveManagedPostgresBindingsForApp = `-- name: CountLiveManagedPostgresBindingsForApp :one
 SELECT count(*) FROM managed_postgres_bindings WHERE app_id=$1 AND state<>'deleted'
 `
@@ -12181,13 +12390,16 @@ func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx
 }
 
 const countVerifiedAccountsCreatedSince = `-- name: CountVerifiedAccountsCreatedSince :one
-select count(*)::bigint from accounts
- where created_at >= $1::timestamptz and email_verified_at is not null
+select count(*)::bigint from accounts a
+ where a.created_at >= $1::timestamptz and a.email_verified_at is not null
+   and not exists (select 1 from unclaimed_accounts u where u.account_id = a.id and u.claimed_at is null)
 `
 
 // Accounts created at or after since that have verified their email
 // (ADR-20261104145353 amendment 1: the platform-wide daily sign-up cap counts
 // the accounts that can use a Free allowance). Read only on a sign-up attempt.
+// Unclaimed anonymous-deploy accounts have their own cap (ADR-20261124080000)
+// and count here only once a human claims them.
 func (q *Queries) CountVerifiedAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error) {
 	row := db.QueryRow(ctx, countVerifiedAccountsCreatedSince, since)
 	var column_1 int64
@@ -14910,13 +15122,15 @@ func (q *Queries) DatabaseHasUsage(ctx context.Context, db DBTX, databaseID pgty
 
 const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
 SELECT n.id AS node_id,
-    COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
-    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+    COALESCE(sum(greatest(v.volume_bytes, a.target_volume_bytes)), 0)::bigint AS volume_bytes,
+    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'maintenance_handoff', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running)), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'maintenance_handoff', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running))::bigint AS active_vms,
     count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
 FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id OR v.standby_node = n.id
+LEFT JOIN native_postgres_base_refreshes a ON a.database_id = v.database_id AND a.node_id = n.id
+    AND a.finished_at IS NULL AND a.resize_id IS NOT NULL
 GROUP BY n.id ORDER BY n.id
 `
 
@@ -14962,7 +15176,8 @@ const databaseRestoreDrillsByNode = `-- name: DatabaseRestoreDrillsByNode :many
 SELECT node_id,
        max(started_at)::timestamptz AS last_started,
        coalesce(max(finished_at) FILTER (WHERE result = 'ok'), 'epoch'::timestamptz)::timestamptz AS last_ok
-  FROM database_restore_drills
+  FROM database_restore_drills d
+ WHERE NOT EXISTS (SELECT 1 FROM database_upgrade_rehearsals r WHERE r.drill_id = d.drill_id)
  GROUP BY node_id
 `
 
@@ -15289,6 +15504,15 @@ DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
 // ADR-749 slice 2: alert rule -> notification channel bindings.
 func (q *Queries) DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteAlertRuleChannels, ruleID)
+	return err
+}
+
+const deleteAlertWebhookStandDown = `-- name: DeleteAlertWebhookStandDown :exec
+DELETE FROM alert_webhook_stand_downs WHERE id = $1::uuid
+`
+
+func (q *Queries) DeleteAlertWebhookStandDown(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAlertWebhookStandDown, id)
 	return err
 }
 
@@ -15675,6 +15899,15 @@ delete from custom_domains where domain = $1
 
 func (q *Queries) DeleteCustomDomain(ctx context.Context, db DBTX, domain interface{}) error {
 	_, err := db.Exec(ctx, deleteCustomDomain, domain)
+	return err
+}
+
+const deleteCustomerAlertObservationChecks = `-- name: DeleteCustomerAlertObservationChecks :exec
+DELETE FROM alert_observation_checks WHERE rule_id=$1
+`
+
+func (q *Queries) DeleteCustomerAlertObservationChecks(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCustomerAlertObservationChecks, id)
 	return err
 }
 
@@ -17073,7 +17306,8 @@ func (q *Queries) DueAlertChannelResolveRetries(ctx context.Context, db DBTX, ar
 
 const dueAlertChannelStandDowns = `-- name: DueAlertChannelStandDowns :many
 SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
-       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts
+       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts,
+       s.pagerduty_target_sealed, coalesce(s.pagerduty_region, '')::text AS pagerduty_region
   FROM alert_channel_stand_downs s
  WHERE s.next_attempt_at <= $1::timestamptz
  ORDER BY s.next_attempt_at, s.rule_id, s.channel_id
@@ -17086,15 +17320,17 @@ type DueAlertChannelStandDownsParams struct {
 }
 
 type DueAlertChannelStandDownsRow struct {
-	RuleID     string
-	ChannelID  string
-	AccountID  string
-	AppID      string
-	RuleName   string
-	RuleMetric string
-	Reason     string
-	QueuedAt   pgtype.Timestamptz
-	Attempts   int32
+	RuleID                string
+	ChannelID             string
+	AccountID             string
+	AppID                 string
+	RuleName              string
+	RuleMetric            string
+	Reason                string
+	QueuedAt              pgtype.Timestamptz
+	Attempts              int32
+	PagerdutyTargetSealed []byte
+	PagerdutyRegion       string
 }
 
 func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg DueAlertChannelStandDownsParams) ([]DueAlertChannelStandDownsRow, error) {
@@ -17116,6 +17352,139 @@ func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg Du
 			&i.Reason,
 			&i.QueuedAt,
 			&i.Attempts,
+			&i.PagerdutyTargetSealed,
+			&i.PagerdutyRegion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueAlertWebhookStandDowns = `-- name: DueAlertWebhookStandDowns :many
+SELECT id, rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+       webhook_url, webhook_secret_sealed, queued_at, attempts
+  FROM alert_webhook_stand_downs
+ WHERE next_attempt_at <= $1::timestamptz
+ ORDER BY next_attempt_at, id
+ LIMIT $2::integer
+`
+
+type DueAlertWebhookStandDownsParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueAlertWebhookStandDownsRow struct {
+	ID                  pgtype.UUID
+	RuleID              pgtype.UUID
+	AppID               pgtype.UUID
+	RuleName            string
+	Metric              string
+	Comparison          string
+	Threshold           float64
+	WindowSpec          string
+	EnvironmentScope    string
+	WebhookUrl          string
+	WebhookSecretSealed []byte
+	QueuedAt            pgtype.Timestamptz
+	Attempts            int32
+}
+
+func (q *Queries) DueAlertWebhookStandDowns(ctx context.Context, db DBTX, arg DueAlertWebhookStandDownsParams) ([]DueAlertWebhookStandDownsRow, error) {
+	rows, err := db.Query(ctx, dueAlertWebhookStandDowns, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueAlertWebhookStandDownsRow{}
+	for rows.Next() {
+		var i DueAlertWebhookStandDownsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuleID,
+			&i.AppID,
+			&i.RuleName,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.EnvironmentScope,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.QueuedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueDeferredAlertFires = `-- name: DueDeferredAlertFires :many
+SELECT f.id::text AS id, d.id::text AS delivery_id, d.rule_id::text AS rule_id,
+       coalesce(f.channel_id::text, '')::text AS channel_id, f.webhook_url, f.channel_only,
+       d.fired_at, d.status, d.payload, d.observed_value,
+       CASE WHEN f.channel_id IS NULL THEN EXISTS (
+           SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = d.rule_id AND s.webhook_url = f.webhook_url
+       ) ELSE EXISTS (
+           SELECT 1 FROM alert_channel_stand_downs s
+            WHERE s.rule_id = d.rule_id AND s.channel_id = f.channel_id AND s.observation_transition
+       ) END::boolean AS blocked
+  FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+ WHERE f.next_attempt_at <= $1::timestamptz
+ ORDER BY f.next_attempt_at, f.id
+ LIMIT $2::integer
+`
+
+type DueDeferredAlertFiresParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueDeferredAlertFiresRow struct {
+	ID            string
+	DeliveryID    string
+	RuleID        string
+	ChannelID     string
+	WebhookUrl    string
+	ChannelOnly   bool
+	FiredAt       pgtype.Timestamptz
+	Status        string
+	Payload       []byte
+	ObservedValue float64
+	Blocked       bool
+}
+
+func (q *Queries) DueDeferredAlertFires(ctx context.Context, db DBTX, arg DueDeferredAlertFiresParams) ([]DueDeferredAlertFiresRow, error) {
+	rows, err := db.Query(ctx, dueDeferredAlertFires, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueDeferredAlertFiresRow{}
+	for rows.Next() {
+		var i DueDeferredAlertFiresRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeliveryID,
+			&i.RuleID,
+			&i.ChannelID,
+			&i.WebhookUrl,
+			&i.ChannelOnly,
+			&i.FiredAt,
+			&i.Status,
+			&i.Payload,
+			&i.ObservedValue,
+			&i.Blocked,
 		); err != nil {
 			return nil, err
 		}
@@ -17128,7 +17497,7 @@ func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg Du
 }
 
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases
 WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR ($1::boolean AND state IN ('provisioning','failed')))
     AND (retry_at<=$2::timestamptz OR (state='deleting' AND purge_after>$2::timestamptz
       AND last_error_code='deletion_hold_pending' AND updated_at<=$3::timestamptz))
@@ -17202,6 +17571,10 @@ func (q *Queries) DueManagedPostgresLifecycleDatabases(ctx context.Context, db D
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -20361,7 +20734,7 @@ SET status = 'restoring',
     updated_at = $4
 FROM candidate
 WHERE execution.id = candidate.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionClaimNextParams struct {
@@ -20419,6 +20792,11 @@ func (q *Queries) ExecutionClaimNext(ctx context.Context, db DBTX, arg Execution
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -20444,7 +20822,7 @@ SET status = 'restoring',
     updated_at = $4
 FROM candidate
 WHERE execution.id = candidate.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionClaimNextForAccountParams struct {
@@ -20504,6 +20882,104 @@ func (q *Queries) ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
+	)
+	return i, err
+}
+
+const executionClaimNextForClass = `-- name: ExecutionClaimNextForClass :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE ($5::uuid IS NULL OR executions.account_id = $5::uuid)
+    AND executions.execution_class = $6
+    AND executions.status = 'queued'
+    AND executions.cancel_requested_at IS NULL
+    AND executions.created_at <= $4::timestamptz
+    AND executions.deadline_at > $4::timestamptz
+  ORDER BY executions.created_at, executions.id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = $1,
+    lease_owner = $2,
+    lease_expires_at = LEAST($3::timestamptz, candidate.deadline_at),
+    updated_at = $4
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
+`
+
+type ExecutionClaimNextForClassParams struct {
+	LeaseToken     pgtype.UUID
+	LeaseOwner     pgtype.Text
+	LeaseExpiresAt pgtype.Timestamptz
+	ClaimedAt      pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	ExecutionClass string
+}
+
+func (q *Queries) ExecutionClaimNextForClass(ctx context.Context, db DBTX, arg ExecutionClaimNextForClassParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionClaimNextForClass,
+		arg.LeaseToken,
+		arg.LeaseOwner,
+		arg.LeaseExpiresAt,
+		arg.ClaimedAt,
+		arg.AccountID,
+		arg.ExecutionClass,
+	)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Artifacts,
+		&i.Profile,
+		&i.RuntimeImageDigest,
+		&i.RunsPrincipalID,
+		&i.WorkflowID,
+		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -20516,6 +20992,18 @@ WHERE account_id = $1
 
 func (q *Queries) ExecutionCountActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, executionCountActive, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const executionCountExtendedActive = `-- name: ExecutionCountExtendedActive :one
+SELECT count(*) FROM executions WHERE account_id = $1
+AND execution_class = 'extended' AND status IN ('queued', 'restoring', 'running')
+`
+
+func (q *Queries) ExecutionCountExtendedActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, executionCountExtendedActive, accountID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -20535,7 +21023,7 @@ SET status = 'timed_out', finished_at = $1, updated_at = $1,
     failure_code = 'deadline_exceeded', failure_message = 'execution deadline elapsed before dispatch'
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionExpireQueuedParams struct {
@@ -20592,6 +21080,11 @@ func (q *Queries) ExecutionExpireQueued(ctx context.Context, db DBTX, arg Execut
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -20622,7 +21115,7 @@ SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'ti
     finished_at = $1, updated_at = $1
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionFinishExpiredRestoresParams struct {
@@ -20679,6 +21172,11 @@ func (q *Queries) ExecutionFinishExpiredRestores(ctx context.Context, db DBTX, a
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -20719,7 +21217,7 @@ SET status = CASE
     finished_at = $1, updated_at = $1
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionFinishExpiredRunsParams struct {
@@ -20776,6 +21274,11 @@ func (q *Queries) ExecutionFinishExpiredRuns(ctx context.Context, db DBTX, arg E
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -20788,7 +21291,7 @@ func (q *Queries) ExecutionFinishExpiredRuns(ctx context.Context, db DBTX, arg E
 }
 
 const executionGetForAccount = `-- name: ExecutionGetForAccount :one
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1 AND id = $2
 `
 
@@ -20840,45 +21343,54 @@ func (q *Queries) ExecutionGetForAccount(ctx context.Context, db DBTX, arg Execu
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
 
 const executionInsert = `-- name: ExecutionInsert :one
 INSERT INTO executions (
-  account_id, runtime, profile, status, network_mode, timeout_ms, memory_mb,
+  account_id, runtime, profile, execution_class, status, network_mode, timeout_ms, memory_mb,
   cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
   source_bytes, input_bytes, deadline_at, created_at, updated_at, runs_principal_id,
-  workflow_id, step_label
+  workflow_id, step_label, max_artifact_bytes, input_file_bytes, environment_id, runtime_image_digest
 ) VALUES (
-  $1, $2, $3, 'queued', $4,
-  $5, $6, $7,
-  $8, $9, $10,
-  $11, $12, $13,
-  $14, $14, $15::uuid,
-  $16, $17
+  $1, $2, $3, $4, 'queued', $5,
+  $6, $7, $8,
+  $9, $10, $11,
+  $12, $13, $14,
+  $15, $15, $16::uuid,
+  $17, $18, $19::bigint, $20::bigint, $21::uuid, (SELECT 'sha256:' || image_digest FROM execution_environments WHERE id=$21::uuid)
 )
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionInsertParams struct {
-	AccountID       pgtype.UUID
-	Runtime         string
-	Profile         string
-	NetworkMode     string
-	TimeoutMs       int32
-	MemoryMb        int32
-	CpuMillicores   int32
-	EphemeralDiskMb int32
-	MaxOutputBytes  int32
-	PidsMax         int32
-	SourceBytes     int32
-	InputBytes      int32
-	DeadlineAt      pgtype.Timestamptz
-	AdmittedAt      pgtype.Timestamptz
-	RunsPrincipalID pgtype.UUID
-	WorkflowID      pgtype.Text
-	StepLabel       pgtype.Text
+	AccountID        pgtype.UUID
+	Runtime          string
+	Profile          string
+	ExecutionClass   string
+	NetworkMode      string
+	TimeoutMs        int32
+	MemoryMb         int32
+	CpuMillicores    int32
+	EphemeralDiskMb  int32
+	MaxOutputBytes   int32
+	PidsMax          int32
+	SourceBytes      int32
+	InputBytes       int32
+	DeadlineAt       pgtype.Timestamptz
+	AdmittedAt       pgtype.Timestamptz
+	RunsPrincipalID  pgtype.UUID
+	WorkflowID       pgtype.Text
+	StepLabel        pgtype.Text
+	MaxArtifactBytes pgtype.Int8
+	InputFileBytes   pgtype.Int8
+	EnvironmentID    pgtype.UUID
 }
 
 func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionInsertParams) (Execution, error) {
@@ -20886,6 +21398,7 @@ func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionIns
 		arg.AccountID,
 		arg.Runtime,
 		arg.Profile,
+		arg.ExecutionClass,
 		arg.NetworkMode,
 		arg.TimeoutMs,
 		arg.MemoryMb,
@@ -20900,6 +21413,9 @@ func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionIns
 		arg.RunsPrincipalID,
 		arg.WorkflowID,
 		arg.StepLabel,
+		arg.MaxArtifactBytes,
+		arg.InputFileBytes,
+		arg.EnvironmentID,
 	)
 	var i Execution
 	err := row.Scan(
@@ -20942,12 +21458,17 @@ func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionIns
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
 
 const executionListForAccount = `-- name: ExecutionListForAccount :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::int OFFSET $2::int
@@ -21008,6 +21529,11 @@ func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg Exec
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21020,7 +21546,7 @@ func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg Exec
 }
 
 const executionListForAccountPrincipal = `-- name: ExecutionListForAccountPrincipal :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
   AND runs_principal_id = $2
 ORDER BY created_at DESC, id DESC
@@ -21088,6 +21614,11 @@ func (q *Queries) ExecutionListForAccountPrincipal(ctx context.Context, db DBTX,
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21100,7 +21631,7 @@ func (q *Queries) ExecutionListForAccountPrincipal(ctx context.Context, db DBTX,
 }
 
 const executionListForAccountPrincipalStatus = `-- name: ExecutionListForAccountPrincipalStatus :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
   AND runs_principal_id = $2
   AND status = $3
@@ -21171,6 +21702,11 @@ func (q *Queries) ExecutionListForAccountPrincipalStatus(ctx context.Context, db
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21183,7 +21719,7 @@ func (q *Queries) ExecutionListForAccountPrincipalStatus(ctx context.Context, db
 }
 
 const executionListForAccountStatus = `-- name: ExecutionListForAccountStatus :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
   AND status = $2
 ORDER BY created_at DESC, id DESC
@@ -21251,6 +21787,11 @@ func (q *Queries) ExecutionListForAccountStatus(ctx context.Context, db DBTX, ar
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21263,7 +21804,7 @@ func (q *Queries) ExecutionListForAccountStatus(ctx context.Context, db DBTX, ar
 }
 
 const executionListForWorkflow = `-- name: ExecutionListForWorkflow :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1::uuid
   AND workflow_id = $2::text
   AND ($3::uuid IS NULL OR runs_principal_id = $3::uuid)
@@ -21337,6 +21878,11 @@ func (q *Queries) ExecutionListForWorkflow(ctx context.Context, db DBTX, arg Exe
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21365,7 +21911,7 @@ func (q *Queries) ExecutionLockAccount(ctx context.Context, db DBTX, accountID p
 }
 
 const executionLockForAccount = `-- name: ExecutionLockForAccount :one
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1 AND id = $2
 FOR UPDATE
 `
@@ -21418,12 +21964,17 @@ func (q *Queries) ExecutionLockForAccount(ctx context.Context, db DBTX, arg Exec
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
 
 const executionLockForLease = `-- name: ExecutionLockForLease :one
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE id = $1
   AND status IN ('restoring', 'running')
   AND lease_token = $2
@@ -21478,6 +22029,11 @@ func (q *Queries) ExecutionLockForLease(ctx context.Context, db DBTX, arg Execut
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -21491,8 +22047,8 @@ WHERE id = $2
   AND lease_expires_at > $1
   AND cancel_requested_at IS NULL
   AND deadline_at > $1
-  AND (profile = 'standard' OR runtime_image_digest IS NOT NULL)
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+  AND (profile = 'standard' AND environment_id IS NULL OR runtime_image_digest IS NOT NULL)
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionMarkRunningParams struct {
@@ -21544,6 +22100,11 @@ func (q *Queries) ExecutionMarkRunning(ctx context.Context, db DBTX, arg Executi
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -21557,40 +22118,42 @@ SET status = $1,
     result = NULLIF($2::text, '')::jsonb,
     result_bytes = $3,
     artifacts = $4,
-    stdout = $5,
-    stderr = $6,
-    output_truncated = $7,
-    exit_code = $8,
-    failure_code = NULLIF($9, ''),
-    failure_message = NULLIF($10, ''),
-    wall_time_ms = $11,
-    cpu_time_ms = $12,
-    peak_memory_mb = $13,
-    finished_at = $14,
-    updated_at = $14
-WHERE id = $15
+    result_validation = $5::jsonb,
+    stdout = $6,
+    stderr = $7,
+    output_truncated = $8,
+    exit_code = $9,
+    failure_code = NULLIF($10, ''),
+    failure_message = NULLIF($11, ''),
+    wall_time_ms = $12,
+    cpu_time_ms = $13,
+    peak_memory_mb = $14,
+    finished_at = $15,
+    updated_at = $15
+WHERE id = $16
   AND status IN ('restoring', 'running')
-  AND lease_token = $16
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+  AND lease_token = $17
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionMarkTerminalParams struct {
-	TerminalStatus  string
-	ResultJson      string
-	ResultBytes     int32
-	Artifacts       []byte
-	Stdout          string
-	Stderr          string
-	OutputTruncated bool
-	ExitCode        pgtype.Int4
-	FailureCode     interface{}
-	FailureMessage  interface{}
-	WallTimeMs      int64
-	CpuTimeMs       int64
-	PeakMemoryMb    int32
-	FinishedAt      pgtype.Timestamptz
-	ExecutionID     pgtype.UUID
-	LeaseToken      pgtype.UUID
+	TerminalStatus   string
+	ResultJson       string
+	ResultBytes      int32
+	Artifacts        []byte
+	ResultValidation []byte
+	Stdout           string
+	Stderr           string
+	OutputTruncated  bool
+	ExitCode         pgtype.Int4
+	FailureCode      interface{}
+	FailureMessage   interface{}
+	WallTimeMs       int64
+	CpuTimeMs        int64
+	PeakMemoryMb     int32
+	FinishedAt       pgtype.Timestamptz
+	ExecutionID      pgtype.UUID
+	LeaseToken       pgtype.UUID
 }
 
 func (q *Queries) ExecutionMarkTerminal(ctx context.Context, db DBTX, arg ExecutionMarkTerminalParams) (Execution, error) {
@@ -21599,6 +22162,7 @@ func (q *Queries) ExecutionMarkTerminal(ctx context.Context, db DBTX, arg Execut
 		arg.ResultJson,
 		arg.ResultBytes,
 		arg.Artifacts,
+		arg.ResultValidation,
 		arg.Stdout,
 		arg.Stderr,
 		arg.OutputTruncated,
@@ -21653,6 +22217,11 @@ func (q *Queries) ExecutionMarkTerminal(ctx context.Context, db DBTX, arg Execut
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -21760,7 +22329,7 @@ WHERE id = $3 AND status = 'restoring'
   AND lease_expires_at > $2 AND deadline_at > $2
   AND cancel_requested_at IS NULL
   AND (runtime_image_digest IS NULL OR runtime_image_digest = $1)
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionPinRuntimeParams struct {
@@ -21818,6 +22387,11 @@ func (q *Queries) ExecutionPinRuntime(ctx context.Context, db DBTX, arg Executio
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -22018,7 +22592,7 @@ SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     updated_at = $1
 WHERE id = $2
   AND status IN ('queued', 'restoring', 'running')
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionRequestCancelParams struct {
@@ -22069,6 +22643,11 @@ func (q *Queries) ExecutionRequestCancel(ctx context.Context, db DBTX, arg Execu
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -22090,7 +22669,7 @@ SET status = 'queued', lease_token = NULL, lease_owner = NULL, lease_expires_at 
     updated_at = $1
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionRequeueExpiredRestoresParams struct {
@@ -22147,6 +22726,11 @@ func (q *Queries) ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, 
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -22949,7 +23533,7 @@ UPDATE managed_postgres_databases SET state='ready',observed_generation=desired_
     last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$1::timestamptz,updated_at=$1::timestamptz
 WHERE id=$2::uuid AND account_id=$3::uuid AND state='updating'
     AND desired_generation=$4::bigint AND observed_generation=desired_generation-1
-    AND lease_token=$5::text AND lease_until>$1::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND lease_token=$5::text AND lease_until>$1::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type FailManagedPostgresResizeDatabaseParams struct {
@@ -23013,6 +23597,10 @@ func (q *Queries) FailManagedPostgresResizeDatabase(ctx context.Context, db DBTX
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -23196,7 +23784,7 @@ UPDATE database_vms SET node_id = standby_node, standby_node = NULL, standby_run
     state = CASE WHEN standby_running THEN 'running' ELSE 'parked' END,
     last_error = 'failed_over', state_changed_at = now()
 WHERE database_id = $1 AND standby_synced
-    AND state IN ('parked', 'running', 'parking', 'failed')
+    AND state IN ('parked', 'running', 'parking', 'maintenance_handoff', 'failed')
 `
 
 // A synchronized standby's node becomes the database's: running if its
@@ -23490,7 +24078,7 @@ func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg 
 }
 
 const findManagedPostgresLifecycleDatabase = `-- name: FindManagedPostgresLifecycleDatabase :one
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE (CASE WHEN $3::uuid IS NULL THEN account_id=$1 ELSE org_id=$3::uuid END) AND name=$2 AND state<>'deleted'
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE (CASE WHEN $3::uuid IS NULL THEN account_id=$1 ELSE org_id=$3::uuid END) AND name=$2 AND state<>'deleted'
 `
 
 type FindManagedPostgresLifecycleDatabaseParams struct {
@@ -23544,12 +24132,16 @@ func (q *Queries) FindManagedPostgresLifecycleDatabase(ctx context.Context, db D
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
 
 const findManagedPostgresPreviewDatabase = `-- name: FindManagedPostgresPreviewDatabase :one
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases
 WHERE preview_source_database_id=$1::uuid AND preview_environment_id=$2::text
  AND preview_pr_number=$3::integer AND deleted_at IS NULL
 `
@@ -23606,6 +24198,10 @@ func (q *Queries) FindManagedPostgresPreviewDatabase(ctx context.Context, db DBT
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -24753,6 +25349,22 @@ func (q *Queries) FinishDatabaseVMUpgrade(ctx context.Context, db DBTX, arg Fini
 	return result.RowsAffected(), nil
 }
 
+const finishDeferredAlertFire = `-- name: FinishDeferredAlertFire :one
+WITH removed AS (
+    DELETE FROM alert_deferred_fires WHERE id = $1::uuid RETURNING id, delivery_id
+)
+SELECT NOT EXISTS (
+    SELECT 1 FROM alert_deferred_fires f JOIN removed ON f.delivery_id = removed.delivery_id AND f.id <> removed.id
+)::boolean AS last_recipient
+`
+
+func (q *Queries) FinishDeferredAlertFire(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, finishDeferredAlertFire, id)
+	var last_recipient pgtype.Bool
+	err := row.Scan(&last_recipient)
+	return last_recipient, err
+}
+
 const finishDevBridgeWebhookReplay = `-- name: FinishDevBridgeWebhookReplay :execrows
 UPDATE dev_bridge_webhook_replays SET state=$1,http_status=$2,completed_at=now()
 WHERE id=$3 AND account_id=$4 AND state='dispatching'
@@ -25001,7 +25613,7 @@ WITH ready AS (
         AND $1::jsonb=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
             'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
             'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
-    RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+    RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 )
 INSERT INTO managed_postgres_restore_proofs(database_id,account_id,operation_id,backend_id,backend_fingerprint,
     provider_resource_id,source_database_id,source_resource_id,point_in_time,spec,generation,observed_at,data_resource_id)
@@ -25094,7 +25706,7 @@ func (q *Queries) FinishManagedPostgresCutoverVerification(ctx context.Context, 
 
 const finishManagedPostgresHealthCheck = `-- name: FinishManagedPostgresHealthCheck :execrows
 WITH target AS (
- SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d
+ SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d
  WHERE d.id = $7::text::uuid AND d.state = 'ready' FOR SHARE
 )
 UPDATE managed_postgres_health h SET
@@ -25152,7 +25764,7 @@ WHERE d.id=$3::uuid AND d.account_id=$4::uuid AND d.state='provisioning'
     AND $10::jsonb=jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
         'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
         'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
-RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type FinishManagedPostgresLifecycleDataProvisionParams struct {
@@ -25224,6 +25836,10 @@ func (q *Queries) FinishManagedPostgresLifecycleDataProvision(ctx context.Contex
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -25232,7 +25848,7 @@ const finishManagedPostgresLifecycleDelete = `-- name: FinishManagedPostgresLife
 UPDATE managed_postgres_databases SET state='deleted',last_error_code=NULL,lease_token=NULL,lease_until=NULL,
     attempt_count=0,retry_at=$1::timestamptz,updated_at=$1::timestamptz,deleted_at=$1::timestamptz
 WHERE id=$2::uuid AND state='deleting' AND lease_token=$3::text
-    AND lease_until>$1::timestamptz RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND lease_until>$1::timestamptz RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type FinishManagedPostgresLifecycleDeleteParams struct {
@@ -25286,6 +25902,10 @@ func (q *Queries) FinishManagedPostgresLifecycleDelete(ctx context.Context, db D
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -25294,7 +25914,7 @@ const finishManagedPostgresLifecycleProvision = `-- name: FinishManagedPostgresL
 UPDATE managed_postgres_databases SET state='ready',observed_generation=desired_generation,last_error_code=NULL,
     lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$1::timestamptz,updated_at=$1::timestamptz
 WHERE id=$2::uuid AND state='provisioning' AND lease_token=$3::text
-    AND lease_until>$1::timestamptz AND provider_resource_id IS NOT NULL RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND lease_until>$1::timestamptz AND provider_resource_id IS NOT NULL RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type FinishManagedPostgresLifecycleProvisionParams struct {
@@ -25348,6 +25968,10 @@ func (q *Queries) FinishManagedPostgresLifecycleProvision(ctx context.Context, d
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -25359,7 +25983,7 @@ UPDATE managed_postgres_databases SET state='ready',service_class=$1::text,scale
     last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$5::timestamptz,updated_at=$5::timestamptz
 WHERE id=$6::uuid AND account_id=$7::uuid AND state='updating'
     AND desired_generation=$8::bigint AND observed_generation=desired_generation-1
-    AND lease_token=$9::text AND lease_until>$5::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    AND lease_token=$9::text AND lease_until>$5::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type FinishManagedPostgresResizeDatabaseParams struct {
@@ -25429,6 +26053,10 @@ func (q *Queries) FinishManagedPostgresResizeDatabase(ctx context.Context, db DB
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -26344,7 +26972,7 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template, a.owner_home_node_id,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
@@ -28315,7 +28943,7 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
     upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
-    held, compute_quota_unit_seconds
+    held, compute_quota_unit_seconds, idle_parked_at, idle_parked_from, recovery_region, restore_from_recovery, restore_timeline
 FROM database_vms WHERE database_id = $1
 `
 
@@ -28359,6 +28987,11 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.MajorHistory,
 		&i.Held,
 		&i.ComputeQuotaUnitSeconds,
+		&i.IdleParkedAt,
+		&i.IdleParkedFrom,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreTimeline,
 	)
 	return i, err
 }
@@ -29266,7 +29899,7 @@ func (q *Queries) GetManagedPostgresAccountingReconciliation(ctx context.Context
 }
 
 const getManagedPostgresCustomerDatabase = `-- name: GetManagedPostgresCustomerDatabase :one
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d
 WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target'
   AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
@@ -29329,6 +29962,10 @@ func (q *Queries) GetManagedPostgresCustomerDatabase(ctx context.Context, db DBT
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -29374,7 +30011,7 @@ func (q *Queries) GetManagedPostgresCutover(ctx context.Context, db DBTX, arg Ge
 }
 
 const getManagedPostgresLifecycleDatabase = `-- name: GetManagedPostgresLifecycleDatabase :one
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE account_id=$1 AND id=$2
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE account_id=$1 AND id=$2
 `
 
 type GetManagedPostgresLifecycleDatabaseParams struct {
@@ -29427,6 +30064,10 @@ func (q *Queries) GetManagedPostgresLifecycleDatabase(ctx context.Context, db DB
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -29503,7 +30144,7 @@ func (q *Queries) GetManagedPostgresReconciliationLedger(ctx context.Context, db
 }
 
 const getManagedPostgresResize = `-- name: GetManagedPostgresResize :one
-SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code, automatic, auto_grow_idle_at FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2
 `
 
 type GetManagedPostgresResizeParams struct {
@@ -29532,6 +30173,8 @@ func (q *Queries) GetManagedPostgresResize(ctx context.Context, db DBTX, arg Get
 		&i.TargetStorageLimitBytes,
 		&i.TargetPostgresMajor,
 		&i.ErrorCode,
+		&i.Automatic,
+		&i.AutoGrowIdleAt,
 	)
 	return i, err
 }
@@ -31264,6 +31907,23 @@ func (q *Queries) GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX
 	var i GitHubRepositoryIDsBoundToAccountRow
 	err := row.Scan(&i.OwnerID, &i.RepoID)
 	return i, err
+}
+
+const grantManagedValkeyCache = `-- name: GrantManagedValkeyCache :exec
+INSERT INTO managed_valkey_cache_grants (cache_app_id, app_id, account_id)
+VALUES ($1::uuid, $2::uuid, $3::uuid)
+ON CONFLICT (cache_app_id, app_id) DO NOTHING
+`
+
+type GrantManagedValkeyCacheParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+func (q *Queries) GrantManagedValkeyCache(ctx context.Context, db DBTX, arg GrantManagedValkeyCacheParams) error {
+	_, err := db.Exec(ctx, grantManagedValkeyCache, arg.CacheAppID, arg.AppID, arg.AccountID)
+	return err
 }
 
 const guardWorkflowAdmissionSnapshot = `-- name: GuardWorkflowAdmissionSnapshot :exec
@@ -34041,11 +34701,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks,environment_id)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,$13,
- $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::jsonb)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels
+ $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::jsonb,$28,$29,$30,$31,$32::uuid)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -34076,6 +34736,11 @@ type InsertCustomerAlertRuleParams struct {
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
 	CustomMetricLabels              []byte
+	ObserveOnly                     bool
+	ObservationEnabled              bool
+	EnvironmentScope                string
+	RecoveryConfirmationChecks      int32
+	EnvironmentID                   pgtype.UUID
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -34107,6 +34772,11 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.CreatedByAccountID,
 		arg.NotifyResolved,
 		arg.CustomMetricLabels,
+		arg.ObserveOnly,
+		arg.ObservationEnabled,
+		arg.EnvironmentScope,
+		arg.RecoveryConfirmationChecks,
+		arg.EnvironmentID,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -34143,6 +34813,13 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
 		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -34947,10 +35624,11 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 
 const insertDatabaseVM = `-- name: InsertDatabaseVM :execrows
 INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on,
-    restore_window_seconds, restore_source, restore_target, replicated, standby_node, state)
+    restore_window_seconds, restore_source, restore_target, replicated, standby_node, state, recovery_region, restore_from_recovery, restore_timeline)
 VALUES ($1, $2, $3, $4,
     $5, $6, $7, $8,
-    $9, $10, $11, $12, 'provisioning')
+    $9, $10, $11, $12, $13,
+    $14, $15, $16)
 ON CONFLICT (database_id) DO NOTHING
 `
 
@@ -34967,6 +35645,10 @@ type InsertDatabaseVMParams struct {
 	RestoreTarget        pgtype.Timestamptz
 	Replicated           bool
 	StandbyNode          pgtype.Text
+	State                string
+	RecoveryRegion       string
+	RestoreFromRecovery  bool
+	RestoreTimeline      int64
 }
 
 func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatabaseVMParams) (int64, error) {
@@ -34983,6 +35665,10 @@ func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatab
 		arg.RestoreTarget,
 		arg.Replicated,
 		arg.StandbyNode,
+		arg.State,
+		arg.RecoveryRegion,
+		arg.RestoreFromRecovery,
+		arg.RestoreTimeline,
 	)
 	if err != nil {
 		return 0, err
@@ -36412,7 +37098,7 @@ func (q *Queries) InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg
 
 const insertManagedPostgresCutoverCredential = `-- name: InsertManagedPostgresCutoverCredential :execrows
 WITH pinned AS (UPDATE managed_postgres_bindings SET cutover_id=$2::text::uuid
-WHERE id=$3::text::uuid AND cutover_id IS NULL AND state='ready' AND coalesce(rotation_previous_generation,0)=0 RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id)
+WHERE id=$3::text::uuid AND cutover_id IS NULL AND state='ready' AND coalesce(rotation_previous_generation,0)=0 RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id, data_api_inspection_revision)
 INSERT INTO managed_postgres_cutover_credentials(id,cutover_id,source_binding_id,source_credential_generation,environment_key,access)
 SELECT $1::text::uuid,cutover_id,id,credential_generation,environment_key,access FROM pinned
 `
@@ -36434,8 +37120,8 @@ func (q *Queries) InsertManagedPostgresCutoverCredential(ctx context.Context, db
 const insertManagedPostgresLifecycleDatabase = `-- name: InsertManagedPostgresLifecycleDatabase :one
 INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,scale_to_zero,
     storage_limit_bytes,restore_window_seconds,backend_id,backend_fingerprint,restore_source_database_id,restore_source_resource_id,
-    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required,org_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,$22::uuid) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required,org_id,restore_from_recovery,restore_recovery_timeline)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,$22::uuid,$23,$24) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type InsertManagedPostgresLifecycleDatabaseParams struct {
@@ -36461,6 +37147,8 @@ type InsertManagedPostgresLifecycleDatabaseParams struct {
 	CreatedAt               pgtype.Timestamptz
 	UpdatedAt               pgtype.Timestamptz
 	OrgID                   pgtype.UUID
+	RestoreFromRecovery     bool
+	RestoreRecoveryTimeline int64
 }
 
 func (q *Queries) InsertManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg InsertManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error) {
@@ -36487,6 +37175,8 @@ func (q *Queries) InsertManagedPostgresLifecycleDatabase(ctx context.Context, db
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.OrgID,
+		arg.RestoreFromRecovery,
+		arg.RestoreRecoveryTimeline,
 	)
 	var i ManagedPostgresDatabase
 	err := row.Scan(
@@ -36531,6 +37221,10 @@ func (q *Queries) InsertManagedPostgresLifecycleDatabase(ctx context.Context, db
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -36548,7 +37242,7 @@ VALUES
  $13, $14, $15,
  $16, $17, $18, $19,
  $20, $21, false)
-RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type InsertManagedPostgresReservationParams struct {
@@ -36643,14 +37337,18 @@ func (q *Queries) InsertManagedPostgresReservation(ctx context.Context, db DBTX,
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
 
 const insertManagedPostgresResize = `-- name: InsertManagedPostgresResize :one
 INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
-    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,target_postgres_major,generation,state,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14) RETURNING id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code
+    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,target_postgres_major,generation,state,created_at,automatic,auto_grow_idle_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14,$15,$16) RETURNING id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code, automatic, auto_grow_idle_at
 `
 
 type InsertManagedPostgresResizeParams struct {
@@ -36668,6 +37366,8 @@ type InsertManagedPostgresResizeParams struct {
 	TargetPostgresMajor     pgtype.Int4
 	Generation              int64
 	CreatedAt               pgtype.Timestamptz
+	Automatic               bool
+	AutoGrowIdleAt          pgtype.Timestamptz
 }
 
 func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg InsertManagedPostgresResizeParams) (ManagedPostgresResize, error) {
@@ -36686,6 +37386,8 @@ func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		arg.TargetPostgresMajor,
 		arg.Generation,
 		arg.CreatedAt,
+		arg.Automatic,
+		arg.AutoGrowIdleAt,
 	)
 	var i ManagedPostgresResize
 	err := row.Scan(
@@ -36706,6 +37408,8 @@ func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		&i.TargetStorageLimitBytes,
 		&i.TargetPostgresMajor,
 		&i.ErrorCode,
+		&i.Automatic,
+		&i.AutoGrowIdleAt,
 	)
 	return i, err
 }
@@ -36943,6 +37647,30 @@ func (q *Queries) InsertPrivateNetworkTransportIdentity(ctx context.Context, db 
 	return vni, err
 }
 
+const insertProjectEnvironmentCloneBucketNotifications = `-- name: InsertProjectEnvironmentCloneBucketNotifications :exec
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules, clone_paused)
+VALUES ($1::uuid, $2::bigint, $3::jsonb, $4::jsonb, true)
+ON CONFLICT (bucket_id) DO NOTHING
+`
+
+type InsertProjectEnvironmentCloneBucketNotificationsParams struct {
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+}
+
+// A full clone's target bucket gets its source's configuration paused.
+func (q *Queries) InsertProjectEnvironmentCloneBucketNotifications(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneBucketNotificationsParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneBucketNotifications,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.ManagedRules,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneCapturedEdgePolicy = `-- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES($1::uuid, $2::uuid, $3::uuid, $4::text, $5::jsonb)
@@ -37127,7 +37855,7 @@ const insertProjectEnvironmentCloneDatabase = `-- name: InsertProjectEnvironment
 INSERT INTO managed_postgres_databases(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
     storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, restore_source_database_id, restore_source_resource_id,
     restore_point_in_time, environment_clone_operation_id, state, desired_generation, observed_generation, clone_resource_role)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning',1,0,$17) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning',1,0,$17) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type InsertProjectEnvironmentCloneDatabaseParams struct {
@@ -37213,6 +37941,10 @@ func (q *Queries) InsertProjectEnvironmentCloneDatabase(ctx context.Context, db 
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -37441,7 +38173,7 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresArchive(ctx context.Conte
 
 const insertProjectEnvironmentClonePostgresBinding = `-- name: InsertProjectEnvironmentClonePostgresBinding :one
 INSERT INTO managed_postgres_bindings(id,account_id,database_id,app_id,scope,environment_key,access,credential_generation,state)
-VALUES($1,$2,$3,$4,$5,$6,$7,1,'provisioning') RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id
+VALUES($1,$2,$3,$4,$5,$6,$7,1,'provisioning') RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id, data_api_inspection_revision
 `
 
 type InsertProjectEnvironmentClonePostgresBindingParams struct {
@@ -37491,6 +38223,7 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresBinding(ctx context.Conte
 		&i.CutoverID,
 		&i.ConnectionLimit,
 		&i.DatabaseAccountID,
+		&i.DataApiInspectionRevision,
 	)
 	return i, err
 }
@@ -48265,8 +48998,57 @@ func (q *Queries) ListCustomDomainsForActor(ctx context.Context, db DBTX, accoun
 	return items, nil
 }
 
+const listCustomerAlertObservationCoverage = `-- name: ListCustomerAlertObservationCoverage :many
+SELECT checks.skip_reason, count(*) FILTER (WHERE checks.evaluated_at > $1::timestamptz) AS checks_in_window,
+ max(checks.evaluated_at)::timestamptz AS last_checked_at
+FROM alert_observation_checks AS checks
+JOIN alert_rules AS rule ON rule.id=checks.rule_id
+WHERE rule.id=$2 AND rule.observe_only
+ AND rule.updated_at=$3::timestamptz
+ AND checks.evaluated_at <= $4::timestamptz
+GROUP BY checks.skip_reason ORDER BY checks.skip_reason
+`
+
+type ListCustomerAlertObservationCoverageParams struct {
+	CoverageCutoff    pgtype.Timestamptz
+	ID                pgtype.UUID
+	ExpectedUpdatedAt pgtype.Timestamptz
+	AsOf              pgtype.Timestamptz
+}
+
+type ListCustomerAlertObservationCoverageRow struct {
+	SkipReason     string
+	ChecksInWindow int64
+	LastCheckedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ListCustomerAlertObservationCoverage(ctx context.Context, db DBTX, arg ListCustomerAlertObservationCoverageParams) ([]ListCustomerAlertObservationCoverageRow, error) {
+	rows, err := db.Query(ctx, listCustomerAlertObservationCoverage,
+		arg.CoverageCutoff,
+		arg.ID,
+		arg.ExpectedUpdatedAt,
+		arg.AsOf,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomerAlertObservationCoverageRow{}
+	for rows.Next() {
+		var i ListCustomerAlertObservationCoverageRow
+		if err := rows.Scan(&i.SkipReason, &i.ChecksInWindow, &i.LastCheckedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id, r.notify_resolved, r.custom_metric_labels FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query, r.created_by_account_id, r.notify_resolved, r.custom_metric_labels, r.latest_anomaly_evaluation, r.observe_only, r.observation_enabled, r.observed_incidents, r.environment_scope, r.recovery_confirmation_checks, r.environment_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2 AND r.environment_id IS NULL
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -48320,6 +49102,13 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -48332,7 +49121,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -48378,6 +49167,13 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -49429,7 +50225,8 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 }
 
 const listDatabaseNodes = `-- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region
 FROM database_nodes ORDER BY id
 `
 
@@ -49441,6 +50238,7 @@ type ListDatabaseNodesRow struct {
 	BootSlots           int32
 	PostgresMajors      []int32
 	Lifecycle           string
+	RecoveryRegion      string
 }
 
 func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabaseNodesRow, error) {
@@ -49460,6 +50258,7 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 			&i.BootSlots,
 			&i.PostgresMajors,
 			&i.Lifecycle,
+			&i.RecoveryRegion,
 		); err != nil {
 			return nil, err
 		}
@@ -49477,7 +50276,7 @@ SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, 
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
     move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
     upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history,
-    held, compute_quota_unit_seconds
+    held, compute_quota_unit_seconds, idle_parked_at, idle_parked_from, recovery_region, restore_from_recovery, restore_timeline
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -49527,6 +50326,11 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.MajorHistory,
 			&i.Held,
 			&i.ComputeQuotaUnitSeconds,
+			&i.IdleParkedAt,
+			&i.IdleParkedFrom,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -49545,12 +50349,14 @@ SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS s
 FROM apps a
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.rollout_state, ''), 'pending') IN ('pending', 'rolling_out')
  AND coalesce(nullif(d.scope, ''), 'default') = 'default'
 JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
  AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'
 WHERE a.status <> 'deleted' AND a.preview_of_slug IS NULL
  AND coalesce(a.manifest->>'release_policy', '') <> 'immediate'
  AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+ AND (a.type <> 'function' OR jsonb_array_length(coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)) > 0)
 ORDER BY a.id, d.id, s.id
 LIMIT $1::int
 `
@@ -49568,6 +50374,10 @@ type ListDefaultRouteProbeTargetsRow struct {
 // default-scope canary and a serving predecessor. apid probes the default
 // path on both so a quiet canary is judged on evidence. An app with several
 // serving predecessors returns several rows and is skipped by the caller.
+// A function is probed only on paths it declares in release_probe_paths:
+// every path of a function is its handler, so a default GET / ran a queue or
+// cron handler with a synthetic event about 20 times a minute for the whole
+// canary (prod 2026-11-20, ADR-1446 amendment).
 func (q *Queries) ListDefaultRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListDefaultRouteProbeTargetsRow, error) {
 	rows, err := db.Query(ctx, listDefaultRouteProbeTargets, batchLimit)
 	if err != nil {
@@ -50882,7 +51692,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules r WHERE r.enabled=true
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id FROM alert_rules r WHERE (r.enabled OR r.observation_enabled)
  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
  ORDER BY r.account_id
 `
@@ -50932,6 +51742,13 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -51585,6 +52402,41 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 	return items, nil
 }
 
+const listEventSubjectsWithKind = `-- name: ListEventSubjectsWithKind :many
+select distinct subject::uuid as subject
+from events
+where subject = any($1::uuid[]) and kind = $2 and at >= $3
+`
+
+type ListEventSubjectsWithKindParams struct {
+	Subjects []pgtype.UUID
+	Kind     string
+	Since    pgtype.Timestamptz
+}
+
+// Which of the given subjects have an event of one kind since a time, in one
+// read: app health asks it of an app's recently stopped instances
+// (liveness_failed, prod hunt r33). events_subject_idx (subject, at desc).
+func (q *Queries) ListEventSubjectsWithKind(ctx context.Context, db DBTX, arg ListEventSubjectsWithKindParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEventSubjectsWithKind, arg.Subjects, arg.Kind, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var subject pgtype.UUID
+		if err := rows.Scan(&subject); err != nil {
+			return nil, err
+		}
+		items = append(items, subject)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
 select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id, clone_paused
@@ -51660,6 +52512,60 @@ func (q *Queries) ListEvents(ctx context.Context, db DBTX, arg ListEventsParams)
 	items := []ListEventsRow{}
 	for rows.Next() {
 		var i ListEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventsByKindSince = `-- name: ListEventsByKindSince :many
+SELECT id, at, actor, kind, subject, data
+FROM events
+WHERE kind = $1::text AND at >= $2::timestamptz
+ORDER BY at DESC
+LIMIT $3::int
+`
+
+type ListEventsByKindSinceParams struct {
+	Kind     string
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type ListEventsByKindSinceRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// The operator wake-latency report (ADR-20261121200409): one kind's rows at
+// or after since, newest first, as a backward scan of events_kind_at_idx
+// (kind, at DESC). The caller asks for one row more than it keeps to learn
+// whether the window was cut.
+func (q *Queries) ListEventsByKindSince(ctx context.Context, db DBTX, arg ListEventsByKindSinceParams) ([]ListEventsByKindSinceRow, error) {
+	rows, err := db.Query(ctx, listEventsByKindSince, arg.Kind, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEventsByKindSinceRow{}
+	for rows.Next() {
+		var i ListEventsByKindSinceRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.At,
@@ -52983,7 +53889,7 @@ func (q *Queries) ListMCPDestinationEvents(ctx context.Context, db DBTX, arg Lis
 }
 
 const listMCPNotificationRules = `-- name: ListMCPNotificationRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE account_id=$1 AND app_id=$2
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id FROM alert_rules WHERE account_id=$1 AND app_id=$2
  AND metric='mcp_readiness_unhealthy' AND action='webhook'
  AND ($3::text='' OR mcp_readiness_scope='' OR mcp_readiness_scope=$3)
  AND ($4::uuid IS NULL OR id>$4)
@@ -53047,6 +53953,13 @@ func (q *Queries) ListMCPNotificationRules(ctx context.Context, db DBTX, arg Lis
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -53174,7 +54087,7 @@ func (q *Queries) ListMCPQueuedReminders(ctx context.Context, db DBTX, arg ListM
 }
 
 const listManagedPostgresAccountErasureDatabases = `-- name: ListManagedPostgresAccountErasureDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases d
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases d
 WHERE d.account_id=$1 AND d.state<>'deleted'
   AND EXISTS (SELECT 1 FROM orgs o WHERE o.id=d.org_id AND (o.personal_org OR NOT o.resource_ownership_enabled))
 ORDER BY d.created_at DESC, d.id
@@ -53234,6 +54147,10 @@ func (q *Queries) ListManagedPostgresAccountErasureDatabases(ctx context.Context
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -53334,7 +54251,7 @@ func (q *Queries) ListManagedPostgresAccountingCoverage(ctx context.Context, db 
 }
 
 const listManagedPostgresCustomerDatabases = `-- name: ListManagedPostgresCustomerDatabases :many
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d
 WHERE (CASE WHEN $2::uuid IS NULL THEN d.account_id=$1 ELSE d.org_id=$2::uuid END) AND d.state<>'deleted' AND d.clone_resource_role='target'
   AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
@@ -53404,6 +54321,10 @@ func (q *Queries) ListManagedPostgresCustomerDatabases(ctx context.Context, db D
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -53454,7 +54375,7 @@ func (q *Queries) ListManagedPostgresCutoverCredentials(ctx context.Context, db 
 }
 
 const listManagedPostgresExpiredDatabasePage = `-- name: ListManagedPostgresExpiredDatabasePage :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases d
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases d
 WHERE d.expires_at IS NOT NULL AND d.expires_at<=$1::timestamptz AND d.state<>'deleted'
   AND NOT (d.state='deleting' AND d.purge_after IS NULL)
   AND ($2::timestamptz IS NULL
@@ -53528,6 +54449,10 @@ func (q *Queries) ListManagedPostgresExpiredDatabasePage(ctx context.Context, db
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -53583,7 +54508,7 @@ func (q *Queries) ListManagedPostgresImportRecords(ctx context.Context, db DBTX,
 }
 
 const listManagedPostgresLifecycleDatabases = `-- name: ListManagedPostgresLifecycleDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id
 `
 
 func (q *Queries) ListManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error) {
@@ -53637,6 +54562,10 @@ func (q *Queries) ListManagedPostgresLifecycleDatabases(ctx context.Context, db 
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -53649,7 +54578,7 @@ func (q *Queries) ListManagedPostgresLifecycleDatabases(ctx context.Context, db 
 }
 
 const listManagedPostgresLifecycleUsageDatabases = `-- name: ListManagedPostgresLifecycleUsageDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE state='ready' AND provider_resource_id IS NOT NULL
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE state='ready' AND provider_resource_id IS NOT NULL
     AND ($1::boolean OR (updated_at,id)>($2::timestamptz,$3::uuid))
 ORDER BY updated_at,id LIMIT $4::integer
 `
@@ -53717,6 +54646,10 @@ func (q *Queries) ListManagedPostgresLifecycleUsageDatabases(ctx context.Context
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -53817,7 +54750,7 @@ func (q *Queries) ListManagedPostgresPlanExcessSince(ctx context.Context, db DBT
 }
 
 const listManagedPostgresPreviewDatabasePage = `-- name: ListManagedPostgresPreviewDatabasePage :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases
 WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL AND id>$1::uuid
 ORDER BY id
 LIMIT $2::integer
@@ -53881,6 +54814,10 @@ func (q *Queries) ListManagedPostgresPreviewDatabasePage(ctx context.Context, db
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -53893,7 +54830,7 @@ func (q *Queries) ListManagedPostgresPreviewDatabasePage(ctx context.Context, db
 }
 
 const listManagedPostgresPreviewDatabases = `-- name: ListManagedPostgresPreviewDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases
 WHERE account_id=$1::uuid AND preview_environment_id=$2::text
  AND preview_pr_number=$3::integer AND deleted_at IS NULL
 ORDER BY created_at,id
@@ -53957,6 +54894,10 @@ func (q *Queries) ListManagedPostgresPreviewDatabases(ctx context.Context, db DB
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -54001,7 +54942,7 @@ func (q *Queries) ListManagedPostgresReconciliationCoverage(ctx context.Context,
 }
 
 const listManagedPostgresRestoreSlotPage = `-- name: ListManagedPostgresRestoreSlotPage :many
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline, COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
 FROM managed_postgres_databases d
 WHERE d.restore_slot_until IS NOT NULL AND d.state<>'deleted'
   AND ($1::timestamptz IS NULL
@@ -54071,6 +55012,10 @@ func (q *Queries) ListManagedPostgresRestoreSlotPage(ctx context.Context, db DBT
 			&i.ManagedPostgresDatabase.PreviewEnvironmentID,
 			&i.ManagedPostgresDatabase.PreviewPrNumber,
 			&i.ManagedPostgresDatabase.ExpiresAt,
+			&i.ManagedPostgresDatabase.DataApiInspectionRevision,
+			&i.ManagedPostgresDatabase.RecoveryRegion,
+			&i.ManagedPostgresDatabase.RestoreFromRecovery,
+			&i.ManagedPostgresDatabase.RestoreRecoveryTimeline,
 			&i.SubjectID,
 		); err != nil {
 			return nil, err
@@ -54084,7 +55029,7 @@ func (q *Queries) ListManagedPostgresRestoreSlotPage(ctx context.Context, db DBT
 }
 
 const listManagedPostgresRestoreSlots = `-- name: ListManagedPostgresRestoreSlots :many
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline, COALESCE(managed_postgres_usage_subject(d.org_id,d.account_id),d.account_id)::uuid AS subject_id
 FROM managed_postgres_databases d
 WHERE d.restore_slot_until IS NOT NULL AND d.state<>'deleted'
 ORDER BY d.restore_slot_until, d.id LIMIT $1
@@ -54148,6 +55093,10 @@ func (q *Queries) ListManagedPostgresRestoreSlots(ctx context.Context, db DBTX, 
 			&i.ManagedPostgresDatabase.PreviewEnvironmentID,
 			&i.ManagedPostgresDatabase.PreviewPrNumber,
 			&i.ManagedPostgresDatabase.ExpiresAt,
+			&i.ManagedPostgresDatabase.DataApiInspectionRevision,
+			&i.ManagedPostgresDatabase.RecoveryRegion,
+			&i.ManagedPostgresDatabase.RestoreFromRecovery,
+			&i.ManagedPostgresDatabase.RestoreRecoveryTimeline,
 			&i.SubjectID,
 		); err != nil {
 			return nil, err
@@ -54161,7 +55110,7 @@ func (q *Queries) ListManagedPostgresRestoreSlots(ctx context.Context, db DBTX, 
 }
 
 const listManagedPostgresUsageResources = `-- name: ListManagedPostgresUsageResources :many
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d
 WHERE (NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
   AND ($1::timestamptz IS NULL
        OR (d.updated_at, d.id) > ($1::timestamptz, $2::uuid))
@@ -54226,10 +55175,43 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManagedValkeyCacheGrantees = `-- name: ListManagedValkeyCacheGrantees :many
+SELECT a.slug FROM managed_valkey_cache_grants g
+JOIN apps a ON a.id = g.app_id
+WHERE g.cache_app_id = $1::uuid
+  AND a.status <> 'deleted' AND a.deleted_at IS NULL
+ORDER BY a.slug
+`
+
+// The live apps bound to a cache, so deleting it can name them.
+func (q *Queries) ListManagedValkeyCacheGrantees(ctx context.Context, db DBTX, cacheAppID pgtype.UUID) ([]string, error) {
+	rows, err := db.Query(ctx, listManagedValkeyCacheGrantees, cacheAppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		items = append(items, slug)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -54732,6 +55714,56 @@ func (q *Queries) ListOutboundBindingProbeSnapshots(ctx context.Context, db DBTX
 			&i.BindingFacts,
 			&i.Plan,
 			&i.CredentialRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPagerDutyObservationStandDownChannels = `-- name: ListPagerDutyObservationStandDownChannels :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at, coalesce(s.pagerduty_target_sealed, c.target_sealed)::bytea AS stand_down_target_sealed,
+       coalesce(s.pagerduty_region, c.pagerduty_region, '')::text AS stand_down_region
+  FROM alert_channel_stand_downs s
+  JOIN notification_channels c ON c.id = s.channel_id
+ WHERE s.rule_id = $1::uuid AND s.observation_transition AND c.kind = 'pagerduty'
+`
+
+type ListPagerDutyObservationStandDownChannelsRow struct {
+	NotificationChannel   NotificationChannel
+	StandDownTargetSealed []byte
+	StandDownRegion       string
+}
+
+func (q *Queries) ListPagerDutyObservationStandDownChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]ListPagerDutyObservationStandDownChannelsRow, error) {
+	rows, err := db.Query(ctx, listPagerDutyObservationStandDownChannels, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPagerDutyObservationStandDownChannelsRow{}
+	for rows.Next() {
+		var i ListPagerDutyObservationStandDownChannelsRow
+		if err := rows.Scan(
+			&i.NotificationChannel.ID,
+			&i.NotificationChannel.AccountID,
+			&i.NotificationChannel.Name,
+			&i.NotificationChannel.Kind,
+			&i.NotificationChannel.TargetSealed,
+			&i.NotificationChannel.TargetHint,
+			&i.NotificationChannel.PagerdutyRegion,
+			&i.NotificationChannel.Email,
+			&i.NotificationChannel.LastDeliveredAt,
+			&i.NotificationChannel.LastError,
+			&i.NotificationChannel.LastErrorAt,
+			&i.NotificationChannel.CreatedAt,
+			&i.NotificationChannel.UpdatedAt,
+			&i.StandDownTargetSealed,
+			&i.StandDownRegion,
 		); err != nil {
 			return nil, err
 		}
@@ -57162,6 +58194,7 @@ FROM route_health_gates g
 JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.rollout_state, ''), 'pending') IN ('pending', 'rolling_out')
  AND coalesce(nullif(d.scope, ''), 'default') = 'default'
 WHERE jsonb_path_exists(g.routes, '$[*].probe')
 ORDER BY a.id, d.id
@@ -58051,7 +59084,7 @@ func (q *Queries) ListStoredWorkflows(ctx context.Context, db DBTX, appID pgtype
 }
 
 const listStrandedAlertRules = `-- name: ListStrandedAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules r
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id FROM alert_rules r
  WHERE r.state <> 'ok'
    AND (NOT r.enabled OR EXISTS (SELECT 1 FROM apps a WHERE a.id = r.app_id AND a.status = 'deleted'))
  ORDER BY r.updated_at, r.id
@@ -58103,6 +59136,13 @@ func (q *Queries) ListStrandedAlertRules(ctx context.Context, db DBTX, maxRows i
 			&i.CreatedByAccountID,
 			&i.NotifyResolved,
 			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -59477,6 +60517,22 @@ func (q *Queries) LockAlertRollbackRule(ctx context.Context, db DBTX, ruleID pgt
 	return id, err
 }
 
+const lockAlertRuleObservationMode = `-- name: LockAlertRuleObservationMode :one
+SELECT observe_only, environment_scope FROM alert_rules WHERE id=$1 FOR UPDATE
+`
+
+type LockAlertRuleObservationModeRow struct {
+	ObserveOnly      bool
+	EnvironmentScope string
+}
+
+func (q *Queries) LockAlertRuleObservationMode(ctx context.Context, db DBTX, id pgtype.UUID) (LockAlertRuleObservationModeRow, error) {
+	row := db.QueryRow(ctx, lockAlertRuleObservationMode, id)
+	var i LockAlertRuleObservationModeRow
+	err := row.Scan(&i.ObserveOnly, &i.EnvironmentScope)
+	return i, err
+}
+
 const lockAppConfigAccount = `-- name: LockAppConfigAccount :one
 SELECT n.id FROM resource_namespaces n
 LEFT JOIN LATERAL (SELECT a.id FROM accounts a WHERE a.id = n.id FOR UPDATE) owner_account ON true
@@ -60595,6 +61651,58 @@ func (q *Queries) LockCustomDomainTLSAdmissionClaim(ctx context.Context, db DBTX
 	return i, err
 }
 
+const lockCustomerAlertRule = `-- name: LockCustomerAlertRule :one
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id FROM alert_rules WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
+	row := db.QueryRow(ctx, lockCustomerAlertRule, id)
+	var i AlertRule
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Enabled,
+		&i.Metric,
+		&i.Comparison,
+		&i.Threshold,
+		&i.WindowSpec,
+		&i.FailureSource,
+		&i.WebhookUrl,
+		&i.WebhookSecretSealed,
+		&i.CooldownMinutes,
+		&i.State,
+		&i.LastFiredAt,
+		&i.LastEvaluatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrgID,
+		&i.Action,
+		&i.PostDeployRollbackWindowSeconds,
+		&i.EventSubscriptionID,
+		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
+		&i.McpMinCalls,
+		&i.McpForMinutes,
+		&i.McpReadinessScope,
+		&i.LogQuery,
+		&i.CreatedByAccountID,
+		&i.NotifyResolved,
+		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
+		&i.EnvironmentID,
+	)
+	return i, err
+}
+
 const lockCustomerOperationAccount = `-- name: LockCustomerOperationAccount :one
 SELECT plan::text FROM accounts WHERE id = $1::uuid FOR UPDATE
 `
@@ -61073,7 +62181,8 @@ func (q *Queries) LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX,
 }
 
 const lockDatabaseNode = `-- name: LockDatabaseNode :one
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+SELECT id, target_url, COALESCE(configured_admission_ceiling_mb, admission_ceiling_mb)::integer AS admission_ceiling_mb,
+    volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes WHERE id = $1 FOR UPDATE
 `
 
@@ -62462,7 +63571,7 @@ func (q *Queries) LockManagedPostgresCutoverApp(ctx context.Context, db DBTX, ap
 }
 
 const lockManagedPostgresCutoverBindings = `-- name: LockManagedPostgresCutoverBindings :many
-SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id FROM managed_postgres_bindings WHERE account_id=$1::text::uuid
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id, data_api_inspection_revision FROM managed_postgres_bindings WHERE account_id=$1::text::uuid
 AND database_id=$2::text::uuid AND app_id=$3::text::uuid
 AND scope=$4::text AND state<>'deleted' ORDER BY id FOR UPDATE
 `
@@ -62514,6 +63623,7 @@ func (q *Queries) LockManagedPostgresCutoverBindings(ctx context.Context, db DBT
 			&i.CutoverID,
 			&i.ConnectionLimit,
 			&i.DatabaseAccountID,
+			&i.DataApiInspectionRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -62526,7 +63636,7 @@ func (q *Queries) LockManagedPostgresCutoverBindings(ctx context.Context, db DBT
 }
 
 const lockManagedPostgresCutoverDatabases = `-- name: LockManagedPostgresCutoverDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases
 WHERE id::text=ANY($1::text[]) ORDER BY id FOR UPDATE
 `
 
@@ -62581,6 +63691,10 @@ func (q *Queries) LockManagedPostgresCutoverDatabases(ctx context.Context, db DB
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}
@@ -62695,7 +63809,7 @@ func (q *Queries) LockManagedPostgresLifecycleAccount(ctx context.Context, db DB
 }
 
 const lockManagedPostgresLifecycleDatabase = `-- name: LockManagedPostgresLifecycleDatabase :one
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE account_id=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE account_id=$1 AND id=$2 FOR UPDATE
 `
 
 type LockManagedPostgresLifecycleDatabaseParams struct {
@@ -62748,6 +63862,10 @@ func (q *Queries) LockManagedPostgresLifecycleDatabase(ctx context.Context, db D
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -62869,7 +63987,7 @@ func (q *Queries) LockManagedPostgresRotationBinding(ctx context.Context, db DBT
 }
 
 const lockManagedPostgresUsageResource = `-- name: LockManagedPostgresUsageResource :one
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d WHERE d.id = $1::uuid FOR UPDATE
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d WHERE d.id = $1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockManagedPostgresUsageResource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error) {
@@ -62917,6 +64035,10 @@ func (q *Queries) LockManagedPostgresUsageResource(ctx context.Context, db DBTX,
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -63625,7 +64747,7 @@ func (q *Queries) LockProjectEnvironmentCloneMaterializedEnvironment(ctx context
 }
 
 const lockProjectEnvironmentClonePostgresBinding = `-- name: LockProjectEnvironmentClonePostgresBinding :one
-SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2 FOR UPDATE
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id, data_api_inspection_revision FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2 FOR UPDATE
 `
 
 type LockProjectEnvironmentClonePostgresBindingParams struct {
@@ -63662,6 +64784,7 @@ func (q *Queries) LockProjectEnvironmentClonePostgresBinding(ctx context.Context
 		&i.CutoverID,
 		&i.ConnectionLimit,
 		&i.DatabaseAccountID,
+		&i.DataApiInspectionRevision,
 	)
 	return i, err
 }
@@ -64493,13 +65616,13 @@ func (q *Queries) LockRouteMonitorRollbackIncident(ctx context.Context, db DBTX,
 
 const lockRoutePolicyAccount = `-- name: LockRoutePolicyAccount :one
 WITH namespace AS MATERIALIZED (
- SELECT id FROM resource_namespaces WHERE id=$2::text::uuid FOR UPDATE
+ SELECT id FROM resource_namespaces WHERE id=$2::text::uuid FOR NO KEY UPDATE
 ), owner AS MATERIALIZED (
  SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o JOIN apps a ON a.org_id=o.id
  JOIN namespace n ON n.id=a.account_id WHERE a.id=$1::text::uuid FOR SHARE OF o
 ), legacy AS MATERIALIZED (
  SELECT ac.id FROM accounts ac JOIN namespace n ON n.id=ac.id
- JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR UPDATE OF ac
+ JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR NO KEY UPDATE OF ac
 )
 SELECT jsonb_build_object('ID', a.id, 'Plan', a.plan, 'Status', a.status, 'AbuseHoldAt', a.abuse_hold_at) AS snapshot
 FROM app_resource_accounts a JOIN namespace n ON n.id=a.id JOIN owner o ON true
@@ -64512,6 +65635,10 @@ type LockRoutePolicyAccountParams struct {
 	AccountID string
 }
 
+// FOR NO KEY UPDATE, not FOR UPDATE: the snapshot then locks the app row, and
+// a child insert's foreign-key checks take KEY SHARE on the app before the
+// namespace (request_id_journal), so FOR UPDATE here deadlocked them. Route
+// policy writers, plan/status updates and deletes still conflict with it.
 func (q *Queries) LockRoutePolicyAccount(ctx context.Context, db DBTX, arg LockRoutePolicyAccountParams) ([]byte, error) {
 	row := db.QueryRow(ctx, lockRoutePolicyAccount, arg.AppID, arg.AccountID)
 	var snapshot []byte
@@ -66222,7 +67349,7 @@ func (q *Queries) ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX,
 }
 
 const managedPostgresDueBindings = `-- name: ManagedPostgresDueBindings :many
-SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready, b.cutover_id, b.connection_limit, b.database_account_id FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
+SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready, b.cutover_id, b.connection_limit, b.database_account_id, b.data_api_inspection_revision FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
 WHERE (b.state='deleting' OR ($1::boolean AND b.state IN ('provisioning','failed'))
     OR (b.state='ready' AND b.access<>'migration' AND b.rotation_previous_generation IS NOT NULL AND NOT b.rotation_cleanup_ready
       AND NOT EXISTS (SELECT 1 FROM notification_outbox outbox WHERE outbox.channel='runtime_config_restart'
@@ -66283,6 +67410,7 @@ func (q *Queries) ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg M
 			&i.CutoverID,
 			&i.ConnectionLimit,
 			&i.DatabaseAccountID,
+			&i.DataApiInspectionRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -66519,6 +67647,7 @@ SELECT
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='compute_unit_seconds'),0)::bigint AS compute_unit_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='storage_byte_seconds'),0)::bigint AS storage_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='history_byte_seconds'),0)::bigint AS history_byte_seconds,
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='snapshot_byte_seconds'),0)::bigint AS snapshot_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='egress_bytes'),0)::bigint AS egress_bytes,
  COALESCE(sum(u.cost_millicents),0)::bigint AS cost_millicents
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
@@ -66537,11 +67666,12 @@ type ManagedPostgresUsageForSubjectParams struct {
 }
 
 type ManagedPostgresUsageForSubjectRow struct {
-	ComputeUnitSeconds int64
-	StorageByteSeconds int64
-	HistoryByteSeconds int64
-	EgressBytes        int64
-	CostMillicents     int64
+	ComputeUnitSeconds  int64
+	StorageByteSeconds  int64
+	HistoryByteSeconds  int64
+	SnapshotByteSeconds int64
+	EgressBytes         int64
+	CostMillicents      int64
 }
 
 // ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
@@ -66553,6 +67683,7 @@ func (q *Queries) ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, a
 		&i.ComputeUnitSeconds,
 		&i.StorageByteSeconds,
 		&i.HistoryByteSeconds,
+		&i.SnapshotByteSeconds,
 		&i.EgressBytes,
 		&i.CostMillicents,
 	)
@@ -67601,7 +68732,7 @@ const moveManagedPostgresBranchExpiry = `-- name: MoveManagedPostgresBranchExpir
 UPDATE managed_postgres_databases SET expires_at=$1::timestamptz, updated_at=clock_timestamp()
 WHERE id=$2::uuid AND deleted_at IS NULL AND state NOT IN ('deleting','deleted')
   AND restore_source_database_id IS NOT NULL AND expires_at=$3::timestamptz
-RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type MoveManagedPostgresBranchExpiryParams struct {
@@ -67659,6 +68790,10 @@ func (q *Queries) MoveManagedPostgresBranchExpiry(ctx context.Context, db DBTX, 
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -71515,6 +72650,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) AS active_observed,
@@ -71522,6 +72663,12 @@ o AS (
       WHERE s.mutated_at < s.quiet_after AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) END AS quiet_observed,
@@ -71530,6 +72677,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.active_since LIMIT 1) END AS activated,
@@ -71562,8 +72715,9 @@ type ObjectInventoryBacklogRow struct {
 // ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 // counts what ObjectInventoriesDue would hand out now (same rule).
 // oldest_age_seconds is the oldest observation admission still holds to the
-// 900 s window: a bucket held by a versioning, Object Lock or capacity change
-// (with an observation), or whose listing advanced within progress_window on
+// 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+// or whose all-version refresh waits for a live multipart session (with an
+// observation), or whose listing advanced within progress_window on
 // an observation under scan_max_age, stays fresh on an older one and does not
 // count (objectBucketInventoryStale). A bucket never observed counts from its
 // creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
@@ -73989,6 +75143,17 @@ func (q *Queries) ObjectNodeSettlementStats(ctx context.Context, db DBTX) (Objec
 	return i, err
 }
 
+const objectNotificationEnvironmentSlug = `-- name: ObjectNotificationEnvironmentSlug :one
+SELECT slug FROM project_environments WHERE id = $1::uuid
+`
+
+func (q *Queries) ObjectNotificationEnvironmentSlug(ctx context.Context, db DBTX, environmentID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectNotificationEnvironmentSlug, environmentID)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
 const objectNotificationInvocationExisting = `-- name: ObjectNotificationInvocationExisting :one
 SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1
 `
@@ -74138,17 +75303,31 @@ func (q *Queries) ObjectNotificationTargetInReach(ctx context.Context, db DBTX, 
 }
 
 const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :many
-SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled AND retired_at IS NULL LIMIT 2
+SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1::uuid AND app_id=$2::uuid
+  AND queue_name=$3::text AND enabled AND retired_at IS NULL
+  AND deployment_scope = $4::text
+  AND environment_id IS NOT DISTINCT FROM $5::uuid
+LIMIT 2
 `
 
 type ObjectNotificationTargetQueueParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	QueueName string
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	QueueName     string
+	Scope         string
+	EnvironmentID pgtype.UUID
 }
 
+// A rule's queue resolves in its bucket's environment (ADR-20261104120000
+// amendment 2026-11-16): production's unscoped binding, or the stage's.
 func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error) {
-	rows, err := db.Query(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	rows, err := db.Query(ctx, objectNotificationTargetQueue,
+		arg.AccountID,
+		arg.AppID,
+		arg.QueueName,
+		arg.Scope,
+		arg.EnvironmentID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -74220,8 +75399,17 @@ func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg O
 	return result.RowsAffected(), nil
 }
 
+const objectNotificationsClearClonePause = `-- name: ObjectNotificationsClearClonePause :exec
+UPDATE object_bucket_notifications SET clone_paused = false WHERE bucket_id = $1::uuid AND clone_paused
+`
+
+func (q *Queries) ObjectNotificationsClearClonePause(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectNotificationsClearClonePause, bucketID)
+	return err
+}
+
 const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id, n.clone_paused
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1
 `
@@ -74234,6 +75422,7 @@ type ObjectNotificationsGetRow struct {
 	Region       string
 	AccountID    pgtype.UUID
 	AppID        pgtype.UUID
+	ClonePaused  bool
 }
 
 func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
@@ -74247,13 +75436,14 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 		&i.Region,
 		&i.AccountID,
 		&i.AppID,
+		&i.ClonePaused,
 	)
 	return i, err
 }
 
 const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
 INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules, clone_paused=false
 `
 
 type ObjectNotificationsSaveParams struct {
@@ -74263,6 +75453,8 @@ type ObjectNotificationsSaveParams struct {
 	ManagedRules []byte
 }
 
+// Any explicit write of the rules clears a clone's pause (ADR-20261104120000
+// amendment 2026-11-16).
 func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
 	_, err := db.Exec(ctx, objectNotificationsSave,
 		arg.BucketID,
@@ -74384,6 +75576,26 @@ func (q *Queries) ObjectS3BindingLockApp(ctx context.Context, db DBTX, arg Objec
 	return id, err
 }
 
+const objectS3BindingLockBorrower = `-- name: ObjectS3BindingLockBorrower :one
+SELECT a.id FROM apps a JOIN object_buckets b ON b.account_id=a.account_id
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid
+  AND b.id=$3::uuid AND b.app_id<>a.id
+FOR UPDATE OF a
+`
+
+type ObjectS3BindingLockBorrowerParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectS3BindingLockBorrower(ctx context.Context, db DBTX, arg ObjectS3BindingLockBorrowerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectS3BindingLockBorrower, arg.AppID, arg.AccountID, arg.BucketID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const objectS3BindingRevokeLock = `-- name: ObjectS3BindingRevokeLock :one
 SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id, issuer_account_id, issuer_access_revision, key_prefix FROM object_storage_s3_credentials
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3
@@ -74498,6 +75710,72 @@ ON CONFLICT (app_id) DO UPDATE SET changed_at=excluded.changed_at
 func (q *Queries) ObjectS3BindingStampRuntime(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectS3BindingStampRuntime, appID)
 	return err
+}
+
+const objectS3ComputeBindingsHeldBy = `-- name: ObjectS3ComputeBindingsHeldBy :many
+SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid, c.label, c.permission, c.status, c.created_at, c.last_used_at, c.revoked_at, c.managed_app_id, c.managed_scope, c.managed_prefix, c.rotation_parent_id, c.rotation_wake_id, c.rotation_stamped_at, c.url_request, c.url_api_key_id, c.url_expires_at, c.url_receipt_id, c.issuer_account_id, c.issuer_access_revision, c.key_prefix, b.app_id AS bucket_app_id
+FROM object_storage_s3_credentials c
+JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
+WHERE c.account_id=$1::uuid AND c.managed_app_id=$2::uuid
+  AND c.status='active' AND c.rotation_parent_id IS NULL AND c.url_request IS NULL
+ORDER BY c.created_at, c.id
+`
+
+type ObjectS3ComputeBindingsHeldByParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+type ObjectS3ComputeBindingsHeldByRow struct {
+	ObjectStorageS3Credential ObjectStorageS3Credential
+	BucketAppID               pgtype.UUID
+}
+
+func (q *Queries) ObjectS3ComputeBindingsHeldBy(ctx context.Context, db DBTX, arg ObjectS3ComputeBindingsHeldByParams) ([]ObjectS3ComputeBindingsHeldByRow, error) {
+	rows, err := db.Query(ctx, objectS3ComputeBindingsHeldBy, arg.AccountID, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectS3ComputeBindingsHeldByRow{}
+	for rows.Next() {
+		var i ObjectS3ComputeBindingsHeldByRow
+		if err := rows.Scan(
+			&i.ObjectStorageS3Credential.ID,
+			&i.ObjectStorageS3Credential.AccountID,
+			&i.ObjectStorageS3Credential.BucketID,
+			&i.ObjectStorageS3Credential.AccessKeyID,
+			&i.ObjectStorageS3Credential.SecretSealed,
+			&i.ObjectStorageS3Credential.Kid,
+			&i.ObjectStorageS3Credential.Label,
+			&i.ObjectStorageS3Credential.Permission,
+			&i.ObjectStorageS3Credential.Status,
+			&i.ObjectStorageS3Credential.CreatedAt,
+			&i.ObjectStorageS3Credential.LastUsedAt,
+			&i.ObjectStorageS3Credential.RevokedAt,
+			&i.ObjectStorageS3Credential.ManagedAppID,
+			&i.ObjectStorageS3Credential.ManagedScope,
+			&i.ObjectStorageS3Credential.ManagedPrefix,
+			&i.ObjectStorageS3Credential.RotationParentID,
+			&i.ObjectStorageS3Credential.RotationWakeID,
+			&i.ObjectStorageS3Credential.RotationStampedAt,
+			&i.ObjectStorageS3Credential.UrlRequest,
+			&i.ObjectStorageS3Credential.UrlApiKeyID,
+			&i.ObjectStorageS3Credential.UrlExpiresAt,
+			&i.ObjectStorageS3Credential.UrlReceiptID,
+			&i.ObjectStorageS3Credential.IssuerAccountID,
+			&i.ObjectStorageS3Credential.IssuerAccessRevision,
+			&i.ObjectStorageS3Credential.KeyPrefix,
+			&i.BucketAppID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const objectS3CredentialCount = `-- name: ObjectS3CredentialCount :one
@@ -76858,7 +78136,13 @@ COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
 i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
 (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
- OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held,
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
+ OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=b.id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+   AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=b.id AND vu.inventory_scope='all_versions')
+   OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed)
+   OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=b.id AND completion_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND versions_required))))::boolean AS inventory_held,
 a.mutated_at, a.active_since, object_inventory_quiet_mode()::text AS inventory_quiet_mode
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
@@ -76930,6 +78214,9 @@ type ObjectUsageBucketsRow struct {
 // narrows by their indexes without changing the result. The subject function
 // alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 // every bucket on the platform, under the account lock of every object write.
+// inventory_held also covers an all-version-path bucket with a live multipart
+// session: its refresh cannot start until the session ends (ADR-533/540), and
+// its tracked reservations keep capacity conservative meanwhile.
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
 	rows, err := db.Query(ctx, objectUsageBuckets, arg.PeriodStart, arg.AccountID)
 	if err != nil {
@@ -77624,6 +78911,252 @@ func (q *Queries) ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectV
 	return err
 }
 
+const objectWorkloadCredentialCountLive = `-- name: ObjectWorkloadCredentialCountLive :one
+SELECT count(*)::int FROM object_storage_workload_credentials
+WHERE instance_id = $1 AND bucket_id = $2 AND expires_at > now()
+`
+
+type ObjectWorkloadCredentialCountLiveParams struct {
+	InstanceID string
+	BucketID   pgtype.UUID
+}
+
+func (q *Queries) ObjectWorkloadCredentialCountLive(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialCountLiveParams) (int32, error) {
+	row := db.QueryRow(ctx, objectWorkloadCredentialCountLive, arg.InstanceID, arg.BucketID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const objectWorkloadCredentialDelete = `-- name: ObjectWorkloadCredentialDelete :execrows
+DELETE FROM object_storage_workload_credentials
+WHERE caller_app_id = $1 AND id = ANY($2::uuid[])
+`
+
+type ObjectWorkloadCredentialDeleteParams struct {
+	CallerAppID pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+func (q *Queries) ObjectWorkloadCredentialDelete(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialDelete, arg.CallerAppID, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectWorkloadCredentialDeleteExpired = `-- name: ObjectWorkloadCredentialDeleteExpired :execrows
+DELETE FROM object_storage_workload_credentials
+WHERE id IN (
+    SELECT id FROM object_storage_workload_credentials
+    WHERE expires_at <= $1::timestamptz
+    ORDER BY expires_at
+    LIMIT $2::int
+)
+`
+
+type ObjectWorkloadCredentialDeleteExpiredParams struct {
+	Before     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ObjectWorkloadCredentialDeleteExpired(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteExpiredParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialDeleteExpired, arg.Before, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectWorkloadCredentialInsert = `-- name: ObjectWorkloadCredentialInsert :exec
+
+INSERT INTO object_storage_workload_credentials
+    (id, account_id, bucket_id, caller_app_id, instance_id, access_key_id, secret_sealed, kid, permission, key_prefix, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11, $12)
+`
+
+type ObjectWorkloadCredentialInsertParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	CallerAppID  pgtype.UUID
+	InstanceID   string
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Permission   string
+	KeyPrefix    pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+}
+
+// ADR-20261122191423 slice 2: short-lived workload S3 credentials.
+func (q *Queries) ObjectWorkloadCredentialInsert(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialInsertParams) error {
+	_, err := db.Exec(ctx, objectWorkloadCredentialInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.CallerAppID,
+		arg.InstanceID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+		arg.Permission,
+		arg.KeyPrefix,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const objectWorkloadCredentialListLiveForApp = `-- name: ObjectWorkloadCredentialListLiveForApp :many
+SELECT id, bucket_id, permission, key_prefix FROM object_storage_workload_credentials
+WHERE caller_app_id = $1 AND expires_at > now()
+`
+
+type ObjectWorkloadCredentialListLiveForAppRow struct {
+	ID         pgtype.UUID
+	BucketID   pgtype.UUID
+	Permission string
+	KeyPrefix  pgtype.Text
+}
+
+func (q *Queries) ObjectWorkloadCredentialListLiveForApp(ctx context.Context, db DBTX, callerAppID pgtype.UUID) ([]ObjectWorkloadCredentialListLiveForAppRow, error) {
+	rows, err := db.Query(ctx, objectWorkloadCredentialListLiveForApp, callerAppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectWorkloadCredentialListLiveForAppRow{}
+	for rows.Next() {
+		var i ObjectWorkloadCredentialListLiveForAppRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.Permission,
+			&i.KeyPrefix,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectWorkloadCredentialRegrant = `-- name: ObjectWorkloadCredentialRegrant :execrows
+UPDATE object_storage_workload_credentials
+SET permission = $1, key_prefix = $2
+WHERE caller_app_id = $3 AND id = ANY($4::uuid[])
+`
+
+type ObjectWorkloadCredentialRegrantParams struct {
+	Permission  string
+	KeyPrefix   pgtype.Text
+	CallerAppID pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+// A grant whose access or prefix changed moves the caller's live credentials
+// for that bucket to the new scope, so a guest's (and its SDK's) cached key
+// keeps working within what uses: still allows and loses the rest at once.
+func (q *Queries) ObjectWorkloadCredentialRegrant(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialRegrantParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialRegrant,
+		arg.Permission,
+		arg.KeyPrefix,
+		arg.CallerAppID,
+		arg.Ids,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectWorkloadCredentialResolve = `-- name: ObjectWorkloadCredentialResolve :one
+SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
+       c.created_at, c.expires_at,
+       b.app_id, b.org_id, b.name AS bucket_name, b.scope AS bucket_scope,
+       b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
+       b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
+       b.updated_at AS bucket_updated_at
+FROM object_storage_workload_credentials c
+JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
+JOIN orgs o ON o.id = b.org_id
+WHERE c.access_key_id = $1 AND c.expires_at > now() AND b.state = 'ready' AND NOT o.deleted_pending
+  AND b.environment_clone_operation_id IS NULL
+  AND EXISTS (SELECT 1 FROM apps ca WHERE ca.id = c.caller_app_id AND ca.status <> 'deleted')
+  AND EXISTS (SELECT 1 FROM instances i WHERE i.id::text = c.instance_id AND i.app_id = c.caller_app_id
+              AND i.state NOT IN ('parked','stopped','failed','evicting_account_deleting'))
+  AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
+       ELSE EXISTS (SELECT 1 FROM accounts a WHERE a.id = b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END)
+`
+
+type ObjectWorkloadCredentialResolveRow struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BucketID           pgtype.UUID
+	CallerAppID        pgtype.UUID
+	AccessKeyID        string
+	SecretSealed       []byte
+	Kid                string
+	Permission         string
+	KeyPrefix          pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	AppID              pgtype.UUID
+	OrgID              pgtype.UUID
+	BucketName         string
+	BucketScope        string
+	BucketRegion       string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	BucketState        string
+	BucketCreatedAt    pgtype.Timestamptz
+	BucketUpdatedAt    pgtype.Timestamptz
+}
+
+// A workload credential resolves while it has not expired, its caller app
+// still exists, the instance it was issued to still holds a VM, its bucket is
+// ready and the bucket's resource owner may use object storage: the same
+// owner rule object_storage_credential_live applies to compute keys. A grant
+// that uses: drops is revoked by deleting the row (ObjectWorkloadCredentialDelete);
+// one whose access or prefix changed is rescoped (ObjectWorkloadCredentialRegrant).
+func (q *Queries) ObjectWorkloadCredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectWorkloadCredentialResolveRow, error) {
+	row := db.QueryRow(ctx, objectWorkloadCredentialResolve, accessKeyID)
+	var i ObjectWorkloadCredentialResolveRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.CallerAppID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Permission,
+		&i.KeyPrefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AppID,
+		&i.OrgID,
+		&i.BucketName,
+		&i.BucketScope,
+		&i.BucketRegion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.BucketState,
+		&i.BucketCreatedAt,
+		&i.BucketUpdatedAt,
+	)
+	return i, err
+}
+
 const objectWriteInsert = `-- name: ObjectWriteInsert :exec
 INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
 VALUES($1,$2,$3,$4,$5,$6,$7::boolean,$8::bigint)
@@ -78213,6 +79746,391 @@ func (q *Queries) OperationEffectDeliveryAllowed(ctx context.Context, db DBTX, d
 	var i OperationEffectDeliveryAllowedRow
 	err := row.Scan(&i.Managed, &i.Allowed)
 	return i, err
+}
+
+const operatorActiveBuilds = `-- name: OperatorActiveBuilds :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.status IN ('queued', 'running')
+ORDER BY (b.status = 'running') DESC, (b.not_before IS NOT NULL AND b.not_before > now()),
+         COALESCE(b.not_before, b.enqueued_at), b.id
+LIMIT $1::int
+`
+
+type OperatorActiveBuildsRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// The operator build queue report (ADR-20261123163340): queued and running
+// builds with their app. Running builds come first (slots bound them, so a
+// long backlog never cuts them), then due queued builds the longest waiting
+// first (from not_before when deferred), then builds deferred to a later
+// not_before. The caller asks for one row more than it keeps to learn whether
+// it was cut.
+func (q *Queries) OperatorActiveBuilds(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorActiveBuildsRow, error) {
+	rows, err := db.Query(ctx, operatorActiveBuilds, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorActiveBuildsRow{}
+	for rows.Next() {
+		var i OperatorActiveBuildsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorFinishedBuildsSince = `-- name: OperatorFinishedBuildsSince :many
+SELECT b.id::text AS id, b.deployment_id::text AS deployment_id,
+       COALESCE(d.app_id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id,
+       b.kind, b.status, COALESCE(b.failure_class, '')::text AS failure_class, b.source_bytes,
+       b.enqueued_at, b.not_before, b.started_at, b.finished_at,
+       COALESCE(b.cache_status, '')::text AS cache_status,
+       COALESCE(b.builder_node_name, '')::text AS builder_node_name, b.preemptions,
+       COALESCE(b.coalesced_with::text, '')::text AS coalesced_with
+FROM builds b
+LEFT JOIN deployments d ON d.id = b.deployment_id
+LEFT JOIN apps a ON a.id = d.app_id
+WHERE b.finished_at >= $1::timestamptz
+  AND b.status IN ('succeeded', 'failed', 'cancelled')
+ORDER BY b.finished_at DESC, b.id DESC
+LIMIT $2::int
+`
+
+type OperatorFinishedBuildsSinceParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorFinishedBuildsSinceRow struct {
+	ID              string
+	DeploymentID    string
+	AppID           string
+	AppSlug         string
+	AccountID       string
+	Kind            string
+	Status          string
+	FailureClass    string
+	SourceBytes     int64
+	EnqueuedAt      pgtype.Timestamptz
+	NotBefore       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	CacheStatus     string
+	BuilderNodeName string
+	Preemptions     int32
+	CoalescedWith   string
+}
+
+// Builds that reached a terminal status at or after since, newest first,
+// for the build queue report's durations, failures and cache outcomes.
+// builds_finished_at_idx serves the range.
+func (q *Queries) OperatorFinishedBuildsSince(ctx context.Context, db DBTX, arg OperatorFinishedBuildsSinceParams) ([]OperatorFinishedBuildsSinceRow, error) {
+	rows, err := db.Query(ctx, operatorFinishedBuildsSince, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorFinishedBuildsSinceRow{}
+	for rows.Next() {
+		var i OperatorFinishedBuildsSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Kind,
+			&i.Status,
+			&i.FailureClass,
+			&i.SourceBytes,
+			&i.EnqueuedAt,
+			&i.NotBefore,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CacheStatus,
+			&i.BuilderNodeName,
+			&i.Preemptions,
+			&i.CoalescedWith,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorLiveDeploymentsWithoutSnapshot = `-- name: OperatorLiveDeploymentsWithoutSnapshot :many
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, a.slug AS app_slug,
+       a.account_id::text AS account_id, (d.rootfs_key <> '')::boolean AS cold_bootable,
+       d.created_at,
+       (SELECT max(s.stale_at) FROM snapshots s WHERE s.deployment_id = d.id)::timestamptz AS last_stale_at
+FROM deployments d
+JOIN apps a ON a.id = d.app_id
+WHERE d.status = 'live' AND d.deleted_at IS NULL AND a.status = 'active'
+  AND NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.deployment_id = d.id AND NOT s.stale AND NOT s.delete_pending)
+ORDER BY (d.rootfs_key = '') DESC, d.created_at DESC, d.id
+LIMIT $1::int
+`
+
+type OperatorLiveDeploymentsWithoutSnapshotRow struct {
+	DeploymentID string
+	AppID        string
+	AppSlug      string
+	AccountID    string
+	ColdBootable bool
+	CreatedAt    pgtype.Timestamptz
+	LastStaleAt  pgtype.Timestamptz
+}
+
+// Live deployments of active apps with no usable snapshot (none, or every one
+// stale or pending deletion): they cold boot on every wake until a snapshot
+// is taken. cold_bootable is false when the deployment has no rootfs either,
+// which breaks spec invariant 6.2-3. Those come first, then the newest.
+func (q *Queries) OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorLiveDeploymentsWithoutSnapshotRow, error) {
+	rows, err := db.Query(ctx, operatorLiveDeploymentsWithoutSnapshot, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorLiveDeploymentsWithoutSnapshotRow{}
+	for rows.Next() {
+		var i OperatorLiveDeploymentsWithoutSnapshotRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.ColdBootable,
+			&i.CreatedAt,
+			&i.LastStaleAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorMemoryPressureEvents = `-- name: OperatorMemoryPressureEvents :many
+SELECT e.at, e.kind, COALESCE(e.data->>'reason', '')::text AS reason,
+       COALESCE(i.id::text, e.subject::text, e.data->>'instance_id', '')::text AS instance_id,
+       COALESCE(a.id::text, '')::text AS app_id, COALESCE(a.slug, '')::text AS app_slug,
+       COALESCE(a.account_id::text, '')::text AS account_id, COALESCE(ac.plan, '')::text AS plan,
+       COALESCE(i.node_id::text, '')::text AS node_id, COALESCE(n.name, '')::text AS node_name,
+       COALESCE(i.ram_mb, 0)::int AS ram_mb,
+       COALESCE(CASE WHEN e.data->>'peak_mb' ~ '^[0-9]{1,9}$' THEN (e.data->>'peak_mb')::int END, 0)::int AS peak_mb,
+       COALESCE(CASE WHEN e.data->>'plan_mb' ~ '^[0-9]{1,9}$' THEN (e.data->>'plan_mb')::int END, 0)::int AS plan_mb,
+       (COALESCE(e.data->>'deployment_failed', '') = 'true')::boolean AS deployment_failed
+FROM events e
+LEFT JOIN instances i ON i.id = COALESCE(e.subject,
+       CASE WHEN e.data->>'instance_id' ~ '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' THEN (e.data->>'instance_id')::uuid END)
+LEFT JOIN apps a ON a.id = COALESCE(i.app_id,
+       CASE WHEN e.data->>'app_id' ~ '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$' THEN (e.data->>'app_id')::uuid END)
+LEFT JOIN accounts ac ON ac.id = a.account_id
+LEFT JOIN compute_nodes n ON n.id = i.node_id
+WHERE e.kind IN ('memory_eviction', 'frozen_park', 'instances.workload_oom_failed')
+  AND e.at >= $1::timestamptz
+  AND (e.kind <> 'frozen_park' OR e.data->>'reason' = 'memory_pressure')
+ORDER BY e.at DESC, e.id DESC
+LIMIT $2::int
+`
+
+type OperatorMemoryPressureEventsParams struct {
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type OperatorMemoryPressureEventsRow struct {
+	At               pgtype.Timestamptz
+	Kind             string
+	Reason           string
+	InstanceID       string
+	AppID            string
+	AppSlug          string
+	AccountID        string
+	Plan             string
+	NodeID           string
+	NodeName         string
+	RamMb            int32
+	PeakMb           int32
+	PlanMb           int32
+	DeploymentFailed bool
+}
+
+// The operator memory pressure report (ADR-20261123190507): RAM pressure
+// evictions of running instances (memory_eviction), frozen instances parked
+// under memory pressure (frozen_park, reason memory_pressure) and workload
+// OOM kills (instances.workload_oom_failed), newest first, each with its
+// instance's node and RAM and its app's account and plan. A transition names
+// its instance in subject; an OOM kill names instance and app in data. The
+// instance row may already be gone (terminal retention), so every join is
+// optional. events_kind_at_idx serves each kind's range.
+func (q *Queries) OperatorMemoryPressureEvents(ctx context.Context, db DBTX, arg OperatorMemoryPressureEventsParams) ([]OperatorMemoryPressureEventsRow, error) {
+	rows, err := db.Query(ctx, operatorMemoryPressureEvents, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorMemoryPressureEventsRow{}
+	for rows.Next() {
+		var i OperatorMemoryPressureEventsRow
+		if err := rows.Scan(
+			&i.At,
+			&i.Kind,
+			&i.Reason,
+			&i.InstanceID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.Plan,
+			&i.NodeID,
+			&i.NodeName,
+			&i.RamMb,
+			&i.PeakMb,
+			&i.PlanMb,
+			&i.DeploymentFailed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorSnapshotInventory = `-- name: OperatorSnapshotInventory :many
+SELECT s.id::text AS id, s.deployment_id::text AS deployment_id, d.app_id::text AS app_id,
+       a.slug AS app_slug, a.account_id::text AS account_id, d.status AS deployment_status,
+       s.tier, s.fc_version, s.cpu_template, s.cpu_model, s.stale, s.stale_at,
+       s.delete_pending, s.created_at,
+       (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END)::bigint AS snapshot_bytes,
+       COALESCE(d.rootfs_bytes, 0)::bigint AS layer_bytes
+FROM snapshots s
+JOIN deployments d ON d.id = s.deployment_id
+JOIN apps a ON a.id = d.app_id
+ORDER BY (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END) + COALESCE(d.rootfs_bytes, 0) DESC, s.id
+LIMIT $1::int
+`
+
+type OperatorSnapshotInventoryRow struct {
+	ID               string
+	DeploymentID     string
+	AppID            string
+	AppSlug          string
+	AccountID        string
+	DeploymentStatus string
+	Tier             string
+	FcVersion        string
+	CpuTemplate      string
+	CpuModel         string
+	Stale            bool
+	StaleAt          pgtype.Timestamptz
+	DeletePending    bool
+	CreatedAt        pgtype.Timestamptz
+	SnapshotBytes    int64
+	LayerBytes       int64
+}
+
+// The operator snapshot health report (ADR-20261122135018): every snapshot
+// row with its parked footprint (the fcvm_snapshot_fleet_avg_bytes
+// definition: allocated mem + vmstate, or logical bytes from a legacy writer,
+// plus the deployment's above-base layer) and its app, largest first. The
+// caller asks for one row more than it keeps to learn whether it was cut.
+func (q *Queries) OperatorSnapshotInventory(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorSnapshotInventoryRow, error) {
+	rows, err := db.Query(ctx, operatorSnapshotInventory, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorSnapshotInventoryRow{}
+	for rows.Next() {
+		var i OperatorSnapshotInventoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.DeploymentStatus,
+			&i.Tier,
+			&i.FcVersion,
+			&i.CpuTemplate,
+			&i.CpuModel,
+			&i.Stale,
+			&i.StaleAt,
+			&i.DeletePending,
+			&i.CreatedAt,
+			&i.SnapshotBytes,
+			&i.LayerBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const orgByID = `-- name: OrgByID :one
@@ -78842,7 +80760,7 @@ FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id
 JOIN project_environments e ON e.id=g.environment_id
 JOIN managed_postgres_bindings b ON b.app_id=q.app_id AND b.scope=e.slug AND b.state='ready'
- AND b.access IN ('read_write','read_only','migration','session') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
+ AND b.access IN ('read_write','read_only','migration','session','replica_only') AND b.rotation_previous_generation IS NULL AND b.cutover_id IS NULL
 JOIN app_secrets s ON s.app_id=q.app_id AND s.scope=e.slug AND s.key=b.environment_key
  AND s.managed_postgres_binding_id=b.id AND s.managed_credential_generation=b.credential_generation AND s.delivery_version IS NOT NULL
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.deleted_at IS NULL
@@ -79267,7 +81185,7 @@ WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='res
     AND d.restore_source_database_id=r.source_database_id AND d.clone_resource_role='checkpoint' AND d.state='provisioning' AND d.provider_resource_id IS NULL
     AND d.data_resource_id IS NULL AND d.desired_generation=1 AND d.observed_generation=0 AND d.lease_token IS NULL
     AND o.id=r.operation_id AND o.status='capturing' AND o.revision=$3::bigint
-    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type PinProjectEnvironmentCloneNativeForkDatabaseParams struct {
@@ -79327,6 +81245,10 @@ func (q *Queries) PinProjectEnvironmentCloneNativeForkDatabase(ctx context.Conte
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -79339,7 +81261,7 @@ WHERE c.operation_id=$2::uuid AND c.source_database_id=$3::uuid AND c.state='del
     AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
     AND d.lease_token IS NULL AND d.lease_until IS NULL AND (d.provider_resource_id IS NULL OR d.provider_resource_id=$1::text)
     AND o.id=c.operation_id AND o.status='compensating' AND o.revision=$4::bigint
-    AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+    AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type PinProjectEnvironmentClonePostgresCopyTargetCleanupDatabaseParams struct {
@@ -79401,6 +81323,10 @@ func (q *Queries) PinProjectEnvironmentClonePostgresCopyTargetCleanupDatabase(ct
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -79413,7 +81339,7 @@ WHERE c.operation_id=$2::uuid AND c.source_database_id=$3::uuid AND c.state IN (
     AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
     AND d.lease_token IS NULL AND d.lease_until IS NULL AND (d.provider_resource_id IS NULL OR d.provider_resource_id=$1::text)
     AND o.id=c.operation_id AND o.status='capturing' AND o.revision=$4::bigint
-    AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+    AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type PinProjectEnvironmentClonePostgresCopyTargetDatabaseParams struct {
@@ -79475,6 +81401,10 @@ func (q *Queries) PinProjectEnvironmentClonePostgresCopyTargetDatabase(ctx conte
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -80182,7 +82112,7 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 }
 
 const pruneDatabaseRestoreDrills = `-- name: PruneDatabaseRestoreDrills :execrows
-DELETE FROM database_restore_drills WHERE result <> 'running' AND started_at < $1
+DELETE FROM database_restore_drills WHERE finished_at IS NOT NULL AND started_at < $1
 `
 
 func (q *Queries) PruneDatabaseRestoreDrills(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
@@ -81708,39 +83638,78 @@ func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg
 
 const queueAlertChannelStandDowns = `-- name: QueueAlertChannelStandDowns :execrows
 WITH rule AS (
-    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $3::uuid
+    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $4::uuid
 ), owed AS (
     SELECT b.channel_id FROM alert_rule_channels b
-     WHERE b.rule_id = $3::uuid
-       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $3::uuid AND e.resolved_at IS NULL)
+     WHERE b.rule_id = $4::uuid
+       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $4::uuid AND e.resolved_at IS NULL)
     UNION
-    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $4::uuid
 ), moved AS (
-    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $4::uuid
 )
 INSERT INTO alert_channel_stand_downs
-    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at,
+     observation_transition, pagerduty_target_sealed, pagerduty_region)
 SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
-       $1::text, $2::timestamptz, $2::timestamptz
-  FROM rule CROSS JOIN owed
-ON CONFLICT (rule_id, channel_id) DO NOTHING
+       $1::text, $2::timestamptz, $2::timestamptz, $3::boolean,
+       CASE WHEN $3::boolean AND c.kind = 'pagerduty' THEN c.target_sealed END,
+       CASE WHEN $3::boolean AND c.kind = 'pagerduty' THEN c.pagerduty_region END
+  FROM rule CROSS JOIN owed JOIN notification_channels c ON c.id = owed.channel_id
+ON CONFLICT (rule_id, channel_id) DO UPDATE SET
+    observation_transition = true,
+    pagerduty_target_sealed = EXCLUDED.pagerduty_target_sealed,
+    pagerduty_region = EXCLUDED.pagerduty_region
+ WHERE EXCLUDED.observation_transition AND NOT alert_channel_stand_downs.observation_transition
 `
 
 type QueueAlertChannelStandDownsParams struct {
-	Reason string
-	At     pgtype.Timestamptz
-	RuleID pgtype.UUID
+	Reason                string
+	At                    pgtype.Timestamptz
+	ObservationTransition bool
+	RuleID                pgtype.UUID
 }
 
 // A rule whose episode ends without it recovering owes each bound channel a
 // recovery notice (ADR-20261104142830): the channels of its open episode,
 // and those whose recovery notice is still being retried, which move here.
 func (q *Queries) QueueAlertChannelStandDowns(ctx context.Context, db DBTX, arg QueueAlertChannelStandDownsParams) (int64, error) {
-	result, err := db.Exec(ctx, queueAlertChannelStandDowns, arg.Reason, arg.At, arg.RuleID)
+	result, err := db.Exec(ctx, queueAlertChannelStandDowns,
+		arg.Reason,
+		arg.At,
+		arg.ObservationTransition,
+		arg.RuleID,
+	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueAlertWebhookStandDown = `-- name: QueueAlertWebhookStandDown :exec
+INSERT INTO alert_webhook_stand_downs
+    (rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+     webhook_url, webhook_secret_sealed, queued_at, next_attempt_at)
+SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spec, r.environment_scope,
+       r.webhook_url, r.webhook_secret_sealed, $1::timestamptz, $1::timestamptz
+  FROM alert_rules r
+ WHERE r.id = $2::uuid AND r.notify_resolved AND r.webhook_url <> ''
+   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL)
+   AND NOT EXISTS (
+       SELECT 1 FROM alert_deferred_fires f JOIN alert_deliveries d ON d.id = f.delivery_id
+        WHERE d.rule_id = r.id AND d.fired_at = r.last_fired_at AND f.webhook_url = r.webhook_url AND NOT f.started AND d.status = 'pending'
+   )
+`
+
+type QueueAlertWebhookStandDownParams struct {
+	At     pgtype.Timestamptz
+	RuleID pgtype.UUID
+}
+
+// Snapshot the pre-edit destination and payload while its live episode is open.
+func (q *Queries) QueueAlertWebhookStandDown(ctx context.Context, db DBTX, arg QueueAlertWebhookStandDownParams) error {
+	_, err := db.Exec(ctx, queueAlertWebhookStandDown, arg.At, arg.RuleID)
+	return err
 }
 
 const queueApplicationStandardExceptionChange = `-- name: QueueApplicationStandardExceptionChange :execrows
@@ -82728,6 +84697,66 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueDeferredAlertFires = `-- name: QueueDeferredAlertFires :many
+WITH live AS (
+    SELECT d.id, d.fired_at, r.id AS rule_id, r.webhook_url
+      FROM alert_deliveries d JOIN alert_rules r ON r.id = d.rule_id
+     WHERE d.id = $1::uuid
+), recipients AS (
+    SELECT unnest($2::uuid[]) AS channel_id,
+           unnest($3::text[]) AS pagerduty_region
+)
+INSERT INTO alert_deferred_fires (delivery_id, channel_id, webhook_url, channel_only, next_attempt_at)
+SELECT live.id, target.channel_id, '', live.webhook_url = '', live.fired_at
+  FROM live CROSS JOIN recipients target
+ WHERE EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs s JOIN notification_channels old ON old.id = s.channel_id
+     WHERE s.rule_id = live.rule_id AND s.observation_transition
+       AND (s.channel_id = target.channel_id OR
+            (old.kind = 'pagerduty' AND target.pagerduty_region = coalesce(s.pagerduty_region, old.pagerduty_region)))
+ )
+UNION ALL
+SELECT live.id, NULL::uuid, live.webhook_url, false, live.fired_at FROM live
+ WHERE live.webhook_url <> '' AND EXISTS (
+    SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = live.rule_id AND s.webhook_url = live.webhook_url
+ )
+RETURNING coalesce(channel_id::text, '')::text AS channel_id, webhook_url
+`
+
+type QueueDeferredAlertFiresParams struct {
+	DeliveryID       pgtype.UUID
+	ChannelIds       []pgtype.UUID
+	PagerdutyRegions []string
+}
+
+type QueueDeferredAlertFiresRow struct {
+	ChannelID  string
+	WebhookUrl string
+}
+
+// Use the recipients selected by the claim. The current bindings may have
+// changed since that snapshot. Meterd compares actual PagerDuty keys when
+// releasing same-region aliases.
+func (q *Queries) QueueDeferredAlertFires(ctx context.Context, db DBTX, arg QueueDeferredAlertFiresParams) ([]QueueDeferredAlertFiresRow, error) {
+	rows, err := db.Query(ctx, queueDeferredAlertFires, arg.DeliveryID, arg.ChannelIds, arg.PagerdutyRegions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QueueDeferredAlertFiresRow{}
+	for rows.Next() {
+		var i QueueDeferredAlertFiresRow
+		if err := rows.Scan(&i.ChannelID, &i.WebhookUrl); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const queueDepthForBinding = `-- name: QueueDepthForBinding :one
@@ -85288,7 +87317,12 @@ SELECT (jsonb_build_object(
     'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired'),
     -- Environment branches (ADR-20261031193635) record the deployments they created.
     'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = $1::uuid),
-    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = $1::uuid)
+    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = $1::uuid),
+    -- Project deploy rollbacks (#7923) record each deployment's deploy group.
+    'project_deploy_rollback_members_deployment_id_fkey', (SELECT count(*) FROM project_deploy_rollback_members WHERE deployment_id = $1::uuid),
+    -- Verification leases (ADR-20261122220000 amendment 2) hold a deployment
+    -- only while unexpired; an expired one opens no secrets.
+    'deployment_verification_leases_deployment_id_fkey', (SELECT count(*) FROM deployment_verification_leases WHERE deployment_id = $1::uuid AND expires_at > now())
 ))::jsonb AS borrowers
 `
 
@@ -85375,7 +87409,19 @@ SELECT (jsonb_build_object(
  -- and capture objects (ADR-20261031193635) keep the id without a foreign key.
  'artifact_signatures.deployment_id', (SELECT count(*) FROM artifact_signatures WHERE deployment_id=$1::uuid),
  'environment_branch_capture_objects.deployment_id', (SELECT count(*) FROM environment_branch_capture_objects WHERE deployment_id=$1::uuid),
- 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=$1::uuid)
+ 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=$1::uuid),
+ -- Verification-contract SQL checks (ADR-20261122220000), route resource
+ -- minutes (ADR-20261121170000) and project rollback undo artifact holds
+ -- (#7923) keep the id without a foreign key.
+ 'deployment_verification_queries.deployment_id', (SELECT count(*) FROM deployment_verification_queries WHERE deployment_id=$1::uuid),
+ 'instance_resource_minutes.deployment_id', (SELECT count(*) FROM instance_resource_minutes WHERE deployment_id=$1::uuid),
+ 'project_rollback_undo_artifact_holds.deployment_id', (SELECT count(*) FROM project_rollback_undo_artifact_holds WHERE deployment_id=$1::uuid),
+ -- Data API inspection admissions (#8068) pin the inspected deployment
+ -- without a foreign key.
+ 'data_api_inspection_admissions.deployment_id', (SELECT count(*) FROM data_api_inspection_admissions WHERE deployment_id=$1::uuid),
+ -- A route split (#8100) records its route app's deployment without a
+ -- foreign key.
+ 'route_splits.target_deployment_id', (SELECT count(*) FROM route_splits WHERE target_deployment_id=$1::uuid)
 ))::jsonb AS borrowers
 `
 
@@ -85921,7 +87967,7 @@ func (q *Queries) ReadCustomDomainProbeObservation(ctx context.Context, db DBTX,
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -85961,6 +88007,13 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
 		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -87283,19 +89336,26 @@ func (q *Queries) ReadInvocationPinScope(ctx context.Context, db DBTX, arg ReadI
 }
 
 const readInvocationVersionApp = `-- name: ReadInvocationVersionApp :one
-SELECT id, account_id, project_id, preview_of_slug, status, deleted_at,
-  coalesce(manifest->>'execution_mode', '')::text AS execution_mode
+SELECT id, account_id, project_id, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, status, deleted_at,
+  coalesce(manifest->>'execution_mode', '')::text AS execution_mode,
+  coalesce(manifest->>'api_sandbox_source_deployment_id', '')::text AS api_sandbox_source_deployment_id,
+  coalesce(manifest->>'api_sandbox_run' = 'true', false)::boolean AS api_sandbox_run
 FROM apps WHERE id = $1::uuid
 `
 
 type ReadInvocationVersionAppRow struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	ProjectID     pgtype.UUID
-	PreviewOfSlug pgtype.Text
-	Status        string
-	DeletedAt     pgtype.Timestamptz
-	ExecutionMode string
+	ID                           pgtype.UUID
+	AccountID                    pgtype.UUID
+	ProjectID                    pgtype.UUID
+	PreviewOfSlug                pgtype.Text
+	PreviewPrNumber              pgtype.Int4
+	PreviewPrState               pgtype.Text
+	PreviewExpiresAt             pgtype.Timestamptz
+	Status                       string
+	DeletedAt                    pgtype.Timestamptz
+	ExecutionMode                string
+	ApiSandboxSourceDeploymentID string
+	ApiSandboxRun                bool
 }
 
 // ADR-570: identity-only projection for a durable invocation version snapshot.
@@ -87307,9 +89367,14 @@ func (q *Queries) ReadInvocationVersionApp(ctx context.Context, db DBTX, id pgty
 		&i.AccountID,
 		&i.ProjectID,
 		&i.PreviewOfSlug,
+		&i.PreviewPrNumber,
+		&i.PreviewPrState,
+		&i.PreviewExpiresAt,
 		&i.Status,
 		&i.DeletedAt,
 		&i.ExecutionMode,
+		&i.ApiSandboxSourceDeploymentID,
+		&i.ApiSandboxRun,
 	)
 	return i, err
 }
@@ -88241,7 +90306,7 @@ func (q *Queries) ReadMCPRouteDeliveryResult(ctx context.Context, db DBTX, id pg
 }
 
 const readManagedPostgresBindingOwnership = `-- name: ReadManagedPostgresBindingOwnership :one
-SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id FROM managed_postgres_bindings WHERE id=$1
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id, data_api_inspection_revision FROM managed_postgres_bindings WHERE id=$1
 `
 
 func (q *Queries) ReadManagedPostgresBindingOwnership(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresBinding, error) {
@@ -88273,6 +90338,7 @@ func (q *Queries) ReadManagedPostgresBindingOwnership(ctx context.Context, db DB
 		&i.CutoverID,
 		&i.ConnectionLimit,
 		&i.DatabaseAccountID,
+		&i.DataApiInspectionRevision,
 	)
 	return i, err
 }
@@ -88430,7 +90496,7 @@ func (q *Queries) ReadManagedPostgresLifecycleDependants(ctx context.Context, db
 }
 
 const readManagedPostgresLifecycleRestoreSource = `-- name: ReadManagedPostgresLifecycleRestoreSource :one
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE
 `
 
 func (q *Queries) ReadManagedPostgresLifecycleRestoreSource(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error) {
@@ -88478,12 +90544,16 @@ func (q *Queries) ReadManagedPostgresLifecycleRestoreSource(ctx context.Context,
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
 
 const readManagedPostgresOwnership = `-- name: ReadManagedPostgresOwnership :one
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE id=$1
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE id=$1
 `
 
 func (q *Queries) ReadManagedPostgresOwnership(ctx context.Context, db DBTX, id pgtype.UUID) (ManagedPostgresDatabase, error) {
@@ -88531,25 +90601,31 @@ func (q *Queries) ReadManagedPostgresOwnership(ctx context.Context, db DBTX, id 
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
 
 const readManagedPostgresResizeConflicts = `-- name: ReadManagedPostgresResizeConflicts :one
-SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND state<>'deleted'
-    AND (state<>'ready' OR rotation_previous_generation<>0 OR lease_token IS NOT NULL)) AS unfinished_bindings,
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=$1 AND b.state<>'deleted'
+    AND (b.state<>'ready' OR b.rotation_previous_generation<>0 OR b.lease_token IS NOT NULL)) AS unfinished_bindings,
+    EXISTS(SELECT 1 FROM managed_postgres_bindings replica WHERE replica.database_id=$1 AND replica.state<>'deleted' AND replica.access='replica_only') AS replica_bindings,
     EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$1 AND state NOT IN ('ready','deleted')) AS unfinished_restores
 `
 
 type ReadManagedPostgresResizeConflictsRow struct {
 	UnfinishedBindings bool
+	ReplicaBindings    bool
 	UnfinishedRestores bool
 }
 
 func (q *Queries) ReadManagedPostgresResizeConflicts(ctx context.Context, db DBTX, databaseID pgtype.UUID) (ReadManagedPostgresResizeConflictsRow, error) {
 	row := db.QueryRow(ctx, readManagedPostgresResizeConflicts, databaseID)
 	var i ReadManagedPostgresResizeConflictsRow
-	err := row.Scan(&i.UnfinishedBindings, &i.UnfinishedRestores)
+	err := row.Scan(&i.UnfinishedBindings, &i.ReplicaBindings, &i.UnfinishedRestores)
 	return i, err
 }
 
@@ -89515,7 +91591,7 @@ func (q *Queries) ReadProjectEnvironmentCloneCrons(ctx context.Context, db DBTX,
 }
 
 const readProjectEnvironmentCloneDatabaseByName = `-- name: ReadProjectEnvironmentCloneDatabaseByName :one
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.name=$2 ORDER BY d.created_at,d.id LIMIT 1 FOR UPDATE OF d
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.name=$2 ORDER BY d.created_at,d.id LIMIT 1 FOR UPDATE OF d
 `
 
 type ReadProjectEnvironmentCloneDatabaseByNameParams struct {
@@ -89568,12 +91644,16 @@ func (q *Queries) ReadProjectEnvironmentCloneDatabaseByName(ctx context.Context,
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
 
 const readProjectEnvironmentCloneDatabaseReservation = `-- name: ReadProjectEnvironmentCloneDatabaseReservation :one
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d
 WHERE d.account_id=$1 AND d.environment_clone_operation_id=$2 AND d.restore_source_database_id=$3 AND d.clone_resource_role='target' FOR UPDATE OF d
 `
 
@@ -89628,6 +91708,10 @@ func (q *Queries) ReadProjectEnvironmentCloneDatabaseReservation(ctx context.Con
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -89644,7 +91728,7 @@ func (q *Queries) ReadProjectEnvironmentCloneDatabaseReservationTime(ctx context
 }
 
 const readProjectEnvironmentCloneDatabaseSource = `-- name: ReadProjectEnvironmentCloneDatabaseSource :one
-SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.id=$2 FOR UPDATE OF d
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.id=$2 FOR UPDATE OF d
 `
 
 type ReadProjectEnvironmentCloneDatabaseSourceParams struct {
@@ -89697,6 +91781,10 @@ func (q *Queries) ReadProjectEnvironmentCloneDatabaseSource(ctx context.Context,
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -90025,7 +92113,7 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectBucket(ctx context.Context, d
 }
 
 const readProjectEnvironmentCloneObjectBuckets = `-- name: ReadProjectEnvironmentCloneObjectBuckets :many
-SELECT jsonb_build_object(
+SELECT (jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
@@ -90048,7 +92136,13 @@ SELECT jsonb_build_object(
         SELECT jsonb_agg(jsonb_build_object('api_key_id', g.api_key_id::text, 'permission', g.permission) ORDER BY g.api_key_id)
         FROM object_storage_access_grants g WHERE g.bucket_id = b.id AND g.account_id = b.account_id
     ), '[]'::jsonb)
-) AS definition, (b.state = 'ready')::boolean AS ready
+) || coalesce((
+    -- ADR-20261104120000 amendment 2026-11-16: present only when the bucket
+    -- has a notification configuration, as the Go capture omits it.
+    SELECT jsonb_build_object('notifications', jsonb_build_object('revision', n.revision, 'rules', n.rules,
+        'managed_rule_ids', (SELECT coalesce(jsonb_agg(m->>'id' ORDER BY m->>'id'), '[]'::jsonb) FROM jsonb_array_elements(n.managed_rules) m)))
+    FROM object_bucket_notifications n WHERE n.bucket_id = b.id
+), '{}'::jsonb))::jsonb AS definition, (b.state = 'ready')::boolean AS ready
 FROM object_buckets b
 WHERE b.account_id = $1::uuid AND b.app_id = $2::uuid
   AND b.scope = $3::text AND b.state <> 'deleted'
@@ -91530,6 +93624,58 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context,
 	var artifact []byte
 	err := row.Scan(&artifact)
 	return artifact, err
+}
+
+const readProjectEnvironmentCloneTargetBucketNotifications = `-- name: ReadProjectEnvironmentCloneTargetBucketNotifications :many
+SELECT b.id AS bucket_id, (n.bucket_id IS NOT NULL)::boolean AS present, coalesce(n.revision, 0)::bigint AS revision,
+    coalesce(n.rules, '[]'::jsonb)::jsonb AS rules, coalesce(n.managed_rules, '[]'::jsonb)::jsonb AS managed_rules,
+    coalesce(n.clone_paused, false)::boolean AS clone_paused
+FROM object_buckets b LEFT JOIN object_bucket_notifications n ON n.bucket_id = b.id
+WHERE b.environment_clone_operation_id = $1::uuid AND b.account_id = $2::uuid
+  AND b.environment_clone_source_bucket_id = $3::uuid AND b.state <> 'deleted'
+ORDER BY b.id
+`
+
+type ReadProjectEnvironmentCloneTargetBucketNotificationsParams struct {
+	OperationID    pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneTargetBucketNotificationsRow struct {
+	BucketID     pgtype.UUID
+	Present      bool
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+	ClonePaused  bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneTargetBucketNotifications(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetBucketNotificationsParams) ([]ReadProjectEnvironmentCloneTargetBucketNotificationsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneTargetBucketNotifications, arg.OperationID, arg.AccountID, arg.SourceBucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneTargetBucketNotificationsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneTargetBucketNotificationsRow
+		if err := rows.Scan(
+			&i.BucketID,
+			&i.Present,
+			&i.Revision,
+			&i.Rules,
+			&i.ManagedRules,
+			&i.ClonePaused,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneTargetOperationID = `-- name: ReadProjectEnvironmentCloneTargetOperationID :one
@@ -94944,6 +97090,28 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 	return i, err
 }
 
+const readServicePolicyCacheGrant = `-- name: ReadServicePolicyCacheGrant :one
+SELECT EXISTS (
+    SELECT 1 FROM managed_valkey_cache_grants g
+    JOIN managed_valkey_caches c ON c.app_id = g.cache_app_id
+    WHERE g.cache_app_id = $1::uuid AND g.app_id = $2::uuid
+)::boolean AS granted
+`
+
+type ReadServicePolicyCacheGrantParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+// A grant counts only while its target is still a managed cache
+// (ADR-20261124174500).
+func (q *Queries) ReadServicePolicyCacheGrant(ctx context.Context, db DBTX, arg ReadServicePolicyCacheGrantParams) (bool, error) {
+	row := db.QueryRow(ctx, readServicePolicyCacheGrant, arg.CacheAppID, arg.AppID)
+	var granted bool
+	err := row.Scan(&granted)
+	return granted, err
+}
+
 const readServicePolicyCallerScope = `-- name: ReadServicePolicyCallerScope :one
 SELECT scope FROM deployments
 WHERE id = $1::uuid AND app_id = $2::uuid
@@ -96553,8 +98721,10 @@ func (q *Queries) RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBT
 }
 
 const reassignOrphanedAppOwner = `-- name: ReassignOrphanedAppOwner :execrows
-UPDATE apps SET node_id=$1::uuid, reassigned_at=now()
-WHERE id=$2::uuid AND node_id=$3::uuid
+UPDATE apps SET node_id=$1::uuid, reassigned_at=now(),
+  owner_home_node_id=CASE WHEN owner_home_node_id=$1::uuid THEN NULL
+                          ELSE coalesce(owner_home_node_id, $2::uuid) END
+WHERE id=$3::uuid AND node_id=$2::uuid
   AND status IN ('active', 'evicted_cold')
   AND ($4::integer < 0 OR reassigned_at IS NULL
        OR reassigned_at < now() - make_interval(secs => $4::integer))
@@ -96562,16 +98732,19 @@ WHERE id=$2::uuid AND node_id=$3::uuid
 
 type ReassignOrphanedAppOwnerParams struct {
 	ToNodeID        pgtype.UUID
-	AppID           pgtype.UUID
 	FromNodeID      pgtype.UUID
+	AppID           pgtype.UUID
 	CooldownSeconds int32
 }
 
+// ADR-20261121203000: a displacement remembers the node the app came from
+// (its home), keeps an older home across a chain of drains, and clears it
+// when the app lands back on its home.
 func (q *Queries) ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error) {
 	result, err := db.Exec(ctx, reassignOrphanedAppOwner,
 		arg.ToNodeID,
-		arg.AppID,
 		arg.FromNodeID,
+		arg.AppID,
 		arg.CooldownSeconds,
 	)
 	if err != nil {
@@ -97491,6 +99664,97 @@ func (q *Queries) RecordCustomDomainVerificationCheck(ctx context.Context, db DB
 	return result.RowsAffected(), nil
 }
 
+const recordCustomerAlertAnomalyEvaluation = `-- name: RecordCustomerAlertAnomalyEvaluation :execrows
+WITH scope_aware AS (
+ SELECT set_config('faas.scoped_alert_state', 'on', true)
+)
+UPDATE alert_rules SET
+ last_evaluated_at=$1::timestamptz,
+ latest_anomaly_evaluation=$2::jsonb,
+ updated_at=CASE WHEN state <> $3::text
+                 THEN greatest(updated_at,$1::timestamptz) ELSE updated_at END,
+ state=coalesce($3::text,state)
+FROM scope_aware
+WHERE id=$4 AND enabled AND comparison IN ('above_baseline','below_baseline')
+ AND updated_at=$5::timestamptz
+ AND (recovery_confirmation_checks = 1 OR last_evaluated_at IS NOT DISTINCT FROM $6::timestamptz)
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < $1::timestamptz)
+`
+
+type RecordCustomerAlertAnomalyEvaluationParams struct {
+	EvaluatedAt             pgtype.Timestamptz
+	Evidence                []byte
+	SkippedState            pgtype.Text
+	ID                      pgtype.UUID
+	ExpectedUpdatedAt       pgtype.Timestamptz
+	ExpectedLastEvaluatedAt pgtype.Timestamptz
+}
+
+// A skipped observation leaves any open alert episode alone.
+func (q *Queries) RecordCustomerAlertAnomalyEvaluation(ctx context.Context, db DBTX, arg RecordCustomerAlertAnomalyEvaluationParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCustomerAlertAnomalyEvaluation,
+		arg.EvaluatedAt,
+		arg.Evidence,
+		arg.SkippedState,
+		arg.ID,
+		arg.ExpectedUpdatedAt,
+		arg.ExpectedLastEvaluatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordCustomerAlertObservation = `-- name: RecordCustomerAlertObservation :execrows
+WITH recorded AS (
+ UPDATE alert_rules SET last_evaluated_at=$1::timestamptz,
+ latest_anomaly_evaluation=$3::jsonb,
+ observed_incidents=$4::jsonb
+ WHERE id=$5 AND observe_only AND observation_enabled
+ AND environment_scope=$6
+ AND updated_at=$7::timestamptz
+ AND last_evaluated_at IS NOT DISTINCT FROM $8::timestamptz
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < $1::timestamptz)
+ RETURNING id
+), expired AS (
+ DELETE FROM alert_observation_checks USING recorded
+ WHERE rule_id=recorded.id AND evaluated_at <= $9::timestamptz
+)
+INSERT INTO alert_observation_checks(rule_id,evaluated_at,skip_reason)
+SELECT id,$1::timestamptz,$2::text FROM recorded
+`
+
+type RecordCustomerAlertObservationParams struct {
+	EvaluatedAt              pgtype.Timestamptz
+	SkipReason               string
+	Evidence                 []byte
+	Incidents                []byte
+	ID                       pgtype.UUID
+	ExpectedEnvironmentScope string
+	ExpectedUpdatedAt        pgtype.Timestamptz
+	ExpectedLastEvaluatedAt  pgtype.Timestamptz
+	CoverageCutoff           pgtype.Timestamptz
+}
+
+func (q *Queries) RecordCustomerAlertObservation(ctx context.Context, db DBTX, arg RecordCustomerAlertObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCustomerAlertObservation,
+		arg.EvaluatedAt,
+		arg.SkipReason,
+		arg.Evidence,
+		arg.Incidents,
+		arg.ID,
+		arg.ExpectedEnvironmentScope,
+		arg.ExpectedUpdatedAt,
+		arg.ExpectedLastEvaluatedAt,
+		arg.CoverageCutoff,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordDatabaseVMBackup = `-- name: RecordDatabaseVMBackup :execrows
 UPDATE database_vms SET last_backup_at = $1
 WHERE database_id = $2 AND state <> 'deleting'
@@ -97511,7 +99775,7 @@ func (q *Queries) RecordDatabaseVMBackup(ctx context.Context, db DBTX, arg Recor
 
 const recordDatabaseVMRestore = `-- name: RecordDatabaseVMRestore :execrows
 UPDATE database_vms SET restore_recovered_to = $1
-WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NOT NULL
+WHERE database_id = $2 AND state IN ('provisioning', 'rehearsal_restore', 'regional_restore') AND restore_source IS NOT NULL
 `
 
 type RecordDatabaseVMRestoreParams struct {
@@ -104165,6 +106429,7 @@ SET vcpu_count = $1, mem_mib = $2, volume_bytes = $3,
     drop_standby_slot = $6::boolean,
     resize_pending = true
 WHERE database_id = $7 AND state IN ('parked', 'running')
+    AND (NOT $8::boolean OR (state = 'parked' AND idle_parked_at = state_changed_at))
 `
 
 type ResizeDatabaseVMParams struct {
@@ -104175,6 +106440,7 @@ type ResizeDatabaseVMParams struct {
 	StandbyNode     pgtype.Text
 	DropStandbySlot bool
 	DatabaseID      pgtype.UUID
+	ParkedOnly      bool
 }
 
 // Records a new shape. Turning replication on names the standby node;
@@ -104188,6 +106454,7 @@ func (q *Queries) ResizeDatabaseVM(ctx context.Context, db DBTX, arg ResizeDatab
 		arg.StandbyNode,
 		arg.DropStandbySlot,
 		arg.DatabaseID,
+		arg.ParkedOnly,
 	)
 	if err != nil {
 		return 0, err
@@ -104579,6 +106846,42 @@ func (q *Queries) RestrictApplicationStandardWorkerEvidence(ctx context.Context,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const resumeEnvironmentClonePausedBucketNotifications = `-- name: ResumeEnvironmentClonePausedBucketNotifications :many
+UPDATE object_bucket_notifications n SET clone_paused = false
+FROM object_buckets b JOIN project_environment_clone_operations o ON o.id = b.environment_clone_operation_id
+WHERE n.bucket_id = b.id AND n.clone_paused AND b.account_id = $1::uuid
+  AND o.project_id = $2::uuid AND b.scope = $3::text
+RETURNING n.bucket_id
+`
+
+type ResumeEnvironmentClonePausedBucketNotificationsParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+// Resumes the notifications a full clone paused on its target buckets in one
+// stage.
+func (q *Queries) ResumeEnvironmentClonePausedBucketNotifications(ctx context.Context, db DBTX, arg ResumeEnvironmentClonePausedBucketNotificationsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, resumeEnvironmentClonePausedBucketNotifications, arg.AccountID, arg.ProjectID, arg.Environment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resumeEnvironmentClonePausedCrons = `-- name: ResumeEnvironmentClonePausedCrons :many
@@ -105231,7 +107534,7 @@ WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='del
     AND o.id=r.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint' AND o.revision=$3::bigint
     AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_credential_retirements retirement WHERE retirement.operation_id=credential.operation_id AND retirement.source_binding_id=credential.source_binding_id AND retirement.state='retired')) RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_credential_retirements retirement WHERE retirement.operation_id=credential.operation_id AND retirement.source_binding_id=credential.source_binding_id AND retirement.state='retired')) RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type RetireProjectEnvironmentCloneNativeForkDatabaseParams struct {
@@ -105291,6 +107594,10 @@ func (q *Queries) RetireProjectEnvironmentCloneNativeForkDatabase(ctx context.Co
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -105306,7 +107613,7 @@ WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='del
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
     AND o.id=c.operation_id AND o.status='compensating' AND o.revision=$3::bigint
-    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type RetireProjectEnvironmentClonePostgresCopyTargetDatabaseParams struct {
@@ -105366,6 +107673,10 @@ func (q *Queries) RetireProjectEnvironmentClonePostgresCopyTargetDatabase(ctx co
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -105443,7 +107754,7 @@ WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='res
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
     AND o.id=c.operation_id AND o.status='compensating' AND o.revision=$3::bigint
-    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at
+    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp() RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after, d.restore_slot_until, d.labels, d.previews, d.preview_source_database_id, d.preview_environment_id, d.preview_pr_number, d.expires_at, d.data_api_inspection_revision, d.recovery_region, d.restore_from_recovery, d.restore_recovery_timeline
 `
 
 type RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabaseParams struct {
@@ -105503,8 +107814,28 @@ func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDat
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
+}
+
+const retryAlertWebhookStandDown = `-- name: RetryAlertWebhookStandDown :exec
+UPDATE alert_webhook_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = $1::timestamptz
+ WHERE id = $2::uuid
+`
+
+type RetryAlertWebhookStandDownParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+}
+
+func (q *Queries) RetryAlertWebhookStandDown(ctx context.Context, db DBTX, arg RetryAlertWebhookStandDownParams) error {
+	_, err := db.Exec(ctx, retryAlertWebhookStandDown, arg.NextAttemptAt, arg.ID)
+	return err
 }
 
 const retryCustomDomainVerificationClaim = `-- name: RetryCustomDomainVerificationClaim :execrows
@@ -105557,6 +107888,20 @@ func (q *Queries) RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const retryDeferredAlertFire = `-- name: RetryDeferredAlertFire :exec
+UPDATE alert_deferred_fires SET next_attempt_at = $1::timestamptz WHERE id = $2::uuid
+`
+
+type RetryDeferredAlertFireParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+}
+
+func (q *Queries) RetryDeferredAlertFire(ctx context.Context, db DBTX, arg RetryDeferredAlertFireParams) error {
+	_, err := db.Exec(ctx, retryDeferredAlertFire, arg.NextAttemptAt, arg.ID)
+	return err
 }
 
 const retryExternalTriggerRecordByOperator = `-- name: RetryExternalTriggerRecordByOperator :execrows
@@ -105970,6 +108315,24 @@ type RevokeManagedPostgresCutoverCredentialParams struct {
 
 func (q *Queries) RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error) {
 	result, err := db.Exec(ctx, revokeManagedPostgresCutoverCredential, arg.ID, arg.CutoverID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeManagedValkeyCacheGrant = `-- name: RevokeManagedValkeyCacheGrant :execrows
+DELETE FROM managed_valkey_cache_grants
+WHERE cache_app_id = $1::uuid AND app_id = $2::uuid
+`
+
+type RevokeManagedValkeyCacheGrantParams struct {
+	CacheAppID pgtype.UUID
+	AppID      pgtype.UUID
+}
+
+func (q *Queries) RevokeManagedValkeyCacheGrant(ctx context.Context, db DBTX, arg RevokeManagedValkeyCacheGrantParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeManagedValkeyCacheGrant, arg.CacheAppID, arg.AppID)
 	if err != nil {
 		return 0, err
 	}
@@ -107160,7 +109523,7 @@ func (q *Queries) RouteProbeTotalsByDeployment(ctx context.Context, db DBTX, arg
 }
 
 const runningDatabaseRestoreDrills = `-- name: RunningDatabaseRestoreDrills :many
-SELECT drill_id, node_id, source_id, target_at, started_at, finished_at, result, recovered_to, error_code FROM database_restore_drills WHERE result = 'running' ORDER BY started_at
+SELECT drill_id, node_id, source_id, target_at, started_at, finished_at, result, recovered_to, error_code, request_id, pending_outcome FROM database_restore_drills WHERE result = 'running' AND request_id IS NULL ORDER BY started_at
 `
 
 func (q *Queries) RunningDatabaseRestoreDrills(ctx context.Context, db DBTX) ([]DatabaseRestoreDrill, error) {
@@ -107182,6 +109545,8 @@ func (q *Queries) RunningDatabaseRestoreDrills(ctx context.Context, db DBTX) ([]
 			&i.Result,
 			&i.RecoveredTo,
 			&i.ErrorCode,
+			&i.RequestID,
+			&i.PendingOutcome,
 		); err != nil {
 			return nil, err
 		}
@@ -107419,7 +109784,7 @@ func (q *Queries) RuntimeConfigReceiptRequired(ctx context.Context, db DBTX, arg
 }
 
 const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
-SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile FROM runtime_snapshots
+SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile, fc_version FROM runtime_snapshots
 WHERE catalog_key = $1
 `
 
@@ -107448,30 +109813,32 @@ func (q *Queries) RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, cata
 		&i.PublishedAt,
 		&i.RetiredAt,
 		&i.Profile,
+		&i.FcVersion,
 	)
 	return i, err
 }
 
 const runtimeSnapshotInsert = `-- name: RuntimeSnapshotInsert :one
 INSERT INTO runtime_snapshots (
-    catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
+    fc_version, catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
     base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
     storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
     payload_free, state, created_at, published_at, retired_at
 )
 VALUES (
-    $1, $2, $3, $4,
-    $5, $6,
-    $7, $8, $9,
-    $10, $11, $12,
-    $13, $14, $15,
-    $16, $17, $18,
-    $19, $20
+    $1, $2, $3, $4, $5,
+    $6, $7,
+    $8, $9, $10,
+    $11, $12, $13,
+    $14, $15, $16,
+    $17, $18, $19,
+    $20, $21
 )
-RETURNING id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile
+RETURNING id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile, fc_version
 `
 
 type RuntimeSnapshotInsertParams struct {
+	FcVersion           string
 	CatalogKey          string
 	Runtime             string
 	Profile             string
@@ -107498,6 +109865,7 @@ type RuntimeSnapshotInsertParams struct {
 // Publication is insert-only; retirement is the sole mutable transition.
 func (q *Queries) RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error) {
 	row := db.QueryRow(ctx, runtimeSnapshotInsert,
+		arg.FcVersion,
 		arg.CatalogKey,
 		arg.Runtime,
 		arg.Profile,
@@ -107542,8 +109910,57 @@ func (q *Queries) RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg Runtim
 		&i.PublishedAt,
 		&i.RetiredAt,
 		&i.Profile,
+		&i.FcVersion,
 	)
 	return i, err
+}
+
+const runtimeSnapshotRecords = `-- name: RuntimeSnapshotRecords :many
+SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile, fc_version FROM runtime_snapshots ORDER BY catalog_key
+`
+
+// Both ready and retired entries retain their immutable native objects.
+func (q *Queries) RuntimeSnapshotRecords(ctx context.Context, db DBTX) ([]RuntimeSnapshot, error) {
+	rows, err := db.Query(ctx, runtimeSnapshotRecords)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeSnapshot{}
+	for rows.Next() {
+		var i RuntimeSnapshot
+		if err := rows.Scan(
+			&i.ID,
+			&i.CatalogKey,
+			&i.Runtime,
+			&i.Architecture,
+			&i.KernelDigest,
+			&i.GuestExecutorDigest,
+			&i.BaseImageDigest,
+			&i.MemoryMb,
+			&i.EphemeralDiskMb,
+			&i.FormatVersion,
+			&i.StorageKey,
+			&i.SnapshotDigest,
+			&i.MemBytes,
+			&i.VmStateBytes,
+			&i.Sanitized,
+			&i.PayloadFree,
+			&i.State,
+			&i.CreatedAt,
+			&i.PublishedAt,
+			&i.RetiredAt,
+			&i.Profile,
+			&i.FcVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const runtimeSnapshotRetire = `-- name: RuntimeSnapshotRetire :execrows
@@ -108906,7 +111323,8 @@ func (q *Queries) SetBuildRuntimeBaseRef(ctx context.Context, db DBTX, arg SetBu
 const setCommitSourceConnection = `-- name: SetCommitSourceConnection :execrows
 UPDATE commit_sources SET sealed_connection=$1::bytea,
  credential_revision=credential_revision+1,relay_status='unconfigured',
- last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL
+ relay_next_poll_at='-infinity',relay_poll_backoff_ms=0,relay_poll_token=NULL,
+ last_checked_at=NULL,pending_events=NULL,blocked_events=NULL,oldest_pending_at=NULL,cleanup_eligible_events=NULL,cleanup_observed_at=NULL
 WHERE account_id=$2::text::uuid AND id=$3::text::uuid
 `
 
@@ -108931,7 +111349,12 @@ UPDATE commit_sources SET
  last_checked_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE last_checked_at END,
  pending_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE pending_events END,
  blocked_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE blocked_events END,
+ cleanup_eligible_events=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE cleanup_eligible_events END,
+ cleanup_observed_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE cleanup_observed_at END,
  oldest_pending_at=CASE WHEN $1::boolean AND NOT enabled THEN NULL ELSE oldest_pending_at END,
+ relay_next_poll_at=CASE WHEN $1::boolean AND NOT enabled THEN '-infinity'::timestamptz ELSE relay_next_poll_at END,
+ relay_poll_backoff_ms=CASE WHEN $1::boolean AND NOT enabled THEN 0 ELSE relay_poll_backoff_ms END,
+ relay_poll_token=CASE WHEN NOT $1::boolean OR NOT enabled THEN NULL ELSE relay_poll_token END,
  enabled=$1::boolean
 WHERE account_id=$2::text::uuid AND id=$3::text::uuid
 `
@@ -109551,7 +111974,7 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 
 const setManagedPostgresDatabaseExpiry = `-- name: SetManagedPostgresDatabaseExpiry :one
 UPDATE managed_postgres_databases SET expires_at=$1::timestamptz
-WHERE id=$2::uuid RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+WHERE id=$2::uuid RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type SetManagedPostgresDatabaseExpiryParams struct {
@@ -109606,6 +112029,10 @@ func (q *Queries) SetManagedPostgresDatabaseExpiry(ctx context.Context, db DBTX,
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -109614,7 +112041,7 @@ const setManagedPostgresDatabasePreviews = `-- name: SetManagedPostgresDatabaseP
 UPDATE managed_postgres_databases SET previews=$1::text,updated_at=$2::timestamptz
 WHERE id=$3::uuid AND account_id=$4::uuid AND state NOT IN ('deleting','deleted')
  AND preview_source_database_id IS NULL
-RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type SetManagedPostgresDatabasePreviewsParams struct {
@@ -109676,6 +112103,10 @@ func (q *Queries) SetManagedPostgresDatabasePreviews(ctx context.Context, db DBT
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -109683,7 +112114,7 @@ func (q *Queries) SetManagedPostgresDatabasePreviews(ctx context.Context, db DBT
 const setManagedPostgresPreviewOwner = `-- name: SetManagedPostgresPreviewOwner :one
 UPDATE managed_postgres_databases SET preview_source_database_id=$1::uuid,
  preview_environment_id=$2::text, preview_pr_number=$3::integer
-WHERE id=$4::uuid RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+WHERE id=$4::uuid RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type SetManagedPostgresPreviewOwnerParams struct {
@@ -109743,8 +112174,44 @@ func (q *Queries) SetManagedPostgresPreviewOwner(ctx context.Context, db DBTX, a
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
+}
+
+const setManagedPostgresRecoveryRegion = `-- name: SetManagedPostgresRecoveryRegion :execrows
+UPDATE managed_postgres_databases
+SET recovery_region = $1, updated_at = now()
+WHERE id = $2 AND account_id = $3
+  AND state = 'ready' AND provider_resource_id = $4
+  AND region = $5 AND recovery_region = $6
+`
+
+type SetManagedPostgresRecoveryRegionParams struct {
+	RecoveryRegion     string
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProviderResourceID pgtype.Text
+	SourceRegion       string
+	PreviousRegion     string
+}
+
+func (q *Queries) SetManagedPostgresRecoveryRegion(ctx context.Context, db DBTX, arg SetManagedPostgresRecoveryRegionParams) (int64, error) {
+	result, err := db.Exec(ctx, setManagedPostgresRecoveryRegion,
+		arg.RecoveryRegion,
+		arg.ID,
+		arg.AccountID,
+		arg.ProviderResourceID,
+		arg.SourceRegion,
+		arg.PreviousRegion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setObjectStorageCeilingGrant = `-- name: SetObjectStorageCeilingGrant :exec
@@ -110776,6 +113243,30 @@ func (q *Queries) StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg St
 		arg.SourceID,
 		arg.TargetAt,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startDeferredWebhookFire = `-- name: StartDeferredWebhookFire :execrows
+WITH live AS (
+    SELECT f.id
+      FROM alert_deferred_fires f
+      JOIN alert_deliveries d ON d.id = f.delivery_id
+      JOIN alert_rules r ON r.id = d.rule_id
+     WHERE f.id = $1::uuid AND f.channel_id IS NULL
+       AND r.enabled AND NOT r.observe_only AND r.state = 'firing'
+       AND r.last_fired_at = d.fired_at AND r.webhook_url = f.webhook_url AND d.status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM alert_webhook_stand_downs s WHERE s.rule_id = r.id AND s.webhook_url = f.webhook_url)
+     FOR UPDATE OF r
+)
+UPDATE alert_deferred_fires f SET started = true FROM live WHERE f.id = live.id
+`
+
+// Serialize handing the webhook to transport with edits that end its episode.
+func (q *Queries) StartDeferredWebhookFire(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, startDeferredWebhookFire, id)
 	if err != nil {
 		return 0, err
 	}
@@ -111916,7 +114407,7 @@ func (q *Queries) SyntheticCheckRunStats(ctx context.Context, db DBTX, arg Synth
 
 const takeManagedPostgresRestoreSlot = `-- name: TakeManagedPostgresRestoreSlot :one
 UPDATE managed_postgres_databases SET restore_slot_until=$1::timestamptz
-WHERE id=$2::uuid RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at
+WHERE id=$2::uuid RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline
 `
 
 type TakeManagedPostgresRestoreSlotParams struct {
@@ -111969,6 +114460,10 @@ func (q *Queries) TakeManagedPostgresRestoreSlot(ctx context.Context, db DBTX, a
 		&i.PreviewEnvironmentID,
 		&i.PreviewPrNumber,
 		&i.ExpiresAt,
+		&i.DataApiInspectionRevision,
+		&i.RecoveryRegion,
+		&i.RestoreFromRecovery,
+		&i.RestoreRecoveryTimeline,
 	)
 	return i, err
 }
@@ -112636,14 +115131,17 @@ const transitionDatabaseVM = `-- name: TransitionDatabaseVM :execrows
 UPDATE database_vms SET state = $1, state_changed_at = now(),
     last_error = $2,
     bootstrapped = bootstrapped OR $3::boolean,
-    last_active_at = CASE WHEN $1 = 'running' THEN now() ELSE last_active_at END
-WHERE database_id = $4 AND state = ANY($5::text[])
+    last_active_at = CASE WHEN $1 = 'running' THEN now() ELSE last_active_at END,
+    idle_parked_at = CASE WHEN $4::timestamptz IS NOT NULL THEN now() ELSE NULL END,
+    idle_parked_from = $4::timestamptz
+WHERE database_id = $5 AND state = ANY($6::text[])
 `
 
 type TransitionDatabaseVMParams struct {
 	ToState      string
 	LastError    pgtype.Text
 	Bootstrapped bool
+	IdleParkFrom pgtype.Timestamptz
 	DatabaseID   pgtype.UUID
 	FromStates   []string
 }
@@ -112653,6 +115151,7 @@ func (q *Queries) TransitionDatabaseVM(ctx context.Context, db DBTX, arg Transit
 		arg.ToState,
 		arg.LastError,
 		arg.Bootstrapped,
+		arg.IdleParkFrom,
 		arg.DatabaseID,
 		arg.FromStates,
 	)
@@ -113607,22 +116106,28 @@ func (q *Queries) UpdateCustomDomainProbeCert(ctx context.Context, db DBTX, arg 
 
 const updateCustomerAlertRule = `-- name: UpdateCustomerAlertRule :one
 UPDATE alert_rules SET mcp_min_calls=coalesce($1::integer,mcp_min_calls),
- mcp_for_minutes=coalesce($2::integer,mcp_for_minutes), name=coalesce($3::text,name),enabled=coalesce($4::boolean,enabled),
+ mcp_for_minutes=coalesce($2::integer,mcp_for_minutes), name=coalesce($3::text,name),enabled=$4,
  metric=coalesce($5::text,metric),comparison=coalesce($6::text,comparison),
  threshold=coalesce($7::double precision,threshold),window_spec=coalesce($8::text,window_spec),
  action=coalesce($9::text,action),webhook_url=coalesce($10::text,webhook_url),
  webhook_secret_sealed=coalesce($11::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($12::integer,cooldown_minutes),
- post_deploy_rollback_window_seconds=coalesce($13::integer,post_deploy_rollback_window_seconds),
- notify_resolved=coalesce($14::boolean,notify_resolved),updated_at=now()
-WHERE id=$15 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels
+ recovery_confirmation_checks=coalesce($13::integer,recovery_confirmation_checks),
+ post_deploy_rollback_window_seconds=coalesce($14::integer,post_deploy_rollback_window_seconds),
+ notify_resolved=coalesce($15::boolean,notify_resolved),
+ state=CASE WHEN observe_only <> $16::boolean THEN 'ok' ELSE state END,
+ observe_only=$16,observation_enabled=$17,
+ environment_scope=coalesce($18::text,environment_scope),
+ observed_incidents=$19::jsonb,
+ latest_anomaly_evaluation=NULL,updated_at=$20
+WHERE id=$21 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id
 `
 
 type UpdateCustomerAlertRuleParams struct {
 	McpMinCalls                     pgtype.Int4
 	McpForMinutes                   pgtype.Int4
 	Name                            pgtype.Text
-	Enabled                         pgtype.Bool
+	Enabled                         bool
 	Metric                          pgtype.Text
 	Comparison                      pgtype.Text
 	Threshold                       pgtype.Float8
@@ -113631,8 +116136,14 @@ type UpdateCustomerAlertRuleParams struct {
 	WebhookUrl                      pgtype.Text
 	WebhookSecretSealed             []byte
 	CooldownMinutes                 pgtype.Int4
+	RecoveryConfirmationChecks      pgtype.Int4
 	PostDeployRollbackWindowSeconds pgtype.Int4
 	NotifyResolved                  pgtype.Bool
+	ObserveOnly                     bool
+	ObservationEnabled              bool
+	EnvironmentScope                pgtype.Text
+	ObservedIncidents               []byte
+	UpdatedAt                       pgtype.Timestamptz
 	ID                              pgtype.UUID
 }
 
@@ -113650,8 +116161,14 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		arg.WebhookUrl,
 		arg.WebhookSecretSealed,
 		arg.CooldownMinutes,
+		arg.RecoveryConfirmationChecks,
 		arg.PostDeployRollbackWindowSeconds,
 		arg.NotifyResolved,
+		arg.ObserveOnly,
+		arg.ObservationEnabled,
+		arg.EnvironmentScope,
+		arg.ObservedIncidents,
+		arg.UpdatedAt,
 		arg.ID,
 	)
 	var i AlertRule
@@ -113689,6 +116206,13 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.CreatedByAccountID,
 		&i.NotifyResolved,
 		&i.CustomMetricLabels,
+		&i.LatestAnomalyEvaluation,
+		&i.ObserveOnly,
+		&i.ObservationEnabled,
+		&i.ObservedIncidents,
+		&i.EnvironmentScope,
+		&i.RecoveryConfirmationChecks,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -114538,17 +117062,18 @@ func (q *Queries) UpsertCustomerOperationWorkflowState(ctx context.Context, db D
 	return err
 }
 
-const upsertDatabaseNode = `-- name: UpsertDatabaseNode :exec
+const upsertDatabaseNode = `-- name: UpsertDatabaseNode :execrows
 
-INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle)
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle, recovery_region)
 VALUES ($1, $2, $3, $4, $5,
-    $6::integer[], $7)
+    $6::integer[], $7, $8)
 ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
     admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
     volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
     boot_slots = EXCLUDED.boot_slots,
     postgres_majors = EXCLUDED.postgres_majors,
     lifecycle = EXCLUDED.lifecycle, updated_at = now()
+WHERE database_nodes.recovery_region = EXCLUDED.recovery_region
 `
 
 type UpsertDatabaseNodeParams struct {
@@ -114559,12 +117084,13 @@ type UpsertDatabaseNodeParams struct {
 	BootSlots           int32
 	PostgresMajors      []int32
 	Lifecycle           string
+	RecoveryRegion      string
 }
 
 // Database VMs (ADR-1027). database_nodes is inventory; database_vms is
 // written only by schedd's database scheduler (pkg/dbsched).
-func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDatabaseNodeParams) error {
-	_, err := db.Exec(ctx, upsertDatabaseNode,
+func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDatabaseNodeParams) (int64, error) {
+	result, err := db.Exec(ctx, upsertDatabaseNode,
 		arg.ID,
 		arg.TargetUrl,
 		arg.AdmissionCeilingMb,
@@ -114572,8 +117098,12 @@ func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDat
 		arg.BootSlots,
 		arg.PostgresMajors,
 		arg.Lifecycle,
+		arg.RecoveryRegion,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertDatabaseRoleVerifier = `-- name: UpsertDatabaseRoleVerifier :exec

@@ -20,7 +20,7 @@ import (
 // and one-time capability grants into the new run's bounded bundle before it
 // is validated and sealed. Returned grants are consumed atomically with run
 // admission by the state store.
-func (s *server) resolveExecutionArtifactInputs(ctx context.Context, acct state.Account, access executionAccess, request *api.CreateExecutionRequest) ([]state.ExecutionArtifactGrant, *api.Problem) {
+func (s *server) resolveExecutionArtifactInputs(ctx context.Context, reader state.ExecutionAdmissionReader, acct state.Account, access executionAccess, request *api.CreateExecutionRequest) ([]state.ExecutionArtifactGrant, *api.Problem) {
 	refs := request.ArtifactInputs
 	if len(refs) == 0 {
 		return nil, nil
@@ -58,11 +58,7 @@ func (s *server) resolveExecutionArtifactInputs(ctx context.Context, acct state.
 			if !valid {
 				return nil, artifactGrantUnavailableProblem()
 			}
-			grantStore, ok := s.store.(state.ExecutionArtifactGrantStore)
-			if !ok {
-				return nil, api.ErrCapacity("execution artifact grants are unavailable in this store")
-			}
-			loaded, err := grantStore.ExecutionArtifactGrantByToken(ctx, acct.ID, tokenHash, time.Now().UTC())
+			loaded, err := reader.ExecutionArtifactGrantByToken(ctx, acct.ID, tokenHash, time.Now().UTC())
 			if errors.Is(err, state.ErrNotFound) {
 				return nil, artifactGrantUnavailableProblem()
 			}
@@ -72,7 +68,7 @@ func (s *server) resolveExecutionArtifactInputs(ctx context.Context, acct state.
 				}
 				return nil, api.ErrInternal("could not load artifact grant")
 			}
-			row, err = s.store.ExecutionByID(ctx, acct.ID, loaded.SourceExecutionID)
+			row, err = reader.ExecutionByID(ctx, acct.ID, loaded.SourceExecutionID)
 			if errors.Is(err, state.ErrNotFound) {
 				return nil, artifactGrantUnavailableProblem()
 			}
@@ -89,7 +85,7 @@ func (s *server) resolveExecutionArtifactInputs(ctx context.Context, acct state.
 				return nil, invalidArtifactInputs("each account-scoped artifact input requires a valid execution_id, artifact name, and normalized destination path")
 			}
 			var err error
-			row, err = s.store.ExecutionByID(ctx, acct.ID, ref.ExecutionID)
+			row, err = reader.ExecutionByID(ctx, acct.ID, ref.ExecutionID)
 			if errors.Is(err, state.ErrNotFound) {
 				return nil, artifactSourceUnavailableProblem()
 			}
@@ -103,7 +99,7 @@ func (s *server) resolveExecutionArtifactInputs(ctx context.Context, acct state.
 				return nil, artifactSourceUnavailableProblem()
 			}
 		}
-		if row.Status != api.ExecutionStatusSucceeded {
+		if row.Status != api.ExecutionStatusSucceeded || row.ResultValidation != nil && row.ResultValidation.Status == "invalid" {
 			if grant != nil {
 				return nil, artifactGrantUnavailableProblem()
 			}
@@ -127,6 +123,9 @@ func (s *server) resolveExecutionArtifactInputs(ctx context.Context, acct state.
 				s.log.Error("stored execution artifact failed integrity verification", "account_id", acct.ID, "err", err)
 			}
 			return nil, api.ErrInternal("stored artifact input failed integrity verification")
+		}
+		if artifact.FileID != "" {
+			return nil, invalidArtifactInputs("stored artifacts must be imported using input_files and their file_id or grant_token")
 		}
 		observed += len(artifact.Content)
 		if observed > planLimits.MaxSourceBytes {

@@ -1,0 +1,25 @@
+{
+  "Statement": [
+    {
+      "Sid": "CustomerBucketAdmin",
+      "Effect": "Allow",
+      "Action": [
+        "s3:*"
+      ],
+      "Resource": [
+        "arn:aws:s3:::gregale-*",
+        "arn:aws:s3:::gregale-*/*"
+      ]
+    },
+    {
+      "Sid": "ReconcileListsBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListAllMyBuckets"
+      ],
+      "Resource": [
+        "arn:aws:s3:::*"
+      ]
+    }
+  ]
+}

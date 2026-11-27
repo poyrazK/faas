@@ -20,6 +20,10 @@ type deletionHoldFixture struct {
 	ignorePatch        bool
 	failConfirmation   bool
 	confirmationBranch string
+	// busyPatches answers that many PATCHes with Neon's 423 for a project
+	// running another operation; failPatch answers every PATCH with 503.
+	busyPatches int
+	failPatch   bool
 }
 
 func deletionHoldProvider(t *testing.T, f *deletionHoldFixture) *Provider {
@@ -46,6 +50,15 @@ func deletionHoldProvider(t *testing.T, f *deletionHoldFixture) *Provider {
 				t.Error(err)
 			}
 			f.patches = append(f.patches, payload)
+			if f.busyPatches > 0 {
+				f.busyPatches--
+				writeResponse(t, w, http.StatusLocked, map[string]any{"code": "", "message": "project already has running conflicting operations, scheduling of new ones is prohibited"})
+				return
+			}
+			if f.failPatch {
+				writeResponse(t, w, http.StatusServiceUnavailable, nil)
+				return
+			}
 			if !f.ignorePatch {
 				f.disabled, _ = payload["endpoint"]["disabled"].(bool)
 			}
@@ -156,5 +169,51 @@ func TestComputeHeldReadsThePrimaryEndpoint(t *testing.T) {
 	}
 	if len(f.patches) != 0 {
 		t.Fatalf("reading the hold wrote %v", f.patches)
+	}
+}
+
+// Neon refuses an endpoint change with 423 while the project runs another
+// operation, as right after a compute wakes. The hold waits it out (cap
+// qualification 2026-11-22), and gives up after a bounded number of tries.
+func TestDeletionHoldWaitsOutABusyProject(t *testing.T) {
+	ctx := context.Background()
+	f := &deletionHoldFixture{busyPatches: 2}
+	provider := deletionHoldProvider(t, f)
+	if err := provider.HoldForDeletion(ctx, "quiet-river-12345678/br-main-123"); err != nil {
+		t.Fatalf("hold after two busy refusals = %v", err)
+	}
+	f.mu.Lock()
+	patches, disabled := len(f.patches), f.disabled
+	f.mu.Unlock()
+	if patches != 3 || !disabled {
+		t.Fatalf("patches = %d, disabled = %v; want 3 attempts ending held", patches, disabled)
+	}
+
+	f = &deletionHoldFixture{busyPatches: endpointHoldBusyAttempts + 1}
+	provider = deletionHoldProvider(t, f)
+	err := provider.HoldForDeletion(ctx, "quiet-river-12345678/br-main-123")
+	if !errors.Is(err, managedpostgres.ErrUnavailable) {
+		t.Fatalf("hold on a project busy past the bound = %v, want ErrUnavailable", err)
+	}
+	f.mu.Lock()
+	patches = len(f.patches)
+	f.mu.Unlock()
+	if patches != endpointHoldBusyAttempts {
+		t.Fatalf("patches = %d, want %d", patches, endpointHoldBusyAttempts)
+	}
+}
+
+// Only the busy refusal is retried: any other failure returns at once.
+func TestDeletionHoldDoesNotRetryOtherFailures(t *testing.T) {
+	f := &deletionHoldFixture{failPatch: true}
+	provider := deletionHoldProvider(t, f)
+	if err := provider.HoldForDeletion(context.Background(), "quiet-river-12345678/br-main-123"); !errors.Is(err, managedpostgres.ErrUnavailable) {
+		t.Fatalf("hold on 503 = %v, want ErrUnavailable", err)
+	}
+	f.mu.Lock()
+	patches := len(f.patches)
+	f.mu.Unlock()
+	if patches != 1 {
+		t.Fatalf("patches = %d, want 1", patches)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Scheduled release states (ADR-20261021152201).
@@ -103,6 +104,42 @@ type ScheduledReleaseStore interface {
 
 var _ ScheduledReleaseStore = (*MemStore)(nil)
 
+type deploymentScheduleKey struct{}
+
+type deploymentScheduleIntent struct {
+	schedule                     ScheduledRelease
+	replacedCode, replacedDetail string
+	result                       *DeploymentScheduleResult
+}
+
+// DeploymentScheduleResult is populated once the deployment and schedule commit.
+type DeploymentScheduleResult struct {
+	Created  ScheduledRelease
+	Replaced []ScheduledRelease
+}
+
+// ContextWithDeploymentSchedule saves a schedule in the deployment creation
+// transaction, before any submission receipt can be replayed.
+func ContextWithDeploymentSchedule(ctx context.Context, schedule ScheduledRelease, replacedCode, replacedDetail string) (context.Context, *DeploymentScheduleResult) {
+	result := &DeploymentScheduleResult{}
+	intent := deploymentScheduleIntent{schedule: schedule, replacedCode: replacedCode, replacedDetail: replacedDetail, result: result}
+	return context.WithValue(ctx, deploymentScheduleKey{}, intent), result
+}
+
+func deploymentScheduleForCreate(ctx context.Context, d Deployment) (deploymentScheduleIntent, error) {
+	intent, ok := ctx.Value(deploymentScheduleKey{}).(deploymentScheduleIntent)
+	if !ok {
+		return deploymentScheduleIntent{}, nil
+	}
+	if intent.schedule.AppID != d.AppID || intent.schedule.ReleaseAt.IsZero() ||
+		(normalizedDeploymentScope(d.Scope) != api.DefaultEnvScope || d.TrafficPercent != 0 ||
+			!d.TrafficPercentExplicit || d.CanaryTotalSteps != 0) ||
+		(len(intent.schedule.Canary) != 0 && !json.Valid(intent.schedule.Canary)) {
+		return deploymentScheduleIntent{}, ErrInvalidArgument
+	}
+	return intent, nil
+}
+
 // scheduledStartKey carries a ScheduledReleaseStart into the traffic change
 // that performs it.
 type scheduledStartKey struct{}
@@ -175,6 +212,11 @@ func (m *MemStore) ScheduleRelease(_ context.Context, s ScheduledRelease, replac
 	if _, ok := m.deployments[s.DeploymentID]; !ok {
 		return ScheduledRelease{}, nil, ErrNotFound
 	}
+	created, replaced := m.scheduleReleaseLocked(s, replacedCode, replacedDetail, now)
+	return created, replaced, nil
+}
+
+func (m *MemStore) scheduleReleaseLocked(s ScheduledRelease, replacedCode, replacedDetail string, now time.Time) (ScheduledRelease, []ScheduledRelease) {
 	now = now.UTC()
 	if m.scheduledReleases == nil {
 		m.scheduledReleases = map[string]ScheduledRelease{}
@@ -197,7 +239,7 @@ func (m *MemStore) ScheduleRelease(_ context.Context, s ScheduledRelease, replac
 	s.NotifyChannelIDs = append([]string{}, s.NotifyChannelIDs...)
 	s.OverrideFreezeIDs = append([]string{}, s.OverrideFreezeIDs...)
 	m.scheduledReleases[s.ID] = s
-	return m.withRevisionLocked(s), replaced, nil
+	return m.withRevisionLocked(s), replaced
 }
 
 func (m *MemStore) withRevisionLocked(s ScheduledRelease) ScheduledRelease {

@@ -21,6 +21,13 @@ var ErrAppTaskAccountInactive = errors.New("sched: app task account is not activ
 // requeues the task for the owning node's schedd instead of failing it.
 var ErrAppTaskNotOwner = errors.New("sched: app task app is owned by another node")
 
+// ErrAppTaskSpendCap refuses a task whose billing subject is at its monthly
+// spend cap (cost-control review 2026-11-19, N16). Task VMs are billed like
+// instances, so the cap holds them like wakes: nothing is dispatched and the
+// coordinator leaves the restoring lease to the sweep, as for a held budget,
+// so the task waits for the cap to lift instead of failing.
+var ErrAppTaskSpendCap = errors.New("sched: app task billing subject is at its spend cap")
+
 const (
 	accountInactiveFailureCode    = "account_inactive"
 	accountInactiveFailureMessage = "the account is suspended; resolve billing to run work again"
@@ -56,6 +63,10 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return ResolvedAppTaskRuntime{}, err
+	}
+	if reached, observed, capCents := e.admitSpendCap(ctx, &app); reached {
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("admission",
+			errors.Join(ErrAppTaskSpendCap, api.ErrAdmissionRefused(observed, capCents)))
 	}
 	dep, err := e.store.DeploymentByID(ctx, request.DeploymentID)
 	if err != nil {
@@ -163,6 +174,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}
+	app = app.WithAPISandboxEgress()
 	spec := AppSpec{
 		RehearsalRunID: runID,
 		BaseKey:        pinnedBase, LayerKey: request.ArtifactKey,
@@ -172,8 +184,8 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
 		SealedEnv: runtimeValues.MainSecrets.Entries,
-		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(apiEnv,
-			app, dep, acct, placement.NodeID, request.ID, placement.Region)),
+		APIEnv: e.withWorkloadS3Env(app, e.withPublicAPIURL(appendPlatformIdentity(apiEnv,
+			app, dep, acct, placement.NodeID, request.ID, placement.Region))),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:         app.EgressPorts,
 		EgressRevision:      app.EgressAllowlistRevision,

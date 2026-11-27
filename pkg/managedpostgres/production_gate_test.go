@@ -358,8 +358,8 @@ func TestProductionRegistryDefaultsToThePlansDatabaseLimit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if registry.MaxDatabasesPerAccount != tc.want {
-				t.Fatalf("per-account limit = %d, want %d", registry.MaxDatabasesPerAccount, tc.want)
+			if registry.MaxDatabasesPerAccount() != tc.want {
+				t.Fatalf("per-account limit = %d, want %d", registry.MaxDatabasesPerAccount(), tc.want)
 			}
 		})
 	}

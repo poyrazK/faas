@@ -17,6 +17,10 @@ func (m *MemStore) CreateExecutionWorkflowJob(_ context.Context, params CreateEx
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createExecutionWorkflowJobLocked(params)
+}
+
+func (m *MemStore) createExecutionWorkflowJobLocked(params CreateExecutionWorkflowJobParams) (ExecutionWorkflowJob, error) {
 	if _, ok := m.accounts[params.AccountID]; !ok {
 		return ExecutionWorkflowJob{}, ErrNotFound
 	}
@@ -98,6 +102,9 @@ func (m *MemStore) UpdateExecutionWorkflowJob(_ context.Context, id, leaseToken 
 		return ErrExecutionWorkflowLeaseLost
 	}
 	if update.NextStep < 0 || update.NextStep > row.StepCount {
+		return ErrExecutionInvalid
+	}
+	if p, ok := m.executionPipelines[id]; ok && (p.Policy.Callback != nil || p.Policy.CompletionVersion != "") && (update.Status == api.ManagedExecutionWorkflowSucceeded || update.Status == api.ManagedExecutionWorkflowFailed) {
 		return ErrExecutionInvalid
 	}
 	row.Status, row.NextStep = update.Status, update.NextStep

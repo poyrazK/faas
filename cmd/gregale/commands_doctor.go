@@ -53,6 +53,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
@@ -83,6 +84,10 @@ type doctorCheck struct {
 	Why     string   `json:"why,omitempty"`
 	Fix     string   `json:"fix,omitempty"`
 	Sources []string `json:"sources,omitempty"` // file:line that triggered
+	// Detail replaces "ok" on a passed check's line (boot checks: "GET / → 200").
+	Detail string `json:"detail,omitempty"`
+	// Output is the tail of a booted container's output (doctor --boot).
+	Output string `json:"output,omitempty"`
 }
 
 // doctorReport is the top-level JSON shape. Always emits a
@@ -183,7 +188,7 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 		return
 	}
 	if rep.HasErrors() || rep.HasStrictWarnings() {
-		renderDoctorHuman(osStderr, rep)
+		renderDoctorDeploy(osStderr, rep, false)
 	}
 	if rep.HasProfileWarnings() {
 		var advisory []frameworkprofile.Warning
@@ -791,6 +796,11 @@ func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregalei
 	}
 	ext := strings.ToLower(filepath.Ext(base))
 	stem := strings.TrimSuffix(base, ext)
+	// Python's pytest/unittest convention names tests test_*.py and keeps
+	// fixtures in conftest.py.
+	if ext == ".py" && (strings.HasPrefix(stem, "test_") || stem == "conftest") {
+		return true
+	}
 	return strings.HasSuffix(stem, "_test") || strings.HasSuffix(stem, ".test") || strings.HasSuffix(stem, ".spec")
 }
 
@@ -964,6 +974,23 @@ func loadDeclaredEnv(path string) map[string]bool {
 			}
 		}
 	}
+	// 3. A Compose file that opts in to env import (x-gregale-env-import)
+	// supplies its services' plain `environment:` values on deploy. Doctor
+	// warned that DATABASE_URL was missing although Compose set it (prod
+	// 2026-11-19). An entry without a value comes from the host, so it
+	// still counts as missing.
+	if compose, err := reposcan.ReadComposeEnv(os.DirFS(path)); err == nil {
+		for service, entries := range compose.Services {
+			if !compose.OptedIn(service) {
+				continue
+			}
+			for key, value := range entries {
+				if value != nil && isDeclaredEnvKey(key) {
+					declared[strings.ToUpper(key)] = true
+				}
+			}
+		}
+	}
 	return declared
 }
 
@@ -1083,6 +1110,20 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 // renderDoctorHumanExit renders the report; failing says the command exits 1
 // on it, so the footer does not suggest --strict to make it fail.
 func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
+	renderDoctorReport(w, rep, failing, false, false)
+}
+
+// renderDoctorDeploy is the report as deploy prints it: findings only, with
+// the passed and skipped checks counted on one line. `gregale doctor` lists
+// every check; deploy output is read by people and agents alike, and the
+// 2026-11-23 agent eval saw agents cut it with tail on most deploys.
+// doctorStrict says the deploy already runs with --doctor-strict, which
+// blocks on errors only, so the footer does not suggest --strict.
+func renderDoctorDeploy(w io.Writer, rep doctorReport, doctorStrict bool) {
+	renderDoctorReport(w, rep, rep.HasErrors(), true, doctorStrict)
+}
+
+func renderDoctorReport(w io.Writer, rep doctorReport, failing, compact, doctorStrict bool) {
 	renderDoctorReadiness(w, rep)
 	if rep.Image != nil {
 		renderDoctorImage(w, rep.Image)
@@ -1100,6 +1141,10 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			// port and health path described it as HTTP (Hunt 14 H14-42).
 			if manifestDeployExecutionMode(rep.Path) == api.ExecutionModeWorker {
 				_, _ = fmt.Fprintln(w, " · worker (no HTTP listener)")
+			} else if rep.Profile.HealthDefaulted {
+				// No health route found: ready once the port accepts
+				// connections (ADR-079 amendment 2), not a /healthz probe.
+				_, _ = fmt.Fprintf(w, " · port=%d · health=none (ready once the port accepts connections)\n", rep.Profile.Port)
 			} else {
 				_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
 			}
@@ -1108,13 +1153,22 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))
 	hasFinding := false
 	hasSkipped := false
+	passed, skipped := 0, 0
 	for _, c := range rep.Checks {
 		switch c.Status {
 		case "ok":
+			passed++
+			if compact {
+				continue
+			}
+			result := "ok"
+			if c.Detail != "" {
+				result = c.Detail
+			}
 			if Enabled() {
-				_, _ = fmt.Fprintf(w, "  ✓ %s — ok\n", c.Name)
+				_, _ = fmt.Fprintf(w, "  ✓ %s — %s\n", c.Name, result)
 			} else {
-				_, _ = fmt.Fprintf(w, "  %s — ok\n", c.Name)
+				_, _ = fmt.Fprintf(w, "  %s — %s\n", c.Name, result)
 			}
 		case "warn":
 			hasFinding = true
@@ -1148,8 +1202,13 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			if len(c.Sources) > 0 {
 				_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(c.Sources, ", "))
 			}
+			renderDoctorCheckOutput(w, c.Output)
 		case "skipped":
 			hasSkipped = true
+			skipped++
+			if compact {
+				continue
+			}
 			_, _ = fmt.Fprintf(w, "  %s — skipped\n", c.Name)
 			if c.Reason != "" {
 				_, _ = fmt.Fprintf(w, "    reason: %s\n", c.Reason)
@@ -1170,6 +1229,22 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(warning.Sources, ", "))
 		}
 	}
+	if compact && passed+skipped > 0 {
+		// "other" only when findings are listed above; a skipped check has
+		// its own reason, which `gregale doctor` prints.
+		var parts []string
+		if passed > 0 {
+			other := ""
+			if hasFinding {
+				other = "other "
+			}
+			parts = append(parts, fmt.Sprintf("%d %scheck(s) passed", passed, other))
+		}
+		if skipped > 0 {
+			parts = append(parts, fmt.Sprintf("%d skipped", skipped))
+		}
+		_, _ = fmt.Fprintf(w, "  %s; `gregale doctor` lists every check\n", strings.Join(parts, ", "))
+	}
 	if !hasFinding {
 		_, _ = fmt.Fprintln(w)
 		if hasSkipped {
@@ -1182,6 +1257,23 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy.")
 	} else {
 		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy, or run with --strict to fail in CI.")
+		// Only warnings: deploy goes ahead, and `deploy --dry-run` follows
+		// this with "No blocking findings" (prod hunt 2026-11-21).
+		if doctorStrict {
+			_, _ = fmt.Fprintln(w, "The warnings above do not block a deploy: --doctor-strict blocks error-class checks only. Run `gregale doctor --strict` to fail on them in CI.")
+		} else {
+			_, _ = fmt.Fprintln(w, "The warnings above do not block a deploy; review them, or run with --strict to fail on them in CI.")
+		}
+	}
+}
+
+// renderDoctorCheckOutput prints a booted container's last output, indented.
+func renderDoctorCheckOutput(w io.Writer, output string) {
+	if output == "" {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "    container output (last lines):")
+	for _, line := range strings.Split(output, "\n") {
+		_, _ = fmt.Fprintf(w, "      %s\n", line)
 	}
 }

@@ -10,10 +10,14 @@ import (
 )
 
 type FinancialMeterCoverage struct {
-	Complete            bool     `json:"complete"`
-	Fresh               bool     `json:"fresh"`
-	ExpectedMinutes     int64    `json:"expected_minutes"`
-	CompleteMinutes     int64    `json:"complete_minutes"`
+	Complete        bool  `json:"complete"`
+	Fresh           bool  `json:"fresh"`
+	ExpectedMinutes int64 `json:"expected_minutes"`
+	CompleteMinutes int64 `json:"complete_minutes"`
+	// Projectable is true when enough of the period was sampled to forecast
+	// it: every minute, or at least FinancialForecastMinCoveragePercent with
+	// the last FinancialForecastRecentWindow whole. Complete stays strict.
+	Projectable         bool     `json:"projectable"`
 	UnpricedQuantity    int64    `json:"unpriced_quantity"`
 	NonBillableQuantity int64    `json:"non_billable_quantity"`
 	Reasons             []string `json:"reasons"`

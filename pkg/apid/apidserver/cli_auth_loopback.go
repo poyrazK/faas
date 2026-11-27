@@ -68,9 +68,9 @@ func (h *cliAuthHandlers) approveLoopbackCode(w http.ResponseWriter, r *http.Req
 	if err := devices.ClaimCliAuthCodeForDevice(r.Context(), hash, accountID, api.HashToken(raw)); err != nil {
 		switch {
 		case errors.Is(err, state.ErrConflict):
-			h.renderCliAuthError(w, r, "Code already used", "Restart 'gregale login' to sign in again.")
+			h.renderCliAuthRetry(w, r, "Code already used")
 		case errors.Is(err, state.ErrNotFound):
-			h.renderCliAuthError(w, r, "Code expired", "Restart 'gregale login' to sign in again.")
+			h.renderCliAuthRetry(w, r, "Code expired")
 		default:
 			h.log.Error("cli_auth.loopback_claim", "err", err)
 			api.WriteProblemForRequest(w, r, api.ErrInternal(

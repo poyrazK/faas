@@ -25,10 +25,13 @@ This feature requires PostgreSQL. It ships disabled. It never enables payouts.
    route the sales root to apid. The old API-host `/dashboard/sales` redirects
    to this frontend. Live session mutations require the canonical sales origin,
    so Vercel preview hostnames are not added to the backend CSRF allowlist.
-4. Configure manager and rep email lists and enable the backend feature. Use
-   existing Gregale accounts with verified email and an enrolled authenticator.
-   Removing an email removes access on the next request, including existing
-   sessions. Deployment does not invent accounts or enable payouts.
+4. Set at least one owner admin in `FAAS_SALES_ADMIN_EMAILS` and enable the
+   backend feature. An owner admin then adds managers and salespeople (managers may add salespeople) in the
+   portal (see [Roles, agreements, credit and payouts](#roles-agreements-credit-and-payouts)).
+   The older manager and rep email lists still work. Use existing Gregale
+   accounts with verified email and an enrolled authenticator. Removing a member
+   removes access on the next request, including existing sessions. Deployment
+   does not invent accounts or move money.
 5. Sign in on the sales host with an existing Gregale email/password and complete
    MFA. OAuth-only staff can add a password in product account settings first.
    Sales sessions use Secure, HttpOnly, host-only cookies; no parent-domain
@@ -36,7 +39,7 @@ This feature requires PostgreSQL. It ships disabled. It never enables payouts.
    backend readiness.
 
 The control-plane Ansible role accepts `faas_sales_enabled`,
-`faas_sales_emails` and `faas_sales_manager_emails`. Its reward variables mirror
+`faas_sales_emails`, `faas_sales_manager_emails` and `faas_sales_admin_emails`. Its reward variables mirror
 the environment settings below. The defaults leave the feature off and both
 allowlists empty. No production DNS or account access is changed by the code.
 
@@ -45,10 +48,11 @@ allowlists empty. No production DNS or account access is changed by the code.
 | `FAAS_SALES_ENABLED` | off | Only `1` enables sales and referral surfaces |
 | `FAAS_SALES_EMAILS` | empty | Comma-separated rep email addresses, exact matches |
 | `FAAS_SALES_MANAGER_EMAILS` | empty | Comma-separated managers; includes rep privileges and team-wide reads |
+| `FAAS_SALES_ADMIN_EMAILS` | empty | Comma-separated owner admins; manager rights plus agreements, credit moves and payout records. Only this setting grants it |
 | `FAAS_REFERRAL_CURRENCY` | `usd` | `usd` or `eur`; amounts are never mixed or converted |
 | `FAAS_REFERRAL_REWARD_CENTS` | `0` | Fixed potential reward for a customer referrer |
 | `FAAS_REFERRAL_NEW_CUSTOMER_REWARD_CENTS` | `0` | Fixed potential reward for the referred customer |
-| `FAAS_SALES_COMMISSION_BPS` | `0` | One-time share of first pre-tax paid invoice, 0–10000 basis points |
+| `FAAS_SALES_COMMISSION_BPS` | `0` | Program default one-time share of first pre-tax paid invoice, 0–10000 basis points; a salesperson's own agreement replaces it |
 | `FAAS_REFERRAL_HOLD_DAYS` | `30` | Days after first observed payment before eligibility, 0–365 |
 | `FAAS_REFERRAL_CONVERSION_DAYS` | `90` | Attribution-to-payment observation window, 1–365 days |
 
@@ -57,8 +61,9 @@ One currency unit is 100 cents. Reward fields accept whole integer cents up to
 refuses startup. Updating settings changes new referral terms only. Existing
 attributions retain the settings captured at their creation.
 
-There is no payout-enable setting or payout endpoint. Portal amounts are
-estimates, not a payable balance or an applied account credit. Enabling money
+There is no payout-enable setting and no money movement. Portal amounts are
+estimates, not a payable balance or an applied account credit; owner admins
+record payments made outside Gregale in a ledger. Enabling money
 movement requires a separately reviewed integration. This also means an estimate
 for the referred customer is not silently applied to their invoices.
 
@@ -81,8 +86,18 @@ retries cannot attach a new referral to an old account.
 An existing Free customer can enter an optional **Salesperson code** before their
 first paid personal-plan purchase, through the product Plans confirmation or
 legacy upgrade page. Only active sales codes owned by an active, verified,
-MFA-enrolled member of the configured sales team are accepted. Organization
-purchases are excluded. Customer-to-customer codes remain a signup feature.
+MFA-enrolled member of the sales team are accepted. Customer-to-customer codes
+remain a signup feature.
+
+A company organization can also carry a salesperson code. A member who may
+change the organization's plan enters it with `salesperson_code` on
+`PATCH /v1/orgs/{slug}/plan` before the organization's first paid purchase.
+`GET /v1/orgs/{slug}/referrals/checkout` reports eligibility. Credit belongs to
+the organization, not the member; the member's own account stays free to take
+its own referral. Personal organizations, organizations pending deletion and
+organizations with any earlier payment are refused, and a salesperson cannot
+credit a purchase they make themselves. The portal shows the organization name
+and the buying member's email.
 
 Checkout refuses an account with a previous positive payment, refund, pending
 refund, paid plan, or subscription. Existing attribution is never replaced.
@@ -153,6 +168,74 @@ excluding note contents, referral cookies and credentials. Deleting an account
 erases its outgoing codes and dependent attributions, or its own incoming
 attribution. Account suspension blocks reward eligibility and new code uses.
 Acquisition attribution and notes are not cloned into application environments.
+
+## Roles, agreements, credit and payouts
+
+Apply `20261120181326259_sales_team_agreements.sql` and
+`20261120181327631_sales_org_attribution.sql` before the matching apid release
+([ADR](../adr/20261120181500-sales-roles-agreements.md)).
+
+| Capability | Salesperson | Sales manager | Owner admin |
+| --- | --- | --- | --- |
+| Own code, own customers, leads and tasks | yes | yes | yes |
+| Every salesperson's customers, leads, tasks, reports and inquiries | no | yes | yes |
+| Add, deactivate or reactivate salespeople | no | yes | yes |
+| Add, change or deactivate managers; promote a salesperson | no | no | yes |
+| Set a salesperson's commission agreement | no | no | yes |
+| Move a customer's sales credit to another salesperson | no | no | yes |
+| Record or void a payout | no | no | yes |
+| Read payouts | own | all | all |
+
+Owner admins come only from `FAAS_SALES_ADMIN_EMAILS`, so the portal can never
+remove the last one. Portal members and the email lists combine; the strongest
+grant wins. An account named only by configuration shows as config-managed.
+
+**Team.** Owner admins add an existing Gregale account by email as `manager` or
+`rep`, change roles and deactivate members. Sales managers do this for
+salespeople only: they cannot add, demote or deactivate a manager, or promote a
+salesperson. The team list
+omits agreements for managers (customer rows still show the rate frozen on each
+customer), and nobody can change their own role or deactivate themselves. A
+member who has not verified their email or enrolled an authenticator shows
+`ready: false` and cannot sign in to sales. Deactivate instead of deleting;
+history stays.
+
+**Agreements.** Each salesperson has an append-only agreement history: a rate in
+basis points (100 = 1%), a start date (today or later, up to a year ahead) and a
+note such as the contract reference. When a customer is attributed to a sales
+code, the agreement in force at that moment is copied onto that customer.
+Without an agreement the program default `FAAS_SALES_COMMISSION_BPS` applies.
+A new agreement never changes existing customers. Each customer row shows the
+rate it carries.
+
+**Credit moves.** An owner admin can move one customer's sales credit to another
+active salesperson with an enrolled authenticator, with a reason. The customer
+then carries the new owner's current agreement. The old owner stops seeing the
+customer. Every move is kept with old and new owner and rate. Customer-program
+referrals cannot become sales credit. A customer with a recorded payout cannot
+move; void the payout first if it was a mistake.
+
+**Payouts.** When a customer's commission is `eligible`, an owner admin records
+the payment made outside Gregale: amount in cents, date, an optional reference
+(for example the transfer ID) and a note. The payee and currency come from the
+customer's credit. One live payout per customer; void with a reason to correct
+it. Nothing is paid by Gregale.
+
+| Private route | Role | Use |
+| --- | --- | --- |
+| `GET /v1/sales/admin/team` | manager | Members, effective role, source, readiness; current agreement for owner admins only |
+| `POST /v1/sales/admin/team` | manager (rep only) | `{"email","role"}` adds a manager or rep |
+| `PUT /v1/sales/admin/team/{member}` | manager (rep records only) | `{"role","active","version"}` changes or deactivates |
+| `GET /v1/sales/admin/team/{member}/agreements` | owner admin | Agreement history |
+| `POST /v1/sales/admin/team/{member}/agreements` | owner admin | `{"commission_bps","effective_from","note"}` |
+| `GET /v1/sales/customers/{account}/credit` | manager | Credit move history |
+| `PUT /v1/sales/customers/{account}/credit` | owner admin | `{"owner_id","reason"}` moves credit |
+| `GET /v1/sales/payouts?owner=&voided=1` | any staff | Payouts in the caller's scope |
+| `POST /v1/sales/customers/{account}/payouts` | owner admin | `{"amount_cents","paid_on","reference","note"}` |
+| `POST /v1/sales/payouts/{payout}/void` | owner admin | `{"reason"}` |
+
+`GET /v1/sales/me` and `GET /v1/sales/team` also return `role`; for staff,
+`policy.commission_bps` is the caller's own current agreement.
 
 ## Verify and disable
 

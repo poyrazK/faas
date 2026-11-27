@@ -118,6 +118,12 @@ bounded by existing per-project caps.
 - From then on the branch captures its own init and warm snapshots, so later wakes take
   the normal snapshot path.
 - Cost: one cold boot per app, on first use, and none for apps never called.
+- *Amendment 2026-11-19.* A branch deployment carries no release command. The parent's
+  release already ran against the data the branch copies at T, and schedd primes a
+  deployment with a release command only after a release task for that deployment
+  succeeds, which nothing starts for a branch: a parent with a release command (a
+  migration) left every branch URL answering 404. A deploy into the branch runs its own
+  release as usual.
 
 **Opt-in path: restore with a new identity.** An app that declares:
 

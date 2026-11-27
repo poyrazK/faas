@@ -224,6 +224,7 @@ func cmdDeploysShow(args []string) int {
 	}
 	if *withStatus && dep != nil {
 		renderDeployFailureIfPresent(osStdout, *dep)
+		printReleaseTaskOutput(ctx, client, osStdout, "", *dep)
 		renderDeploymentConfiguration(*dep)
 	}
 	return 0
@@ -296,6 +297,7 @@ func cmdDeploysStatus(args []string) int {
 		_, _ = fmt.Fprintf(os.Stderr, "warning: stage summary render failed: %v\n", err)
 	}
 	renderDeployFailureIfPresent(osStdout, *dep)
+	printReleaseTaskOutput(ctx, client, osStdout, *appFlag, *dep)
 	renderDeploymentConfiguration(*dep)
 	return 0
 }

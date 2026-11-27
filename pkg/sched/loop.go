@@ -195,6 +195,7 @@ type Loop struct {
 	targets               *targets.Trigger                        // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
 	floor                 *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
 	prewarm               *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
+	cronPrewake           *cronPrewake                            // ADR-20261107122928 amendment 3: prewarm intents before HTTP cron fires; nil opts out
 	recentLoad            *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
 	fleetRates            fleetRequestRates                       // H4-70 fleet-wide demand from instances.request_count
 	livenessWindow        *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
@@ -1884,6 +1885,7 @@ func (l *Loop) dispatchRetention(ctx context.Context) {
 		l.runRetention(ctx)
 		l.runDeadLetterRetention(ctx)
 		l.runCronHistoryRetention(ctx)
+		l.runCronPrewakeRetention(ctx)
 	})
 }
 
@@ -3175,7 +3177,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	l.engine.CompressFrozenForDensity(ctx, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range reservationEvictions(l.engine.Ledger(), now, snapshot) {
-		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id, EvictionReasonRAMPressure); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
 			continue
 		}
@@ -4934,6 +4936,7 @@ const cronSweepSlice = 10 * time.Second
 func (l *Loop) runCronTick(ctx context.Context) {
 	l.cronSweepTried = map[string]struct{}{}
 	l.runCronSweep(ctx)
+	l.runCronPrewake(ctx)
 }
 
 // cronAppBudgetHeld reports an app a compute budget holds. The drain defers
@@ -5957,7 +5960,7 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 	}
 	infos := indexInstanceInfos(snapshot)
 	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
-		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id, EvictionReasonMeasuredMemory); err != nil {
 			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
 			continue
 		}

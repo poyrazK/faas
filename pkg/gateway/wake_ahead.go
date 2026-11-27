@@ -75,6 +75,14 @@ type wakeAheadCaller struct {
 	edges       map[string]*wakeAheadEdge
 	published   map[string]bool // targets whose shares the sink currently holds
 	wakesShown  bool
+	// declaredMisses counts, per declared target, consecutive speculative
+	// wakes that went unused or failed. While the caller is below
+	// ServiceWakeAheadMinWakes the declared list is the prediction; without
+	// this a caller that never reaches the minimum (TCP pools, restarts,
+	// several gateways) woke every declared target on every cold wake
+	// forever, each billed to its idle timeout (account usage audit
+	// 2026-11-21).
+	declaredMisses map[string]int
 }
 
 type wakeAheadEdge struct{ calls, cold float64 }
@@ -132,8 +140,15 @@ func (l *WakeAheadLearner) ObserveCall(caller, target string, woken bool) {
 	defer l.mu.Unlock()
 	now := l.now()
 	benefit := woken
+	// Any observed call proves the caller uses the target.
+	if c := l.callers[caller]; c != nil {
+		delete(c.declaredMisses, target)
+	}
 	if s := l.speculative[target]; s != nil && !woken && now.Sub(s.at) <= api.ServiceWakeAheadFollowWindow {
 		benefit = true
+		if sc := l.callers[s.caller]; sc != nil {
+			delete(sc.declaredMisses, target)
+		}
 		if !s.used {
 			s.used = true
 			l.sink.WakeAheadOutcome(s.caller, target, WakeAheadUsed)
@@ -172,6 +187,9 @@ func (l *WakeAheadLearner) PredictWithDeclared(app string, declared []string) []
 		var targets []string
 		for _, target := range declared {
 			if target == "" || target == app || slices.Contains(targets, target) {
+				continue
+			}
+			if c != nil && c.declaredMisses[target] >= api.ServiceWakeAheadDeclaredMaxMisses {
 				continue
 			}
 			if targets = append(targets, target); len(targets) == api.ServiceWakeAheadMaxTargets {
@@ -219,6 +237,11 @@ func (l *WakeAheadLearner) ClaimSpeculation(caller, target string) bool {
 func (l *WakeAheadLearner) ReleaseSpeculation(target string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	// A released speculation is a failed wake-ahead: count it against the
+	// declared target like an unused one.
+	if s := l.speculative[target]; s != nil && !s.used {
+		l.noteDeclaredMissLocked(s.caller, target)
+	}
 	delete(l.speculative, target)
 }
 
@@ -313,10 +336,24 @@ func (l *WakeAheadLearner) sweepLocked(now time.Time) {
 		if now.Sub(s.at) > api.ServiceWakeAheadFollowWindow {
 			if !s.used {
 				l.sink.WakeAheadOutcome(s.caller, target, WakeAheadUnused)
+				l.noteDeclaredMissLocked(s.caller, target)
 			}
 			delete(l.speculative, target)
 		}
 	}
+}
+
+// noteDeclaredMissLocked counts one speculative wake of target that caller
+// did not use.
+func (l *WakeAheadLearner) noteDeclaredMissLocked(caller, target string) {
+	c := l.callers[caller]
+	if c == nil {
+		return
+	}
+	if c.declaredMisses == nil {
+		c.declaredMisses = map[string]int{}
+	}
+	c.declaredMisses[target]++
 }
 
 // evictLocked keeps the caller table bounded by dropping the caller whose

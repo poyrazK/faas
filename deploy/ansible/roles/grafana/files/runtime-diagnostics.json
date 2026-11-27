@@ -1,0 +1,1371 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "expr": "1000 * max by (job, instance, revision) (\n  label_replace(\n    (\n      (timestamp(apid_daemon_build_info{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\",git_sha=~\"[0-9a-f]{40}\"}) and (apid_daemon_build_info{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\",git_sha=~\"[0-9a-f]{40}\"} == 1))\n      unless on (job, instance, git_sha) (apid_daemon_build_info{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\",git_sha=~\"[0-9a-f]{40}\"} offset 15s == 1)\n    )\n    and on (job, instance) (count by (job, instance) (apid_daemon_build_info{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"} == 1) == 1)\n    and on (job, instance) (count by (job, instance) (apid_daemon_build_info{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"} offset 15s == 1) == 1)\n    and on (job, instance) (count by (job, instance) (apid_daemon_build_info{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\",git_sha=~\"[0-9a-f]{40}\"} offset 15s == 1) == 1)\n    and on (job, instance) (\n      (((timestamp(up{job=\"apid\",instance=~\"$apid_instance\"}) and (up{job=\"apid\",instance=~\"$apid_instance\"} == 1))\n        - (timestamp(up{job=\"apid\",instance=~\"$apid_instance\"} offset 15s) and (up{job=\"apid\",instance=~\"$apid_instance\"} offset 15s == 1))) > 0) <= 25\n    )\n    and on (job, instance) (min_over_time(up{job=\"apid\",instance=~\"$apid_instance\"}[30s]) == 1),\n    \"revision\", \"$1\", \"git_sha\", \"([0-9a-f]{7})[0-9a-f]{33}\"\n  )\n)",
+        "hide": false,
+        "iconColor": "blue",
+        "name": "apid revision changes",
+        "step": "15s",
+        "tagKeys": "instance,revision",
+        "titleFormat": "apid {{instance}} \u00b7 {{revision}}",
+        "textFormat": "Observed apid revision change to {{revision}}",
+        "useValueForTime": true
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "expr": "1000 * max by (job, instance) (\n  (timestamp(apid_daemon_uptime_seconds{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"}) == on (job, instance) group_left() (timestamp(up{job=\"apid\",instance=~\"$apid_instance\"}) and (up{job=\"apid\",instance=~\"$apid_instance\"} == 1)))\n  and (apid_daemon_uptime_seconds{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"} < apid_daemon_uptime_seconds{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"} offset 15s)\n  and ((timestamp(apid_daemon_uptime_seconds{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"}) - timestamp(apid_daemon_uptime_seconds{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"} offset 15s)) <= 25)\n  and (timestamp(apid_daemon_uptime_seconds{job=\"apid\",instance=~\"$apid_instance\",daemon=\"apid\"} offset 15s) == on (job, instance) group_left() (timestamp(up{job=\"apid\",instance=~\"$apid_instance\"} offset 15s) and (up{job=\"apid\",instance=~\"$apid_instance\"} offset 15s == 1)))\n  and on (job, instance) (min_over_time(up{job=\"apid\",instance=~\"$apid_instance\"}[30s]) == 1)\n)",
+        "hide": false,
+        "iconColor": "purple",
+        "name": "apid restarts",
+        "step": "15s",
+        "tagKeys": "instance",
+        "titleFormat": "apid {{instance}} \u00b7 restart",
+        "textFormat": "Uptime dropped between successful apid scrapes",
+        "useValueForTime": true
+      }
+    ]
+  },
+  "description": "Capacity, evidence coverage, source reads and response previews for Gregale runtime diagnostics.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 12,
+      "title": "Runtime telemetry coverage by apid",
+      "description": "Coverage for the selected apid instances at the end of the time range. Reporting includes idle collectors. A successful scrape without runtime metrics can occur during a rolling upgrade.",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "2 * ((up{job=\"apid\",instance=~\"$apid_instance\"} == 1) and apid_operator_runtime_active_collections{job=\"apid\",instance=~\"$apid_instance\"})\nor (up{job=\"apid\",instance=~\"$apid_instance\"} + 0)\nor label_replace(3 * absent(up{job=\"apid\",instance=~\"$apid_instance\"}), \"instance\", \"Prometheus\", \"job\", \"apid\")",
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Scrape failed",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "Runtime metrics missing",
+                  "color": "orange"
+                },
+                "2": {
+                  "text": "Reporting",
+                  "color": "green"
+                },
+                "3": {
+                  "text": "No matching apid targets",
+                  "color": "gray"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "gray",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "wideLayout": false
+      }
+    },
+    {
+      "id": 13,
+      "title": "Time since the last complete runtime report by apid",
+      "description": "Elapsed time at the end of the selected time range. A complete report contains the evidence requested by that collection. The timestamp is local to each apid process and resets on startup.",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(clamp_min(time() - (apid_operator_runtime_last_complete_report_timestamp_seconds{job=\"apid\",instance=~\"$apid_instance\"} > 0), 0)\nor ((apid_operator_runtime_last_complete_report_timestamp_seconds{job=\"apid\",instance=~\"$apid_instance\"} == 0) - 1))\nand (up{job=\"apid\",instance=~\"$apid_instance\"} == 1)",
+          "legendFormat": "{{instance}}",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "No complete report since startup",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "wideLayout": false
+      }
+    },
+    {
+      "id": 18,
+      "title": "Last runtime collection by apid",
+      "description": "Age and outcome of the latest finished collection at the end of the selected time range. The observation resets on apid startup. Outcomes describe evidence collection.",
+      "type": "table",
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(\n  max by (job, instance, outcome) (\n    clamp_min(time() - (apid_operator_runtime_last_collection_timestamp_seconds{job=\"apid\",instance=~\"$apid_instance\"} > 0), 0)\n    or (apid_operator_runtime_last_collection_timestamp_seconds{job=\"apid\",instance=~\"$apid_instance\"} == 0) - 1\n  )\n  and on (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"} == 1)\n)\nor on (job, instance) label_replace(-1 + 0 * max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"} == 1), \"outcome\", \"metrics_missing\", \"job\", \"apid\")\nor on (job, instance) label_replace(-1 + 0 * max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"} == 0), \"outcome\", \"scrape_failed\", \"job\", \"apid\")",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true
+            },
+            "indexByName": {
+              "instance": 0,
+              "outcome": 1,
+              "Value": 2,
+              "Time": 3,
+              "job": 4
+            },
+            "renameByName": {
+              "instance": "Instance",
+              "outcome": "Outcome",
+              "Value": "Age"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Outcome"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "complete": {
+                        "text": "Complete"
+                      },
+                      "incomplete": {
+                        "text": "Incomplete evidence"
+                      },
+                      "deadline_exceeded": {
+                        "text": "Deadline exceeded"
+                      },
+                      "canceled": {
+                        "text": "Canceled"
+                      },
+                      "unselected": {
+                        "text": "Unselected"
+                      },
+                      "encoding_error": {
+                        "text": "Encoding error"
+                      },
+                      "not_collected": {
+                        "text": "No collection since startup"
+                      },
+                      "metrics_missing": {
+                        "text": "Collection metric missing"
+                      },
+                      "scrape_failed": {
+                        "text": "Scrape failed"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "-1": {
+                        "text": "\u2014"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Instance",
+            "desc": false
+          }
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "title": "Runtime collector warning timeline",
+      "description": "Prometheus warning states by apid and evidence group. Clear requires a successful scrape with the warning's source metric. Core evidence also requires at least 10 evaluations of the group in 30 minutes.",
+      "type": "state-timeline",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(\n  max by (job, instance) (\n    (2 * ALERTS{job=\"apid\",instance=~\"$apid_instance\",alertname=\"FaasRuntimeCollectorCapacityRefusals\",alertstate=\"firing\"})\n    or ALERTS{job=\"apid\",instance=~\"$apid_instance\",alertname=\"FaasRuntimeCollectorCapacityRefusals\",alertstate=\"pending\"}\n    or (0 * apid_operator_runtime_refused_collections_total{job=\"apid\",instance=~\"$apid_instance\"})\n  )\n  and on (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"} == 1)\n)\nor (max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"}) - 2)",
+          "legendFormat": "{{instance}} / Capacity refusals",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "expr": "(\n  max by (job, instance) (\n    (2 * ALERTS{job=\"apid\",instance=~\"$apid_instance\",alertname=\"FaasRuntimeCollectorDeadlines\",alertstate=\"firing\"})\n    or ALERTS{job=\"apid\",instance=~\"$apid_instance\",alertname=\"FaasRuntimeCollectorDeadlines\",alertstate=\"pending\"}\n    or (0 * apid_operator_runtime_reports_total{job=\"apid\",instance=~\"$apid_instance\",outcome=\"deadline_exceeded\"})\n  )\n  and on (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"} == 1)\n)\nor (max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"}) - 2)",
+          "legendFormat": "{{instance}} / Collection deadlines",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "expr": "max without (selected_group) (\n  # Mark matching groups and drop unmarked rows, including scrape fallbacks.\n  label_replace(\n    (\n      (\n        max by (job, instance, group) (\n          (2 * ALERTS{job=\"apid\",instance=~\"$apid_instance\",alertname=\"FaasRuntimeCollectorIncompleteCoreEvidence\",alertstate=\"firing\"})\n          or ALERTS{job=\"apid\",instance=~\"$apid_instance\",alertname=\"FaasRuntimeCollectorIncompleteCoreEvidence\",alertstate=\"pending\"}\n          or (\n            0 * (sum by (job, instance, group) (\n              increase(apid_operator_runtime_group_evaluations_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"identity|readiness|process|loop_health\",outcome=~\"complete|incomplete\"}[30m])\n            ) >= 10)\n            and on (job, instance, group) apid_operator_runtime_group_evaluations_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"identity|readiness|process|loop_health\",outcome=\"incomplete\"}\n          )\n          or (0 * apid_operator_runtime_group_evaluations_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"identity|readiness|process|loop_health\",outcome=\"incomplete\"} - 3)\n        )\n        and on (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"} == 1)\n      )\n      or label_replace((max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"}) - 2), \"group\", \"identity\", \"job\", \"apid\")\n      or label_replace((max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"}) - 2), \"group\", \"readiness\", \"job\", \"apid\")\n      or label_replace((max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"}) - 2), \"group\", \"process\", \"job\", \"apid\")\n      or label_replace((max by (job, instance) (up{job=\"apid\",instance=~\"$apid_instance\"}) - 2), \"group\", \"loop_health\", \"job\", \"apid\")\n    ),\n    \"selected_group\", \"$1\", \"group\", \"($evidence_group)|.*\"\n  )\n  unless on (selected_group) vector(0)\n)",
+          "legendFormat": "{{instance}} / Incomplete {{group}} evidence",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-3": {
+                  "text": "Insufficient evaluations",
+                  "color": "blue"
+                },
+                "-2": {
+                  "text": "Scrape failed",
+                  "color": "dark-red"
+                },
+                "-1": {
+                  "text": "Runtime metrics missing",
+                  "color": "gray"
+                },
+                "0": {
+                  "text": "Clear",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "Pending",
+                  "color": "yellow"
+                },
+                "2": {
+                  "text": "Firing",
+                  "color": "orange"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "gray",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 1,
+      "title": "Active collections by apid",
+      "description": "Scraped active collections per apid, including canceled work still unwinding. The reference line shows the two-slot limit per process. Use refusals to detect saturation between scrapes.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "apid_operator_runtime_active_collections{job=\"apid\",instance=~\"$apid_instance\"}",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            },
+            "axisSoftMax": 2
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Capacity refusals by apid (5m)",
+      "description": "Estimated number of runtime reads refused at capacity over the last five minutes. A refusal occurs before inventory or Prometheus reads start.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "increase(apid_operator_runtime_refused_collections_total{job=\"apid\",instance=~\"$apid_instance\"}[5m])",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Completed collections by outcome (5m)",
+      "description": "Estimated counts over the last five minutes. Complete and incomplete describe evidence coverage. A complete report can contain a fresh daemon fault. Unselected reads are source-free.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (increase(apid_operator_runtime_reports_total{job=\"apid\",instance=~\"$apid_instance\"}[5m]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Collection duration p95 by apid (5m)",
+      "description": "Estimated 95th percentile through preview fitting. The three-second reference is the shared source deadline. Total collection also includes aggregation and fitting, and percentile estimates depend on bucket widths.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, instance) (rate(apid_operator_runtime_collection_duration_seconds_bucket{job=\"apid\",instance=~\"$apid_instance\"}[5m]))) >= 0",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            },
+            "axisSoftMax": 3
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Incomplete runtime reports by evidence group (5m)",
+      "description": "Estimated incomplete reports over five minutes. Each affected evidence group counts once per report, so one report can contribute to several series.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (group) (increase(apid_operator_runtime_incomplete_reports_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\"}[5m])) > 0",
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Incomplete report rate by evidence group (30m)",
+      "description": "Share of group evaluations with incomplete evidence over the 30 minutes ending at the selected time. Evaluations are estimated from counter increases. The table shows groups with at least one observed increase.",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (group) (increase(apid_operator_runtime_group_evaluations_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\",outcome=\"incomplete\"}[30m]))\n/ (sum by (group) (increase(apid_operator_runtime_group_evaluations_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\"}[30m])) > 0)",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (group) (increase(apid_operator_runtime_group_evaluations_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\"}[30m])) > 0",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "group",
+            "mode": "inner"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true
+            },
+            "renameByName": {
+              "group": "Evidence group",
+              "Value #A": "Incomplete rate",
+              "Value #B": "Evaluations"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Incomplete rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Incomplete rate",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "title": "Core evidence gaps by reason (30m)",
+      "description": "Estimated affected reports in the 30 minutes ending at the selected time. Each report counts once per affected group and reason from its full evidence summaries. A report can appear in several rows.",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (group, reason) (increase(apid_operator_runtime_core_evidence_gaps_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\"}[30m])) > 0",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "group": "Evidence group",
+              "reason": "Reason",
+              "Value": "Affected reports"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Affected reports",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "title": "Non-successful source reads by group (5m)",
+      "description": "Groups and outcomes with at least some observed non-successful reads in the last five minutes. Source errors, deadlines, cancellation and missing configuration appear as separate series. Some invocations stop before transport.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (group, outcome) (increase(apid_operator_runtime_query_attempts_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\",outcome!=\"success\"}[5m])) > 0",
+          "legendFormat": "{{group}} / {{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Source read duration p95 by group (5m)",
+      "description": "Estimated 95th percentile by diagnostic group across apids, including decoding and failed invocations. Groups without observations leave gaps.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 59
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, group) (rate(apid_operator_runtime_query_duration_seconds_bucket{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\"}[5m]))) >= 0",
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "title": "Source read failures by reason (5m)",
+      "description": "Estimated source errors by apid and evidence group in the five minutes ending at the selected time. Rows require an observed counter increase.",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance, group, reason) (increase(apid_operator_runtime_query_source_errors_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\"}[5m])) > 0",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "instance": "Apid",
+              "group": "Evidence group",
+              "reason": "Reason",
+              "Value": "Failures"
+            },
+            "indexByName": {
+              "instance": 0,
+              "group": 1,
+              "reason": 2,
+              "Value": 3,
+              "Time": 4
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reason"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "transport_error": {
+                        "text": "Transport error"
+                      },
+                      "http_error": {
+                        "text": "HTTP error"
+                      },
+                      "invalid_response": {
+                        "text": "Invalid response"
+                      },
+                      "other": {
+                        "text": "Other"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Failures",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "title": "Encoded response size p95 by apid (5m)",
+      "description": "Estimated 95th percentile of the encoded JSON payload before transport. The reference line marks the 64 KiB response envelope.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 75
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, instance) (rate(apid_operator_runtime_response_bytes_bucket{job=\"apid\",instance=~\"$apid_instance\"}[5m]))) >= 0",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            },
+            "axisSoftMax": 65536
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 65536
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Omitted preview items by group (5m)",
+      "description": "Groups with omissions over the last five minutes. Counts include inventory preview and response size limits. Full-set summaries still cover inspected items, and repeated reports count omissions again.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 75
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (group) (increase(apid_operator_runtime_preview_omitted_items_total{job=\"apid\",instance=~\"$apid_instance\",group=~\"$evidence_group\"}[5m])) > 0",
+          "legendFormat": "{{group}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Collection phase duration p95 by apid (5m)",
+      "description": "Wall-clock time per phase. Parallel readers contribute one elapsed time per phase. Core evidence includes initial summaries. Assembly covers loop and advisory summaries. The percentiles describe separate distributions, so their sum does not estimate total p95.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 83
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, instance, phase) (rate(apid_operator_runtime_phase_duration_seconds_bucket{job=\"apid\",instance=~\"$apid_instance\"}[5m]))) >= 0",
+          "legendFormat": "{{instance}} / {{phase}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Compute inventory outcomes by apid (5m)",
+      "description": "Outcomes observed for compute-backed profiles, including successful empty inventories. Registry errors, invalid data and expired deadlines appear separately. Static profiles skip the inventory phase.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 83
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance, outcome) (increase(apid_operator_runtime_inventory_attempts_total{job=\"apid\",instance=~\"$apid_instance\"}[5m])) > 0",
+          "legendFormat": "{{instance}} / {{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Collection deadlines by phase and origin (5m)",
+      "description": "One event per timed-out collection. Phase is where expiry was first observed. Origin distinguishes apid\u2019s collection budget from the incoming context deadline. Compare phase durations to see which earlier stages also consumed the budget.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 91
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance, phase, origin) (increase(apid_operator_runtime_collection_deadlines_total{job=\"apid\",instance=~\"$apid_instance\"}[5m])) > 0",
+          "legendFormat": "{{instance}} / {{phase}} / {{origin}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No data",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "faas",
+    "operator"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(up{job=\"apid\"}, instance)",
+        "includeAll": true,
+        "label": "apid instance",
+        "multi": false,
+        "name": "apid_instance",
+        "options": [],
+        "query": {
+          "query": "label_values(up{job=\"apid\"}, instance)",
+          "qryType": 1,
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(apid_operator_runtime_query_attempts_total{job=\"apid\",instance=~\"$apid_instance\"}, group)",
+        "includeAll": true,
+        "label": "Evidence group",
+        "multi": false,
+        "name": "evidence_group",
+        "options": [],
+        "query": {
+          "query": "label_values(apid_operator_runtime_query_attempts_total{job=\"apid\",instance=~\"$apid_instance\"}, group)",
+          "qryType": 1,
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Gregale Runtime Diagnostics",
+  "uid": "faas-runtime-diagnostics",
+  "version": 16
+}

@@ -76,6 +76,14 @@ error rate at least 5 percentage points and twice above baseline:
 
 > http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
 
+Each retained span keeps up to 32 of its attributes. It also keeps these
+OpenTelemetry resource attributes, so a span in a trace that crosses services
+says which service produced it: `service.name`, `service.namespace`,
+`service.version`, `service.instance.id`, `deployment.environment.name` and
+`telemetry.sdk.language`. They count toward the 32 and are kept first; a span
+attribute with the same name wins. Other resource attributes (host names,
+process command lines and the like) are not kept.
+
 ## Request logs
 
 With tracing enabled, the app's own log lines are linked to the request that
@@ -102,6 +110,20 @@ To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
 `gregale debug trace <trace-id>` shows every retained request of one trace across
 your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
+
+You can also start from a request id, the `x-faas-request-id` on a response
+or in the access log. It has the same 32-hex shape as a trace id, so when no
+trace has the id, it is looked up as a request of one app: name it with
+`--app` or run in a linked directory:
+
+```sh
+gregale debug trace 019a3c5e7d1b7f2a9c4e6b8d0f1a2c3e --app public-api --json
+```
+
+The request is resolved to its trace, and the `--json` output gains a
+`resolved_from` object (`app`, `request_id`, `trace_id`). A request with no
+trace id, or whose trace is no longer indexed, shows its own evidence
+instead.
 
 ```text
 MATCHES
@@ -217,6 +239,13 @@ request telemetry, so tracing never uses up the budget your request records
 need. Spans that exceed it are dropped and the app keeps serving. An app in an
 organization that owns its resources is limited by the organization's plan,
 not the plan of whoever created the app.
+
+Spans attach to the request's own record. On a busy app the gateway keeps a
+record for the first 30 traced requests per route, method and status each
+minute and counts later ones in the minute's totals, so those traces have no
+request record and no spans in `gregale debug trace` or the dashboard. Server errors
+keep their own sample. `gregale debug trace` says so when a trace has no request
+record.
 
 ## Sending traces to your own backend as well
 

@@ -76,6 +76,37 @@ func classifyCalledComposeServices(fsys fs.FS, workloads []Workload, imageListen
 		}
 	}
 	var warnings []string
+	listedAsDependency := map[int]bool{}
+	for _, caller := range workloads {
+		if !servesRequests(caller) {
+			continue
+		}
+		for _, dependency := range caller.DependsOn {
+			if i, ok := candidates[strings.ToLower(dependency)]; ok {
+				listedAsDependency[i] = true
+			}
+		}
+	}
+	// A service that declares `expose:` listens, and a listening worker
+	// fails its first boot with execution_mode_conflict. With no caller and
+	// no published port it stays a worker (the ADR keeps a health or metrics
+	// listener loud rather than parking it), so say so in the plan instead
+	// of only at boot. A depends_on target is warned below.
+	for _, i := range candidates {
+		w := workloads[i]
+		if w.Class != ClassWorker || len(w.InternalPorts) == 0 || listedAsDependency[i] {
+			continue
+		}
+		ports := make([]string, 0, len(w.InternalPorts))
+		for _, p := range w.InternalPorts {
+			ports = append(ports, strconv.Itoa(p.Port))
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"reposcan: service %q declares expose: [%s] but publishes no ports and no service calls it, so it is planned as a background worker, "+
+				"and a worker that listens fails its first boot (execution_mode_conflict); publish it with ports:, have a service call it (http://%s:%s), "+
+				"or drop expose: if it does not serve requests",
+			w.Name, strings.Join(ports, ", "), w.Name, ports[0]))
+	}
 	for _, caller := range workloads {
 		if !servesRequests(caller) {
 			continue

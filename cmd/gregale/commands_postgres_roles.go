@@ -22,6 +22,37 @@ const postgresRolesUsage = "usage: gregale postgres roles <list|create|grant|rev
 // postgresRoleGrantable are the access modes a custom role can be granted to.
 var postgresRoleGrantable = []string{"migration", "read_write", "read_only"}
 
+// postgresRoleDefaultable are the access modes whose logins can start as a
+// custom role (ADR-20261116213000 amendment 2).
+var postgresRoleDefaultable = []string{"read_write", "read_only"}
+
+// parsePostgresRoleDefaults validates --default-for against the role's grants.
+func parsePostgresRoleDefaults(value string, grants []string) ([]string, error) {
+	defaults := []string{}
+	for _, mode := range parsePostgresRoleList(value) {
+		if mode == "session" {
+			mode = "read_write"
+		}
+		if !slices.Contains(postgresRoleDefaultable, mode) {
+			return nil, fmt.Errorf("%q cannot start as a custom role (choose from %s)", mode, strings.Join(postgresRoleDefaultable, ", "))
+		}
+		if !slices.Contains(grants, mode) {
+			return nil, fmt.Errorf("the role is not granted to %s; add it to --grant-to first", mode)
+		}
+		if !slices.Contains(defaults, mode) {
+			defaults = append(defaults, mode)
+		}
+	}
+	return defaults, nil
+}
+
+// flagSet reports whether name was given on the command line.
+func flagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
+}
+
 func cmdPostgresRoles(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, postgresRolesUsage, "postgres")
@@ -97,13 +128,14 @@ func renderPostgresRoles(w io.Writer, roles []api.ManagedPostgresCustomRole) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ROLE\tBYPASSRLS\tGRANTED TO\tMEMBER OF\tSTATE")
+	_, _ = fmt.Fprintln(tw, "ROLE\tBYPASSRLS\tGRANTED TO\tDEFAULT FOR\tMEMBER OF\tSTATE")
 	for _, role := range roles {
 		state := role.State
 		if role.LastErrorCode != "" && role.State != "ready" {
 			state += " (" + role.LastErrorCode + ")"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", role.Name, yesNo(role.BypassRLS), dashIfEmpty(strings.Join(role.GrantedTo, ",")), dashIfEmpty(strings.Join(role.MemberOf, ",")), state)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", role.Name, yesNo(role.BypassRLS), dashIfEmpty(strings.Join(role.GrantedTo, ",")),
+			dashIfEmpty(strings.Join(role.DefaultFor, ",")), dashIfEmpty(strings.Join(role.MemberOf, ",")), state)
 	}
 	_ = tw.Flush()
 }
@@ -137,6 +169,9 @@ func renderPostgresRole(w io.Writer, role api.ManagedPostgresCustomRole, verb st
 	if len(role.GrantedTo) > 0 {
 		_, _ = fmt.Fprintf(w, "Logins of %s can now run SET ROLE %s.\n", strings.Join(role.GrantedTo, ", "), role.Name)
 	}
+	if len(role.DefaultFor) > 0 {
+		_, _ = fmt.Fprintf(w, "Logins of %s start every session as %s.\n", strings.Join(role.DefaultFor, ", "), role.Name)
+	}
 	if role.BypassRLS {
 		_, _ = fmt.Fprintln(w, "It bypasses row-level security. Data API and Auth cannot be enabled on this database while it exists.")
 	}
@@ -148,17 +183,27 @@ func cmdPostgresRolesCreate(args []string) int {
 	bypass := fs.Bool("bypass-rls", false, "the role bypasses row-level security (refused on databases with Data API or Auth)")
 	grantTo := fs.String("grant-to", "migration,read_write", "comma-separated access modes whose logins may SET ROLE to it: migration, read_write, read_only")
 	memberOf := fs.String("member-of", "", "comma-separated custom roles of the database this role is a member of")
+	defaultFor := fs.String("default-for", "", "comma-separated access modes whose logins start every session as this role: read_write, read_only (empty clears)")
 	if err := fs.Parse(append(flags, positional...)); err != nil {
 		return 1
 	}
 	if fs.NArg() != 2 {
-		PrintUsage(os.Stderr, "usage: gregale postgres roles create <database> <role> [--bypass-rls] [--grant-to migration,read_write] [--member-of ROLE,...]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres roles create <database> <role> [--bypass-rls] [--grant-to migration,read_write] [--member-of ROLE,...] [--default-for read_write]", "postgres")
 		return 1
 	}
 	grants := parsePostgresRoleList(*grantTo)
 	if err := validPostgresRoleGrants(grants); err != nil {
 		printCommandValidation(os.Stderr, "%v\n", err)
 		return 1
+	}
+	request := api.PutManagedPostgresCustomRoleRequest{BypassRLS: *bypass, GrantedTo: grants, MemberOf: parsePostgresRoleList(*memberOf)}
+	if flagSet(fs, "default-for") {
+		defaults, err := parsePostgresRoleDefaults(*defaultFor, grants)
+		if err != nil {
+			printCommandValidation(os.Stderr, "%v\n", err)
+			return 1
+		}
+		request.DefaultFor = &defaults
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -168,9 +213,7 @@ func cmdPostgresRolesCreate(args []string) int {
 	if err != nil {
 		return printErr("Could not find managed PostgreSQL database", err)
 	}
-	role, err := client.PutManagedPostgresCustomRole(context.Background(), databaseID, fs.Arg(1), api.PutManagedPostgresCustomRoleRequest{
-		BypassRLS: *bypass, GrantedTo: grants, MemberOf: parsePostgresRoleList(*memberOf),
-	})
+	role, err := client.PutManagedPostgresCustomRole(context.Background(), databaseID, fs.Arg(1), request)
 	if err != nil {
 		return printErr("Could not create the Postgres role", err)
 	}
@@ -188,9 +231,13 @@ func cmdPostgresRolesGrant(args []string, grant bool) int {
 	if grant {
 		name, flagName, preposition = "postgres roles grant", "to", "--to"
 	}
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "default")
 	fs := newFlagSet(name, flag.ContinueOnError)
 	modes := fs.String(flagName, "", "comma-separated access modes: migration, read_write, read_only")
+	makeDefault := false
+	if grant {
+		fs.BoolVar(&makeDefault, "default", false, "logins of these access modes also start every session as the role (read_write, read_only)")
+	}
 	if err := fs.Parse(append(flags, positional...)); err != nil {
 		return 1
 	}
@@ -232,9 +279,16 @@ func cmdPostgresRolesGrant(args []string, grant bool) int {
 			grants = slices.DeleteFunc(grants, func(existing string) bool { return existing == mode })
 		}
 	}
-	role, err := client.PutManagedPostgresCustomRole(context.Background(), databaseID, current.Name, api.PutManagedPostgresCustomRoleRequest{
-		BypassRLS: current.BypassRLS, GrantedTo: grants, MemberOf: current.MemberOf,
-	})
+	request := api.PutManagedPostgresCustomRoleRequest{BypassRLS: current.BypassRLS, GrantedTo: grants, MemberOf: current.MemberOf}
+	if makeDefault {
+		defaults, err := parsePostgresRoleDefaults(strings.Join(append(slices.Clone(current.DefaultFor), changes...), ","), grants)
+		if err != nil {
+			printCommandValidation(os.Stderr, "%v\n", err)
+			return 1
+		}
+		request.DefaultFor = &defaults
+	}
+	role, err := client.PutManagedPostgresCustomRole(context.Background(), databaseID, current.Name, request)
 	if err != nil {
 		return printErr("Could not change the Postgres role", err)
 	}

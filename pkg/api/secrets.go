@@ -52,7 +52,7 @@ type SecretRuntimeReloadObservation struct {
 // reached it and came back as a 503 "Secret storage temporarily
 // unavailable" (Hunt 11 H11-39): a validation case reported as an outage.
 func errEmptySecretValue() *Problem {
-	return ErrValidation("secret value must not be empty; to remove a secret, run `gregale secrets unset`")
+	return ErrValidation("secret value must not be empty; to remove a secret, run `gregale env unset`")
 }
 
 // Validate enforces the byte cap against maxBytes. Used by apid's PUT

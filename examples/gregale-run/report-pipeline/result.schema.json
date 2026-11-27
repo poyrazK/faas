@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "currency",
+    "orders",
+    "units",
+    "revenue_cents",
+    "source_reports"
+  ],
+  "properties": {
+    "currency": {
+      "type": "string",
+      "enum": [
+        "USD"
+      ]
+    },
+    "orders": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "units": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "revenue_cents": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "source_reports": {
+      "type": "integer",
+      "enum": [
+        2
+      ]
+    }
+  }
+}

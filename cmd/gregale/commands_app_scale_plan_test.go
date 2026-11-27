@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
@@ -35,5 +36,27 @@ func TestBuildAppScalePlanChangesListsOnlyRequestedSettings(t *testing.T) {
 				t.Fatalf("changes = %+v, want exactly %q", changes, tc.want)
 			}
 		})
+	}
+}
+
+// prod hunt 2026-11-21: `app scale --plan --idle 5` previewed a clean change
+// that the API then refused ("must be 0 (plan default) or 10..1200").
+func TestAppScalePlanChecksIdleTimeoutRange(t *testing.T) {
+	limits, ok := api.LimitsFor(api.PlanScale)
+	if !ok {
+		t.Fatal("no scale plan limits")
+	}
+	floor, ceiling := limits.IdleTimeoutBounds()
+	app := api.AppResponse{Slug: "echo", RAMMB: 128, MaxConcurrency: 1}
+	for _, tc := range []struct {
+		idle int
+		warn bool
+	}{{0, false}, {floor - 1, true}, {floor, false}, {ceiling, false}, {ceiling + 1, true}} {
+		idle := tc.idle
+		warnings := main.AppScalePlanWarnings(app, api.UpdateAppRequest{IdleTimeoutS: &idle}, api.PlanScale, limits)
+		got := strings.Contains(strings.Join(warnings, "\n"), "Idle timeout")
+		if got != tc.warn {
+			t.Errorf("idle %d: warnings %q, want idle warning %v", tc.idle, warnings, tc.warn)
+		}
 	}
 }

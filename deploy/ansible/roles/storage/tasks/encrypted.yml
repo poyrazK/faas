@@ -20,7 +20,7 @@
 - name: storage — require Tang peers and recovery recipients
   ansible.builtin.assert:
     that:
-      - faas_tang_peer_urls | default([]) | length > 0
+      - ((faas_tang_peer_urls | default([])) + (faas_tang_peer_hosts | default([]))) | length > 0
       - faas_disk_recovery_recipients | default([]) | length > 0
       - faas_disk_recovery_recipients | select('match', '^age1[02-9ac-hj-np-z]{58}$') | list | length == faas_disk_recovery_recipients | length
     fail_msg: >-
@@ -28,6 +28,32 @@
       age recipients; render the inventory from a manifest with a
       disk_encryption section.
     quiet: true
+
+# A peer named by host name in the manifest is bound at the private address
+# the discovery play resolved for it, never at its name: the private names
+# reach /etc/hosts only when the overlay role runs, later in this bootstrap,
+# and the bound URLs stay in the LUKS header.
+- name: storage — require a private address for each Tang peer named by host name
+  ansible.builtin.assert:
+    that:
+      - (hostvars[item].faas_private_dns_address | default(hostvars[item].faas_private_address | default(''), true)) | length > 0
+    fail_msg: >-
+      Tang peer {{ item }} has no resolved private address. Run the whole
+      inventory, so the discovery play resolves every host, or set
+      faas_private_address for it. Nothing was written.
+    quiet: true
+  loop: "{{ faas_tang_peer_hosts | default([]) }}"
+
+- name: storage — start the Tang peer list with the rendered URLs
+  ansible.builtin.set_fact:
+    faas_storage_tang_urls: "{{ faas_tang_peer_urls | default([]) }}"
+
+- name: storage — add each Tang peer named by host name at its private address
+  ansible.builtin.set_fact:
+    faas_storage_tang_urls: "{{ faas_storage_tang_urls + ['http://' ~ (('[' ~ peer ~ ']') if ':' in peer else peer) ~ ':' ~ faas_tang_port] }}"
+  vars:
+    peer: "{{ hostvars[item].faas_private_dns_address | default(hostvars[item].faas_private_address | default(''), true) }}"
+  loop: "{{ faas_tang_peer_hosts | default([]) }}"
 
 - name: storage — install the encryption tooling
   ansible.builtin.apt:
@@ -37,7 +63,7 @@
 - name: storage — find the Tang peers that answer now
   ansible.builtin.shell: |
     set -uo pipefail
-    for url in {{ faas_tang_peer_urls | map('quote') | join(' ') }}; do
+    for url in {{ faas_storage_tang_urls | map('quote') | join(' ') }}; do
       if curl -fsS --max-time 5 "$url/adv" > /dev/null 2>&1; then echo "$url"; fi
     done
   args:
@@ -50,7 +76,7 @@
     that:
       - faas_storage_tang_live.stdout_lines | length > 0
     fail_msg: >-
-      None of {{ faas_tang_peer_urls | join(', ') }} answers. Every host runs
+      None of {{ faas_storage_tang_urls | join(', ') }} answers. Every host runs
       Tang from the first bootstrap play (tag `tang`); bring another host's
       Tang up first, e.g. `ansible-playbook bootstrap.yml --tags tang` across
       the inventory, then converge this host again. Nothing was written.
@@ -60,10 +86,10 @@
   ansible.builtin.debug:
     msg: >-
       Binding to {{ faas_storage_tang_live.stdout_lines | join(', ') }} only;
-      {{ faas_tang_peer_urls | difference(faas_storage_tang_live.stdout_lines) | join(', ') }}
+      {{ faas_storage_tang_urls | difference(faas_storage_tang_live.stdout_lines) | join(', ') }}
       did not answer. Any one bound server unlocks the volume; rebind later
       (docs/runbooks/disk-encryption.md) to add the rest.
-  when: faas_storage_tang_live.stdout_lines | length < faas_tang_peer_urls | length
+  when: faas_storage_tang_live.stdout_lines | length < faas_storage_tang_urls | length
 
 - name: storage — inspect the volume for an existing LUKS header
   ansible.builtin.command:

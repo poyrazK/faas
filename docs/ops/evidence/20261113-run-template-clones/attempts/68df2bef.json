@@ -1,0 +1,22 @@
+{
+  "failed_tests": [
+    "TestSourceTemplateClonesMetal",
+    "TestSourceTemplateClonesMetal/four_live_clones_are_isolated",
+    "package"
+  ],
+  "functional_pass": false,
+  "process_exits": {
+    "leakcheck_after": 0,
+    "leakcheck_before": 0,
+    "template_clones": 1
+  },
+  "raw_evidence_sha256": {
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "process-exits.json": "cbee24a9c0f61bc2d6c5239a0faaa9f54768912f2ca1a30f5b70ba01b5144cd3",
+    "template-clones.jsonl": "95817df13751eebdb938c95f4e48c74e7ca9240e73fa2a21b089765684b122b2"
+  },
+  "reason": "probe read unpopulated LeaseUid from Stats; corrected to verify the actual Firecracker process credentials",
+  "snapshot_commit": "68df2bef88908cabf6a1af304f3b2db458fd92ce",
+  "warm_oom_rerun_passed": true
+}

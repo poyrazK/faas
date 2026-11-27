@@ -670,7 +670,7 @@ func (r pgRouter) toPublicApp(ctx context.Context, app state.App) (gateway.App, 
 // A production app the account no longer holds leaves the preview with its
 // own rules; a failed read fails the host's resolution closed.
 func (r pgRouter) previewProductionAppID(ctx context.Context, app state.App) (string, error) {
-	if app.PreviewOfSlug == "" {
+	if app.PreviewOfSlug == "" || state.IsAPISandbox(app) {
 		return "", nil
 	}
 	production, err := r.store.AppBySlug(ctx, app.PreviewOfSlug)
@@ -687,8 +687,13 @@ func (r pgRouter) previewProductionAppID(ctx context.Context, app state.App) (st
 }
 
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
-	if app.Status == state.AppDeleted {
+	if app.Status == state.AppDeleted || (state.IsAPISandbox(app) && !state.APISandboxAcceptsRequests(app, time.Now())) {
 		return gateway.App{}, false, nil
+	}
+	if state.IsAPISandbox(app) {
+		app.RequireAuthn = false
+		app.PublicAuthMode = api.AppPublicAuthModeOpen
+		app.ConsumerAuthMode = api.ConsumerAuthModeRequired
 	}
 	if exact != nil {
 		resolved, err := state.ResolveAppForDeployment(ctx, r.store, app, *exact)
@@ -790,6 +795,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
 		MaxConcurrency:               app.MaxConcurrency,
 		PerInstanceConcurrency:       perInstanceConcurrency,
+		FunctionRunnerSlots:          functionRunnerSlots(app),
 		ConcurrencyOverflow:          concurrencyOverflow,
 		MaxQueueWaitMS:               maxQueueWaitMS,
 		MaxQueueDepth:                maxQueueDepth,
@@ -804,6 +810,9 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		CanonicalHost:                app.Slug + r.appsSuffix,
 		IsPreview:                    app.PreviewOfSlug != "",
 		ProductionAppID:              productionAppID,
+		IsAPISandbox:                 state.IsAPISandbox(app),
+		APISandboxPartner:            state.IsAPISandbox(app) && app.Manifest.APISandboxPartner,
+		APISandboxRun:                state.IsAPISandbox(app) && app.Manifest.APISandboxRun,
 		StreamingEnabled:             app.StreamingEnabled,
 		SessionAffinity:              app.Manifest.SessionAffinity,
 		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,
@@ -811,6 +820,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RevisionPinTTLSeconds:        app.Manifest.RevisionPinTTLSeconds,
 		ProjectID:                    app.ProjectID,
 		NodeID:                       app.NodeID,
+		HasLiveDeployment:            len(liveDeployments) > 0,
 		Ports:                        gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports),
 		Sidecars:                     companionRoutes,
 		PrimaryIngressPort:           primaryIngressPort,
@@ -1121,6 +1131,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyKeyChanged,
 		db.NotifyDeploymentChanged,
 		db.NotifyDeploymentRouteChanged,
+		db.NotifyProjectRollbackRouteChanged,
 		db.NotifyDeploymentSmokeChallenge,
 		db.NotifyRouteProbeChallenge,
 		db.NotifyEdgeRuleChanged,
@@ -1138,6 +1149,9 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		// ADR 20261114150000 §3: a published flag configuration may kill
 		// or revive a flag; the per-deployment kill cache is wholesale.
 		db.NotifyFeatureFlagsChanged,
+		// ADR 20261119102741 §4: a refreshed or deleted cohort changes
+		// the per-customer cohort cache, which is wholesale too.
+		db.NotifyAnalyticsCohortsChanged,
 	}
 	// With resync: a LISTEN reconnect or a full hub buffer loses notifications
 	// (ADR-1344 §5 rule 3), and the route and app caches have no TTL.
@@ -1196,6 +1210,12 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				}
 				continue
 			}
+			if n.Channel == db.NotifyProjectRollbackRouteChanged {
+				if gatewayNode != "" {
+					observeProjectRollbackRoute(ctx, pool, inv, n.Payload, gatewayNode, log)
+				}
+				continue
+			}
 			if n.Channel == db.NotifyDeploymentRouteChanged {
 				payload, applied := handleDeploymentRouteInvalidation(ctx, inv, n.Payload, log)
 				if applied && gatewayNode != "" {
@@ -1251,6 +1271,9 @@ func flushAfterMissedNotifications(inv invalidator, log *slog.Logger) {
 	if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
 		kills.InvalidateFlagKills()
 	}
+	if cohorts, ok := inv.(interface{ InvalidateFlagCohorts() }); ok {
+		cohorts.InvalidateFlagCohorts()
+	}
 }
 
 func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw string, log *slog.Logger) (db.DeploymentRouteChangedPayload, bool) {
@@ -1259,6 +1282,10 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 		log.Warn("gatewayd: bad deployment_route_changed payload", "err", err)
 		return db.DeploymentRouteChangedPayload{}, false
 	}
+	return payload, refreshDeploymentRoute(ctx, inv, payload, log)
+}
+
+func refreshDeploymentRoute(ctx context.Context, inv invalidator, payload db.DeploymentRouteChangedPayload, log *slog.Logger) bool {
 	if admission, ok := inv.(interface{ InvalidateWorkloadAdmission(string) }); ok {
 		admission.InvalidateWorkloadAdmission(payload.AppID)
 	}
@@ -1268,17 +1295,17 @@ func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw
 	// cached target is assigned zero but the new target is not cached yet.
 	if err := inv.RefreshLiveTargets(ctx, payload.AppID); err != nil {
 		log.Warn("gatewayd: refresh deployment route targets failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
-		return payload, false
+		return false
 	}
 	if err := inv.RefreshDeploymentWeights(ctx, payload.AppID); err != nil {
 		log.Warn("gatewayd: refresh deployment route weights failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
-		return payload, false
+		return false
 	}
 	if err := refreshPublicRoutingForRoute(ctx, inv, payload.AppID); err != nil {
 		log.Warn("gatewayd: refresh deployment route routing view failed", "app", payload.AppID, "generation", payload.Generation, "err", err)
-		return payload, false
+		return false
 	}
-	return payload, true
+	return true
 }
 
 func ackDeploymentRouteInvalidation(ctx context.Context, pool *pgxpool.Pool, generation int64, node string, log *slog.Logger) {
@@ -1358,6 +1385,10 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 	case db.NotifyFeatureFlagsChanged:
 		if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
 			kills.InvalidateFlagKills()
+		}
+	case db.NotifyAnalyticsCohortsChanged:
+		if cohorts, ok := inv.(interface{ InvalidateFlagCohorts() }); ok {
+			cohorts.InvalidateFlagCohorts()
 		}
 	case db.NotifyTrafficSecurityChanged:
 		if _, err := db.ParseTrafficSecurityChangedPayload(n.Payload); err != nil {
@@ -1839,4 +1870,13 @@ func (r pgRouter) deploymentAliasReserved(ctx context.Context, label string) (bo
 		return false, errors.New("deployment alias reservation reader is unavailable")
 	}
 	return false, nil
+}
+
+// functionRunnerSlots is a function app's runner execution slots for burst
+// scale-out (gateway.App.FunctionRunnerSlots); zero for other apps.
+func functionRunnerSlots(app state.App) int {
+	if app.Type != state.AppTypeFunction || app.Runtime == "" {
+		return 0
+	}
+	return api.FunctionRunnerSlots(app.Manifest.FunctionConcurrency)
 }

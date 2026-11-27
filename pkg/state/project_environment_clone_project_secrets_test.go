@@ -3,7 +3,6 @@ package state_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -11,14 +10,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestMemDurableCloneRefusesProjectSecrets(t *testing.T) {
-	durableCloneRefusesProjectSecrets(t, state.NewMemStore())
+func TestMemDurableCloneCapturesProjectSecrets(t *testing.T) {
+	durableCloneCapturesProjectSecrets(t, state.NewMemStore())
 }
 
-// A durable clone cannot carry shared secrets yet, so its capture refuses a
-// source environment that has any instead of cloning services that would
-// boot without them.
-func durableCloneRefusesProjectSecrets(t *testing.T, s contractTestStore) {
+// A durable clone captures the source environment's shared secrets as sealed
+// envelopes instead of refusing the source (ADR-20261104120000 amendment
+// 2026-11-21).
+func durableCloneCapturesProjectSecrets(t *testing.T, s contractTestStore) {
 	t.Helper()
 	ctx := context.Background()
 	account, project, _, op := cloneBindingFixture(t, s)
@@ -31,7 +30,8 @@ func durableCloneRefusesProjectSecrets(t *testing.T, s contractTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, account.ID, project.ID, lease.Operation.ID, lease.Operation.Revision); !errors.Is(err, state.ErrProjectSecretCloneTransferUnsupported) {
-		t.Fatalf("capture with a shared secret = %v, want ErrProjectSecretCloneTransferUnsupported", err)
+	views, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, account.ID, project.ID, lease.Operation.ID, lease.Operation.Revision)
+	if err != nil || len(views) != 1 {
+		t.Fatalf("capture with a shared secret = %d workloads, %v", len(views), err)
 	}
 }

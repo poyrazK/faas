@@ -2,6 +2,7 @@ from typing import Literal
 
 OperatorRuntimeConfigKind = Literal[
     "boolean",
+    "builder_slots",
     "duration",
     "enum",
     "integer",
@@ -14,6 +15,7 @@ OperatorRuntimeConfigKind = Literal[
 
 OPERATOR_RUNTIME_CONFIG_KIND_VALUES: set[OperatorRuntimeConfigKind] = {
     "boolean",
+    "builder_slots",
     "duration",
     "enum",
     "integer",

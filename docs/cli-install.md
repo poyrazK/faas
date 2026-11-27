@@ -215,7 +215,7 @@ gregale man | man -l -
 
 Persistent non-secret settings are managed with [`gregale config`](cli-config.md):
 `gregale config list`, `gregale config get api-base`, and
-`gregale config set json true`. `FAAS_API` and `FAAS_JSON` remain higher
+`gregale config set json true`. `GREGALE_API_URL` and `FAAS_JSON` remain higher
 precedence for CI and one-off local overrides.
 
 ## Windows

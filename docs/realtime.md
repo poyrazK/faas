@@ -6,21 +6,23 @@ WebSocket or HTTPS Server-Sent Events. This supports job progress, live dashboar
 chat events, and notifications without operating a separate connection server.
 
 Configure the endpoint and authentication before distributing client credentials.
-Keep account credentials on your backend. Scoped publisher credentials can limit
-channels, event types, payload sizes, message TTL, and publishing rate. Worker
-credentials authorize only their configured consumer group and operations.
+Keep account credentials on your backend.
 
-Retained channels support recovery after reconnecting. Consumer groups add leased
-claims, retry policies, dead-letter recovery, and worker health reporting. A worker
-must settle a claim with its current fencing token; use that token to protect
-customer-side writes from a stale worker.
+> **Beta:** realtime endpoints, WebSocket and SSE connections held while your
+> app is parked, authentication and callbacks, the original protocol, live
+> publish, direct and principal send, connection operations and fair-use
+> limits. Beta features are on for every paid plan and may still change.
+>
+> **Preview, released per account:** retained history and the resumable
+> protocol, presence, channel occupancy, subscription tickets, principal
+> access controls, consumer groups and workers, push, publisher credentials,
+> function triggers (`kind: realtime`), the `realtime:` section of
+> `gregale.yaml`, channel rules and the browser and React client. Sections below
+> mark them. Until Gregale releases a preview to your account its API routes
+> answer 404, its frames are ignored and `gregale.yaml` refuses the
+> `realtime:` key.
 
-See the [Node SDK](../sdk/node/README.md), [Python SDK](../sdk/python/README.md),
-and [customer transaction and fencing examples](realtime-customer-examples.md).
-
-Some features on this page are previews: they become available to your account
-when Gregale releases them to it. Until then their API routes answer 404 and
-their frames are ignored.
+See the [Node SDK](../sdk/node/README.md) and [Python SDK](../sdk/python/README.md).
 
 ## Long-lived connections and scale to zero
 
@@ -127,7 +129,16 @@ than 5 seconds is closed with code 1013.
 Check the callback token on every request. Each callback body is JSON with the
 event `type`, `endpoint_id`, `connection_id`, `principal` and, for
 `authorize-channel`, the `channel` and the `permission` asked for: `read` to
-subscribe, `presence` to set presence state or send signals. A grant lasts 30
+subscribe, `presence` to set presence state or send signals. A `message`
+callback carries the frame in `data`, which is always base64 (even for a text
+frame with `"binary": false`), and, for a text frame that is valid UTF-8, the
+same frame as a plain string in `text`:
+
+```json
+{"type":"message","connection_id":"rt_…","binary":false,"data":"eyJoaSI6MX0=","text":"{\"hi\":1}"}
+```
+
+A grant lasts 30
 seconds and is checked again after that while the subscription stays open; a
 401 or 403 then removes the subscription with an `access_revoked` error, and
 any other failure of that check closes the connection with code 1013 so the
@@ -167,6 +178,8 @@ message is at most 1 MiB. The API equivalents are under
 `connections/{connection_id}/close`).
 
 ### Resumable protocol
+
+> **Preview**, released per account: see the top of this page.
 
 The resumable protocol (preview) lets a client subscribe itself and catch up on
 what it missed. It needs an `oidc_jwt` endpoint (or a
@@ -222,6 +235,8 @@ at least once, so deduplicate by `message_id` or `sequence`.
 
 ## Declare endpoints in gregale.yaml
 
+> **Preview**, released per account: see the top of this page.
+
 Name each endpoint with a `slug` and declare it next to your app, so every
 deploy creates it, keeps it in step with the file, and can recreate it in
 another account. This is a preview: until it is enabled for your account, the
@@ -263,6 +278,8 @@ realtime:
 - A failed deploy rolls all of it back.
 
 ### Channel rules
+
+> **Preview**, released per account: see the top of this page.
 
 An endpoint whose clients sign in with tokens (`oidc`, or Gregale Auth) can
 grant channels from the token itself, with no authorize callback, so a
@@ -311,6 +328,9 @@ where realtime holds real capacity on our servers:
   is open. A refused connection gets HTTP 429 with code
   `realtime_connection_limit`, the limit and the number open. Close idle
   connections, share one connection per browser tab, or upgrade the plan.
+- **One client address:** Gregale's edge holds at most 512 open connections
+  from one client IP address on each node, and resets connections past that.
+  Users behind one shared address, such as an office NAT, share those 512.
 - **One node, one account:** an account may hold at most half of a single
   realtime node's connections, so one busy account cannot fill a node. This
   refusal names the per-node limit; retry with backoff, and new connections may
@@ -357,6 +377,8 @@ for each recent hour, per account and per endpoint.
 
 ## Subscription tickets
 
+> **Preview**, released per account: see the top of this page.
+
 A subscription ticket (preview) lets your backend hand a browser or app a
 short-lived credential for named channels without an OIDC provider. Your
 backend is the authority: sign the user in with your own login, decide which
@@ -391,6 +413,8 @@ reconnecting with it gets 401. A connection whose ticket Gregale cannot check
 right now gets 503 with `Retry-After`; retry it.
 
 ## Presence
+
+> **Preview**, released per account: see the top of this page.
 
 Presence shows who is on a channel: every resumable WebSocket subscriber joins
 the channel's presence with an optional JSON state (up to 512 bytes), such as
@@ -432,6 +456,8 @@ With the Node SDK, pass `presence` (initial state), `presenceScope` and
 passed to `onSubscribed` (`updatePresence`).
 
 ## Channel occupancy
+
+> **Preview**, released per account: see the top of this page.
 
 Occupancy tells you how many clients are on a channel right now, for "23
 watching" badges, room sizes or dashboards. It is a preview: until it is
@@ -484,6 +510,8 @@ still works and the client gets an `occupancy_limit` error frame instead.
 
 ## Browser apps and React
 
+> **Preview**, released per account: see the top of this page.
+
 `createRealtimeClient` from the Node SDK runs in the browser. It keeps one
 WebSocket per endpoint, subscribes a channel while something on the page
 watches it, and gives each channel a view with its status, recent messages,
@@ -528,6 +556,8 @@ the same view to any UI library. These features use the
 
 ## Principal access controls preview
 
+> **Preview**, released per account: see the top of this page.
+
 Access controls (preview) cut a user off without finding their sockets, for
 example when they leave a workspace or sign out everywhere. They work on
 `oidc_jwt` endpoints and on subscription tickets; static bearer and
@@ -561,6 +591,8 @@ SDK has `revokeRealtimeChannelAccess`, `restoreRealtimeChannelAccess` and
 `revokeRealtimeSessions`.
 
 ## Function triggers
+
+> **Preview**, released per account: see the top of this page.
 
 A realtime trigger runs one of your functions for each message on a channel, so
 you do not operate always-on workers. It consumes an existing consumer
@@ -678,5 +710,5 @@ triggers:
     config: {endpoint_id: 6f1c2a4e-1d9b-4c7a-9a39-0b8d6f0f4c11, channel: orders, group: billing}
 ```
 
-`gregale trigger add --delivery batch` and `PATCH /v1/triggers/{id}` with
+`gregale trigger create --delivery batch` and `PATCH /v1/triggers/{id}` with
 `{"delivery": "batch"}` set it outside a manifest.

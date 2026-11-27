@@ -107,6 +107,9 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
     if previous_release and previous_release != base:
         raise Refused(f"unit release is built over {base}, but the previous release before {commit} is "
                       f"{previous_release} (N±1); roll it out in full first")
+    if host["base_git_sha"] is None:
+        raise Refused(f"the host has no active release yet (a rebuilt control plane): deploy the full release {base} "
+                      "first")
     if host["base_git_sha"] != base:
         raise Refused(f"host runs full release {host['base_git_sha']}, but this unit release is built over {base}: "
                       "deploy that full release first")
@@ -142,6 +145,35 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
     record_out = None
     if diff["roles"]:
         record_out = {"format_version": host_roles.FORMAT, "kind": KIND_RECORD, "group": GROUP, "commit": commit,
+                      "globals": new["globals"], "order": new["order"], "roles": new["roles"]}
+    return out, record_out
+
+
+def plan_rollback(target, host, new, deps=None, is_ancestor=git_is_ancestor, stateful=None):
+    """Converge the control plane's roles back to target, the host
+    configuration it had before a unit release the post-deploy watch rolled
+    back (docs/adr/20261122170000-continuous-unit-lane.md, "Config
+    rollback"). new is host_roles.group_hashes at target. Only roles whose
+    content differs from the record converge; roles that can restart a
+    stateful service never do (the lane never changed them), and other
+    globals refuse: only a full release converges those."""
+    record, stale = usable_record(host)
+    if record is None:
+        raise Refused(f"cannot converge back: {stale}")
+    current = record.get("commit") or host.get("base_git_sha")
+    if current and current != target and not is_ancestor(target, current):
+        raise Refused(f"cannot converge back to {target}: it is not an ancestor of the converged {current}")
+    diff = host_roles.changed(record, new, deps)
+    if diff["all"]:
+        raise Refused("the record's globals differ from the known-good commit's: deploy a full release")
+    stateful = stateful or {}
+    roles = [r for r in diff["roles"] if r not in stateful]
+    out = {"action": "converge" if roles else "none", "group": GROUP, "commit": target, "previous": "",
+           "roles": roles, "all": False, "reason": "roles back to the known-good host configuration",
+           "guarded": []}
+    record_out = None
+    if roles:
+        record_out = {"format_version": host_roles.FORMAT, "kind": KIND_RECORD, "group": GROUP, "commit": target,
                       "globals": new["globals"], "order": new["order"], "roles": new["roles"]}
     return out, record_out
 
@@ -193,6 +225,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--gate-from", help="deployctl restart-changed --json report: write gate.json")
     ap.add_argument("--full-release", metavar="SHA", help="plan a full release's convergence at this commit")
+    ap.add_argument("--rollback-to", metavar="SHA",
+                    help="plan converging the roles back to this known-good commit (post-deploy watch breach)")
     ap.add_argument("--units-manifest")
     ap.add_argument("--host-state")
     ap.add_argument("--out", required=True)
@@ -225,6 +259,26 @@ def main():
         write_plan(args.out, result, record)
         print(f"plan: full release converges {result['action']}: {', '.join(result['roles']) or '<none>'} "
               f"({result['reason']})", file=sys.stderr)
+        return 0
+    if args.rollback_to:
+        if not args.host_state:
+            ap.error("--host-state is required to plan")
+        with open(args.host_state, encoding="utf-8") as fh:
+            host = json.load(fh)
+        try:
+            with open(args.config, encoding="utf-8") as fh:
+                services = (json.load(fh).get("host_config") or {}).get("stateful_services") or []
+            tree = host_roles.git_tree(args.rollback_to, args.repo)
+            new = host_roles.group_hashes(tree, GROUP)
+            result, record = plan_rollback(args.rollback_to, host, new, host_roles.notify_targets(tree, new["order"]),
+                                           lambda a, d: git_is_ancestor(a, d, args.repo),
+                                           host_roles.restart_roles(tree, GROUP, services))
+        except (Refused, RuntimeError, ValueError, KeyError) as err:
+            print(f"plan_host_config: refused: {err}", file=sys.stderr)
+            return 1
+        write_plan(args.out, result, record)
+        print(f"plan: host config back to {args.rollback_to[:12]}: {', '.join(result['roles']) or '<none>'}",
+              file=sys.stderr)
         return 0
     if not args.units_manifest or not args.host_state:
         ap.error("--units-manifest and --host-state are required to plan")

@@ -79,6 +79,7 @@ Commands:
   github        GitHub delivery + Check Run recovery and legacy webhook secrets (status|retry-delivery|retry-check|webhook-secret)
   status        Publish incidents and maintenance (status incident|maintenance ...)
   release-acceptance  Mint and revoke short-lived production acceptance credentials
+  journey-fixture  Mint and revoke short-lived keys of the Free/Hobby journey fixture accounts
   promotion-rollout  Inspect readiness and manage signed promotion rollout approvals
   version      Print the CLI version
   completion   Print a shell completion script (bash|zsh|fish|powershell)
@@ -225,6 +226,12 @@ func run(args []string) int {
 		return cmdDatabaseNodes(args[1:])
 	case "release-acceptance":
 		return cmdReleaseAcceptanceDispatch(args[1:])
+	case "journey-fixture":
+		// Plan-specific journey fixture accounts (tests/journeys).
+		return cmdJourneyFixtureDispatch(args[1:])
+	case "unit-smoke":
+		// The unit lane's smoke account and key (ADR-20261122170000).
+		return cmdUnitSmokeDispatch(args[1:])
 	case dispatchOperatorAuth:
 		// Password + TOTP session used by strict provider mutations.
 		return cmdOperatorAuthDispatch(args[1:])

@@ -271,14 +271,14 @@ const builderCPUMax = "200000 100000"
 // writeBuildCgroup applies the dedicated builder VM fence. Build VMs are
 // fixed at 2 vCPU / 2048 MiB by the build contract, so their CPU quota is
 // independent of the owning account's tenant plan quota.
-func writeBuildCgroup(instance string, planMB int) error {
+func writeBuildCgroup(parent, instance string, planMB int) error {
 	if planMB < 1 {
 		return fmt.Errorf("fcvm: cgroup: builder planMB %d < 1", planMB)
 	}
-	if err := ensureSubtreeControllers(filepath.Join(cgroupRoot, BuilderCgroupParent), perInstanceControllers); err != nil {
+	if err := ensureSubtreeControllers(filepath.Join(cgroupRoot, parent), perInstanceControllers); err != nil {
 		return err
 	}
-	scope := filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(instance))
+	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
 	if err := writeMemoryMaxAt(scope, api.BuilderMemoryMaxMB(planMB)); err != nil {
 		return err
 	}
@@ -318,7 +318,7 @@ func writeMemoryMaxTo(scope string, planMB int) error {
 // the widened limit used while a full snapshot is written, both in MiB.
 func snapshotMemoryLimits(l Lease) (scope string, ordinaryMB, widenedMB int) {
 	if l.IsBuilder {
-		return filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance)),
+		return filepath.Join(cgroupRoot, builderCgroupParent(l), PerInstanceScope(l.Instance)),
 			api.BuilderMemoryMaxMB(l.MemoryMaxMiB), api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
 	}
 	return filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance)),

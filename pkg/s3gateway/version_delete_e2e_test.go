@@ -72,14 +72,14 @@ func (p *versionDeleteHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r 
 		next := end < len(ids)
 		_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>%t</IsTruncated>`, next)
 		if next {
-			_, _ = fmt.Fprintf(w, `<NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>%s</NextVersionIdMarker>`, url.PathEscape(publicVersionTestKey), ids[end-1])
+			_, _ = fmt.Fprintf(w, `<NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>%s</NextVersionIdMarker>`, url.QueryEscape(publicVersionTestKey), ids[end-1])
 		}
 		for _, id := range ids[start:end] {
 			latest := id == "private-marker" || p.gone["private-marker"] && id == publicVersionNativeNew || p.gone["private-marker"] && p.gone[publicVersionNativeNew] && id == publicVersionNativeOld
 			if id == "private-marker" {
-				_, _ = fmt.Fprintf(w, `<DeleteMarker><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%t</IsLatest><LastModified>2026-10-02T10:00:00Z</LastModified></DeleteMarker>`, url.PathEscape(publicVersionTestKey), id, latest)
+				_, _ = fmt.Fprintf(w, `<DeleteMarker><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%t</IsLatest><LastModified>2026-10-02T10:00:00Z</LastModified></DeleteMarker>`, url.QueryEscape(publicVersionTestKey), id, latest)
 			} else {
-				_, _ = fmt.Fprintf(w, `<Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%t</IsLatest><Size>8</Size><ETag>&quot;etag&quot;</ETag><LastModified>2026-10-02T09:00:00Z</LastModified></Version>`, url.PathEscape(publicVersionTestKey), id, latest)
+				_, _ = fmt.Fprintf(w, `<Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%t</IsLatest><Size>8</Size><ETag>&quot;etag&quot;</ETag><LastModified>2026-10-02T09:00:00Z</LastModified></Version>`, url.QueryEscape(publicVersionTestKey), id, latest)
 			}
 		}
 		_, _ = io.WriteString(w, `</ListVersionsResult>`)

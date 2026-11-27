@@ -329,7 +329,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmPoolNotAllowed,
 				"Warm-pool capacity is not allowed on this plan",
-				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		effectiveMaxConcurrency := app.MaxConcurrency
 		if req.MaxConcurrency != nil {
@@ -406,8 +406,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		dirty := false
 		for _, raw := range *req.EgressAllowlist {
 			prefix, err := netip.ParsePrefix(raw)
-			if err != nil || prefix.Bits() == 0 {
-				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
+			if err != nil {
+				return api.ErrInvalidEgressAllowlist(raw, err)
+			}
+			if prefix.Bits() == 0 {
+				// "parse failed" for a valid CIDR read as a typo (prod
+				// hunt r58). /0 is every address: no allowlist at all.
+				return api.ErrInvalidEgressAllowlist(raw, errors.New("a /0 entry allows every address; `gregale app <slug> egress-allowlist clear` removes the allowlist instead"))
 			}
 			// Allowlisted destinations skip the SMTP block, the port
 			// policy and the DNS gate, so 0.0.0.0/1 plus 128.0.0.0/1
@@ -438,6 +443,15 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				// silently produces `::/24` instead of `1.2.3.0/24`.
 				prefix = netip.PrefixFrom(prefix.Masked().Addr().Unmap(), v4Bits).Masked()
 				dirty = true
+			}
+			// A range apps can never reach (RFC1918, link-local and the
+			// rest of the platform denylist) was saved and reported as
+			// "updated", though no allowlist opens it (prod hunt r58:
+			// 10.0.0.0/8). Only new entries are refused, so an app that
+			// already holds one can still change its list. Held entries
+			// compare masked: 10.0.0.1/8 resubmits the stored 10.0.0.0/8.
+			if blocked, ok := egressAllowlistBlockedRange(prefix); ok && !slices.ContainsFunc(app.EgressAllowlist, func(h netip.Prefix) bool { return h.Masked() == prefix.Masked() }) {
+				return api.ErrInvalidEgressAllowlist(raw, fmt.Errorf("it is inside %s, which apps can never reach; an allowlist entry does not open it (see https://gregale.dev/docs/egress-denylist)", blocked))
 			}
 			key := prefix.String()
 			if _, ok := seen[key]; ok {
@@ -475,7 +489,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanScaleUpNotAllowed,
 				"Autoscale target RPS is not allowed on this plan",
-				"Free tier does not support per-app autoscaling; upgrade to Hobby or higher.")
+				"Free tier does not support per-app autoscaling; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		// 0 is the explicit-disable form (the Set bit is set, so
 		// the column gets overwritten to 0). Negative values are
@@ -492,7 +506,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanScaleUpNotAllowed,
 				"Autoscale target CPU%% is not allowed on this plan",
-				"Autoscale target CPU%% requires Pro or Scale; upgrade to a paid tier.")
+				"Autoscale target CPU%% requires Pro or Scale; upgrade to a paid tier.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		// 0 is the explicit-disable form; values outside [1, 100]
 		// are invalid (PG CHECK enforces this as a second-layer
@@ -517,7 +531,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanStreamingNotAllowed,
 				"Streaming responses are not allowed on this plan",
-				"Free tier does not support per-app streaming; upgrade to Hobby or higher.")
+				"Free tier does not support per-app streaming; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge flag.
@@ -533,7 +547,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWebSocketNotAllowed,
 				"WebSocket / Upgrade traffic is not allowed on this plan",
-				"Free tier does not support per-app WebSocket; upgrade to Hobby or higher.")
+				"Free tier does not support per-app WebSocket; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// ADR-093: per-route observability opt-in. Same plan-gate
@@ -551,7 +565,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanRouteMetricsNotAllowed,
 				"Per-route metrics are not allowed on this plan",
-				"Free tier does not support per-route observability; upgrade to Hobby or higher.")
+				"Free tier does not support per-route observability; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Only-allow-declared-routes is deliberately plan-agnostic: the gateway
@@ -595,7 +609,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmSnapshotNotAllowed,
 				"Warm-tier snapshots are not allowed on this plan",
-				"Free and Hobby tiers do not support per-app warm snapshots; upgrade to Pro or higher.")
+				"Free and Hobby tiers do not support per-app warm snapshots; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	// Issue #560: per-app require_authn opt-in. Same plan-gate
@@ -613,7 +627,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusForbidden,
 				api.CodePlanRequireAuthnNotAllowed,
 				"Per-deployment authentication is not allowed on this plan",
-				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
+				"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 	}
 	if req.ConsumerAuthMode != nil {
@@ -659,7 +673,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusUnprocessableEntity,
 				api.CodeInvalidWarmSnapshotMinRequests,
 				"Invalid warm_snapshot_min_requests",
-				fmt.Sprintf("warm_snapshot_min_requests must be in [1, 100]; got %d", v))
+				fmt.Sprintf("warm_snapshot_min_requests must be in [1, 100]; got %d", v)).WithDocs("https://gregale.dev/docs/scale-to-zero#warm-snapshots-opt-in-pro-and-scale")
 		}
 	}
 	if req.WarmSnapshotMinMs != nil {
@@ -668,7 +682,7 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			return api.NewProblem(http.StatusUnprocessableEntity,
 				api.CodeInvalidWarmSnapshotMinMs,
 				"Invalid warm_snapshot_min_ms",
-				fmt.Sprintf("warm_snapshot_min_ms must be in [100, 60000]; got %d", v))
+				fmt.Sprintf("warm_snapshot_min_ms must be in [100, 60000]; got %d", v)).WithDocs("https://gregale.dev/docs/scale-to-zero#warm-snapshots-opt-in-pro-and-scale")
 		}
 	}
 	// Issue #475: per-app eviction_priority tier. The validation
@@ -1030,6 +1044,18 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 	return nil
 }
 
+// egressAllowlistBlockedRange reports the platform deny range that holds
+// every address of p, if any.
+func egressAllowlistBlockedRange(p netip.Prefix) (netip.Prefix, bool) {
+	for _, cidr := range api.TenantEgressDenyCIDRs {
+		d := netip.MustParsePrefix(cidr)
+		if d.Addr().Is4() == p.Addr().Is4() && d.Bits() <= p.Bits() && d.Contains(p.Addr()) {
+			return d, true
+		}
+	}
+	return netip.Prefix{}, false
+}
+
 // errOrZero shapes the error message in api.ErrInvalidEgressAllowlist.
 // When ParsePrefix fails err is non-nil; the v4 / zero-bits branches
 // fire without one, so we synthesise a stable suffix instead of
@@ -1103,6 +1129,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	req, decodeErr := httpkit.DecodeUpdateAppRequest(r)
 	if decodeErr != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
+		return
+	}
+	if state.IsAPISandbox(app) && (req.EgressAllowlist != nil || req.EgressPorts != nil) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Sandbox egress is fixed", "API sandboxes restrict outbound traffic to their dedicated database binding"))
 		return
 	}
 	if problem := s.appUpdateSettingsProblem(r, acct, app, req); problem != nil {
@@ -1203,7 +1233,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	limits := api.MustLimitsFor(acct.Plan)
 	ram, mc := app.RAMMB, app.MaxConcurrency
 	if req.RAMMB != nil {
-		if *req.RAMMB <= 0 {
+		if *req.RAMMB < api.AppMinRAMMB {
 			api.WriteProblem(w, api.ErrInvalidAppRAM(*req.RAMMB))
 			return
 		}
@@ -2133,11 +2163,15 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 		if len(buckets) != 0 {
-			api.WriteProblem(w, api.NewProblem(409, "app_has_buckets", "Conflict", "Delete this app's object storage buckets before deleting the app."))
+			api.WriteProblem(w, appHasBucketsProblem(app.Slug, buckets))
 			return
 		}
 	}
 	if problem := s.appPostgresBindingsProblem(r.Context(), app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := s.appBorrowedBindingsProblem(r.Context(), app); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -2514,7 +2548,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
-			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+			api.WriteProblem(w, s.trafficChangeDuringCanaryProblem(guardCtx, app))
 		case errors.As(err, &limitErr):
 			api.WriteProblem(w, api.ErrTrafficSplitReleaseLimit(limitErr.Limit, limitErr.Requested))
 		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
@@ -2798,7 +2832,7 @@ func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
-		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale release traffic rollback %s --to %s", appSlug, split.earlier)).
 		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
@@ -3021,22 +3055,26 @@ func (s *server) verifyRollbackTargetArtifact(ctx context.Context, target state.
 	if strings.TrimSpace(target.RootfsKey) == "" {
 		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q has no immutable rootfs artifact key", target.ID))
 	}
+	return s.verifyRollbackArtifact(ctx, target.ID, target.RootfsKey)
+}
+
+func (s *server) verifyRollbackArtifact(ctx context.Context, deploymentID, storageKey string) *api.Problem {
 	if s.rollbackArtifactVerifier == nil {
 		return customerCapacityProblem(s.log, "verify rollback target", "Deployment temporarily unavailable",
 			"Gregale could not verify this deployment right now.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	err := s.rollbackArtifactVerifier.CheckPresent(ctx, target.RootfsKey, "sigs/"+target.RootfsKey+".sig")
+	err := s.rollbackArtifactVerifier.CheckPresent(ctx, storageKey, "sigs/"+storageKey+".sig")
 	if err == nil {
 		return nil
 	}
 	s.log.Warn("rollback artifact verification failed",
-		"deployment", target.ID,
-		"rootfs_key", target.RootfsKey,
+		"deployment", deploymentID,
+		"rootfs_key", storageKey,
 		"err", err)
 	var problem *api.Problem
 	if artifactstorage.IsNotFound(err) || (errors.As(err, &problem) && problem.Code == api.CodeSigInvalid) {
-		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", target.ID))
+		return api.ErrRollbackTargetUnavailable(fmt.Sprintf("deployment %q does not have an accessible, attested cold-boot rootfs", deploymentID))
 	}
 	return api.ErrCapacity("could not verify rollback target artifact").WithHeader("Retry-After", "5")
 }
@@ -3524,6 +3562,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
+	if problem := s.blockedAppNameProblem(acct.ID, req.NewSlug); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	// Route rules name their target by slug, and host rules may name the
 	// app's platform hostname: fence their hosts, rename, and point them at
 	// the new slug and hostname before the fence lifts (ADR-091 amendments
@@ -3791,6 +3833,8 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			var pending *claimPendingError
 			if errors.As(err, &pending) {
 				problem.Hint = pending.hint()
+			} else if hint := ownDomainHolderHint(r.Context(), s.store, acct.ID, domain); hint != "" {
+				problem.Detail, problem.Hint = hint, hint
 			}
 			api.WriteProblem(w, problem)
 			return
@@ -4435,6 +4479,16 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if detail, rem, ok := onDemandTLSAdvice(d, obs); ok {
 		tlsDetail, tlsRem = detail, rem
 	}
+	// No certificate is issued, on demand or otherwise, until the
+	// _faas-verify TXT record has been seen. The doctor checked only the
+	// CNAME and promised a certificate "once the domain resolves", so a
+	// customer who skipped the TXT record waited forever (prod hunt
+	// 2026-11-21).
+	if !d.Verified() && d.ChallengeToken != "" && (obs.CertState == "" || obs.CertState == "none" || obs.CertState == certStatusPending) {
+		tlsStatus, report.Healthy = probePending, false
+		tlsDetail = "ownership not verified: the _faas-verify TXT record has not been seen, and no certificate is issued until it is"
+		tlsRem = fmt.Sprintf("Publish TXT _faas-verify.%s with the value %s.", d.Domain, d.ChallengeToken)
+	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
 		Name: "tls_certificate", Status: string(tlsStatus), Detail: tlsDetail,
 		Remediation: tlsRem, CheckedAt: obs.CertCheckedAt.UTC().Format(time.RFC3339),
@@ -4630,6 +4684,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
 	}
+	commitBudget, answered := s.chargeAgentBudget(w, r, acct.Plan, 0,
+		cronStandingMillicents(app, acct.Plan, req.Schedule, timezone, enabled, cronCommand, commandTimeoutSeconds, time.Now().UTC()))
+	if answered {
+		return
+	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
 		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
@@ -4651,6 +4710,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		}
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"created","app_id":"`+app.ID+`"}`)
 	s.log.Info("cron created", "cron", c.ID, "app", app.ID, "account", acct.ID)
 	// IAM-4 (issue #291): record the cron schedule so a stolen CI
@@ -4837,6 +4897,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Timezone != nil {
 		timezonePatch = &timezone
 	}
+	commitBudget, answered := s.chargeCronUpdate(w, r, acct.Plan, app, c, req, timezonePatch)
+	if answered {
+		return
+	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
 	if errors.Is(err, state.ErrConflict) {
 		api.WriteProblem(w, api.ErrCronConflict())
@@ -4846,6 +4910,7 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"updated","cron":"`+id+`"}`)
 	// IAM-4 (issue #291): record what changed and to what. We
 	// capture only the fields the caller actually sent (req.X != nil)
@@ -6947,7 +7012,7 @@ func (s *server) decoratedDeploymentResponse(parent context.Context, d state.Dep
 		if profileLoaded {
 			bp.Framework = buildPlanFramework(profile.Framework)
 			bp.Version = profile.FrameworkVer
-			bp.Entrypoint = profile.StartCommand
+			bp.Entrypoint = frameworkprofile.DeployedStartCommand(profile)
 			bp.Port = profile.Port
 			bp.HealthPath = profile.HealthPath
 			bp.ConfigFile = profile.ConfigFile
@@ -7719,7 +7784,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode, overage)
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode, s.managedPostgresHistoryMode, overage)
 			out.ManagedPostgres = &view
 		}
 	}

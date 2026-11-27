@@ -50,7 +50,7 @@ func (p *nativeJailInputsFixture) Close() error {
 	}
 	return err
 }
-func (b *nativeJailBackendFixture) Prepare(_ context.Context, owner nativeLaunchRecord, root string, _ nativeTunSource) (nativeJailDeviceInputs, error) {
+func (b *nativeJailBackendFixture) Prepare(_ context.Context, owner nativeLaunchRecord, root string, source nativeTunSource) (nativeJailDeviceInputs, error) {
 	if b.beforePrepare != nil {
 		b.beforePrepare()
 	}
@@ -61,7 +61,13 @@ func (b *nativeJailBackendFixture) Prepare(_ context.Context, owner nativeLaunch
 	identities := []*jailsetup.DeviceFDIdentity{&s.Root, &s.Namespace, &s.PIDHandle, &s.Tun}
 	p := &nativeJailInputsFixture{backend: b}
 	for i := range identities {
-		file, err := os.CreateTemp(filepath.Dir(root), "device-input-")
+		var file *os.File
+		var err error
+		if owner.Lease.Networkless && i == 3 {
+			file, err = openNativeJournalFile(p.files[0].Name(), os.O_RDONLY)
+		} else {
+			file, err = os.CreateTemp(filepath.Dir(root), "device-input-")
+		}
 		if err != nil {
 			_ = p.Close()
 			return nil, err
@@ -75,6 +81,12 @@ func (b *nativeJailBackendFixture) Prepare(_ context.Context, owner nativeLaunch
 		stat := info.Sys().(*syscall.Stat_t)
 		*identities[i] = jailsetup.DeviceFDIdentity{Device: uint64(stat.Dev), Inode: stat.Ino}
 		s.ParentFDs[i] = int(file.Fd())
+	}
+	if owner.Lease.Networkless {
+		if source != (nativeTunSource{}) {
+			return nil, errors.Join(errors.New("fixture: networkless TUN source"), p.Close())
+		}
+		s.Version, s.TunMountID, s.TunMode = 2, s.RootMountID, 0
 	}
 	p.scope = s
 	b.files = append(b.files, p.files...)
@@ -456,5 +468,39 @@ func TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch(
 				t.Fatalf("holder bypassed the namespace proof: %v", err)
 			}
 		})
+	}
+}
+
+// adr: 20261114010000 — KVM-only launch keeps the original native device ownership fences.
+func TestNativeJailDeviceNetworklessScopeCannotBorrowTUNAuthority(t *testing.T) {
+	j, owner, _, _ := nativeJailDeviceFixture(t)
+	owner.Lease.Networkless = true
+	if err := j.owner.write(owner); err != nil {
+		t.Fatal(err)
+	}
+	cmd, _ := nativeJailFixtureCommand(t)
+	var output nativeHostHelperOutput
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := j.run(t.Context(), owner, cmd, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.confirmDeviceReceipt(t.Context(), owner, output.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.requireDeviceReady(owner); err != nil {
+		t.Fatal(err)
+	}
+	records, err := j.records(owner)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("KVM-only journal: %v %d", err, len(records))
+	}
+	frame := records[0]
+	if frame.JailDevice.Scope.Version != 2 || frame.JailDevice.Receipt.TunAccessible || frame.JailDevice.Receipt.TunMountID != 0 {
+		t.Fatal("networkless helper gained TUN")
+	}
+	owner.Lease.Networkless = false
+	frame.Launch.Lease.Networkless = false
+	if err := frame.validate(owner); err == nil {
+		t.Fatal("networked owner borrowed a KVM-only receipt")
 	}
 }

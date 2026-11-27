@@ -21,18 +21,20 @@ func databaseSwitchFromRow(r sqlc.ReleaseDatabaseSwitch) DatabaseSwitch {
 		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), Scope: r.Scope,
 		FromDeploymentID: dbSwitchUUID(r.FromDeploymentID), TargetDeploymentID: pgUUIDString(r.TargetDeploymentID),
 		UndoneDeploymentIDs: pgUUIDStrings(r.UndoneDeploymentIds), SourceDatabaseID: pgUUIDString(r.SourceDatabaseID),
-		TargetDatabaseID: dbSwitchUUID(r.TargetDatabaseID), TargetName: r.TargetName, RestorePoint: r.RestorePoint.Time.UTC(),
+		TargetDatabaseID: dbSwitchUUID(r.TargetDatabaseID), TargetName: r.TargetName, RestorePoint: r.RestorePoint.Time.UTC(), MigrationOperationID: dbSwitchUUID(r.MigrationOperationID),
 		CutoverID: dbSwitchUUID(r.CutoverID), Phase: r.Phase, FailureCode: r.FailureCode, FailureDetail: r.FailureDetail,
 		RequestedBy: r.RequestedBy, CancelRequestedAt: dbSwitchTime(r.CancelRequestedAt), FencedAt: dbSwitchTime(r.FencedAt),
 		DrainRequestedAt: dbSwitchTime(r.DrainRequestedAt), ReleaseSwitchedAt: dbSwitchTime(r.ReleaseSwitchedAt),
 		ActivatedAt: dbSwitchTime(r.ActivatedAt), FinishedAt: dbSwitchTime(r.FinishedAt), PhaseStartedAt: r.PhaseStartedAt.Time.UTC(),
 		Drain:        DatabaseSwitchDrain{Retired: int(r.DrainRetired), Parked: int(r.DrainParked), Pending: int(r.DrainPending), Blocked: int(r.DrainBlocked)},
-		AttemptCount: int(r.AttemptCount), LastErrorCode: r.LastErrorCode, LeaseUntil: dbSwitchTime(r.LeaseUntil),
+		AttemptCount: int(r.AttemptCount), LastErrorCode: r.LastErrorCode,
 		RetryAt: r.RetryAt.Time.UTC(), CreatedAt: r.CreatedAt.Time.UTC(), UpdatedAt: r.UpdatedAt.Time.UTC(),
 	}
-	if r.LeaseToken.Valid {
-		sw.LeaseToken = r.LeaseToken.String
+	token, until := r.LeaseToken, r.LeaseUntil
+	if r.MigrationOperationID.Valid {
+		token, until = r.MigrationLeaseToken, r.MigrationLeaseUntil
 	}
+	sw.LeaseToken, sw.LeaseUntil = token.String, dbSwitchTime(until)
 	return sw
 }
 
@@ -80,12 +82,20 @@ func (s *PgStore) CreateDatabaseSwitch(ctx context.Context, sw DatabaseSwitch) (
 	if now.IsZero() {
 		now = time.Now()
 	}
+	var restorePoint pgtype.Timestamptz
+	var target pgtype.UUID
+	if sw.MigrationOperationID == "" {
+		restorePoint = pgTimestamptzUTC(sw.RestorePoint)
+	} else {
+		target = dbSwitchNullUUID(sw.TargetDatabaseID)
+	}
 	row, err := sqlc.New().InsertReleaseDatabaseSwitch(ctx, s.pool, sqlc.InsertReleaseDatabaseSwitchParams{
 		ID: mustPgUUID(sw.ID), AccountID: mustPgUUID(sw.AccountID), AppID: mustPgUUID(sw.AppID),
 		Scope: normalizedDeploymentScope(sw.Scope), FromDeploymentID: dbSwitchNullUUID(sw.FromDeploymentID),
 		TargetDeploymentID: mustPgUUID(sw.TargetDeploymentID), UndoneDeploymentIds: pgUUIDList(sw.UndoneDeploymentIDs),
 		SourceDatabaseID: mustPgUUID(sw.SourceDatabaseID), TargetName: sw.TargetName,
-		RestorePoint: pgTimestamptzUTC(sw.RestorePoint), RequestedBy: sw.RequestedBy, Now: pgTimestamptzUTC(now),
+		RestorePoint: restorePoint, TargetDatabaseID: target, MigrationOperationID: dbSwitchNullUUID(sw.MigrationOperationID),
+		RequestedBy: sw.RequestedBy, Now: pgTimestamptzUTC(now),
 		MaxActive: api.DatabaseSwitchesActivePerAccount,
 	})
 	if err != nil {
@@ -114,12 +124,12 @@ func (s *PgStore) DatabaseSwitch(ctx context.Context, accountID, id string) (Dat
 	return databaseSwitchFromRow(row), nil
 }
 
-func (s *PgStore) ListDatabaseSwitches(ctx context.Context, accountID, appID string, limit int) ([]DatabaseSwitch, error) {
+func (s *PgStore) ListDatabaseSwitches(ctx context.Context, accountID, appID string, migration bool, limit int) ([]DatabaseSwitch, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
 	rows, err := sqlc.New().ListReleaseDatabaseSwitches(ctx, s.pool, sqlc.ListReleaseDatabaseSwitchesParams{
-		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), MaxRows: int32(limit)}) //nolint:gosec // bounded above
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Migration: migration, MaxRows: int32(limit)}) //nolint:gosec // bounded above
 	if err != nil {
 		return nil, mapErr(err)
 	}

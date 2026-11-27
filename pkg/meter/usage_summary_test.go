@@ -97,9 +97,38 @@ func TestBuildAppWindowSummary_FiltersToOneApp(t *testing.T) {
 	if sum.GBHours <= 0 || sum.GBHours >= 1 {
 		t.Errorf("GBHours = %v, want ~0.0008 (3072 mb-s in one hour)", sum.GBHours)
 	}
-	// BuilderSeconds = CPUHours(3_000_000) * 3600 = (3M / 3.6B) * 3600 ≈ 3.0
-	if sum.BuilderSeconds < 2.99 || sum.BuilderSeconds > 3.01 {
-		t.Errorf("BuilderSeconds = %v, want ~3.0 (3M µs = 3 CPU-seconds)", sum.BuilderSeconds)
+	// Instance CPU time is not builder time (ADR-20261121231500): a store
+	// without builder usage reports none.
+	if sum.BuilderSeconds != 0 {
+		t.Errorf("BuilderSeconds = %v, want 0 from instance CPU time", sum.BuilderSeconds)
+	}
+}
+
+// builderStubStore adds builder usage to stubStore.
+type builderStubStore struct {
+	stubStore
+	seconds   int64
+	gotApp    string
+	gotWindow [2]time.Time
+}
+
+func (s *builderStubStore) AppBuilderSeconds(_ context.Context, appID string, since, until time.Time) (int64, error) {
+	s.gotApp, s.gotWindow = appID, [2]time.Time{since, until}
+	return s.seconds, nil
+}
+
+func TestBuildAppWindowSummary_BuilderSecondsFromBuilds(t *testing.T) {
+	now := time.Now().UTC()
+	store := &builderStubStore{stubStore: stubStore{rows: []state.Usage{{AppID: "app-1", MBSeconds: 1024, CPUUsec: 9_000_000}}}, seconds: 420}
+	sum, _, err := BuildAppWindowSummary(context.Background(), store, "acct-1", "app-1", now.Add(-time.Hour), now)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if sum.BuilderSeconds != 420 {
+		t.Errorf("BuilderSeconds = %v, want 420 from the app's builds", sum.BuilderSeconds)
+	}
+	if store.gotApp != "app-1" || !store.gotWindow[0].Equal(now.Add(-time.Hour)) || !store.gotWindow[1].Equal(now) {
+		t.Errorf("builder read = %q %v, want app-1 over the summary window", store.gotApp, store.gotWindow)
 	}
 }
 

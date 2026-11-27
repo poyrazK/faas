@@ -17,6 +17,8 @@ func writeNodeAdmissionRefusal(w http.ResponseWriter, r *http.Request, err error
 		return false
 	}
 	if p.Code == api.CodeConcurrencyThrottled {
+		markNodeBusy(r.Context())
+		markCapacityRefused(r)
 		recordTrafficRefusal(r.Context(), "node_capacity")
 		p.Title = "App busy"
 		p.Detail = "This app is handling its current request limit. Retry shortly."

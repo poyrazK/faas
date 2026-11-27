@@ -62,6 +62,9 @@ func (p *RuntimeSnapshotPublisher) PublishRuntimeSnapshot(ctx context.Context, p
 	if err := ctx.Err(); err != nil {
 		return RuntimeSnapshot{}, err
 	}
+	if publication.Identity.FormatVersion != 1 {
+		return RuntimeSnapshot{}, ErrRuntimeSnapshotUnsupported
+	}
 	if err := publication.Identity.Validate(); err != nil {
 		return RuntimeSnapshot{}, err
 	}
@@ -150,6 +153,7 @@ func (p *RuntimeSnapshotPublisher) PublishRuntimeSnapshot(ctx context.Context, p
 	}
 
 	record := state.RuntimeSnapshotRecord{
+		FCVersion:           entry.Identity.FCVersion,
 		Profile:             entry.Identity.Profile,
 		CatalogKey:          catalogKey,
 		Runtime:             entry.Identity.Runtime,

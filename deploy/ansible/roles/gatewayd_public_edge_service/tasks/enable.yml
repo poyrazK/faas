@@ -13,12 +13,49 @@
   ansible.builtin.set_fact:
     faas_cloudflared_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
 
+# ADR-20261102081618 step 6: public_edge.entry direct has left the tunnel, so
+# the node runs no connector. Remove one an earlier converge installed, and
+# its token; a node that never had it has nothing to remove.
+- name: gatewayd_public_edge_service — inspect the retired connector unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/faas-cloudflared.service
+  register: faas_cloudflared_unit
+  when: not (faas_edge_tunnel | bool)
+
+- name: gatewayd_public_edge_service — stop and disable the retired connector
+  ansible.builtin.systemd_service:
+    name: faas-cloudflared.service
+    enabled: false
+    state: stopped
+  when:
+    - not (faas_edge_tunnel | bool)
+    - faas_cloudflared_unit.stat.exists
+
+- name: gatewayd_public_edge_service — remove the retired connector and its token
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/faas-cloudflared.service
+    - "{{ faas_cloudflared_token_path }}"
+    - "{{ faas_cloudflared_install_dir }}"
+  register: faas_cloudflared_removed
+  when: not (faas_edge_tunnel | bool)
+
+- name: gatewayd_public_edge_service — reload systemd after removing the connector  # noqa: no-handler (removal must be visible before the units below start)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - not (faas_edge_tunnel | bool)
+    - faas_cloudflared_removed.changed
+
 - name: gatewayd_public_edge_service — create the connector user
   ansible.builtin.user:
     name: cloudflared
     system: true
     shell: /usr/sbin/nologin
     create_home: false
+  when: faas_edge_tunnel | bool
 
 - name: gatewayd_public_edge_service — create the connector install directory
   ansible.builtin.file:
@@ -27,6 +64,7 @@
     owner: root
     group: root
     mode: "0755"
+  when: faas_edge_tunnel | bool
 
 - name: gatewayd_public_edge_service — download the pinned connector
   notify: restart faas-cloudflared
@@ -37,6 +75,7 @@
     owner: root
     group: root
     mode: "0755"
+  when: faas_edge_tunnel | bool
 
 - name: gatewayd_public_edge_service — create the token directory
   ansible.builtin.file:
@@ -45,6 +84,7 @@
     owner: root
     group: root
     mode: "0700"
+  when: faas_edge_tunnel | bool
 
 - name: gatewayd_public_edge_service — install the connector unit
   notify: restart faas-cloudflared
@@ -54,6 +94,10 @@
     owner: root
     group: root
     mode: "0644"
+  when: faas_edge_tunnel | bool
+
+- name: gatewayd_public_edge_service — install the reload-or-restart helper
+  ansible.builtin.include_tasks: ../../_shared/tasks/reload_or_restart_helper.yml
 
 - name: gatewayd_public_edge_service — install the edge unit and socket
   notify: restart faas-gatewayd-public-edge
@@ -97,7 +141,7 @@
     fail_msg: >-
       faas_edge_public_front is {{ faas_edge_public_front }}; want cloudflare
       or none (ADR-20261103163954).
-  when: faas_edge_entry == 'both'
+  when: faas_edge_entry in ['both', 'direct']
 
 - name: gatewayd_public_edge_service — check where the edge's certificate comes from
   ansible.builtin.assert:
@@ -109,7 +153,7 @@
       (want file or database) and faas_edge_public_tls_cert_ca is
       {{ faas_edge_public_tls_cert_ca }} (want letsencrypt or
       letsencrypt-staging) (ADR-20261103163954 §3).
-  when: faas_edge_entry == 'both'
+  when: faas_edge_entry in ['both', 'direct']
 
 # The database source reads no certificate or key file; it needs the
 # edge-tls identity instead.
@@ -121,7 +165,7 @@
        if faas_edge_public_tls_cert_source == 'database'
        else [faas_edge_public_tls_cert, faas_edge_public_tls_key, faas_edge_public_tls_client_ca] }}
   register: faas_edge_public_tls_files
-  when: faas_edge_entry == 'both'
+  when: faas_edge_entry in ['both', 'direct']
 
 - name: gatewayd_public_edge_service — require the direct-entry TLS material
   ansible.builtin.assert:
@@ -135,7 +179,7 @@
       faas_edge_public_tls_cert_source database the edge-tls identity
       (seal_domains role), and the zone's Authenticated Origin Pulls CA
       (ADR-20261102081618 §2, ADR-20261103163954 §2, §3).
-  when: faas_edge_entry == 'both'
+  when: faas_edge_entry in ['both', 'direct']
 
 # ADR-20261107180000: Cloudflare's shared origin-pull certificate is presented
 # for every Cloudflare customer's zone, and Cloudflare ships its CA under the
@@ -147,7 +191,7 @@
   register: faas_edge_public_tls_client_ca_names
   changed_when: false
   check_mode: false
-  when: faas_edge_entry == 'both'
+  when: faas_edge_entry in ['both', 'direct']
 
 - name: gatewayd_public_edge_service — refuse Cloudflare's shared origin-pull CA
   ansible.builtin.assert:
@@ -158,7 +202,7 @@
       CA, which every Cloudflare zone's requests satisfy. Install the zone's own
       origin-pull CA (origin-pull-ca.pem from deploy/scripts/cloudflare-origin-pull.sh
       ca, docs/runbooks/EdgeDirectEntry.md step 1).
-  when: faas_edge_entry == 'both'
+  when: faas_edge_entry in ['both', 'direct']
 
 # ADR-20261103163954 §4: the same pinned Cloudflare ranges as the host
 # firewall, read here so this role does not depend on the nftables role
@@ -168,7 +212,7 @@
     faas_edge_cloudflare_ipv4_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v4.txt').splitlines() }}"
     faas_edge_cloudflare_ipv6_cidrs: "{{ lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v6.txt').splitlines() }}"
   when:
-    - faas_edge_entry == 'both'
+    - faas_edge_entry in ['both', 'direct']
     - (faas_edge_public_front | string | lower) == 'none'
     - faas_cloudflare_origin_only | default(false) | bool
 
@@ -265,17 +309,11 @@
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     enabled: true
-  loop:
-    - faas-gatewayd-public-edge.socket
-    - faas-gatewayd-public-edge.service
-    - faas-cloudflared.service
+  loop: "{{ ['faas-gatewayd-public-edge.socket', 'faas-gatewayd-public-edge.service'] + (['faas-cloudflared.service'] if (faas_edge_tunnel | bool) else []) }}"
 
 - name: gatewayd_public_edge_service — start the edge and the connector
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     state: started
-  loop:
-    - faas-gatewayd-public-edge.socket
-    - faas-gatewayd-public-edge.service
-    - faas-cloudflared.service
+  loop: "{{ ['faas-gatewayd-public-edge.socket', 'faas-gatewayd-public-edge.service'] + (['faas-cloudflared.service'] if (faas_edge_tunnel | bool) else []) }}"
   when: not (faas_join_defer_service_handlers | default(false) | bool)

@@ -3,7 +3,7 @@
 -- name: ListPostReleaseWatchCandidates :many
 -- Completed live releases that kept automatic rollback, finished within the
 -- watch window (plus telemetry grace), are the newest deployment in their
--- scope to have served, and have a superseded predecessor created before them.
+-- scope to have served, and have a predecessor created before them.
 -- Being the newest to have served excludes rollback targets, which are older
 -- than what they replaced. A newer release that never served (staged with no
 -- traffic, parked for its schedule, or still building) leaves the serving
@@ -12,7 +12,8 @@
 -- ends when it completed.
 -- The predecessor is the release a plain rollback returns to
 -- (LatestRetainedRollbackDeployment): the one that served most recently, never
--- a canary candidate aborted before it completed. Ordered by created_at, a
+-- a canary candidate aborted before it completed. Scheduled cutovers retain
+-- their previous release live at zero traffic. Ordered by created_at, a
 -- canary aborted between v1 and v3 (retired as superseded when v3 completed)
 -- or a build superseded before it went live was chosen, so the watch compared
 -- v3 with a release that never served and rolled back to it (release review
@@ -25,7 +26,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
         SELECT p.id FROM deployments AS p
          WHERE p.app_id = d.app_id
            AND COALESCE(NULLIF(p.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
-           AND p.status = 'superseded' AND p.created_at < d.created_at
+           AND p.deleted_at IS NULL AND p.created_at < d.created_at
+           AND (p.status = 'superseded' OR (p.status = 'live' AND p.traffic_percent = 0 AND p.serving_ended_at IS NOT NULL))
            AND NOT (p.canary_total_steps > 0 AND p.rollout_state = 'aborted' AND p.rollout_completed_at IS NULL)
            AND p.last_auto_rollback_reason IS NULL
          ORDER BY COALESCE(p.serving_ended_at, p.created_at) DESC, p.created_at DESC, p.id DESC LIMIT 1) AS pred ON true

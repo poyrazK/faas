@@ -52,6 +52,9 @@ type Host interface {
 	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 	// PublicOrigin is the https origin the sign-up page is served from.
 	PublicOrigin() string
+	// AppHosts are the hosts app answers on now: its platform URL and its
+	// default custom domain (ADR-20261126175800).
+	AppHosts(ctx context.Context, app state.App) []string
 	// ClientIP is the request's client address behind the trusted proxy.
 	ClientIP(r *http.Request) string
 }
@@ -62,7 +65,9 @@ type Host interface {
 type Service struct {
 	Host   Host
 	Stripe *stripeinvoice.Client
-	Now    func() time.Time
+	// UpgradeKey signs upgrade links (ADR-20261124094745); empty mints none.
+	UpgradeKey []byte
+	Now        func() time.Time
 	// Enabled pauses the cleanup worker while it reports false; nil runs it.
 	Enabled func() bool
 
@@ -154,7 +159,8 @@ func (s *Service) settingsResponse(slug string, set state.APIConsumerSignupSetti
 	return api.ConsumerSignupSettingsResponse{App: slug, Enabled: set.Enabled, Provider: set.Provider, PlanIDs: set.PlanIDs,
 		KeyScopes: set.KeyScopes, DisplayName: set.DisplayName, TermsURL: set.TermsURL, ReturnURL: set.ReturnURL,
 		TrialDays: set.TrialDays, DailyLimit: set.DailyLimit, PageURL: s.PageURL(slug), CustomerPlanChanges: set.CustomerPlanChanges,
-		CustomerClosing: set.CustomerClosing, CreatedAt: set.CreatedAt, UpdatedAt: set.UpdatedAt}
+		CustomerClosing: set.CustomerClosing, FreePlanID: set.FreePlanID, OAuthConsumers: set.OAuthConsumers, AccountTools: set.AccountTools, CreatedAt: set.CreatedAt,
+		UpdatedAt: set.UpdatedAt}
 }
 
 func invalid(detail string) *api.Problem {
@@ -166,7 +172,9 @@ func (s *Service) settingsFromRequest(ctx context.Context, acct state.Account, a
 	set := state.APIConsumerSignupSettings{AppID: app.ID, AccountID: acct.ID, Enabled: req.Enabled == nil || *req.Enabled,
 		Provider: strings.TrimSpace(req.Provider), DisplayName: strings.TrimSpace(req.DisplayName), TermsURL: strings.TrimSpace(req.TermsURL),
 		ReturnURL: strings.TrimSpace(req.ReturnURL), TrialDays: req.TrialDays, DailyLimit: req.DailyLimit, KeyScopes: req.KeyScopes,
-		CustomerPlanChanges: req.CustomerPlanChanges, CustomerClosing: req.CustomerClosing}
+		CustomerPlanChanges: req.CustomerPlanChanges, CustomerClosing: req.CustomerClosing,
+		FreePlanID: strings.TrimSpace(req.FreePlanID), OAuthConsumers: req.OAuthConsumers,
+		AccountTools: req.AccountTools}
 	if set.Provider == "" {
 		set.Provider = state.APIConsumerSignupProviderStripe
 	}
@@ -189,6 +197,8 @@ func (s *Service) settingsFromRequest(ctx context.Context, acct state.Account, a
 		return set, invalid("daily_limit must be 1 to 1000")
 	case len(set.KeyScopes) == 0 || len(set.KeyScopes) > state.MaxAPIConsumerSignupScopes:
 		return set, invalid("key_scopes must name 1 to 4 scopes")
+	case set.AccountTools && !set.OAuthConsumers:
+		return set, invalid("account_tools needs oauth_consumers: the tools answer people signed in through the MCP server")
 	}
 	if problem := s.Host.KeyScopesProblem(acct.ID, set.KeyScopes); problem != nil {
 		return set, problem
@@ -209,6 +219,16 @@ func (s *Service) settingsFromRequest(ctx context.Context, acct state.Account, a
 	}
 	if len(set.PlanIDs) > state.MaxAPIConsumerSignupPlans {
 		return set, invalid("plan_ids may name at most 20 plans")
+	}
+	if problem := s.freePlanProblem(ctx, app, set); problem != nil {
+		return set, problem
+	}
+	if offersOnlyFreePlan(set) {
+		// Every offered plan is the card-less free plan: no sign-up ever
+		// reaches Stripe Checkout, so a seller can start selling an MCP server
+		// to signed-in callers before connecting Stripe. Offering a paid plan
+		// later runs this check again.
+		return set, nil
 	}
 	connections, ok := s.Host.Store().(state.StatementInvoiceExportStore)
 	if !ok {
@@ -250,7 +270,9 @@ func (s *Service) PutSettings(w http.ResponseWriter, r *http.Request, acct state
 	}
 	s.Host.Audit(r.Context(), "api_consumer.signup_settings_set", acct.ID, map[string]any{"app_id": app.ID, "enabled": saved.Enabled,
 		"plan_ids": saved.PlanIDs, "key_scopes": saved.KeyScopes, "trial_days": saved.TrialDays, "daily_limit": saved.DailyLimit,
-		"customer_plan_changes": saved.CustomerPlanChanges, "customer_closing": saved.CustomerClosing})
+		"customer_plan_changes": saved.CustomerPlanChanges, "customer_closing": saved.CustomerClosing,
+		"free_plan_id": saved.FreePlanID, "oauth_consumers": saved.OAuthConsumers,
+		"account_tools": saved.AccountTools})
 	httpkit.WriteJSON(w, http.StatusOK, s.settingsResponse(app.Slug, saved))
 }
 

@@ -1,0 +1,13 @@
+{
+  "collected_at": "2026-11-16T22:25:47.379831+00:00",
+  "final_lint_unit": "gregale-pipeline-completion-lint-remaining-20261117.service",
+  "state": "inactive",
+  "properties": [
+    "Result=success",
+    "ExecMainStatus=0",
+    "MemoryPeak=[not set]",
+    "CPUUsageNSec=[not set]"
+  ],
+  "missing_logs": [],
+  "exit_status": "exit=0"
+}

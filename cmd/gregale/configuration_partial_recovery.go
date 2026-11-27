@@ -17,8 +17,8 @@ func printConfigurationPartialError(title string, err error, app, scope, confirm
 		_, _ = fmt.Fprintf(osStderr, "  Confirmed keys: %s\n", compactInspectFailureText(strings.Join(keys, ", ")))
 	}
 	_, _ = fmt.Fprintln(osStderr, "The remaining step was not confirmed. Do not repeat the whole operation just to recover that step.")
-	_, _ = fmt.Fprintf(osStderr, "Review saved secret metadata (POSIX shells):\n  %s secrets list --app %s --scope %s\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
-	command := recoveryCLI() + " inspect " + recoveryArgument(app)
+	_, _ = fmt.Fprintf(osStderr, "Review saved secret metadata (POSIX shells):\n  %s env list --app %s --scope %s\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
+	command := recoveryCLI() + " app health " + recoveryArgument(app) + " --explain"
 	if wakeID != "" {
 		command = recoveryCLI() + " app " + recoveryArgument(app) + " restart status --wake-id " + recoveryArgument(wakeID)
 	}

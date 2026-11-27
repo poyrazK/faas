@@ -214,39 +214,7 @@ func (s *server) collectFleetObservedRoutes(ctx context.Context, appID string) o
 		return unavailableObservedRoutes(len(expected))
 	}
 
-	routeSet := make(map[string]struct{}, len(routeSamples))
-	capHit := false
-	for _, sample := range routeSamples {
-		if _, ok := healthyIDs[strings.TrimSpace(sample.Labels["node_id"])]; !ok {
-			// Ignore stale series from a drained/replaced node and any series
-			// missing the registry identity attached by HTTP-SD.
-			continue
-		}
-		route := strings.TrimSpace(sample.Labels["route"])
-		switch route {
-		case "":
-			continue
-		case observedRoutesOther:
-			capHit = true
-			continue
-		default:
-			routeSet[route] = struct{}{}
-		}
-	}
-	routes := make([]string, 0, len(routeSet)+1)
-	for route := range routeSet {
-		routes = append(routes, route)
-	}
-	sort.Strings(routes)
-	if len(routes) >= api.RouteMetricsPerAppCap {
-		capHit = true
-	}
-	if len(routes) > api.RouteMetricsPerAppCap {
-		routes = routes[:api.RouteMetricsPerAppCap]
-	}
-	if capHit {
-		routes = append(routes, observedRoutesOther)
-	}
+	routes, capHit := mergeObservedRouteSamples(routeSamples, healthyIDs)
 
 	source := api.AppRoutesSourceLive
 	if len(healthyIDs) < len(expected) {
@@ -308,4 +276,45 @@ func (s *server) collectLegacyObservedRoutes(ctx context.Context, appID, slug st
 		CollectorsHealthy:  1,
 		CapHit:             upstream.CapHit,
 	}
+}
+
+// mergeObservedRouteSamples unions the healthy collectors' route series.
+func mergeObservedRouteSamples(routeSamples []promql.VectorSample, healthyIDs map[string]struct{}) ([]string, bool) {
+	routeSet := make(map[string]struct{}, len(routeSamples))
+	// __route_other__ also counts requests that ended without a route label
+	// (a timeout or an OOM), so its presence alone is not the 50-route cap:
+	// an app with 9 routes was told it had hit the cap (prod 2026-11-19).
+	capHit, sawOther := false, false
+	for _, sample := range routeSamples {
+		if _, ok := healthyIDs[strings.TrimSpace(sample.Labels["node_id"])]; !ok {
+			// Ignore stale series from a drained/replaced node and any series
+			// missing the registry identity attached by HTTP-SD.
+			continue
+		}
+		route := strings.TrimSpace(sample.Labels["route"])
+		switch route {
+		case "":
+			continue
+		case observedRoutesOther:
+			sawOther = true
+			continue
+		default:
+			routeSet[route] = struct{}{}
+		}
+	}
+	routes := make([]string, 0, len(routeSet)+1)
+	for route := range routeSet {
+		routes = append(routes, route)
+	}
+	sort.Strings(routes)
+	if len(routes) >= api.RouteMetricsPerAppCap {
+		capHit = true
+	}
+	if len(routes) > api.RouteMetricsPerAppCap {
+		routes = routes[:api.RouteMetricsPerAppCap]
+	}
+	if capHit || sawOther {
+		routes = append(routes, observedRoutesOther)
+	}
+	return routes, capHit
 }

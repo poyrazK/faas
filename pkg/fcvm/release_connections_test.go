@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/connreleaseproto"
 )
@@ -118,5 +119,14 @@ func TestReleasesConnectionsEligibility(t *testing.T) {
 	off := &Manager{}
 	if off.releasesConnections(app(nil), "") {
 		t.Fatal("disabled manager still releases connections")
+	}
+}
+
+// adr: 20261121160000
+func TestInheritedReleaseWarnLimiter(t *testing.T) {
+	w := &warnLimiter{every: time.Minute}
+	start := time.Unix(1_000, 0)
+	if !w.allow(start) || w.allow(start.Add(59*time.Second)) || !w.allow(start.Add(time.Minute)) {
+		t.Fatal("warn limiter must allow one warning per interval")
 	}
 }

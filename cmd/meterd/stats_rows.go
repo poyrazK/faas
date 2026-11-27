@@ -31,3 +31,25 @@ func preferLiveStatsRows(rows []scheddgrpc.InstanceStatsRow) map[string]scheddgr
 	}
 	return live
 }
+
+// sourceFinalStatsRows returns, per instance with a live row, the single
+// departed row another node reported for it: the source node's final reading
+// of a live migration (ADR-20261122090000). The Store applies it once, before
+// the destination's counter, and ignores it after the switch.
+func sourceFinalStatsRows(rows []scheddgrpc.InstanceStatsRow, live map[string]scheddgrpc.InstanceStatsRow) map[string]scheddgrpc.InstanceStatsRow {
+	departed := make(map[string][]scheddgrpc.InstanceStatsRow)
+	for _, r := range rows {
+		if r.Departed {
+			departed[r.InstanceID] = append(departed[r.InstanceID], r)
+		}
+	}
+	out := make(map[string]scheddgrpc.InstanceStatsRow)
+	for id, readings := range departed {
+		current, ok := live[id]
+		if !ok || current.Departed || len(readings) != 1 || readings[0].NodeID == "" || readings[0].NodeID == current.NodeID {
+			continue
+		}
+		out[id] = readings[0]
+	}
+	return out
+}

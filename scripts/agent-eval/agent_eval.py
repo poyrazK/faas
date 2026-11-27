@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -37,6 +38,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -46,12 +48,17 @@ AGENTS = ("claude", "codex", "gemini", "cursor")
 AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
 SETUP_KINDS = ("deploy", "replace")
-CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response")
+CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps", "owner_response",
+               "vote_counted", "app_field", "cli_output")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
 DEFAULT_API = "https://api.gregale.dev"
 # Failure codes that mean the agent walked into a known platform trap.
 DEFAULT_TRAPS = ("liveness_exhausted", "app_startup_timeout")
+# App statuses that mean parked (the API's and the CLI's spelling).
+PARKED_STATUSES = ("evicted_cold", "parked")
+# Conditions under which a feature is not needed (see grade_features).
+FEATURE_UNLESS = ("first_deploy_live",)
 # Ways of working around the CLI that count against a run.
 ANTI_PATTERNS = {
     "raw_api_call": re.compile(r"\b(curl|wget|https?|xh)\b[^\n]*(api\.gregale\.dev|/v1/(apps|projects|deployments))"),
@@ -71,7 +78,7 @@ CLAUDE_ALLOWED_TOOLS = ["Bash(gregale *)", "Bash(curl *)", "Read", "Edit", "Writ
 # It may also read the web: a person's agent can read gregale.dev docs.
 CLAUDE_ANY_SHELL = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch", "mcp__gregale"]
 # Agents whose session the eval can resume for a task's follow_up reply.
-FOLLOW_UP_AGENTS = ("claude",)
+FOLLOW_UP_AGENTS = ("claude", "codex")
 
 
 class EvalError(Exception):
@@ -108,6 +115,8 @@ def load_tasks(path: Path = TASKS) -> list[dict]:
         for feature in task.get("features", []):
             if not re.fullmatch(r"[a-z][a-z0-9-]{1,40}", feature.get("id", "")) or feature.get("kind") not in FEATURE_KINDS:
                 raise EvalError(f"{tid}: feature {feature.get('id')!r} needs a slug id and a kind in {FEATURE_KINDS}")
+            if feature.get("unless") is not None and feature["unless"] not in FEATURE_UNLESS:
+                raise EvalError(f"{tid}: feature {feature['id']} has unknown unless {feature['unless']!r}")
             if feature["kind"] == "state" and feature.get("state") not in FEATURE_STATES:
                 raise EvalError(f"{tid}: unknown state feature {feature.get('state')!r}")
             if feature["kind"] != "state":
@@ -185,17 +194,26 @@ def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budge
     return command
 
 
-def codex_command(prompt: str, project: Path, gregale: str, toolset: str, model: str | None, writes: bool) -> list[str]:
+def codex_command(prompt: str, project: Path, gregale: str, toolset: str, model: str | None, writes: bool, keep_session: bool = False,
+                  resume: str | None = None) -> list[str]:
+    """A headless Codex run. A repo task keeps its session (no --ephemeral) so a
+    follow_up reply can resume it; `resume` continues that session. `codex exec
+    resume` takes no -C or -s: the sandbox comes from config and the working
+    directory is the project the run starts in."""
     # --ignore-user-config keeps your own Codex settings and MCP servers out.
-    command = ["codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "-C", str(project), "-s", "workspace-write",
-               "-c", "sandbox_workspace_write.network_access=true", "-c", "shell_environment_policy.inherit=all"]
+    config = ["-c", "sandbox_workspace_write.network_access=true", "-c", "shell_environment_policy.inherit=all"]
     if toolset != "none":
-        command += ["-c", f"mcp_servers.gregale.command={json.dumps(gregale)}",
-                    "-c", f"mcp_servers.gregale.args={json.dumps(mcp_args(toolset, writes))}",
-                    "-c", 'mcp_servers.gregale.env_vars=["FAAS_TOKEN","FAAS_API"]']
+        config += ["-c", f"mcp_servers.gregale.command={json.dumps(gregale)}",
+                   "-c", f"mcp_servers.gregale.args={json.dumps(mcp_args(toolset, writes))}",
+                   "-c", 'mcp_servers.gregale.env_vars=["FAAS_TOKEN","FAAS_API"]']
     if model:
-        command += ["-m", model]
-    return command + [prompt]
+        config += ["-m", model]
+    if resume:
+        return ["codex", "exec", "resume", "--json", "--ignore-user-config", "--skip-git-repo-check", "-c", 'sandbox_mode="workspace-write"', *config,
+                resume, prompt]
+    session = [] if keep_session else ["--ephemeral"]
+    return ["codex", "exec", "--json", *session, "--ignore-user-config", "--skip-git-repo-check", "-C", str(project), "-s", "workspace-write", *config,
+            prompt]
 
 
 def gemini_command(prompt: str, run_dir: Path, gregale: str, toolset: str, model: str | None, writes: bool) -> tuple[list[str], dict]:
@@ -272,7 +290,8 @@ def merge_metrics(first: dict, second: dict) -> dict:
     merged["commands"] = list(first.get("commands") or []) + list(second.get("commands") or [])
     merged["written_paths"] = list(first.get("written_paths") or []) + list(second.get("written_paths") or [])
     merged["tool_inputs"] = list(first.get("tool_inputs") or []) + list(second.get("tool_inputs") or [])
-    merged["first_answer"] = first.get("answer", "")
+    merged["first_answer"] = first["first_answer"] if "first_answer" in first else first.get("answer", "")
+    merged["session_id"] = second.get("session_id") or first.get("session_id")
     return merged
 
 
@@ -332,7 +351,9 @@ def parse_codex(lines) -> dict:
     failed = False
     for event in _events(lines):
         kind = event.get("type")
-        if kind == "turn.completed":
+        if kind == "thread.started":
+            metrics["session_id"] = event.get("thread_id") or ""
+        elif kind == "turn.completed":
             metrics["turns"] += 1
             usage = event.get("usage") or {}
             metrics["input_tokens"] += usage.get("input_tokens", 0)
@@ -481,6 +502,11 @@ def _rows(value) -> list:
     return []
 
 
+def _retryable(done: subprocess.CompletedProcess) -> bool:
+    """The CLI's error envelope says the failure is temporary."""
+    return bool(re.search(r'"retryable"\s*:\s*true', (done.stderr or "") + (done.stdout or "")))
+
+
 class CliGregale(Gregale):
     """The caller's own logged-in CLI profile (`--cli-login`).
 
@@ -494,6 +520,7 @@ class CliGregale(Gregale):
     ROUTES = (
         (re.compile(r"^/v1/apps$"), lambda m: ["app", "list"]),
         (re.compile(r"^/v1/projects$"), lambda m: ["project", "list"]),
+        (re.compile(r"^/v1/postgres$"), lambda m: ["postgres", "list"]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)$"), lambda m: ["app", "get", m[1]]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)/health$"), lambda m: ["app", "health", m[1]]),
         (re.compile(r"^/v1/apps/([a-z0-9-]+)/deployments(\?.*)?$"), lambda m: ["release", "list", "--app", m[1], "--limit", "20"]),
@@ -509,7 +536,13 @@ class CliGregale(Gregale):
         for pattern, args in self.ROUTES:
             match = pattern.match(path)
             if match:
-                done = self.cli(*args(match), timeout=120)
+                # A read the CLI marks retryable (an API timeout) is retried:
+                # one 503 on `app get` failed a working voting-app run (Codex, rc.381).
+                for wait in (2, 5, None):
+                    done = self.cli(*args(match), timeout=120)
+                    if done.returncode == 0 or wait is None or not _retryable(done):
+                        break
+                    time.sleep(wait)
                 if done.returncode != 0:
                     raise ValueError(f"gregale {' '.join(args(match))}: {done.stderr.strip()[-300:] or done.stdout.strip()[-300:]}")
                 return _json_output(done.stdout)
@@ -519,7 +552,17 @@ class CliGregale(Gregale):
         apps = _rows(self.get("/v1/apps"))
         projects = _rows(self.get("/v1/projects"))
         return {"apps": {a["slug"] for a in apps if a.get("slug")}, "projects": {p["slug"] for p in projects if p.get("slug")},
+                "databases": self.databases(),
                 "app_ids": {a["id"]: a["slug"] for a in apps if a.get("id") and a.get("slug")}}
+
+    def databases(self) -> set:
+        """Managed Postgres database names. A run that creates one and leaves it
+        filled the account's database limit: the 2026-11-24 voting-app rerun
+        found 10/10, most of them earlier runs' databases."""
+        try:
+            return {d["name"] for d in _rows(self.get("/v1/postgres")) if isinstance(d, dict) and d.get("name")}
+        except ValueError:
+            return set()
 
     def touched_since(self, before: dict, started_at: str) -> dict:
         after = self.inventory()
@@ -531,8 +574,12 @@ class CliGregale(Gregale):
         return touched
 
 
+# What a run can create in the account, and what cleanup deletes.
+RESOURCE_KINDS = ("apps", "projects", "databases")
+
+
 def created_since(before: dict, after: dict) -> dict:
-    return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
+    return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in RESOURCE_KINDS}
 
 
 # Project files read for the names of the apps a run deploys (Compose service
@@ -570,13 +617,43 @@ def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None
     (--cli-login) is shared with other sessions, so there an app or project is
     the run's only if the agent named it (or it is the harness's own slug)."""
     if not isinstance(gregale, CliGregale):
-        return touched, {"apps": [], "projects": []}
-    mine: dict = {"apps": [], "projects": []}
-    others: dict = {"apps": [], "projects": []}
-    for kind in ("apps", "projects"):
+        return touched, {kind: [] for kind in RESOURCE_KINDS}
+    mine: dict = {kind: [] for kind in RESOURCE_KINDS}
+    others: dict = {kind: [] for kind in RESOURCE_KINDS}
+    prefixes = _slug_prefixes(evidence)
+    for kind in RESOURCE_KINDS:
         for name in touched.get(kind, []):
-            (mine if name == slug or _named(name, evidence) else others)[kind].append(name)
+            named = name == slug or _named(name, evidence) or (kind == "apps" and name.startswith(prefixes))
+            (mine if named else others)[kind].append(name)
+    for app in _members_of(gregale, mine["projects"], others["apps"]):
+        others["apps"].remove(app)
+        mine["apps"].append(app)
+    mine["apps"].sort()
     return mine, others
+
+
+def _members_of(gregale: "Gregale", projects: list[str], apps: list[str]) -> list[str]:
+    """The apps among `apps` that belong to one of `projects`. A Compose
+    deploy names a project's apps from its services, names the agent never
+    typed (rc.381 retail-store: retail-catalog and retail-carts went
+    unattributed, failed apps_created and were left behind)."""
+    if not projects or not apps:
+        return []
+    try:
+        ids = {row.get("id") for row in _rows(gregale.get("/v1/projects")) if row.get("slug") in projects}
+        members = {row.get("slug") for row in _rows(gregale.get("/v1/apps")) if row.get("project_id") in ids - {None, ""}}
+    except (OSError, ValueError, AttributeError, urllib.error.URLError, subprocess.TimeoutExpired):
+        return []
+    return [app for app in apps if app in members]
+
+
+def _slug_prefixes(evidence: str) -> tuple:
+    """App slug prefixes the agent asked for (`--prefix retail-sample-`): a
+    Compose deploy names its apps <prefix><service>, a name the agent never
+    typed whole (Codex 2026-11-23, retail-store). Prefixes under four
+    characters are ignored so a stray `--prefix a` does not claim the account."""
+    found = re.findall(r"--prefix[=\s]+['\"]?([a-z0-9][a-z0-9-]*)", evidence)
+    return tuple(sorted({p for p in found if len(p) >= 4}))
 
 
 def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str | None, evidence: str = "") -> tuple[dict, str | None]:
@@ -587,7 +664,7 @@ def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str 
     if not isinstance(gregale, CliGregale):
         return created, slug
     if before is None:
-        return {"apps": [], "projects": []}, None
+        return {kind: [] for kind in RESOURCE_KINDS}, None
     new, _ = attribute(gregale, created_since(before, gregale.inventory()), evidence, slug)
     return new, slug if slug in new["apps"] else None
 
@@ -663,6 +740,31 @@ def http_check(url: str, check: dict, deadline_s: float = 120, fetch=None) -> tu
         time.sleep(5)
 
 
+def private_http_check(gregale, slug: str, check: dict) -> tuple[bool, str]:
+    """Apps are private by default (ADR-20261116120000), so a public GET gets
+    401. Ask the latest serving deployment as the owner instead."""
+    # The serving deployment, not the latest: after a rollback the latest is
+    # the bad release.
+    health = gregale.get(f"/v1/apps/{slug}/health")
+    latest = (health.get("serving_deployment_ids") or [None])[0]
+    if not latest:
+        return False, "private app has no serving deployment"
+    result = gregale.cli("release", "verify", latest, "--app", slug, "--path", check.get("path", "/"), timeout=90)
+    if result.returncode != 0:
+        return False, f"private: release verify failed: {(result.stderr or result.stdout)[:160]!r}"
+    evidence = json.loads(result.stdout)
+    status, body = evidence.get("http_status"), str(evidence.get("body") or "")
+    ok = status == check.get("status", 200) and check.get("contains", "") in body
+    return ok, f"private {status}: {body[:120]!r}"
+
+
+def _http_or_private(gregale, slug: str, url: str, check: dict, deadline_s: float, fetch) -> tuple[bool, str]:
+    ok, detail = http_check(url, check, deadline_s=deadline_s, fetch=fetch)
+    if not ok and detail.startswith("401") and fetch is None:
+        return private_http_check(gregale, slug, check)
+    return ok, detail
+
+
 def _fetch(url: str) -> tuple[int, str]:
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
@@ -673,28 +775,203 @@ def _fetch(url: str) -> tuple[int, str]:
         return 0, str(error)
 
 
+def _http(method: str, url: str, data: bytes | None = None, headers: dict | None = None, timeout: float = 30) -> tuple[int, str]:
+    request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=max(timeout, 1)) as response:
+            return response.status, response.read(65536).decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read(65536).decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as error:
+        return 0, str(error)
+
+
+class SocketIOUnavailable(ValueError):
+    """The Socket.IO server refused or broke the session."""
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+_SOCKETIO_TEXT = {"Content-Type": "text/plain;charset=UTF-8"}
+
+
+def _socketio_session(base: str, http, timeout_s: float) -> str:
+    status, body = http("GET", f"{base}/socket.io/?EIO=4&transport=polling", timeout=timeout_s)
+    if status != 200 or not body.startswith("0"):
+        raise SocketIOUnavailable(f"socket.io handshake {status}: {body[:80]!r}", status)
+    try:
+        sid = json.loads(body[1:])["sid"]
+    except (ValueError, KeyError, TypeError) as error:
+        raise SocketIOUnavailable(f"socket.io handshake unreadable: {body[:80]!r}") from error
+    poll = f"{base}/socket.io/?EIO=4&transport=polling&sid={urllib.parse.quote(str(sid))}"
+    status, body = http("POST", poll, b"40", _SOCKETIO_TEXT, timeout=timeout_s)
+    if status != 200:
+        raise SocketIOUnavailable(f"socket.io connect {status}: {body[:80]!r}", status)
+    return poll
+
+
+def socketio_event(base: str, event: str, http=_http, timeout_s: float = 30, attempts: int = 3) -> list:
+    """The arguments of the next `event` a Socket.IO v4 server emits, read
+    over the plain HTTP long-polling transport (no websocket client needed).
+
+    A polling session lives on one server instance. When an app runs more
+    than one, a request can reach an instance that does not know the session
+    (400 "Session ID unknown"); that starts a new session instead of failing.
+    The session is always closed: disconnect from the namespace, then close
+    the transport."""
+    deadline = time.monotonic() + timeout_s
+    last = ""
+    for _ in range(attempts):
+        poll = ""
+        try:
+            poll = _socketio_session(base, http, max(deadline - time.monotonic(), 1))
+            while time.monotonic() < deadline:
+                status, body = http("GET", poll, timeout=max(deadline - time.monotonic(), 1))
+                if status == 0 and time.monotonic() >= deadline - 1:
+                    break  # the long poll outlived the deadline: no event came
+                if status != 200:
+                    raise SocketIOUnavailable(f"socket.io poll {status}: {body[:80]!r}", status)
+                for packet in body.split("\x1e"):
+                    if packet == "2":
+                        http("POST", poll, b"3", _SOCKETIO_TEXT, timeout=5)
+                    elif packet.startswith(("44", "41")) or packet == "1":
+                        raise SocketIOUnavailable(f"socket.io refused the connection: {packet[:80]!r}")
+                    elif packet.startswith("42"):
+                        name, *args = json.loads(packet[2:])
+                        if name == event:
+                            return args
+            raise TimeoutError(f"no socket.io {event!r} event within {timeout_s:.0f}s")
+        except SocketIOUnavailable as error:
+            last = str(error)
+            if error.status != 400 or time.monotonic() >= deadline:
+                raise
+        finally:
+            if poll:
+                http("POST", poll, b"41\x1e1", _SOCKETIO_TEXT, timeout=5)
+    raise SocketIOUnavailable(f"socket.io session kept moving between instances: {last}", 400)
+
+
+def _vote_scores(result_url: str, http, timeout_s: float) -> dict:
+    args = socketio_event(result_url, "scores", http=http, timeout_s=timeout_s)
+    scores = json.loads(args[0]) if args and isinstance(args[0], str) else (args[0] if args else None)
+    if not isinstance(scores, dict) or not all(isinstance(v, int) for v in scores.values()):
+        raise ValueError(f"scores is not a count per option: {str(args)[:80]}")
+    return scores
+
+
+def _created_public_app(gregale, created_apps: list[str], pattern: str, exclude: str = "") -> tuple[str, str]:
+    for app in created_apps:
+        if app != exclude and re.search(pattern, app):
+            url = _app_url(gregale.get(f"/v1/apps/{app}"))
+            if url:
+                return app, url
+    return "", ""
+
+
+def vote_counted_check(gregale, created_apps: list[str], check: dict, http=_http, deadline_s: float = 120) -> tuple[bool, str]:
+    """End to end for the voting app: cast a vote on the vote app and wait for
+    the result app to count it. GETs of both pages passed on rc.380 while every
+    vote POST returned 500 (Redis unreachable) and the votes table was never
+    created, so serving pages alone said nothing about the app working.
+
+    The grader votes as a new voter for the option with fewer votes, so its own
+    vote is the likeliest change; a total that grows still cannot prove which
+    vote was counted. Both apps must be public: the grader has no session to
+    vote or read scores as the owner."""
+    # A taken name gets the project's prefix (<project>-vote) or, when another
+    # account holds it, a 5-character suffix (vote-k3x7q, pkg/api SuffixedAppSlugs).
+    result_app, result_url = _created_public_app(gregale, created_apps, check.get("result_match", r"(^|-)result(-[a-z0-9]{5})?$"))
+    vote_app, vote_url = _created_public_app(gregale, created_apps, check.get("vote_match", r"(^|-)vote(-[a-z0-9]{5})?$"), exclude=result_app)
+    if not vote_url or not result_url:
+        return False, f"no public vote ({vote_app or '-'}) or result ({result_app or '-'}) app among {','.join(created_apps)}"
+    deadline = time.monotonic() + max(deadline_s, 0)
+    read_s = lambda: min(30.0, max(deadline - time.monotonic(), 5.0))  # noqa: E731
+    try:
+        before = _vote_scores(result_url, http, read_s())
+    except SocketIOUnavailable as error:
+        private = " (the result app requires sign-in)" if error.status == 401 else ""
+        return False, f"{result_app} scores unreadable{private}: {error}"
+    except (ValueError, TimeoutError) as error:
+        return False, f"{result_app} scores unreadable: {error}"
+    options = sorted(before) or ["a"]
+    option = check.get("option") or min(options, key=lambda o: (before.get(o, 0), o))
+    voter = "agent-eval-" + secrets.token_hex(8)
+    status, body = http("POST", vote_url + check.get("path", "/"), urllib.parse.urlencode({"vote": option}).encode(),
+                        {"Content-Type": "application/x-www-form-urlencoded", "Cookie": f"voter_id={voter}"})
+    if status != 200:
+        private = " (the vote app requires sign-in)" if status == 401 else ""
+        return False, f"{vote_app} vote POST {status}{private}: {body[:120]!r}"
+    base, after, error_detail = before.get(option, 0), None, ""
+    while True:
+        try:
+            after = _vote_scores(result_url, http, read_s()).get(option, 0)
+            if after > base:
+                return True, f"{option}: {base} -> {after}"
+        except (ValueError, TimeoutError) as error:
+            error_detail = str(error)
+        if time.monotonic() >= deadline:
+            if after is None:
+                return False, f"vote accepted but {result_app} scores unreadable after it: {error_detail}"
+            return False, f"vote accepted but not counted: {option} stayed {after}"
+        time.sleep(5)
+
+
+def _app_is_serving(gregale, slug: str) -> bool:
+    """An app serves when health names a serving deployment. Health does not
+    assess workers or jobs unless app_health_workers is on (phase
+    "unsupported"); a live worker pool serves its queue, not HTTP, so the app
+    record's deployment availability decides."""
+    health = gregale.get(f"/v1/apps/{slug}/health")
+    if health.get("serving_deployment_ids"):
+        return True
+    if health.get("phase") == "unsupported":
+        return gregale.get(f"/v1/apps/{slug}").get("deployment_availability") == "live"
+    return False
+
+
 def _app_url(app: dict) -> str:
     return (app.get("canonical_url") or app.get("url") or "").rstrip("/")
 
 
-def _app_evidence(gregale, slug: str, since: str = "") -> str:
-    """The app's park and its deployments since the run started, as text for
-    trap codes. Older parks and deployments belong to someone else's run."""
+def _app_final_evidence(gregale, slug: str, since: str = "") -> str:
+    """The app's state at the end of the run, as text for trap codes: its
+    park, if it is still parked from this run, and its latest deployment since
+    the run started. A failed release the agent replaced with a working one
+    was the agent experimenting, not a trap it was left in (voting-app,
+    2026-11-23: a deliberate HEALTHCHECK experiment failed the run)."""
     parts = []
     try:
-        parked = gregale.get(f"/v1/apps/{slug}").get("parked_deployment") or {}
-        if (parked.get("parked_at") or "") >= since:
+        app = gregale.get(f"/v1/apps/{slug}")
+        parked = app.get("parked_deployment") or {}
+        if app.get("status") in PARKED_STATUSES and (parked.get("parked_at") or "") >= since:
             parts.append(json.dumps(parked))
-        for deployment in _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=20")):
-            if (deployment.get("created_at") or "") >= since:
-                parts.append(json.dumps(deployment))
+        recent = [d for d in _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=20")) if (d.get("created_at") or "") >= since]
+        if recent:
+            parts.append(json.dumps(max(recent, key=lambda d: d.get("created_at") or "")))
     except (OSError, ValueError, AttributeError, urllib.error.URLError) as error:
         parts.append(f"unreadable {slug}: {error}")
     return "\n".join(parts)
 
 
+def first_deploy_live(gregale, apps: list[str], since: str = "") -> bool:
+    """Whether every app the run created went live on its first deployment
+    (`live` now, or `superseded` by a later one)."""
+    if not apps:
+        return False
+    try:
+        for slug in apps:
+            recent = [d for d in _rows(gregale.get(f"/v1/apps/{slug}/deployments?limit=50")) if (d.get("created_at") or "") >= since]
+            if not recent or min(recent, key=lambda d: d.get("created_at") or "").get("status") not in ("live", "superseded"):
+                return False
+    except (OSError, ValueError, AttributeError, urllib.error.URLError):
+        return False
+    return True
+
+
 def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch=None, http_deadline_s: float = 120, created: dict | None = None,
-               since: str = "", expected_app_id: str | None = None) -> list[dict]:
+               since: str = "", expected_app_id: str | None = None, http=None) -> list[dict]:
     created_apps = (created or {}).get("apps", [])
     results = []
     for check in task["checks"]:
@@ -707,7 +984,7 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 ok = check["text"] in (project / check["file"]).read_text()
             elif kind == "http":
                 url = _app_url(gregale.get(f"/v1/apps/{slug}")) + check.get("path", "/")
-                ok, detail = http_check(url, check, deadline_s=http_deadline_s, fetch=fetch)
+                ok, detail = _http_or_private(gregale, slug, url, check, http_deadline_s, fetch)
             elif kind == "owner_response":
                 ok, detail = owner_response_check(gregale, slug, check, expected_app_id)
             elif kind == "serving":
@@ -719,24 +996,54 @@ def run_checks(task: dict, slug: str, project: Path, answer: str, gregale, fetch
                 ok = len(created_apps) >= check.get("min", 1)
                 detail = ",".join(created_apps)
             elif kind == "apps_serving":
-                idle = [app for app in created_apps if not gregale.get(f"/v1/apps/{app}/health").get("serving_deployment_ids")]
+                idle = [app for app in created_apps if not _app_is_serving(gregale, app)]
                 ok, detail = bool(created_apps) and not idle, f"not serving: {','.join(idle)}" if idle else f"{len(created_apps)} serving"
             elif kind == "app_http":
                 matches = [app for app in created_apps if re.search(check["match"], app)]
-                urls = [_app_url(gregale.get(f"/v1/apps/{app}")) for app in matches]
-                urls = [url for url in urls if url]
-                if not urls:
+                pairs = [(app, _app_url(gregale.get(f"/v1/apps/{app}"))) for app in matches]
+                pairs = [(app, url) for app, url in pairs if url]
+                if not pairs:
                     detail = f"no created public app matches {check['match']!r}"
                 else:
-                    ok, detail = http_check(urls[0] + check.get("path", "/"), check, deadline_s=http_deadline_s, fetch=fetch)
+                    app, url = pairs[0]
+                    ok, detail = _http_or_private(gregale, app, url + check.get("path", "/"), check, http_deadline_s, fetch)
+            elif kind == "app_field":
+                ok, detail = app_field_check(gregale.get(f"/v1/apps/{slug}"), check)
+            elif kind == "cli_output":
+                ok, detail = cli_output_check(gregale, slug, check)
+            elif kind == "vote_counted":
+                ok, detail = vote_counted_check(gregale, created_apps, check, http=http or _http, deadline_s=http_deadline_s)
             elif kind == "no_traps":
                 codes = check.get("codes") or list(DEFAULT_TRAPS)
-                hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_evidence(gregale, app, since)})
+                hit = sorted({f"{app}:{code}" for app in created_apps for code in codes if code in _app_final_evidence(gregale, app, since)})
                 ok, detail = not hit, ",".join(hit)
         except (OSError, KeyError, ValueError, subprocess.TimeoutExpired, urllib.error.URLError) as error:
             detail = f"check error: {error}"
         results.append({"kind": kind, "ok": ok, "detail": detail})
     return results
+
+
+def app_field_check(app: dict, check: dict) -> tuple[bool, str]:
+    """One field of the app record: `equals` a value, or at least `min`."""
+    value = app.get(check["field"])
+    if "equals" in check:
+        return value == check["equals"], f"{check['field']}={value!r}"
+    try:
+        return value is not None and value >= check["min"], f"{check['field']}={value!r}"
+    except TypeError:
+        return False, f"{check['field']}={value!r} is not comparable"
+
+
+def cli_output_check(gregale, slug: str, check: dict) -> tuple[bool, str]:
+    """Run a read-only gregale command (`{app}` names the task's app) and
+    require every `patterns` regex in its JSON output."""
+    args = [arg.replace("{app}", slug or "") for arg in check["args"]]
+    done = gregale.cli(*args, timeout=90)
+    out = (done.stdout or "") + (done.stderr or "")
+    if done.returncode != 0:
+        return False, f"gregale {' '.join(args)} exited {done.returncode}: {out.strip()[-160:]!r}"
+    missing = [p for p in check["patterns"] if not re.search(p, out, re.IGNORECASE)]
+    return not missing, f"missing {missing} in {out.strip()[:160]!r}" if missing else "all patterns present"
 
 
 def owner_response_check(gregale, slug: str, check: dict, expected_app_id: str | None = None) -> tuple[bool, str]:
@@ -793,13 +1100,22 @@ def _project_files_text(project: Path, glob: str, limit: int = 2_000_000) -> str
     return "\n".join(text)
 
 
-def grade_features(task: dict, commands: list[str], project: Path, created: dict) -> dict:
-    """Which of the task's applicable Gregale features the run used."""
+def grade_features(task: dict, commands: list[str], project: Path, created: dict, tools: list[str] | None = None,
+                   first_live: bool = False) -> dict:
+    """Which of the task's applicable Gregale features the run used. A command
+    feature also counts when the agent called one of its equivalent MCP
+    tools (`tools`, matched on the tool name's suffix). A feature with
+    `"unless": "first_deploy_live"` is a fix the agent needs only when
+    Gregale's detection falls short, so it counts as used when the first
+    deploy went live without it."""
     used, missed = [], []
     joined = "\n".join(commands)
     for feature in task.get("features", []):
-        if feature["kind"] == "command":
-            hit = re.search(feature["pattern"], joined, re.MULTILINE) is not None
+        if feature.get("unless") == "first_deploy_live" and first_live:
+            hit = True
+        elif feature["kind"] == "command":
+            hit = re.search(feature["pattern"], joined, re.MULTILINE) is not None or any(
+                name.endswith(tool) for name in tools or [] for tool in feature.get("tools", []))
         elif feature["kind"] == "file":
             hit = re.search(feature["pattern"], _project_files_text(project, feature.get("glob", "**/*")), re.MULTILINE) is not None
         else:  # state
@@ -828,14 +1144,29 @@ def agent_command(agent: str, prompt: str, task: dict, run_dir: Path, project: P
     if agent == "claude":
         return claude_command(prompt, run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes, any_shell=bool(task.get("repo"))), {}
     if agent == "codex":
-        return codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes), {}
+        return codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes, keep_session=bool(task.get("repo"))), {}
     if agent == "gemini":
         return gemini_command(prompt, run_dir, gregale.binary, toolset, model, options.mcp_writes)
     return cursor_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes), {}
 
 
+def follow_up_command(agent: str, task: dict, run_dir: Path, project: Path, gregale: Gregale, toolset: str, options, session_id: str) -> list[str]:
+    """The task's follow_up reply, resuming the agent's session (FOLLOW_UP_AGENTS)."""
+    model = getattr(options, f"{agent}_model", None)
+    if agent == "codex":
+        return codex_command(task["follow_up"], project, gregale.binary, toolset, model, options.mcp_writes, resume=session_id)
+    return claude_command(task["follow_up"], run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes, any_shell=True,
+                          resume=session_id)
+
+
 def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
-    """Delete what the run created; returns what could not be deleted."""
+    """Delete what the run created; returns what could not be deleted.
+
+    A deleted app keeps its name for its seven-day restore window, so the next
+    run's agent found the repository's natural name taken and deployed under a
+    suffixed one (express-hello-world-2, flask-hello-world-2, 2026-11-19).
+    Purging right after the delete frees the name; `name:<app>` marks a purge
+    that failed and left only the name held."""
     left = []
     for project_slug in created.get("projects", []):
         if gregale.cli("project", "delete", "--yes", "--detach-services", project_slug, timeout=300).returncode != 0:
@@ -843,6 +1174,13 @@ def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
     for app in sorted(set(created.get("apps", [])) | ({slug} if slug else set())):
         if gregale.cli("app", "delete", "--yes", "--delete-bindings", app, timeout=300).returncode != 0:
             left.append(f"app:{app}")
+        elif gregale.cli("app", "purge", "--yes", app, timeout=300).returncode != 0:
+            left.append(f"name:{app}")
+    # Recoverable for seven days; a deleted database no longer counts against
+    # the account's database limit.
+    for database in created.get("databases", []):
+        if gregale.cli("postgres", "delete", "--yes", database, timeout=300).returncode != 0:
+            left.append(f"database:{database}")
     return left
 
 
@@ -861,6 +1199,11 @@ def invoke(command: list[str], project: Path, env: dict, timeout: float, record:
 # The HTTP wait of the check that decides on a follow-up: long enough for a
 # cold wake, short next to the task's own 120 s check.
 FOLLOW_UP_HTTP_DEADLINE_S = 30
+
+# The most follow_up replies one run gets. On 2026-11-19 Codex deployed Flask
+# and Go privately, answered the first "go ahead" by asking whether to make the
+# app public, and failed with one reply.
+MAX_FOLLOW_UPS = 2
 
 
 def needs_follow_up(task: dict, metrics: dict, record: dict, slug: str | None, project: Path, gregale: Gregale, created: dict) -> bool:
@@ -888,7 +1231,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             record["cli_sha256"] = checksum.hexdigest()
     except OSError:
         record["cli_sha256"] = None
-    created: dict = {"apps": [], "projects": []}
+    created: dict = {kind: [] for kind in RESOURCE_KINDS}
     before, evidence = None, ""
     cleanup_allowed = False
     try:
@@ -934,27 +1277,32 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         metrics = PARSERS[agent](lines)
         evidence = run_evidence(metrics, project)
         created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
-        if needs_follow_up(task, metrics, record, slug, project, gregale, created):
-            # The agent stopped short (often to ask a question); answer once, as the person would.
-            if agent in FOLLOW_UP_AGENTS and metrics.get("session_id"):
-                remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
-                again = claude_command(task["follow_up"], run_dir, gregale.binary, toolset, task["budget_usd"], getattr(options, "claude_model", None),
-                                       options.mcp_writes, any_shell=True, resume=metrics["session_id"])
-                more = invoke(again, project, env, remaining, record)
-                (run_dir / f"{agent}-follow-up.jsonl").write_text("\n".join(more))
-                metrics = merge_metrics(metrics, PARSERS[agent](more))
-                record["follow_ups"] = 1
-                evidence = run_evidence(metrics, project)
-                created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
-            else:
-                record["follow_ups"] = "unsupported"
+        # The agent stopped short (often to ask a question); answer as the
+        # person would, up to MAX_FOLLOW_UPS times.
+        follow_ups = 0
+        while follow_ups < MAX_FOLLOW_UPS and needs_follow_up(task, metrics, record, slug, project, gregale, created):
+            if agent not in FOLLOW_UP_AGENTS or not metrics.get("session_id"):
+                record["follow_ups"] = follow_ups or "unsupported"
+                break
+            follow_ups += 1
+            remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
+            again = follow_up_command(agent, task, run_dir, project, gregale, toolset, options, metrics["session_id"])
+            more = invoke(again, project, env, remaining, record)
+            suffix = "" if follow_ups == 1 else f"-{follow_ups}"
+            (run_dir / f"{agent}-follow-up{suffix}.jsonl").write_text("\n".join(more))
+            metrics = merge_metrics(metrics, PARSERS[agent](more))
+            record["follow_ups"] = follow_ups
+            evidence = run_evidence(metrics, project)
+            created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
         record["duration_s"] = round(time.monotonic() - started, 1)
         record.update({k: v for k, v in metrics.items() if k != "tool_inputs"})
         record["created"] = created
         record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"],
                                       expected_app_id=record.get("initial_app_id"))
         record["success"] = all(check["ok"] for check in record["checks"])
-        record.update(grade_features(task, metrics["commands"], project, created))
+        record["first_deploy_live"] = first_deploy_live(gregale, created.get("apps", []), record["started_at"])
+        record.update(grade_features(task, metrics["commands"], project, created, tools=list(metrics.get("tool_calls") or {}),
+                                     first_live=record["first_deploy_live"]))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
         record["wrote_outside_run"] = writes_outside(metrics.get("written_paths") or [], run_dir, project, AGENT_OWN_DIRS[agent])
         if record["wrote_outside_run"]:

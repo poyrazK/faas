@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -175,8 +176,17 @@ func TestAuthConfigShowsTheRunningSettings(t *testing.T) {
 	}
 	sealed, _, restarts := authSettingsWorld(t, nil, running)
 	out := captureAuthStdout(t)
+	var warnings bytes.Buffer
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &warnings
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
 	if code := main.CmdAuth([]string{"config", "shop-auth"}); code != 0 || len(sealed) != 0 || *restarts != 0 {
 		t.Fatalf("show = %d, wrote %v", code, sealed)
+	}
+	// Open sign-up without CAPTCHA is warned about; the leaked-password
+	// check is on here, so it is not.
+	if !strings.Contains(warnings.String(), "CAPTCHA is off") || strings.Contains(warnings.String(), "leaked-password check is off") {
+		t.Errorf("warnings = %q", warnings.String())
 	}
 	for _, line := range []string{"sign-in methods: email, google", "at least 12 characters; must include lower; leaked-password check on", "email delivery:  not configured", "signing key:     0A1B2C3D (1 more verifying)"} {
 		if !strings.Contains(out.String(), line) {

@@ -28,11 +28,18 @@ relations and routines, and configures the owner's default privileges.
 Fixture cleanup finds the logins by their resource-specific name even if
 an earlier deletion already dropped the database.
 
-This contract covers seeded fixtures and the initial grants. A runner
-that applies migrations must recheck native ACLs and the candidate
-before recording execution evidence. The managed-work preview neither
-consumes owner-approved hosted rehearsal claims nor admits access to the
-approved hosted application's database.
+At sealing, the collector reads the exact Task participants from the
+enrollment. It checks their effective privileges using fixed PostgreSQL
+catalog queries in the final read-only snapshot, after freezing the
+database and retiring open sessions. It requires the expected grants and
+refuses additional writes, reads outside the Task allowlist, schema
+creation, role membership and callable security-definer routines. Unsafe
+or missing grants prevent complete evidence. The disposable database and
+logins are still removed.
+
+The managed-work preview uses the disposable fixture database throughout.
+Consuming owner-approved hosted rehearsal claims requires a separate
+executor integration.
 
 ## Consequences
 

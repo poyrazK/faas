@@ -23,6 +23,12 @@ type VM interface {
 	Cancel(ctx context.Context, buildID string) error
 }
 
+// EnvironmentLogVM is an optional live diagnostic transport; older owners
+// retain completed-build tail diagnostics.
+type EnvironmentLogVM interface {
+	StreamEnvironmentBuildLogs(context.Context, BuildHandle, func(string, bool) error) error
+}
+
 // WarmVM is the optional transport capability for the guaranteed builder
 // slot. Keeping it separate from VM preserves the cold-build fallback for
 // older vmmd nodes and for unit-test fakes during a rolling deployment.
@@ -32,6 +38,16 @@ type WarmVM interface {
 	RestoreWarmBuilder(ctx context.Context, req VMRequest, snapshot WarmSnapshot) (BuildHandle, error)
 	WaitForWarmCompletion(ctx context.Context, h BuildHandle) (BuildOutcome, WarmSnapshot, error)
 	DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error
+}
+
+// BuildConsoleVM is the optional capability to follow a running builder's
+// console. builderd reads BuildKit's step lines from it while the build runs,
+// so a deploy shows "[3/12] RUN mvn package" instead of going quiet until the
+// VM exits (retail-store feedback A3, 2026-11-17). FollowBuildConsole calls
+// line for each console line, oldest first, until the VM's console closes or
+// ctx ends. Its error only costs the live steps; the build is unaffected.
+type BuildConsoleVM interface {
+	FollowBuildConsole(ctx context.Context, h BuildHandle, line func(string)) error
 }
 
 // DeferredCacheVM is the optional capability behind DeferCacheExport
@@ -63,7 +79,16 @@ type DeferredCacheSpec struct {
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
-	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
+	// Borrowed runs the builder on a borrowed builder slot, in
+	// faas-borrowed.slice (ADR-20261118154632).
+	Borrowed bool
+	// SliceShared reports whether this build has shared faas-cp-build.slice
+	// with another builder since its slot was granted. The slice's oom_kill
+	// counter then cannot say whose VM was killed, so only the VM's own exit
+	// status classifies an OOM (ADR-20261118154632 amendment 1). nil means
+	// never shared.
+	SliceShared           func() bool `json:"-"`
+	BuildDependencyDigest string      `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string
 	DockerfileBuild       *api.DockerfileBuildOptions // Compose build.args/target (ADR-20261019142544)
 	GoCommand             string                      // cmd/<name> a Go module build compiles (ADR-20261025134512)
@@ -83,6 +108,7 @@ type VMRequest struct {
 	IssueSourceMaps *api.IssueSourceMapBuildConfig
 	Function        bool // handler build; allows markerless Node/Python sources
 	SharedRuntime   bool // container app built on a shared runner base (H10-140)
+	NextStandalone  bool // build Next.js apps with standalone output (ADR-20261124160000)
 	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
 	DevWatchCommand string
 	// DevWatchHost is the developer app's public hostname for that image.
@@ -154,12 +180,18 @@ type BuildHandle struct {
 	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
 	WarmScopeKey            string    // scope bound to a retained warm drive
 	// BuilderSliceOOMKillsAtStart snapshots the parent builder slice's
-	// cumulative oom_kill counter before vmmd starts this operation. With the
-	// host fence limited to one admitted builder, a later delta belongs to
-	// this build and can be reported even when Firecracker dies before writing
-	// build-done.json.
+	// cumulative oom_kill counter before vmmd starts this operation. While
+	// this build is the slice's only builder (SliceShared reports false), a
+	// later delta belongs to it and can be reported even when Firecracker dies
+	// before writing build-done.json.
 	BuilderSliceOOMKillsAtStart uint64
 	BuilderSliceOOMCounterValid bool
+	// SliceShared is VMRequest.SliceShared.
+	SliceShared func() bool `json:"-"`
+	// Borrowed is a builder on a borrowed slot (ADR-20261118154632). It runs
+	// outside faas-cp-build.slice, so that slice's oom_kill counter says
+	// nothing about it.
+	Borrowed bool
 	// DeferredCache is set when the build's manifest asked the guest to defer
 	// its dependency-cache export.
 	DeferredCache *DeferredCacheSpec
@@ -176,6 +208,9 @@ type BuildHandle struct {
 // or a marked-failed build row on failure. Named BuildOutcome to avoid
 // clashing with the orchestrator's BuildResult (whole-ProcessOne return).
 type BuildOutcome struct {
+	// PreemptedForTenants: vmmd destroyed this borrowed builder because
+	// tenants needed its memory (ADR-20261118154632).
+	PreemptedForTenants   bool
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLsSHA256 string
 	DockerfileBuildSHA256 string
@@ -233,7 +268,7 @@ type BuildOutcome struct {
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string
 	// BuilderSliceOOMKills is the parent faas-cp-build.slice oom_kill delta
-	// observed while this build owned the single host builder slot.
+	// observed while this build was the slice's only builder.
 	BuilderSliceOOMKills uint64
 	// BuildKitSeeded reports that BuildKit ran on the seeded drive2
 	// (api.BuildDone.BuildKitSeeded).

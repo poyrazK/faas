@@ -215,3 +215,271 @@ The follow-up the previous amendment named.
   (`object_bucket_setting_unavailable`): their queue destinations resolve
   through environment-bound queue bindings, so a paused copy needs its own
   design. Deployment and database events stay production's.
+
+## Amendment 2026-11-16: bucket notification copies
+
+Status: accepted (owner's choices of 2026-11-16). Closes the "not yet" above
+for bucket notification rules.
+
+### Problem
+
+A rule's destination is an ARN that names an app and, for a queue, a queue
+name (`arn:gregale:sqs:REGION:ACCOUNT:APP/QUEUE`,
+`arn:gregale:lambda:REGION:ACCOUNT:function:APP`). Neither names an
+environment.
+
+- **Queues.** Delivery resolves the ARN to the one enabled queue binding of
+  that app and name, across every environment. Full clones copy queue
+  bindings into the stage, so once a stage holds a queue of the same name the
+  lookup finds two and resolves to none: production's own bucket
+  notifications to that queue stop resolving. This is latent while full
+  clones are dark and is fixed by the first decision below.
+- **Functions.** A notification always invokes the app's production
+  deployment, even when the event came from a stage bucket.
+
+That is why `object_bucket_notifications` is `unavailable` in the clone
+registry (`object_bucket_setting_unavailable`): a copied rule would deliver a
+stage's object events to production.
+
+### Decision
+
+1. **Destinations resolve in the bucket's environment.** The bucket's
+   environment is the one its events carry (amendment 2026-11-14): a branch's
+   copy bucket or a clone's target bucket belongs to its stage, every other
+   bucket to production. An ARN is resolved there:
+   - a queue ARN to the enabled binding of that app and queue name **in that
+     environment** (production: `deployment_scope = ''`), never another
+     environment's;
+   - a function ARN to that app's work in that environment: the recipient
+     carries the environment and is delivered as stage work, pinned to the
+     stage's live release, as event-subscription recipients are (amendment
+     2026-11-12).
+   The ARN format does not change, and a rule copied verbatim reaches the
+   stage's own queue or deployment. Rule writes (`PutBucketNotification`,
+   compute-trigger reconcile) validate destinations in the bucket's
+   environment the same way. A stage bucket whose environment is gone
+   resolves nothing.
+2. **Full clones copy the configuration, paused as a whole.** The clone
+   copies each captured bucket's `rules` and `managed_rules` (manifest compute
+   triggers stay managed) into its target bucket with the source revision,
+   and sets `object_bucket_notifications.clone_paused`. While it is set the
+   rules are stored and readable but match no event, so nothing is delivered.
+   It is cleared by `automation/resume` (`gregale env resume-automation`),
+   which then reports `bucket_notifications_resumed` and the bucket IDs, and
+   by any explicit write of the rules (PUT, delete, or a stage manifest deploy
+   reconciling its compute triggers): the customer has decided. A source
+   bucket that is itself clone-paused copies paused.
+3. **Missing destinations refuse the clone.** Capture checks every rule's
+   destination against the stage-to-be: a queue must be one of the captured
+   workloads' queues and a function one of the captured workloads' apps.
+   Anything else refuses admission with a named blocker
+   (`object_notification_destination_unavailable`), as crons and subscriptions
+   refuse apps outside the captured workloads. Destinations in another
+   account or region are already invalid.
+4. **Proof.** Publication checks that each target bucket holds exactly the
+   captured rules and managed rule IDs and is still `clone_paused`.
+5. **Registry.** `object_bucket_notifications` gains `clone_paused` and moves
+   from `unavailable` to `capture` + `materialize`. CORS, lifecycle,
+   encryption, Object Lock, upload routes and per-version protection keep
+   blocking.
+
+### Consequences
+
+- Environment branches benefit without copying anything: a branch's copy
+  bucket created with rules resolves them in the branch. (Branches do not copy
+  notification rules today; that stays a separate choice.)
+- Plan entitlement is unchanged: queue targets still need queue depth and
+  function targets async invoke on the bucket's plan.
+- No resume quota: notification rules have no plan cap of their own, and the
+  queues and functions they reach are already counted.
+- A production bucket no longer reaches a queue that exists only in a stage:
+  before, the environment-blind lookup resolved it there. Stage queues are
+  dark with full clones, so no production rule is expected to rely on it.
+- Release compatibility. The environment-scoped lookup and the pause are read
+  by every writer that captures notification work (apid and the object
+  gateway). An N-1 writer resolves environment-blind and ignores
+  `clone_paused`, so it would deliver a paused copy: full clones must stay off
+  until every such writer runs N. The migration adds `clone_paused boolean
+  NOT NULL DEFAULT false`, expand-only; the writers clear it on any explicit
+  rules write, identical rules included.
+
+### Slices
+
+1. Environment-scoped destination resolution and validation (fixes the
+   production ambiguity on its own; shippable first).
+2. `clone_paused` column, capture, copy, proof, registry, admission blocker.
+3. `automation/resume` and the CLI resume bucket notifications; docs and SDK
+   models.
+
+## Amendment 2026-11-21: what production projects need from a full clone
+
+Status: accepted.
+
+### Problem
+
+A read-only run of the clone admission inventory over production (22
+projects; 6 hold apps, 56 of 89 live apps belong to no project) found that no
+project with apps could be cloned. The tables the sources hold rows in were,
+by projects hit: `deployment_public_build_urls` 6; `edge_rules` and
+`edge_rule_set_versions` 3; `app_service_wake_ahead` 3; `app_release_gates`,
+`app_slos` and `synthetic_checks` 2; and once each `project_environment_secrets`,
+`route_health_gates`, `alert_rules`, `api_consumers`, `consumer_keys`,
+`app_openapi_docs` and `stored_workflow_revisions`.
+
+### Decision
+
+1. **App-wide settings stay with production.** `edge_rules`,
+   `edge_rule_set_versions`, `app_service_wake_ahead`, `app_slos`,
+   `synthetic_checks`, `app_release_gates` and `route_health_gates` have no
+   environment column. A new registry strategy, `production_only`, declares
+   that a clone neither copies nor refuses them: the stage starts without
+   them. Stage hosts already take their edge rules from the environment edge
+   policy, which a clone copies. The strategy is valid only for tables owned
+   below the account (app, deployment, environment, project).
+2. **A target deployment carries its source's build URLs.** The workload
+   snapshot captures the source deployment's `deployment_public_build_urls`
+   row; attaching the target deployment writes it. The table gains `capture`
+   and `materialize`.
+3. **Shared secrets are captured sealed.** The capture records the source
+   environment's `project_environment_secrets` envelopes (ciphertext, key ID,
+   value hash, version) and every project app's
+   `app_environment_secret_refs` and `app_environment_secret_ref_suppressions`
+   in the project-level part of the snapshot, beside the project
+   configuration. The envelope is not bound to an environment, so the stage
+   gets the same ciphertext under the same key ID, as a clone without a
+   checkpoint already does; no value is opened. Materialization writes the
+   secrets and the cloned apps' references and suppressions; publication
+   proves the stage holds exactly them. The refusal
+   `source.project_secrets` (`ErrProjectSecretCloneTransferUnsupported`) is
+   removed.
+
+### Consequences
+
+- Five of the six production projects with apps pass admission; the sixth
+  still needs `alert_rules`, `api_consumers`, `consumer_keys`,
+  `app_openapi_docs` and `stored_workflow_revisions`.
+- A secret rotated in production after the clone does not reach the stage:
+  the stage holds its own copy from the clone's capture.
+- Captures made before this release carry no shared secrets and still
+  publish; N-1 capture refuses a source with shared secrets, so admission
+  stays off until every apid runs N.
+
+## Amendment 2026-11-22: per-environment API consumers, alert rules and stored workflows
+
+Status: accepted (consumers designed here; alert rules and stored workflows
+get their detail in their own slices).
+
+### Problem
+
+The last production project that a full clone refuses holds app-wide
+`api_consumers`, `consumer_keys`, `alert_rules` and stored workflows. None has
+an environment column, so a clone can neither copy them into the stage nor
+leave them behind without changing what the stage serves. `app_openapi_docs`
+is also app-wide; stage deployments already record their own OpenAPI snapshot.
+
+### Decision
+
+1. **`app_openapi_docs` is derived**: the stage's deployments rebuild it.
+2. **The owner chose per-environment configuration for the other three, in
+   minimal form first.** Each gets an environment scope (NULL is production,
+   as for queue bindings and crons). A full clone copies the source
+   environment's rows into the stage; side effects are copied paused. A stage
+   row works only where its source is environment-aware today; elsewhere the
+   stage refuses it with a clear message, and later slices widen that.
+3. **API consumers.**
+   - `api_consumers` and `consumer_keys` gain `environment_id` (NULL is
+     production). A key belongs to its consumer's environment; a trigger
+     fills and checks it.
+   - The unique identities become per-environment: key prefix and key name
+     per app and environment, consumer external reference per app and
+     environment. A stage copy of a key keeps its prefix and keyed hash, so
+     the same plaintext authenticates in both environments.
+   - **Stage hosts:** a stage that has consumers of its own accepts only
+     them; a stage with none keeps accepting production's (owner's choice),
+     so existing stages keep working. Production hosts accept only production
+     consumers.
+   - Consumer plans stay app-wide and are shared; plan assignments follow
+     their consumer.
+   - Stage consumer usage is not billed or metered against consumer plans.
+   - A full clone copies the source environment's active consumers, their
+     active keys and plan assignments into the stage, and publication proves
+     the copy.
+   - API and CLI take `environment` on consumer and key routes; omitted is
+     production.
+4. **Alert rules** (later slice): copied paused; a stage rule may be resumed
+   only on a metric whose source carries the environment (requests, errors,
+   latency and invocations first).
+5. **Stored workflows** (later slice): copied disabled; a stage workflow may
+   be enabled only for HTTP and cron triggers first.
+
+### Release
+
+The per-environment identity indexes are added beside the app-wide ones, and
+a later contract release drops the app-wide ones. They cannot go in the same
+release: platform-tenant consumer creation writes `ON CONFLICT (app_id,
+external_ref)`, which needs the app-wide index, and N-1 runs that path. Until
+the contract release a stage consumer's external reference and key names must
+differ from production's, so a full clone, which copies them, ships with the
+contract release; full clone admission stays off until every apid and gateway
+runs it.
+
+An N-1 gateway reads keys by app and prefix with no environment, so it would
+accept a stage's key on a production host. Creating a stage's consumers waits
+for the apid runtime key `stage_api_consumers_enabled` (default off), which
+operators turn on once every gatewayd-internal runs this release. A stage's
+consumers are not billed: the gateway records their usage without a consumer
+and skips their plan admission, and billing runs read production's consumers
+only.
+
+Release order: (1) the per-environment columns, indexes and stage
+consumers; (2) platform-tenant consumer creation writes `ON CONFLICT (app_id,
+COALESCE(environment_id, zero uuid), external_ref)`, the per-environment
+index; (3) once every apid runs (2), the contract migration drops the
+app-wide indexes and full clones copy consumers, keys and plan assignments.
+
+### Alert rules (detail, 2026-11-26)
+
+- `alert_rules.environment_id` (NULL is production) names one of the app's
+  project environments; a trigger checks it and keeps it fixed, and the
+  environment's deletion removes its rules. Account-wide rules are
+  production's.
+- **What a stage rule reads.** The gateway's per-environment request series
+  from ADR-744 (amendment 2026-11-23):
+  `gateway_environment_request_duration_seconds{app,scope,class}` and
+  `gateway_environment_capacity_refusals_total{app,scope}`, labelled by
+  environment slug and recorded for production (`production`, or `default`
+  for a legacy app) as well as stages. This amendment adds
+  `gateway_environment_cold_boot_total{app,scope}` beside them. A stage
+  rule reads its stage's slug (looked up from `environment_id`). Failed
+  invocations already carry their environment.
+- **Production rules leave stages out.** A production rule's request
+  metrics are the app-wide series minus every non-production scope's, and
+  its failed-invocation counts take only invocations without an
+  environment, so a stage's traffic fires only the stage's rules. Anomaly
+  baselines (ADR-744) keep reading the whole app. Production's other
+  readers of the account's rules (the app's dashboard alerts and preset
+  cards, preset lookup, the platform outage notice's "owner already has an
+  error-rate rule" check) skip stage rules. A stage rule's webhook payloads
+  carry `app_id` and `environment_id`.
+- **Not to be confused with `environment_scope`** (ADR-744): that is a
+  production rule's anomaly baseline read over one environment's traffic.
+  A rule has at most one of the two: `environment_scope` needs an anomaly
+  comparison, and a stage rule a fixed one.
+- **A stage rule can run** on `request_count`, `error_rate_pct`,
+  `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `cold_start_pct` or
+  `failed_invocations`, with `gt`, `gte`, `lt` or `lte` and a webhook action
+  (`alert_rules_environment_enabled_chk`). The API refuses creating any
+  other stage rule, and refuses enabling one; a clone's paused copy of such
+  a rule can be edited or deleted. Notification channels work as for
+  production.
+- API and CLI take `environment` on the app's alert list and create routes.
+- **Release.** An N-1 meterd would evaluate a stage rule over the whole app,
+  and an N-1 gateway does not count environment hosts, so creating or
+  enabling a stage rule waits for the apid runtime key
+  `stage_alert_rules_enabled` (default off), turned on once every meterd and
+  gatewayd-internal runs this release.
+- Rule names become unique per app and environment
+  (`alert_rules_app_environment_name_uniq`); the app-wide
+  `alert_rules_app_name_uniq` is dropped by the contract release that also
+  lets a full clone copy rules paused, as for consumers. Until then a stage
+  rule's name must differ from production's.

@@ -1,0 +1,53 @@
+{
+  "feature": "Run task pipelines and bounded retries",
+  "date": "2026-11-16",
+  "feature_gate": "FAAS_EXECUTION_PIPELINES_ENABLED",
+  "default_enabled": false,
+  "production_deployed": false,
+  "qualification_host": "gregale-internal-test-1",
+  "gcp_project": "gregale-prod",
+  "source_base_manifest": "908b512feece17b5dd87810a6496e6cd57820aea9c37851b3d15582e312c0522",
+  "reviewed_delta_sha256": "44df733d104bd577acaa66bae648f7fbd7dc2b7eaf6197de13a76a71e95deb4d",
+  "reviewed_source_files": 55,
+  "checks": {
+    "migration_expand_contract": "passed",
+    "sqlc_regeneration": "passed",
+    "teststore_interface_policy": "passed",
+    "node_sdk": {
+      "passed": 3,
+      "failed": 0
+    },
+    "python_sdk": {
+      "passed": 4,
+      "failed": 0
+    },
+    "linux_domain": "passed",
+    "linux_memory_store": "passed",
+    "linux_postgres_store": "passed",
+    "linux_api_and_legacy_dags": "passed",
+    "linux_cli": "passed",
+    "go_sdk": "passed",
+    "linux_lint": "passed",
+    "spec_and_sdk_coverage": "passed",
+    "global_adr_uniqueness": {
+      "status": "preexisting_failure",
+      "prefixes": [
+        "20261104120000",
+        "20261111130000"
+      ]
+    }
+  },
+  "scope": "Control-plane orchestration and transaction qualification; no VM or guest lifecycle protocol changes; no native bare-metal acceptance claim.",
+  "request_copy_patch_sha256": "32f32868f38b0779737a099e1a0c25a9e15259f3dbbf305478ab7e93b251dc52",
+  "documentation_updated_after_source_check": [
+    "docs/run-pipelines.md",
+    "docs/ops/evidence/20261116-run-pipelines/README.md"
+  ],
+  "sdk_changed_files_verified": 70,
+  "budget_wait_patch_sha256": "e696a2b6d2d4bf13594985e1d2e998ae021944198ea7add265ab9f59ad013f08",
+  "final_safety_patch_sha256": "0d2641863c9a1c8af0d3e5da4ab44d96d3692c670622ba95e7ac6003f906b7e6",
+  "qualification_status": "passed_scoped_checks",
+  "evidence_archive_sha256": "3e43c25330768865edf99b2242125f5643225768c90964651e3f5f154fbaef5b",
+  "temporary_databases_remaining": 0,
+  "sdk_spec_sha256": "408df8fef56fc0862c762e4774eebef16394be4ecb25f67ec81a004961340eed"
+}

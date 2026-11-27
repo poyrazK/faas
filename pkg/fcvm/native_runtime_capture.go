@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -36,10 +37,11 @@ func (v *JailerVMM) nativeRuntimeCaptureEnabled() bool {
 // or warm capture needs. Only Manager.Park and Manager.WarmSnapshot set it;
 // wire callers cannot supply one.
 type nativeRuntimeCaptureRequest struct {
-	DeploymentID     string
-	NativeGeneration string
-	FCVersion        string
-	Backing          BackingIdentity
+	DeploymentID      string
+	NativeGeneration  string
+	FCVersion         string
+	Backing           BackingIdentity
+	ExecutionTemplate bool
 }
 
 // nativeRuntimeCapture returns the request for an ordinary park or warm
@@ -52,11 +54,21 @@ func (m *Manager) nativeRuntimeCapture(ctx context.Context, inst *Instance, spec
 		spec.functionMigration != nil || spec.functionMigrationGrant != nil || spec.Storage != nil {
 		return nil
 	}
+	if inst.ExecutionOnly && !inst.executionTemplateOnly {
+		return nil
+	}
+	deployment := inst.DeploymentID
+	if inst.executionTemplateOnly {
+		if !inst.ExecutionOnly || !executionTemplateMemoryKey(spec.StorageKey) {
+			return nil
+		}
+		deployment = uuid.Nil.String()
+	}
 	// The identity may still be hashing off the wake path; the capture
 	// records it, so wait for it as writeSnapshotBacking does.
 	backing, _ := m.awaitInstanceBacking(ctx, inst.Lease.Instance)
-	return &nativeRuntimeCaptureRequest{DeploymentID: inst.DeploymentID, NativeGeneration: inst.nativeGeneration,
-		FCVersion: m.fcVersion, Backing: backing}
+	return &nativeRuntimeCaptureRequest{DeploymentID: deployment, NativeGeneration: inst.nativeGeneration,
+		FCVersion: m.fcVersion, Backing: backing, ExecutionTemplate: inst.executionTemplateOnly}
 }
 
 // nativeRuntimeCaptureAuthority is the runtime counterpart of a qualification
@@ -115,12 +127,16 @@ func (a nativeRuntimeCaptureAuthority) validate() error {
 	if err := validateNativeJournalLease(a.NativeLease); err != nil {
 		return err
 	}
-	if a.Version != 1 || a.NativeLease.Instance != a.InstanceID || a.NativeLease.IsBuilder ||
+	if (a.Version != 1 && a.Version != 2) || a.NativeLease.Instance != a.InstanceID || a.NativeLease.IsBuilder ||
 		!canonicalNativeHelperID(a.NativeGeneration) || !canonicalNativeHelperID(a.KernelBootID) {
 		return errors.New("native runtime capture: original physical owner is incomplete")
 	}
-	if runtimeadmission.CheckSnapshotCaptureKeys(a.DeploymentID, a.Keys.Memory, a.Keys.VMState, a.Keys.Drive) != nil ||
-		a.Keys != nativeRuntimeCaptureKeys(a.Keys.Memory) || !canonicalNativeHelperID(nativeRuntimeCaptureID(a.Keys.Memory)) {
+	namespaceOK := a.Version == 1 && runtimeadmission.CheckSnapshotCaptureKeys(a.DeploymentID, a.Keys.Memory, a.Keys.VMState, a.Keys.Drive) == nil
+	if a.Version == 2 {
+		namespaceOK = a.DeploymentID == uuid.Nil.String() && executionTemplateMemoryKey(a.Keys.Memory) &&
+			a.NativeLease.Networkless && a.NativeLease.Plan == api.PlanScale && canonicalNativeHelperID(a.InstanceID)
+	}
+	if !namespaceOK || a.Keys != nativeRuntimeCaptureKeys(a.Keys.Memory) || !canonicalNativeHelperID(nativeRuntimeCaptureID(a.Keys.Memory)) {
 		return errors.New("native runtime capture: a fresh v2 capture namespace is required")
 	}
 	if a.AcceptedAt.IsZero() || !a.AcceptedAt.Before(a.Deadline) || a.Deadline.Sub(a.AcceptedAt) > api.NativeRuntimeCaptureMaxDuration {

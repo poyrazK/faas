@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -192,6 +194,27 @@ func TestAnalyzeDockerfileWarnsForRawTCPServer(t *testing.T) {
 	}
 }
 
+// Prod hunt r42: a loopback address that is not bound warned on every deploy
+// of rest-api-postgres.
+func TestLoopbackBindLine(t *testing.T) {
+	for body, want := range map[string]bool{
+		"app.listen(3000, '127.0.0.1')":                                     true,
+		"const HOST = process.env.HOST || 'localhost'":                      true,
+		"uvicorn.run(app, host=\"127.0.0.1\")":                              true,
+		"server.bind(('localhost', 8080))":                                  true,
+		"app.run('127.0.0.1', 8080)":                                        true,
+		"uvicorn.run(app, \"127.0.0.1\")":                                   true,
+		"web.run_app(app, \"127.0.0.1\")":                                   true,
+		"if (![\"127.0.0.1\", \"::1\"].includes(req.socket.remoteAddress))": false,
+		"const url = 'http://localhost:5432/db'":                            false,
+		"// try it at http://localhost:8080":                                false,
+	} {
+		if got := loopbackBindLine(body); got != want {
+			t.Errorf("loopbackBindLine(%q) = %v, want %v", body, got, want)
+		}
+	}
+}
+
 func TestAnalyzeUnknownAndLoopbackWarning(t *testing.T) {
 	got, err := Analyze(fstest.MapFS{
 		"server.js": &fstest.MapFile{Data: []byte("app.listen(3000, '127.0.0.1')\n")},
@@ -208,6 +231,29 @@ func TestAnalyzeUnknownAndLoopbackWarning(t *testing.T) {
 	}
 	if !seen["framework_not_detected"] || !seen["loopback_bind_possible"] {
 		t.Fatalf("warnings = %+v, want framework_not_detected and loopback_bind_possible", got.Warnings)
+	}
+}
+
+// A deploy of the plain MCP starter printed four loopback warnings: its tests
+// and a server.js that binds 0.0.0.0 on Gregale and 127.0.0.1 elsewhere.
+func TestLoopbackWarningSkipsTestsAndChosenBinds(t *testing.T) {
+	got := loopbackWarnings(fstest.MapFS{
+		"server.js":                  &fstest.MapFile{Data: []byte("const host = onGregale ? '0.0.0.0' : '127.0.0.1'\n")},
+		"test/http.test.js":          &fstest.MapFile{Data: []byte("fetch('http://127.0.0.1:1')\n")},
+		"src/__tests__/a.js":         &fstest.MapFile{Data: []byte("localhost\n")},
+		"main_test.go":               &fstest.MapFile{Data: []byte("localhost\n")},
+		"test_server.py":             &fstest.MapFile{Data: []byte("localhost\n")},
+		"web/app.spec.ts":            &fstest.MapFile{Data: []byte("localhost\n")},
+		"api/listen.js":              &fstest.MapFile{Data: []byte("app.listen(3000, 'localhost')\n")},
+		"contest/localhost_check.py": &fstest.MapFile{Data: []byte("bind('127.0.0.1')\n")},
+	})
+	var sources []string
+	for _, warning := range got {
+		sources = append(sources, warning.Sources...)
+	}
+	sort.Strings(sources)
+	if want := []string{"api/listen.js", "contest/localhost_check.py"}; !slices.Equal(sources, want) {
+		t.Fatalf("loopback warnings on %v, want %v", sources, want)
 	}
 }
 

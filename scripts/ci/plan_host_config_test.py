@@ -94,12 +94,42 @@ class PlanTest(unittest.TestCase):
             ("not a unit release", dict(RELEASE, kind="other"), host(record()), None, "format 2"),
             ("N±1", RELEASE, host(record()), "d" * 40, "N±1"),
             ("host runs another full release", RELEASE, host(record(), base="e" * 40), None, "deploy that full release"),
+            ("a rebuilt host has no active release", RELEASE, host(None, base=None), None, "no active release yet"),
             ("host converged newer content", RELEASE, host(record(commit="f" * 40)), None, "not an ancestor"),
         ]
         for name, release, state, previous, want in cases:
             with self.subTest(name):
                 with self.assertRaisesRegex(phc.Refused, want):
                     phc.plan(release, state, NEW, None, ancestors(("a" * 40, COMMIT)), previous)
+
+
+class RollbackTest(unittest.TestCase):
+    """Converging back to the known-good host configuration after a watch
+    breach (ADR-20261122170000)."""
+    GOOD = "9" * 40
+
+    def test_roles_that_differ_converge_back_and_the_record_names_the_target(self):
+        # The record says grafana was converged at "a" (sha256:f2); back at GOOD it is sha256:f.
+        rec = record(roles={"nftables": "sha256:n", "postgres": "sha256:p2", "grafana": "sha256:f2"})
+        out, new_rec = phc.plan_rollback(self.GOOD, host(rec), NEW, None, ancestors((self.GOOD, "a" * 40)))
+        self.assertEqual((out["action"], out["roles"], out["previous"]), ("converge", ["grafana"], ""))
+        self.assertEqual(new_rec["commit"], self.GOOD)
+
+    def test_stateful_roles_never_converge_back(self):
+        rec = record(roles={"nftables": "sha256:n", "postgres": "sha256:p9", "grafana": "sha256:f"})
+        out, new_rec = phc.plan_rollback(self.GOOD, host(rec), NEW, None, ancestors((self.GOOD, "a" * 40)),
+                                         {"postgres": ["postgresql"]})
+        self.assertEqual((out["action"], out["roles"]), ("none", []))
+        self.assertIsNone(new_rec)
+
+    def test_refusals(self):
+        for name, state, anc, why in (
+            ("no record", host(None), ancestors(), "no role record"),
+            ("not an ancestor", host(record()), ancestors(), "not an ancestor"),
+            ("other globals", host(record(globals="sha256:old")), ancestors((self.GOOD, "a" * 40)), "globals"),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(phc.Refused, why):
+                phc.plan_rollback(self.GOOD, state, NEW, None, anc)
 
 
 class FullReleaseTest(unittest.TestCase):
@@ -147,6 +177,13 @@ class FullReleaseTest(unittest.TestCase):
                 self.assertEqual(written, {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane",
                                            "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
                                            "roles": NEW["roles"]})
+
+    def test_a_rebuilt_host_with_no_active_release_converges_every_role(self):
+        # unit_deploy.sh host-state on a control plane rebuilt from backups,
+        # before its first activation: no release, maybe no record.
+        fresh = {"current": None, "base_git_sha": None, "manifest_hash": None, "record": None, "contract": None}
+        out, _ = phc.plan_full_release(COMMIT, fresh, NEW)
+        self.assertEqual((out["action"], out["roles"], out["all"]), ("all", NEW["order"], True))
 
 
 class GateTest(unittest.TestCase):

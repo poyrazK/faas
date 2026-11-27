@@ -444,6 +444,15 @@ func cmdAuthStatus(args []string) int {
 	}
 	PrintOK(osStdout, "Auth for %s is %s", status.App, state)
 	_, _ = fmt.Fprintf(osStdout, "  issuer:   %s\n  jwks:     %s\n  audience: %s\n", status.Issuer, status.JWKSURL, status.Audience)
+	// Settings come from the running app, so a parked or failing app only
+	// loses the warnings, never the status.
+	if status.Ready {
+		if settings, err := fetchAuthSettings(ctx, app); err == nil {
+			for _, warning := range authSecurityWarnings(settings) {
+				PrintWarn(osStderr, "%s", warning)
+			}
+		}
+	}
 	return 0
 }
 

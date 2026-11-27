@@ -20,6 +20,7 @@ func releaseApprovalPolicyFromRow(r sqlc.AppReleaseApprovalPolicy) ReleaseApprov
 		RequiredApprovals: int(r.RequiredApprovals), AfterStage: int(r.AfterStage), TimeoutMinutes: int(r.TimeoutMinutes),
 		Approvers: r.Approvers, AllowSelfApproval: r.AllowSelfApproval, NotifyChannelIDs: pgUUIDStrings(r.NotifyChannelIds),
 		UpdatedBy: r.UpdatedBy, CreatedAt: r.CreatedAt.Time.UTC(), UpdatedAt: r.UpdatedAt.Time.UTC(),
+		RequirePassingSandboxSuite: &r.RequirePassingSandboxSuite,
 	}
 }
 
@@ -115,11 +116,16 @@ func releaseApprovalFromRow(r sqlc.DeploymentReleaseApproval) ReleaseApproval {
 }
 
 func (s *PgStore) SetReleaseApprovalPolicy(ctx context.Context, p ReleaseApprovalPolicy, now time.Time) (ReleaseApprovalPolicy, error) {
+	var requirement pgtype.Bool
+	if p.RequirePassingSandboxSuite != nil {
+		requirement = pgtype.Bool{Bool: *p.RequirePassingSandboxSuite, Valid: true}
+	}
 	row, err := sqlc.New().UpsertAppReleaseApprovalPolicy(ctx, s.pool, sqlc.UpsertAppReleaseApprovalPolicyParams{
 		AppID: mustPgUUID(p.AppID), AccountID: mustPgUUID(p.AccountID),
 		RequiredApprovals: int16(p.RequiredApprovals), AfterStage: int16(p.AfterStage), TimeoutMinutes: int32(p.TimeoutMinutes),
 		Approvers: p.Approvers, AllowSelfApproval: p.AllowSelfApproval, NotifyChannelIds: pgUUIDList(p.NotifyChannelIDs),
 		UpdatedBy: p.UpdatedBy, Now: pgTimestamptzUTC(now),
+		RequirePassingSandboxSuite: requirement,
 	})
 	if err != nil {
 		return ReleaseApprovalPolicy{}, mapErr(err)

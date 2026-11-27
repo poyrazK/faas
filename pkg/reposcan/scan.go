@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
 )
@@ -180,6 +181,9 @@ type Workload struct {
 	// ServiceBindingTransport selects the canonical URL scheme injected for
 	// internal service bindings. Empty preserves the established HTTP contract.
 	ServiceBindingTransport ServiceBindingTransport
+	// Uses are the gregale.yaml `uses:` grants of the service
+	// (ADR-20261122191423); nil when the service declares none.
+	Uses *capgrant.Uses
 	// ServiceReliability is caller-owned timeout and retry policy for declared
 	// depends_on targets.
 	ServiceReliability map[string]api.ServiceReliabilityPolicy
@@ -204,6 +208,12 @@ type Workload struct {
 	// setting and the platform default for a new one.
 	Streaming *bool `json:",omitempty"`
 	WakeAhead *bool `json:",omitempty"`
+	// Access is who may call the service's public URL, declared in
+	// gregale.yaml (project.services.<name>.access) or Compose
+	// (x-gregale-access): "public" (anyone) or "key" (a Gregale API key).
+	// Empty declares nothing: a new app takes the plan default and an
+	// existing one keeps its setting (ADR-20261124090000).
+	Access string `json:",omitempty"`
 	// RenamedFrom is the service's previous name (Compose
 	// x-gregale-renamed-from). A deploy updates that name's app in place
 	// instead of removing it and creating a new one (ADR-20261029090000).

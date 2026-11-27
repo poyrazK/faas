@@ -26,6 +26,8 @@ func cmdPostgresBranch(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "masked":
+		return cmdPostgresBranchMasked(args[1:])
 	case subList:
 		return cmdPostgresBranchList(args[1:])
 	case "delete", "rm":
@@ -178,7 +180,11 @@ func renderPostgresBranches(w io.Writer, source string, branches []api.ManagedPo
 		if expires == "" {
 			expires = "-"
 		}
-		_, _ = fmt.Fprintf(w, "%-20s %-13s %-32s %s\n", branch.Name, branch.State, branch.RestorePointInTime, expires)
+		from := branch.RestorePointInTime
+		if branch.MaskedBranch {
+			from = "masked"
+		}
+		_, _ = fmt.Fprintf(w, "%-20s %-13s %-32s %s\n", branch.Name, branch.State, from, expires)
 	}
 }
 

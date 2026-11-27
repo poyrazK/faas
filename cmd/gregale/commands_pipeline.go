@@ -17,7 +17,7 @@ import (
 
 func cmdPipeline(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|setup|create|freshness|indexes|evolve|operations|access|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
+		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|setup|create|freshness|index|evolution|work|access|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
 		return 1
 	}
 	switch args[0] {
@@ -53,7 +53,10 @@ func cmdPipeline(args []string) int {
 	case "status", "wait", "pause", "resume", "resync", "verify", "delete":
 		return cmdPipelineControl(args[0], args[1:])
 	default:
-		return printErr("Unknown pipeline command", errors.New("use connection, setup, create, freshness, indexes, evolve, operations, access, list, status, wait, pause, resume, resync, verify or delete"))
+		// Spelled as help lists them (prod hunt r60): the dispatcher's
+		// indexes/evolve/operations are what the CLI tree rewrites
+		// index/evolution/work to.
+		return printErr("Unknown pipeline command", errors.New("use connection, setup, create, freshness, index, evolution, work, access, list, status, wait, pause, resume, resync, verify or delete"))
 	}
 }
 
@@ -285,13 +288,7 @@ func cmdPipelineCreate(args []string) int {
 	if *database != "" {
 		db, err = resolveManagedPostgresDatabase(ctx, client, *database)
 	} else {
-		if *region == "" {
-			caps, capErr := client.GetManagedPostgresCapabilities(ctx, "")
-			if capErr != nil {
-				return printErr("Could not inspect placement", capErr)
-			}
-			*region = caps.Region
-		}
+		*region = defaultPostgresRegion(ctx, client, *region)
 		req := api.CreateManagedPostgresDatabaseRequest{Name: pipelineMirrorName(fs.Arg(0)), Region: *region, PostgresMajor: api.ManagedPostgresDefaultMajor}
 		db, err = client.CreateManagedPostgresDatabase(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline-mirror", req.Name, req.Region)), req)
 	}

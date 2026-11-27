@@ -204,6 +204,9 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	if isPostgresBindingProbeCommand(req) {
 		return executePostgresBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
+	if len(req.Command) > 0 && req.Command[0] == api.AppTaskDataAPIWriteInspectionCommand {
+		return executeDataAPIWriteInspection(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	if isServiceBindingProbeCommand(req) {
 		return executeServiceBindingProbeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
@@ -257,13 +260,22 @@ func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, s
 	// release command logged mise's "failed create_dir_all:
 	// /.local/state/mise/tracked-configs: Permission denied" (SB-10).
 	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
+	env = StampMiseCacheEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
 	env = stampAppTaskOutputManifestPath(env)
 	if req.CommandShell {
-		argv = []string{"/bin/sh", "-lc", argv[0]}
+		// Not a login shell: Debian's /etc/profile resets PATH for non-root
+		// users, which drops /app/node_modules/.bin and the runtime shims the
+		// deployment's environment put on PATH (a `prisma migrate deploy`
+		// release exited 127). env above is already the app's environment,
+		// and the app's own start command runs under `sh -c` too, so a task
+		// now sees what the app sees. A contained rehearsal still pins the
+		// `-lc` argv in its envelope (pkg/rehearsalcommand and the SQL
+		// admission trigger match it); that path is unchanged.
+		argv = []string{"/bin/sh", "-c", argv[0]}
 	} else {
 		argv[0] = resolveWorkloadCommandPath("/", argv[0], env)
 	}

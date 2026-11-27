@@ -17,7 +17,7 @@ stored evidence.
 | `oauth_chatgpt_login` | Connect in ChatGPT through the selected real OAuth provider: discovery, PKCE, resource audience, consent, valid request and rejection after expiry. |
 | `oauth_codex_login` | Repeat the real provider flow in Codex and record provider/client versions. |
 | `official_sdk_interop` | Exercise the Node, Go and Python starters in modern and legacy modes using the pinned official SDK client; check tools, resources, prompts, prompt/resource completions and streamed progress in each runtime. CI also checks Go and Python resource/prompt/completion scope policies, including filtered catalogs, unlisted-entry denial, and insufficient-scope challenges. |
-| `tasks_restart_replicas` | Create a task, kill/restart its worker, resume with two replicas, fence the stale lease, and retrieve the result only as its owner. Include final-attempt input resume. |
+| `tasks_restart_replicas` | Create a task, kill/restart its worker, resume with two replicas, fence the stale lease, and retrieve the result only as its owner. Include final-attempt input resume and reviewed-input resume across worker replacement. |
 | `tasks_scale_from_zero` | CI proves the Gregale control-plane path from zero to four MCP workers and back using fresh task-backlog metrics. The staging runner requires a distinct linked observer app with an always-on running replica, a fresh observer heartbeat, a fresh zero metric and zero worker replicas before enqueue, then observes a fresh positive backlog, worker start, task completion, a fresh zero metric and return to zero. |
 
 Reject a candidate with bad protocol behavior or a widened reader catalog and
@@ -152,12 +152,12 @@ stage; URLs, response content and tool results are not written to the receipt.
 Qualify task recovery across separate worker processes and two replacement
 replicas with a disposable PostgreSQL database. This creates and drops one
 randomly named schema; it does not alter the starter's configured database
-schema or any app deployment. Materialize the Node starter and install its
-dependencies first:
+schema or any app deployment. Materialize the Node Tasks starter and install
+its dependencies first:
 
 ```sh
-gregale mcp init --runtime node --path /tmp/mcp-node
-cd /tmp/mcp-node && npm ci
+gregale init --template mcp-node-tasks --path /tmp/mcp-node-tasks
+cd /tmp/mcp-node-tasks && npm ci
 ```
 
 Then run the task qualification with the disposable database URL in the
@@ -167,16 +167,24 @@ the receipt):
 ```sh
 MCP_TASKS_TEST_DATABASE_URL='<disposable PostgreSQL URL>' \
   python3 scripts/ops/mcp-qualification.py tasks-restart --dir <evidence> \
-  --starter-dir /tmp/mcp-node --confirm-disposable-database \
-  --target '<reviewed commit / Node starter / disposable PostgreSQL>'
+  --starter-dir /tmp/mcp-node-tasks --confirm-disposable-database \
+  --gregale "$(command -v gregale)" \
+  --target '<reviewed commit / Node Tasks starter / disposable PostgreSQL>'
 ```
 
 The runner kills a worker during a task, starts two replacement processes,
 checks that exactly one replica recovers the task, rejects the stale lease,
 and verifies that only the task owner can read the result. It also verifies
-that input resume on the final attempt does not grant another retry. The
-receipt contains only pass states, replica/attempt counts, and a redacted
-failure stage. Scale-from-zero still requires an observation on the target
+that input resume on the final attempt does not grant another retry.
+
+The CLI from the reviewed build submits a separate Task, exports its pending
+form for review, and resumes it after the original worker exits. The replacement
+worker must complete the same Task with exactly one accepted update and one
+durable result. A token for the same owner with reduced scope must send zero
+updates and leave the pending state intact. With `--gregale`, the version 2
+receipt records these checks and counts. The original version 1 runner remains
+available without the CLI flag. Receipts contain pass states, counts, and a
+redacted failure stage. Scale-from-zero still requires an observation on the target
 hosting platform.
 
 Qualify real staging scale-from-zero behavior with an MCP tool that returns an
@@ -317,7 +325,7 @@ Build the Gregale binary from the reviewed commit. Prepare disposable fixtures:
 
 ```sh
 python3 scripts/ops/mcp-hosting-rollout-qualification.py prepare \
-  --starter cmd/gregale/templates/mcp-node --dir /tmp/mcp-qualification-fixtures
+  --starter cmd/gregale/templates/mcp-node-tasks --dir /tmp/mcp-qualification-fixtures
 ```
 
 Install each fixture's locked npm dependencies before running. Provision separate `mcp-qual-` web, previous-worker, candidate-worker, and observer apps in a dedicated qualification account. The candidate app must have no instances or deployments; worker and observer scaling must have minimum one. Configure remote `DATABASE_URL` secrets with the runtime account for web/workers and the observer account for the observer. All apps share the disposable namespace and owner key. Follow the migration and role-grant instructions above to establish four distinct database accounts in the same schema; grant them their runtime, observer, operator, and migration profiles. The three service accounts must not have schema CREATE.

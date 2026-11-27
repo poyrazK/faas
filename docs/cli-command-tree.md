@@ -69,6 +69,7 @@ touch them. The tables below map each earlier name.
 
 | Earlier | Now |
 |---|---|
+| `gregale agents` | `gregale agent` |
 | `gregale alerts` | `gregale alert` |
 | `gregale analytics` | `gregale metric requests` |
 | `gregale approvals` | `gregale release approval` |
@@ -80,6 +81,7 @@ touch them. The tables below map each earlier name.
 | `gregale capabilities` | `gregale feature list` |
 | `gregale channels` | `gregale alert channel` |
 | `gregale chaos` | `gregale test` |
+| `gregale claim` | `gregale account claim create` |
 | `gregale connect` | `gregale github` |
 | `gregale consumers` | `gregale api consumer` |
 | `gregale context` | `gregale config context get` |
@@ -128,6 +130,7 @@ touch them. The tables below map each earlier name.
 | `gregale projects` | `gregale project` |
 | `gregale ps` | `gregale app instances` |
 | `gregale release-gates` | `gregale release gate` |
+| `gregale route-resources` | `gregale metric resources` |
 | `gregale routes` | `gregale api route` |
 | `gregale runs` | `gregale sandbox` |
 | `gregale sandbox-templates` | `gregale sandbox template` |
@@ -147,6 +150,7 @@ touch them. The tables below map each earlier name.
 | `gregale trusted-publishers` | `gregale registry key` |
 | `gregale upload-cache` | `gregale config upload-cache` |
 | `gregale usage` | `gregale billing usage` |
+| `gregale verify` | `gregale release check` |
 | `gregale wake` | `gregale app wake` |
 | `gregale wake-ahead` | `gregale app wake-ahead` |
 | `gregale wake-timeline` | `gregale app wake-timeline` |
@@ -165,6 +169,9 @@ touch them. The tables below map each earlier name.
 | `gregale account dpa` | `gregale account dpa get` |
 | `gregale account health` | `gregale account health get` |
 | `gregale account slo` | `gregale alert slo list --account` |
+| `gregale agents runs approvals` | `gregale agent run approval list` |
+| `gregale agents runs approve` | `gregale agent run approve` |
+| `gregale agents runs deny` | `gregale agent run deny` |
 | `gregale ai app-limit` | `gregale ai app-limit get` |
 | `gregale ai app-limit` | `gregale ai app-limit set` |
 | `gregale ai content-policy` | `gregale ai content-policy get` |
@@ -218,6 +225,8 @@ touch them. The tables below map each earlier name.
 | `gregale consumers billing-policy` | `gregale api consumer billing-policy get` |
 | `gregale consumers credit-grant` | `gregale api consumer credit grant` |
 | `gregale consumers credit-void` | `gregale api consumer credit void` |
+| `gregale consumers identities` | `gregale api consumer identity list` |
+| `gregale consumers identity-delete` | `gregale api consumer identity delete` |
 | `gregale consumers key-create` | `gregale api consumer key create` |
 | `gregale consumers key-revoke` | `gregale api consumer key revoke` |
 | `gregale consumers overdue-holds` | `gregale api consumer overdue-hold list` |
@@ -264,6 +273,8 @@ touch them. The tables below map each earlier name.
 | `gregale data-api rotation preflight` | `gregale data-api rotation check` |
 | `gregale data-api storage sql` | `gregale data-api storage export` |
 | `gregale data-api verify release` | `gregale data-api release verify` |
+| `gregale data-api write-check` | `gregale data-api write check` |
+| `gregale data-api write-readiness` | `gregale data-api write readiness` |
 | `gregale debug capture-diff` | `gregale debug capture diff` |
 | `gregale debug rollout` | `gregale debug explain` |
 | `gregale delayed-task add` | `gregale cron create --at` |
@@ -389,15 +400,27 @@ touch them. The tables below map each earlier name.
 | `gregale events subscriptions` | `gregale event subscription list` |
 | `gregale events workflow-backfill` | `gregale event backfill create --workflow-name <WORKFLOW-NAME>` |
 | `gregale events workflow-replay-preview` | `gregale event backfill create --workflow-name <WORKFLOW-NAME> --dry-run` |
+| `gregale flags edge-list` | `gregale flag edge list` |
+| `gregale flags edge-rm` | `gregale flag edge delete` |
+| `gregale flags edge-set` | `gregale flag edge set` |
 | `gregale flags experiments create` | `gregale flag experiment create` |
 | `gregale flags experiments delete` | `gregale flag experiment delete` |
 | `gregale flags experiments get` | `gregale flag experiment get` |
+| `gregale flags experiments holdout get` | `gregale flag experiment holdout get` |
+| `gregale flags experiments holdout report` | `gregale flag experiment holdout report` |
+| `gregale flags experiments holdout set` | `gregale flag experiment holdout set` |
+| `gregale flags experiments layers create` | `gregale flag experiment layer create` |
+| `gregale flags experiments layers delete` | `gregale flag experiment layer delete` |
+| `gregale flags experiments layers list` | `gregale flag experiment layer list` |
 | `gregale flags experiments list` | `gregale flag experiment list` |
 | `gregale flags experiments results` | `gregale flag experiment result get` |
 | `gregale flags experiments ship` | `gregale flag experiment promote` |
 | `gregale flags experiments start` | `gregale flag experiment start` |
 | `gregale flags experiments stop` | `gregale flag experiment stop` |
 | `gregale flags kill` | `gregale flag kill set` |
+| `gregale flags notifications clear` | `gregale flag notify clear` |
+| `gregale flags notifications get` | `gregale flag notify get` |
+| `gregale flags notifications set` | `gregale flag notify set` |
 | `gregale flags off` | `gregale flag disable` |
 | `gregale flags on` | `gregale flag enable` |
 | `gregale flags percent` | `gregale flag rollout set` |
@@ -407,10 +430,20 @@ touch them. The tables below map each earlier name.
 | `gregale flags unkill` | `gregale flag kill unset` |
 | `gregale github bind` | `gregale github link` |
 | `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
+| `gregale insights cohorts create` | `gregale insight cohort create` |
+| `gregale insights cohorts delete` | `gregale insight cohort delete` |
+| `gregale insights cohorts get` | `gregale insight cohort get` |
+| `gregale insights cohorts list` | `gregale insight cohort list` |
+| `gregale insights cohorts refresh` | `gregale insight cohort refresh` |
 | `gregale insights events` | `gregale insight event list` |
 | `gregale insights funnel` | `gregale insight funnel get` |
 | `gregale insights requests` | `gregale insight request list` |
 | `gregale insights retention` | `gregale insight retention get` |
+| `gregale insights saved delete` | `gregale insight saved delete` |
+| `gregale insights saved get` | `gregale insight saved get` |
+| `gregale insights saved list` | `gregale insight saved list` |
+| `gregale insights saved run` | `gregale insight saved run` |
+| `gregale insights saved save` | `gregale insight saved create` |
 | `gregale invitations accept` | `gregale org invitation accept` |
 | `gregale invitations peek` | `gregale org invitation peek` |
 | `gregale issues bulk` | `gregale debug issue update --issues <ISSUES>` |
@@ -466,11 +499,21 @@ touch them. The tables below map each earlier name.
 | `gregale mcp retirements acknowledge-manual` | `gregale mcp server retirements ack` |
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
+| `gregale mcp task-group-ack` | `gregale mcp client group ack` |
+| `gregale mcp task-group-respond` | `gregale mcp client group respond` |
+| `gregale mcp task-group-review` | `gregale mcp client group review` |
+| `gregale mcp task-group-status` | `gregale mcp client group status` |
+| `gregale mcp task-group-stop` | `gregale mcp client group stop` |
+| `gregale mcp task-group-submit` | `gregale mcp client group submit` |
+| `gregale mcp task-group-watch` | `gregale mcp client group watch` |
+| `gregale mcp task-inbox` | `gregale mcp client inbox` |
+| `gregale mcp task-respond` | `gregale mcp client respond` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
 | `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |
 | `gregale mcp tasks execution` | `gregale mcp server tasks run` |
 | `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |
+| `gregale mcp tasks rehearsal` | `gregale mcp server tasks rehearse` |
 | `gregale mcp tasks release` | `gregale mcp server tasks deploy` |
 | `gregale mcp tasks source-review` | `gregale mcp server tasks audit` |
 | `gregale mcp tools` | `gregale mcp client tools` |
@@ -482,6 +525,7 @@ touch them. The tables below map each earlier name.
 | `gregale orgs agent-policy` | `gregale org agent policy` |
 | `gregale orgs invitations list-all` | `gregale org invitation list --all` |
 | `gregale orgs invitations` | `gregale org invitation` |
+| `gregale orgs keys` | `gregale org key` |
 | `gregale orgs members change-role` | `gregale org members update` |
 | `gregale orgs seat-usage` | `gregale org usage` |
 | `gregale orgs standards application` | `gregale org standards adoption get` |
@@ -531,12 +575,14 @@ touch them. The tables below map each earlier name.
 | `gregale platform-tenants trial-end` | `gregale api tenant trial end` |
 | `gregale platform-tenants trial-set` | `gregale api tenant trial set` |
 | `gregale platform-tenants trial` | `gregale api tenant trial get` |
+| `gregale postgres app-wake` | `gregale postgres app-wake set` |
 | `gregale postgres compute-policy-status` | `gregale postgres compute-policy status` |
 | `gregale postgres compute-policy` | `gregale postgres compute-policy set` |
 | `gregale postgres overage` | `gregale postgres overage get` |
 | `gregale postgres overage` | `gregale postgres overage set` |
 | `gregale postgres previews` | `gregale postgres previews set` |
 | `gregale postgres resize-status` | `gregale postgres resize status` |
+| `gregale postgres suspend-timeout` | `gregale postgres suspend-timeout set` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |
 | `gregale projects environments abort` | `gregale environment cancel` |
@@ -570,6 +616,13 @@ touch them. The tables below map each earlier name.
 | `gregale routes migration gate` | `gregale api route migration check` |
 | `gregale routes migration server-check` | `gregale api route migration verify` |
 | `gregale routes monitor preview` | `gregale api route monitor set --dry-run` |
+| `gregale run controls binding` | `gregale sandbox binding controls` |
+| `gregale run controls customer` | `gregale sandbox customer budget` |
+| `gregale run controls task` | `gregale sandbox task budget` |
+| `gregale run deliveries download-url` | `gregale sandbox delivery sign` |
+| `gregale run environments build` | `gregale sandbox environment publish` |
+| `gregale run tasks invoke` | `gregale sandbox task call` |
+| `gregale runs workflow rerun` | `gregale sandbox workflow retry` |
 | `gregale sandbox-templates build` | `gregale sandbox template publish` |
 | `gregale secrets audit` | `gregale env audit` |
 | `gregale secrets check` | `gregale env check` |

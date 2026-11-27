@@ -10,10 +10,14 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -29,9 +33,12 @@ const (
 )
 
 var (
-	errTaskSubscriptionsUnsupported = errors.New("MCP server does not support task status subscriptions")
-	errTaskSubscriptionClosed       = errors.New("MCP task subscription stream closed")
-	errTaskSubscriptionInterrupted  = errors.New("MCP task subscription stream interrupted")
+	// ErrTaskSubscriptionsUnsupported means the endpoint declined the requested Task subscription.
+	ErrTaskSubscriptionsUnsupported = errors.New("MCP server does not support task status subscriptions")
+	// ErrTaskSubscriptionClosed means the server ended the subscription.
+	ErrTaskSubscriptionClosed = errors.New("MCP task subscription stream closed")
+	// ErrTaskSubscriptionInterrupted means the stream ended unexpectedly or could not connect.
+	ErrTaskSubscriptionInterrupted = errors.New("MCP task subscription stream interrupted")
 )
 
 // CallOptions controls opt-in behavior for a single MCP tool call. Tasks are
@@ -41,6 +48,11 @@ type CallOptions struct {
 	Responder   InputResponder
 	EnableTasks bool
 	WaitForTask bool
+	// TaskSubmissionKey is a caller-retained UUIDv7 for a handle-only Task call.
+	TaskSubmissionKey string
+	// DeferFormInput lets a keyed, handle-only Task request bounded forms.
+	// The caller supplies responses in a later request.
+	DeferFormInput bool
 	// CancelOnTimeout requests cooperative cancellation when the wait ends
 	// because its context expires or is cancelled. It is opt-in so a resumed
 	// wait can stop observing without stopping durable work.
@@ -64,6 +76,38 @@ type Task struct {
 	Error         json.RawMessage             `json:"error,omitempty"`
 }
 
+// TaskInputUpdateUnconfirmedError carries metadata for a Task whose input
+// update could not be confirmed by a subsequent read.
+type TaskInputUpdateUnconfirmedError struct {
+	Task  Task
+	cause error
+}
+
+func (e *TaskInputUpdateUnconfirmedError) Error() string {
+	return "MCP task input update outcome is unclear"
+}
+
+func (e *TaskInputUpdateUnconfirmedError) Unwrap() error { return e.cause }
+
+// TaskCancellationUnconfirmedError means the cancellation request may have
+// reached the server without a reliable acknowledgement. Its cause retains the original error.
+type TaskCancellationUnconfirmedError struct {
+	cause error
+}
+
+func (e *TaskCancellationUnconfirmedError) Error() string { return e.cause.Error() }
+
+func (e *TaskCancellationUnconfirmedError) Unwrap() error { return e.cause }
+
+// PollDelay returns the bounded delay before reading this task again.
+func (t Task) PollDelay() time.Duration {
+	if t.PollInterval == nil {
+		return defaultTaskPollInterval
+	}
+	milliseconds := min(max(*t.PollInterval, minTaskPollInterval.Milliseconds()), maxTaskPollInterval.Milliseconds())
+	return time.Duration(milliseconds) * time.Millisecond
+}
+
 // TaskInputRequest is a server-to-client request surfaced while a task waits
 // for user input. The CLI currently supports form-mode elicitation only.
 type TaskInputRequest struct {
@@ -79,7 +123,9 @@ func (request *TaskInputRequest) UnmarshalJSON(data []byte) error {
 	type plain TaskInputRequest
 	var decoded plain
 	decoded.Params.Mode = "form"
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
 	var fields struct {
@@ -93,6 +139,14 @@ func (request *TaskInputRequest) UnmarshalJSON(data []byte) error {
 	}
 	*request = TaskInputRequest(decoded)
 	return nil
+}
+
+// InputForms returns the supported forms in the current Task snapshot.
+func (t Task) InputForms() ([]InputRequest, error) {
+	if t.Status != "input_required" {
+		return nil, errors.New("MCP Task input review requires a Task waiting for form input")
+	}
+	return parseTaskInputRequests("task", t.InputRequests)
 }
 
 // GetTask reads one task. Streamable HTTP requests carry taskId in Mcp-Name
@@ -113,6 +167,46 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (Task, Exchange, er
 		return Task{}, x, err
 	}
 	return task, x, nil
+}
+
+// GetTaskBySubmissionKey reads metadata for a retained Task using its saved key.
+func (c *Client) GetTaskBySubmissionKey(ctx context.Context, key string) (Task, Exchange, error) {
+	if err := validateTaskSubmissionKey(key); err != nil {
+		return Task{}, Exchange{}, err
+	}
+	if c.Token == "" {
+		return Task{}, Exchange{}, errors.New("MCP Task submission lookup requires a client token")
+	}
+	if err := c.requireTasksCapability(ctx); err != nil {
+		return Task{}, Exchange{}, err
+	}
+	if !c.Capabilities.HasExtension("io.gregale/task-submission-lookup") {
+		return Task{}, Exchange{}, errors.New("MCP server does not advertise Task submission lookup")
+	}
+	x, err := c.request(ctx, "gregale/tasks/lookup", map[string]any{"submissionKey": key}, nil, false)
+	body := x.Result
+	x.Result = nil
+	if err != nil {
+		return Task{}, x, err
+	}
+	task, err := decodeTaskSnapshot(body, "complete", "", true)
+	return task, x, err
+}
+
+// IsTaskSubmissionNotFound identifies a definitive lookup response. The Node
+// starter uses a server-defined code because the modern MCP codec rewrites
+// the older resource-not-found code used by the Go and Python starters.
+func IsTaskSubmissionNotFound(err error) bool {
+	var rpc *RPCError
+	return errors.As(err, &rpc) && (rpc.Code == -32002 || rpc.Code == -32004)
+}
+
+func validateTaskSubmissionKey(value string) error {
+	key, err := uuid.Parse(value)
+	if err != nil || key.Version() != 7 || key.Variant() != uuid.RFC4122 || key.String() != value {
+		return errors.New("MCP Task submission key must be a lowercase UUIDv7")
+	}
+	return nil
 }
 
 // WaitTask resumes polling for a task created by an earlier call. It uses the
@@ -140,6 +234,37 @@ func (c *Client) WaitTask(ctx context.Context, taskID string, options CallOption
 	return c.waitForTask(ctx, "task", task, options)
 }
 
+// RespondToTask answers the forms in a freshly retrieved Task in one update.
+// It reads the Task once after the update to verify whether the forms are
+// still pending, including when the update reply is lost.
+func (c *Client) RespondToTask(ctx context.Context, task Task, responder InputResponder) (Task, error) {
+	if task.Status != "input_required" {
+		return task, nil
+	}
+	if responder == nil {
+		return Task{}, errors.New("MCP task input update requires a responder")
+	}
+	forms, err := task.InputForms()
+	if err != nil {
+		return Task{}, err
+	}
+	responses := make(map[string]InputResponse, len(forms))
+	for _, form := range forms {
+		response, err := responder(ctx, form)
+		if err != nil {
+			return Task{}, err
+		}
+		if err := validateInputResponse(response); err != nil {
+			return Task{}, err
+		}
+		responses[form.ID] = response
+	}
+	if uncertain, err := c.updateTask(ctx, task.TaskID, responses); err != nil && !uncertain {
+		return Task{}, err
+	}
+	return c.reconcileTaskInputUpdate(ctx, task.TaskID, responses)
+}
+
 // CancelTask requests cooperative cancellation. The acknowledgement does not
 // imply that the task has already reached its cancelled state.
 func (c *Client) CancelTask(ctx context.Context, taskID string) (Exchange, error) {
@@ -151,38 +276,76 @@ func (c *Client) CancelTask(ctx context.Context, taskID string) (Exchange, error
 	}
 	x, err := c.taskRequest(ctx, "tasks/cancel", taskID, nil)
 	if err != nil {
+		if taskResponseUncertain(x.HTTPStatus, err) {
+			return x, &TaskCancellationUnconfirmedError{cause: err}
+		}
 		return x, err
 	}
 	var result struct {
 		ResultType string `json:"resultType"`
 	}
 	if err := json.Unmarshal(x.Result, &result); err != nil || result.ResultType != "complete" {
-		return x, errors.New("MCP task cancellation returned an invalid acknowledgement")
+		return x, &TaskCancellationUnconfirmedError{cause: errors.New("MCP task cancellation returned an invalid acknowledgement")}
 	}
 	return x, nil
 }
 
-func (c *Client) updateTask(ctx context.Context, taskID string, responses map[string]InputResponse) error {
+func (c *Client) updateTask(ctx context.Context, taskID string, responses map[string]InputResponse) (uncertain bool, err error) {
 	if len(responses) == 0 {
-		return errors.New("MCP task update requires at least one input response")
+		return false, errors.New("MCP task update requires at least one input response")
 	}
 	if err := validateTaskID(taskID); err != nil {
-		return err
+		return false, err
 	}
 	if err := c.requireTasksCapability(ctx); err != nil {
-		return err
+		return false, err
 	}
 	x, err := c.taskRequest(ctx, "tasks/update", taskID, map[string]any{"inputResponses": responses})
 	if err != nil {
-		return err
+		return taskResponseUncertain(x.HTTPStatus, err), err
 	}
 	var result struct {
 		ResultType string `json:"resultType"`
 	}
 	if err := json.Unmarshal(x.Result, &result); err != nil || result.ResultType != "complete" {
-		return errors.New("MCP task update returned an invalid acknowledgement")
+		return true, errors.New("MCP task update returned an invalid acknowledgement")
 	}
-	return nil
+	return false, nil
+}
+
+func taskResponseUncertain(status int, err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var transport *url.Error
+	var rpc *RPCError
+	return errors.As(err, &transport) || status == http.StatusRequestTimeout || status >= 500 ||
+		status >= 200 && status < 300 && !errors.As(err, &rpc)
+}
+
+// Inspect the durable state once after an update that may have committed.
+// The caller decides how to handle an answer that is still pending.
+func (c *Client) reconcileTaskInputUpdate(ctx context.Context, taskID string, responses map[string]InputResponse) (Task, error) {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return Task{}, err
+		}
+		return Task{}, &TaskInputUpdateUnconfirmedError{Task: Task{TaskID: taskID}, cause: err}
+	}
+	current, exchange, err := c.GetTask(ctx, taskID)
+	if err != nil {
+		if taskResponseUncertain(exchange.HTTPStatus, err) || exchange.HTTPStatus == http.StatusTooManyRequests {
+			return Task{}, &TaskInputUpdateUnconfirmedError{Task: Task{TaskID: taskID}, cause: err}
+		}
+		return Task{}, err
+	}
+	for id := range responses {
+		if _, pending := current.InputRequests[id]; pending {
+			snapshot := Task{TaskID: taskID, Status: current.Status, LastUpdatedAt: current.LastUpdatedAt}
+			return current, &TaskInputUpdateUnconfirmedError{Task: snapshot}
+		}
+	}
+	return current, nil
 }
 
 // listenTaskUpdate opens a fresh Tasks subscription and returns the first
@@ -190,20 +353,36 @@ func (c *Client) updateTask(ctx context.Context, taskID string, responses map[st
 // current snapshot, so callers can reconnect without a race-prone catch-up
 // cursor.
 func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, error) {
-	if err := validateTaskID(current.TaskID); err != nil {
-		return Task{}, err
+	var update Task
+	err := c.listenTaskNotifications(ctx, []string{current.TaskID}, func(next Task) (bool, error) {
+		if next.Status == current.Status && next.LastUpdatedAt == current.LastUpdatedAt {
+			return false, nil
+		}
+		update = next
+		return true, nil
+	})
+	return update, err
+}
+
+func (c *Client) listenTaskNotifications(ctx context.Context, taskIDs []string, notify func(Task) (bool, error)) error {
+	requested := make(map[string]struct{}, len(taskIDs))
+	for _, id := range taskIDs {
+		if err := validateTaskID(id); err != nil {
+			return err
+		}
+		requested[id] = struct{}{}
 	}
 	if c.Version != ProtocolVersion {
-		return Task{}, errTaskSubscriptionsUnsupported
+		return ErrTaskSubscriptionsUnsupported
 	}
 	if err := c.requireTasksCapability(ctx); err != nil {
-		return Task{}, err
+		return err
 	}
 
 	c.nextID++
 	id := c.nextID
 	params := map[string]any{
-		"notifications": map[string]any{"taskIds": []string{current.TaskID}},
+		"notifications": map[string]any{"taskIds": taskIDs},
 		"_meta": map[string]any{
 			"io.modelcontextprotocol/protocolVersion": c.Version,
 			"io.modelcontextprotocol/clientInfo":      map[string]string{"name": "gregale-cli", "version": "1.0.0"},
@@ -214,11 +393,11 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 	}
 	encoded, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "subscriptions/listen", "params": params})
 	if err != nil {
-		return Task{}, fmt.Errorf("encode MCP task subscription: %w", err)
+		return fmt.Errorf("encode MCP task subscription: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(encoded))
 	if err != nil {
-		return Task{}, fmt.Errorf("create MCP task subscription: %w", err)
+		return fmt.Errorf("create MCP task subscription: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -236,38 +415,38 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 	res, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return Task{}, ctx.Err()
+			return ctx.Err()
 		}
-		return Task{}, fmt.Errorf("%w: %w", errTaskSubscriptionInterrupted, err)
+		return fmt.Errorf("%w: %w", ErrTaskSubscriptionInterrupted, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		switch res.StatusCode {
 		case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotAcceptable, http.StatusUnsupportedMediaType, http.StatusNotImplemented:
-			return Task{}, errTaskSubscriptionsUnsupported
+			return ErrTaskSubscriptionsUnsupported
 		case http.StatusRequestTimeout, http.StatusTooManyRequests:
-			return Task{}, fmt.Errorf("%w: %w", errTaskSubscriptionInterrupted, httpResponseError(res))
+			return fmt.Errorf("%w: %w", ErrTaskSubscriptionInterrupted, httpResponseError(res))
 		default:
 			if res.StatusCode >= 500 {
-				return Task{}, fmt.Errorf("%w: %w", errTaskSubscriptionInterrupted, httpResponseError(res))
+				return fmt.Errorf("%w: %w", ErrTaskSubscriptionInterrupted, httpResponseError(res))
 			}
-			return Task{}, httpResponseError(res)
+			return httpResponseError(res)
 		}
 	}
 	if res.Header.Get("Mcp-Session-Id") != "" {
-		return Task{}, errors.New("stateful MCP session detected")
+		return errors.New("stateful MCP session detected")
 	}
 	contentType, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
 	if err != nil {
-		return Task{}, errTaskSubscriptionsUnsupported
+		return ErrTaskSubscriptionsUnsupported
 	}
 	if contentType == "application/json" {
 		body, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
 		if readErr != nil {
-			return Task{}, fmt.Errorf("%w: %w", errTaskSubscriptionInterrupted, readErr)
+			return fmt.Errorf("%w: %w", ErrTaskSubscriptionInterrupted, readErr)
 		}
 		if len(body) > maxResponseBytes {
-			return Task{}, errors.New("MCP task subscription response exceeds diagnostic limit")
+			return errors.New("MCP task subscription response exceeds diagnostic limit")
 		}
 		var message struct {
 			Error *struct {
@@ -275,24 +454,22 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 			} `json:"error"`
 		}
 		if json.Unmarshal(body, &message) != nil {
-			return Task{}, errors.New("MCP task subscription returned invalid JSON")
+			return errors.New("MCP task subscription returned invalid JSON")
 		}
 		if message.Error != nil {
 			if unsupportedTaskSubscriptionCode(message.Error.Code) {
-				return Task{}, errTaskSubscriptionsUnsupported
+				return ErrTaskSubscriptionsUnsupported
 			}
-			return Task{}, &RPCError{Code: message.Error.Code}
+			return &RPCError{Code: message.Error.Code}
 		}
-		return Task{}, errTaskSubscriptionsUnsupported
+		return ErrTaskSubscriptionsUnsupported
 	}
 	if contentType != "text/event-stream" {
-		return Task{}, errTaskSubscriptionsUnsupported
+		return ErrTaskSubscriptionsUnsupported
 	}
 
 	acknowledged := false
-	var updated Task
-	gotUpdate := false
-	_, err = scanTaskSSE(res.Body, func(data []byte) (bool, error) {
+	done, err := scanTaskSSE(res.Body, func(data []byte) (bool, error) {
 		var message struct {
 			JSONRPC string          `json:"jsonrpc"`
 			ID      json.RawMessage `json:"id"`
@@ -313,10 +490,10 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 			}
 			if message.Error != nil {
 				if unsupportedTaskSubscriptionCode(message.Error.Code) {
-					return true, errTaskSubscriptionsUnsupported
+					return true, ErrTaskSubscriptionsUnsupported
 				}
 				if message.Error.Code == -32603 {
-					return true, fmt.Errorf("%w: %w", errTaskSubscriptionInterrupted, &RPCError{Code: message.Error.Code})
+					return true, fmt.Errorf("%w: %w", ErrTaskSubscriptionInterrupted, &RPCError{Code: message.Error.Code})
 				}
 				return true, &RPCError{Code: message.Error.Code}
 			}
@@ -324,7 +501,7 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 				return true, errors.New("MCP task subscription ended with an empty response")
 			}
 			if !acknowledged {
-				return true, errTaskSubscriptionsUnsupported
+				return true, ErrTaskSubscriptionsUnsupported
 			}
 			var result struct {
 				ResultType string `json:"resultType"`
@@ -332,7 +509,7 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 			if json.Unmarshal(message.Result, &result) != nil || result.ResultType != "complete" {
 				return true, errors.New("MCP task subscription ended with an invalid response")
 			}
-			return true, errTaskSubscriptionClosed
+			return true, ErrTaskSubscriptionClosed
 		}
 
 		switch message.Method {
@@ -343,10 +520,12 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 				} `json:"notifications"`
 			}
 			if err := json.Unmarshal(message.Params, &ack); err != nil {
-				return true, errTaskSubscriptionsUnsupported
+				return true, ErrTaskSubscriptionsUnsupported
 			}
-			if !containsString(ack.Notifications.TaskIDs, current.TaskID) {
-				return true, errTaskSubscriptionsUnsupported
+			for id := range requested {
+				if !slices.Contains(ack.Notifications.TaskIDs, id) {
+					return true, ErrTaskSubscriptionsUnsupported
+				}
 			}
 			acknowledged = true
 		case "notifications/tasks":
@@ -359,43 +538,28 @@ func (c *Client) listenTaskUpdate(ctx context.Context, current Task) (Task, erro
 			if err := json.Unmarshal(message.Params, &identity); err != nil {
 				return true, err
 			}
-			if identity.TaskID != current.TaskID {
+			if _, ok := requested[identity.TaskID]; !ok {
 				return false, nil
 			}
-			updated, err = decodeTaskNotification(message.Params, current.TaskID)
+			update, err := decodeTaskNotification(message.Params, identity.TaskID)
 			if err != nil {
 				return true, err
 			}
-			if updated.Status != current.Status || updated.LastUpdatedAt != current.LastUpdatedAt {
-				gotUpdate = true
-				return true, nil
-			}
+			return notify(update)
 		}
 		return false, nil
 	})
-	if err != nil {
-		return Task{}, err
-	}
-	if gotUpdate {
-		return updated, nil
+	if done || err != nil {
+		return err
 	}
 	if !acknowledged {
-		return Task{}, errTaskSubscriptionsUnsupported
+		return ErrTaskSubscriptionsUnsupported
 	}
-	return Task{}, errTaskSubscriptionClosed
+	return ErrTaskSubscriptionClosed
 }
 
 func unsupportedTaskSubscriptionCode(code int) bool {
 	return code == -32601 || code == -32602 || code == -32021
-}
-
-func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 func decodeTaskNotification(body json.RawMessage, expectedID string) (Task, error) {
@@ -443,7 +607,7 @@ func scanTaskSSE(reader io.Reader, handle func([]byte) (bool, error)) (bool, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return false, fmt.Errorf("%w: %w", errTaskSubscriptionInterrupted, err)
+		return false, fmt.Errorf("%w: %w", ErrTaskSubscriptionInterrupted, err)
 	}
 	return dispatch()
 }
@@ -478,6 +642,10 @@ func (c *Client) taskRequest(ctx context.Context, method, taskID string, extra m
 }
 
 func decodeTask(body json.RawMessage, wantType, expectedID string) (Task, error) {
+	return decodeTaskSnapshot(body, wantType, expectedID, false)
+}
+
+func decodeTaskSnapshot(body json.RawMessage, wantType, expectedID string, metadataOnly bool) (Task, error) {
 	var task Task
 	if err := json.Unmarshal(body, &task); err != nil {
 		return Task{}, fmt.Errorf("decode MCP task: %w", err)
@@ -485,6 +653,14 @@ func decodeTask(body json.RawMessage, wantType, expectedID string) (Task, error)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return Task{}, fmt.Errorf("decode MCP task: %w", err)
+	}
+	if metadataOnly {
+		for field := range fields {
+			switch strings.ToLower(field) {
+			case "result", "error", "inputrequests", "statusmessage":
+				return Task{}, errors.New("MCP Task lookup included a payload field")
+			}
+		}
 	}
 	if task.ResultType != wantType {
 		return Task{}, fmt.Errorf("MCP task resultType must be %q", wantType)
@@ -520,15 +696,15 @@ func decodeTask(body json.RawMessage, wantType, expectedID string) (Task, error)
 	switch task.Status {
 	case "working", "cancelled":
 	case "input_required":
-		if len(task.InputRequests) == 0 || len(task.InputRequests) > maxInteractiveInputRequests {
+		if !metadataOnly && (len(task.InputRequests) == 0 || len(task.InputRequests) > maxInteractiveInputRequests) {
 			return Task{}, errors.New("MCP task contains an invalid input request set")
 		}
 	case "completed":
-		if !isJSONObject(task.Result) {
+		if !metadataOnly && !isJSONObject(task.Result) {
 			return Task{}, errors.New("completed MCP task is missing its object result")
 		}
 	case "failed":
-		if !isJSONObject(task.Error) {
+		if !metadataOnly && !isJSONObject(task.Error) {
 			return Task{}, errors.New("failed MCP task is missing its object error")
 		}
 	default:
@@ -563,6 +739,15 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 	responded := make(map[string]TaskInputRequest)
 	inputUpdates := 0
 	lastStatus, lastUpdated := task.Status, task.LastUpdatedAt
+	observe := func(updated Task) {
+		task = updated
+		if task.Status != lastStatus || task.LastUpdatedAt != lastUpdated {
+			if options.OnTask != nil {
+				options.OnTask(task)
+			}
+			lastStatus, lastUpdated = task.Status, task.LastUpdatedAt
+		}
+	}
 	subscriptionsSupported := true
 	reconnectDelay := taskStreamReconnectBase
 	streamFailures := 0
@@ -619,13 +804,21 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 				if inputUpdates >= maxInteractiveInputRounds {
 					return task, fmt.Errorf("MCP task exceeded the %d input update limit", maxInteractiveInputRounds)
 				}
-				if err := c.updateTask(ctx, task.TaskID, responses); err != nil {
-					return task, err
+				updated := task
+				if uncertain, updateErr := c.updateTask(ctx, task.TaskID, responses); updateErr != nil {
+					if !uncertain {
+						return task, updateErr
+					}
+					updated, err = c.reconcileTaskInputUpdate(ctx, task.TaskID, responses)
+					if err != nil {
+						return updated, err
+					}
 				}
 				for id := range responses {
 					responded[id] = task.InputRequests[id]
 				}
 				inputUpdates++
+				observe(updated)
 				continue
 			}
 		}
@@ -647,17 +840,11 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 			case err == nil:
 				reconnectDelay = taskStreamReconnectBase
 				streamFailures = 0
-				task = updated
-				if task.Status != lastStatus || task.LastUpdatedAt != lastUpdated {
-					if options.OnTask != nil {
-						options.OnTask(task)
-					}
-					lastStatus, lastUpdated = task.Status, task.LastUpdatedAt
-				}
+				observe(updated)
 				continue
-			case errors.Is(err, errTaskSubscriptionsUnsupported):
+			case errors.Is(err, ErrTaskSubscriptionsUnsupported):
 				subscriptionsSupported = false
-			case errors.Is(err, errTaskSubscriptionClosed), errors.Is(err, errTaskSubscriptionInterrupted):
+			case errors.Is(err, ErrTaskSubscriptionClosed), errors.Is(err, ErrTaskSubscriptionInterrupted):
 				streamFailures++
 				if streamFailures >= maxTaskStreamReconnects {
 					subscriptionsSupported = false
@@ -675,27 +862,14 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 				return task, err
 			}
 		}
-		wait := defaultTaskPollInterval
-		if task.PollInterval != nil {
-			wait = time.Duration(*task.PollInterval) * time.Millisecond
-		}
-		if wait < minTaskPollInterval {
-			wait = minTaskPollInterval
-		}
-		if err := waitForTaskPoll(ctx, wait); err != nil {
+		if err := waitForTaskPoll(ctx, task.PollDelay()); err != nil {
 			return task, fmt.Errorf("wait for MCP task ended: %w", err)
 		}
 		updated, _, err := c.GetTask(ctx, task.TaskID)
 		if err != nil {
 			return task, err
 		}
-		task = updated
-		if task.Status != lastStatus || task.LastUpdatedAt != lastUpdated {
-			if options.OnTask != nil {
-				options.OnTask(task)
-			}
-			lastStatus, lastUpdated = task.Status, task.LastUpdatedAt
-		}
+		observe(updated)
 	}
 }
 

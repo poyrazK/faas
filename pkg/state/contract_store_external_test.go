@@ -15,8 +15,21 @@ import (
 // a package declares and converts to, so the 66 Store-sized interfaces this replaced made this
 // test compile peak at 4.9 GB of heap instead of 1.5 GB (ADR-982).
 type contractTestStore interface {
+	state.ExecutionPipelineProgressStore
+	state.ExecutionPipelineCallbackStore
+	state.ExecutionPipelineStore
+	state.ExecutionWorkflowJobStore
+	state.ExecutionStore
+	state.ExecutionWorkflowStore
+	state.RunControlStore
+	state.ExecutionQueueStore
+	state.ExecutionTaskStore
+	state.ExecutionAdmissionStore
 	state.Store // teststorecheck:allow the one Store-sized interface the contracts alias
 	state.RollbackTrafficStore
+	state.APIConsumerEnvironmentStore
+	state.APIConsumerPlanStore
+	state.APIConsumerTrialStore
 	state.WorkflowRunStartStore
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
@@ -168,6 +181,7 @@ type contractTestStore interface {
 	state.EnvironmentBranchEgressStore
 	state.EnvironmentBranchObjectRelayStore
 	state.EnvironmentBranchSeedStore
+	state.RouteSplitStore
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
 	state.ProjectEnvironmentPromotionWorkloadSpecStore

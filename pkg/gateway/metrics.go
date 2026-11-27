@@ -124,19 +124,27 @@ type Metrics struct {
 	mcpActive   *prometheus.GaugeVec
 	registry    *prometheus.Registry
 
-	requests                    *prometheus.CounterVec
-	platformErrors              *prometheus.CounterVec
+	requests *prometheus.CounterVec
+	// serviceRequests is the service-to-service part of requests, which
+	// the platform availability figure leaves out of its denominator.
+	serviceRequests *prometheus.CounterVec
+	platformErrors  *prometheus.CounterVec
+	// capacityRefusals counts 429s the gateway answered because the app had
+	// no capacity (capacityRefusalForSLO).
+	capacityRefusals            *prometheus.CounterVec
 	appInflight                 *prometheus.GaugeVec
 	notificationPayloadRejected *prometheus.CounterVec
 	// requestTelemetry* are gateway-side data-plane health counters. They
 	// deliberately have no app/route labels: per-tenant detail belongs to
 	// apid's ingest outcome metric.
-	requestTelemetryDropped prometheus.Counter
+	requestTelemetryDropped         prometheus.Counter
+	requestTelemetryPlatformDropped prometheus.Counter
 	// requestIDJournalEvicted counts node-local journal records removed to fit
 	// the disk budget before they expired (ADR-20261101085552).
 	requestIDJournalEvicted     prometheus.Counter
 	requestTelemetryShipped     prometheus.Counter
 	requestAnalyticsRollups     *prometheus.CounterVec
+	instanceRouteMinutesDropped prometheus.Counter
 	requestTelemetryOverwritten prometheus.Counter
 	requestIDJournalWrites      *prometheus.CounterVec
 	requestIDJournalWriteTime   prometheus.Histogram
@@ -157,6 +165,11 @@ type Metrics struct {
 	// request routing/auth work before admission and every public edge/client
 	// hop, while retaining scheduler, VM restore, and internal proxy overhead.
 	platformWakeLatency prometheus.Histogram
+	// platformWakeExcluded counts admitted wakes kept out of
+	// platformWakeLatency because the app or the deploy pipeline, not the
+	// platform's wake path, set their latency.
+	// reason ∈ {startup_oom, deployment_smoke}.
+	platformWakeExcluded *prometheus.CounterVec
 	// drainWaitSeconds (issue #587 / PR-A) is the per-daemon
 	// graceful-shutdown drain histogram (see ObserveDrainWait).
 	drainWaitSeconds *prometheus.HistogramVec
@@ -225,7 +238,10 @@ type Metrics struct {
 	// compute_nodes count (today: 1, tomorrow: tens). ADR-091
 	// §3.6 documents the label cardinality constraint.
 	wakeLatencyByNode *prometheus.HistogramVec
-	wakeQueueWait     prometheus.Histogram
+	// appWakeLatency is wakeLatency per app, for the app's own wake p95 on
+	// its metrics card (Observe audit 2026-11-21, finding 6).
+	appWakeLatency *prometheus.HistogramVec
+	wakeQueueWait  prometheus.Histogram
 	// wakePhaseDuration (ADR-098 C11): phase-decomposed wake
 	// latency vector. Closed phase set pre-instantiated below so
 	// the §12 panel surfaces zero on an idle gateway.
@@ -638,6 +654,7 @@ type Metrics struct {
 	// the aggregate caused Prometheus increase() to discard the first request
 	// for every newly seen deployment.
 	requestDurationByDeployment *prometheus.HistogramVec
+	environmentRequests         *environmentRequestMetrics
 	// requestsByRoute backs the per-route observability counter
 	// (ADR-093 / issue #273 — opt-in follow-up to ADR-042 §1).
 	// Labels: app, plan, route, code. The `route` label admits
@@ -963,6 +980,12 @@ func NewMetrics() *Metrics {
 			Name: "gateway_platform_errors_total",
 			Help: "5xx responses the gateway produced before the guest sent any response byte, labelled by app and plan. Guest-authored 5xx are excluded.",
 		}, []string{"app", "plan"}),
+		// capacityRefusals is pre-instantiated per app (PreInstantiateApp)
+		// so increase() counts the first refusal (ADR-20261121190000).
+		capacityRefusals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_capacity_refusals_total",
+			Help: "429 responses the gateway answered before the guest sent any byte because the app had no capacity (plan concurrency reached, drop overflow, full concurrency queue, node refusal), labelled by app.",
+		}, []string{"app"}),
 		// appInflight is the gateway's per-app demand: requests that passed
 		// the edge rate limits and have not completed, whether they are
 		// waiting for capacity, queued for a slot, or being served. schedd's
@@ -1065,6 +1088,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_telemetry_dropped_total",
 			Help: "Original requests represented by telemetry rows dropped after publisher retries or an unavailable apid client.",
 		}),
+		requestTelemetryPlatformDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_request_telemetry_platform_dropped_total",
+			Help: "The part of gateway_request_telemetry_dropped_total the platform lost (delivery gave up, a full backlog, the shutdown deadline), excluding rows apid refused for their app (an ingest quota, a row it will never accept).",
+		}),
 		requestTelemetryShipped: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_shipped_total",
 			Help: "Original requests represented by telemetry rows successfully handed to apid.",
@@ -1073,6 +1100,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_analytics_rollup_requests_total",
 			Help: "Requests in gateway analytics rollup batches, by outcome: shipped (apid acknowledged the batch) or lost (the batch was given up).",
 		}, []string{"outcome"}),
+		instanceRouteMinutesDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_instance_route_minutes_dropped_total",
+			Help: "Per-instance route minutes (route resource peaks) dropped because the buffer was full or apid did not take the batch.",
+		}),
 		requestTelemetryOverwritten: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_overwritten_total",
 			Help: "Telemetry rows evicted from the gateway ring because it was full before the publisher drained them.",
@@ -1342,9 +1373,13 @@ func NewMetrics() *Metrics {
 			// The SLO histogram's buckets, so the two overlay on one panel.
 			Buckets: wakeLatencyBuckets(),
 		}),
+		platformWakeExcluded: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_platform_wake_excluded_total",
+			Help: "Admitted wakes kept out of gateway_platform_wake_latency_seconds because the app or the deploy pipeline set their latency. reason=startup_oom: the kernel killed an app process for memory while the wake booted it (vmmd WakeResponse.startup_oom). reason=deployment_smoke: a deployment smoke verification, which waits for its candidate's first-boot snapshot. The app's own wake latency still records the wake.",
+		}, []string{"reason"}),
 		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_platform_wake_latency_seconds",
-			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
+			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency, wakes whose app ran out of memory while booting, and deployment smoke verifications (both counted in gateway_platform_wake_excluded_total). Public-beta SSD gate: p95 < 0.35 seconds.",
 			Buckets: platformWakeLatencyBuckets(),
 		}),
 		// PR #4 / ADR-092 §3.5. Same bucket layout as wakeLatency
@@ -1353,6 +1388,11 @@ func NewMetrics() *Metrics {
 		// change the existing unlabeled histogram's buckets
 		// without re-running the §12 fleet p95 calibration; the
 		// new histogram is opt-in and not part of any SLO.
+		appWakeLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gateway_app_wake_latency_seconds",
+			Help:    "Wake latency of cold boots per app: gateway_wake_latency_seconds labelled by app. Series exist only for apps that woke on this gateway.",
+			Buckets: wakeLatencyBuckets(),
+		}, []string{"app"}),
 		wakeLatencyByNode: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "gateway_wake_latency_seconds_by_node",
 			Help:    "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
@@ -1620,19 +1660,16 @@ func NewMetrics() *Metrics {
 		// ~50ms mark separates the two regimes for an at-a-glance
 		// p50/p95 reading.
 		requestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "gateway_request_duration_seconds",
-			Help: "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
-			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
-			},
+			Name:    "gateway_request_duration_seconds",
+			Help:    "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
+			Buckets: requestDurationBuckets,
 		}, []string{"app", "class"}),
 		requestDurationByDeployment: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "gateway_request_duration_by_deployment_seconds",
-			Help: "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
-			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
-			},
+			Name:    "gateway_request_duration_by_deployment_seconds",
+			Help:    "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
+			Buckets: requestDurationBuckets,
 		}, []string{"app", "class", "deployment"}),
+		environmentRequests: newEnvironmentRequestMetrics(),
 		// Issue #273 / ADR-042. Renamed outright from gateway_cold_wake_total.
 		coldBoot: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_cold_boot_total",
@@ -1750,6 +1787,10 @@ func NewMetrics() *Metrics {
 		// (WSOutcome / WSDirection constants) so the constructor
 		// pre-instantiate loop and the runtime helpers share one
 		// source of truth.
+		serviceRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_service_requests_total",
+			Help: "The service-to-service part of gateway_requests_total, by app and status code. Service calls count toward customer SLOs and scale-up, but the platform availability figure (FaasApiAvailabilityLow, the status page) subtracts them: it counts only platform errors at the public edge, and one public request fanning out to N internal calls must not dilute it.",
+		}, []string{"app", "code"}),
 		serviceCallTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_service_call_total",
@@ -1898,6 +1939,7 @@ func NewMetrics() *Metrics {
 			[]string{"plan", "direction"},
 		),
 	}
+	m.deploymentLabels.onAdmit = m.preInstantiateDeploymentClasses
 	// Pre-instantiate the WS closed label cross-product (issue
 	// #676 / ADR-080 follow-up, PR-B). Same precedent as
 	// tlsOnDemandDenied / accountRateLimited above. The
@@ -2062,6 +2104,9 @@ func NewMetrics() *Metrics {
 	for _, tier := range []string{tierWarm, tierInit, tierCold} {
 		m.wakeSnapshotTier.WithLabelValues(tier)
 	}
+	// Pre-instantiated so a zero exclusion count is visible from boot.
+	m.platformWakeExcluded.WithLabelValues(platformWakeExcludedStartupOOM)
+	m.platformWakeExcluded.WithLabelValues(platformWakeExcludedDeploymentSmoke)
 	// ADR-098 C7: pre-instantiate the closed (reason) set on the
 	// leader-bootstrap-aborts counter so the §12 dashboard chip
 	// "leader bootstrap aborts" surfaces every reason from boot.
@@ -2225,7 +2270,8 @@ func NewMetrics() *Metrics {
 		Name: "geoip_db_build_timestamp_seconds",
 		Help: "Unix time the loaded geoip country database was built (its build_epoch); NaN when none is loaded. time() minus it is the database's age (ADR-091 amendment 2026-11-02, later).",
 	}, m.geoipDBBuildTimestamp)
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestAnalyticsRollups, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.capacityRefusals, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryPlatformDropped, m.serviceRequests, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestAnalyticsRollups, m.instanceRouteMinutesDropped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.platformWakeExcluded, m.wakeLatencyByNode, m.appWakeLatency, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.environmentRequests.duration, m.environmentRequests.refusals, m.environmentRequests.coldBoots)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -2562,6 +2608,7 @@ func (m *Metrics) ForgetAppRequestCounts(appID string) {
 		return
 	}
 	m.requests.DeletePartialMatch(prometheus.Labels{"app": appID})
+	m.serviceRequests.DeletePartialMatch(prometheus.Labels{"app": appID})
 }
 
 // AdjustAppInflight moves appID's in-flight request gauge by delta.
@@ -2579,12 +2626,28 @@ func (m *Metrics) ObserveRequest(appID, plan, code string) {
 	m.requests.WithLabelValues(appID, plan, code).Inc()
 }
 
+// ObserveServiceRequest counts a service-to-service request in
+// gateway_requests_total and in its service part.
+func (m *Metrics) ObserveServiceRequest(appID, plan, code string) {
+	m.requests.WithLabelValues(appID, plan, code).Inc()
+	m.serviceRequests.WithLabelValues(appID, code).Inc()
+}
+
 // ObservePlatformError counts a 5xx the platform, not the guest, produced.
 func (m *Metrics) ObservePlatformError(appID, plan string) {
 	if m == nil {
 		return
 	}
 	m.platformErrors.WithLabelValues(appID, plan).Inc()
+}
+
+// ObserveCapacityRefusal counts a 429 the gateway answered because the app had
+// no capacity. Nil-receiver safe.
+func (m *Metrics) ObserveCapacityRefusal(appID string) {
+	if m == nil || m.capacityRefusals == nil {
+		return
+	}
+	m.capacityRefusals.WithLabelValues(appID).Inc()
 }
 
 // ObserveResponseBytes increments the per-(app, plan) egress byte
@@ -2747,6 +2810,9 @@ func (m *Metrics) PreInstantiateApp(appID string) {
 		m.requestDuration.WithLabelValues(appID, class)
 		m.requestDurationByDeployment.WithLabelValues(appID, class, emptyDeploymentLabel)
 	}
+	if m.capacityRefusals != nil {
+		m.capacityRefusals.WithLabelValues(appID)
+	}
 }
 
 // ObserveResponseCacheOutcome records both the historical global cache
@@ -2769,6 +2835,25 @@ func (m *Metrics) ObserveNotificationPayloadRejected() {
 		return
 	}
 	m.notificationPayloadRejected.WithLabelValues("app_changed", "cache").Inc()
+}
+
+// preInstantiateDeploymentClasses creates an admitted deployment's
+// status-class series at zero. Created on first observation instead, a
+// release's 5xx series appeared with its first errors already counted, and
+// increase() dropped them: app health read "10 of 41 requests returned 5xx
+// (24.39%), too few to classify" while 30 of 62 had failed (prod hunt r58).
+// It runs on the deployment's first request, so only the other three classes
+// start at zero: the first request's own class is still created counted, and
+// what it sees before the first scrape is lost. The admitted set is capped per
+// app; each class is a histogram (11 buckets + +Inf + sum + count), so this
+// adds about 56 series per admitted deployment.
+func (m *Metrics) preInstantiateDeploymentClasses(appID, deploymentID string) {
+	if m == nil || m.requestDurationByDeployment == nil {
+		return
+	}
+	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
+		m.requestDurationByDeployment.WithLabelValues(appID, class, deploymentID)
+	}
 }
 
 // PreInstantiateDeployment is a no-op helper for symmetry with
@@ -3250,6 +3335,9 @@ func (m *Metrics) ObserveColdBootWithTrace(appID string, latency time.Duration, 
 	}
 	m.coldBoot.WithLabelValues(appID).Inc()
 	observeWithTraceExemplar(m.wakeLatency, latency.Seconds(), traceID)
+	if m.appWakeLatency != nil && appID != "" {
+		observeWithTraceExemplar(m.appWakeLatency.WithLabelValues(appID), latency.Seconds(), traceID)
+	}
 	if m.wakeLatencyByNode == nil {
 		return
 	}
@@ -3278,6 +3366,25 @@ func (m *Metrics) ObservePlatformWakeWithTrace(latency time.Duration, traceID st
 		return
 	}
 	observeWithTraceExemplar(m.platformWakeLatency, latency.Seconds(), traceID)
+}
+
+// platformWakeExcludedStartupOOM is the gateway_platform_wake_excluded_total
+// reason for a wake whose app ran out of memory while it booted.
+const platformWakeExcludedStartupOOM = "startup_oom"
+
+// platformWakeExcludedDeploymentSmoke is the
+// gateway_platform_wake_excluded_total reason for a wake a deployment smoke
+// verification admitted: it restores a candidate whose first-boot snapshot
+// is still being captured, so its wait belongs to the deploy pipeline.
+const platformWakeExcludedDeploymentSmoke = "deployment_smoke"
+
+// ObservePlatformWakeExcluded counts one admitted wake kept out of the
+// platform wake histogram. Nil-safe.
+func (m *Metrics) ObservePlatformWakeExcluded(reason string) {
+	if m == nil || m.platformWakeExcluded == nil {
+		return
+	}
+	m.platformWakeExcluded.WithLabelValues(reason).Inc()
 }
 
 // observeWithTraceExemplar keeps the exemplar path optional. Older/custom
@@ -4506,6 +4613,15 @@ func (m *Metrics) AddRequestIDJournalEvicted(n int64) {
 	m.requestIDJournalEvicted.Add(float64(n))
 }
 
+// AddRequestTelemetryPlatformDropped records the dropped requests apid did
+// not refuse for their app.
+func (m *Metrics) AddRequestTelemetryPlatformDropped(n int64) {
+	if m == nil || m.requestTelemetryPlatformDropped == nil || n <= 0 {
+		return
+	}
+	m.requestTelemetryPlatformDropped.Add(float64(n))
+}
+
 func (m *Metrics) AddRequestTelemetryDropped(n int64) {
 	if m == nil || m.requestTelemetryDropped == nil || n <= 0 {
 		return
@@ -4532,6 +4648,15 @@ func (m *Metrics) AddRequestAnalyticsRollupShipped(n int64) {
 // was given up.
 func (m *Metrics) AddRequestAnalyticsRollupLost(n int64) {
 	m.addRequestAnalyticsRollups("lost", n)
+}
+
+// AddInstanceRouteMinutesDropped records per-instance route minutes dropped
+// (ADR-20261121170000).
+func (m *Metrics) AddInstanceRouteMinutesDropped(n int64) {
+	if m == nil || m.instanceRouteMinutesDropped == nil || n <= 0 {
+		return
+	}
+	m.instanceRouteMinutesDropped.Add(float64(n))
 }
 
 func (m *Metrics) addRequestAnalyticsRollups(outcome string, n int64) {

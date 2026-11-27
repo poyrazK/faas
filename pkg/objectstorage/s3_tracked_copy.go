@@ -80,6 +80,33 @@ func trackedCopySource(bucket, key string, s CopySourceSnapshot) string {
 	return value
 }
 
+// copySourceConditionsUnsupported reports a backend that refuses copy-source
+// conditional headers. OVH, the BackendVersioningUnsupported backend, answers
+// 501 NotImplemented ("Copy object not implemented with
+// X-Amz-Copy-Source-If-Match"); every gateway copy then stayed
+// provider_write_uncertain and clients saw 409 OperationAborted (rc.367,
+// 2026-11-22). Client conditions are still checked against the gateway's own
+// HEAD snapshot before dispatch; copyPreservedSnapshot fences the copy.
+func (p *S3) copySourceConditionsUnsupported() bool { return p.unversioned }
+
+// copyPreservedSnapshot reports whether a server-side copy without provider
+// conditions provably copied the snapshotted bytes. A single-part,
+// unencrypted object's ETag is its content MD5 and a copy of the same bytes
+// returns it; any other ETag means the source changed after the snapshot.
+// Multipart sources get a whole-content ETag on copy and cannot be fenced
+// this way; their copy reflects the source at copy time, as S3 does without
+// conditions (ADR-20261121150000 amendment 3).
+func copyPreservedSnapshot(source CopySourceSnapshot, encrypted bool, etag string) bool {
+	if encrypted || source.ETag == "" || strings.Contains(source.ETag, "-") {
+		return true
+	}
+	return etag == source.ETag
+}
+
+func clearCopySourceConditions(in *s3.CopyObjectInput) {
+	in.CopySourceIfMatch, in.CopySourceIfNoneMatch, in.CopySourceIfModifiedSince, in.CopySourceIfUnmodifiedSince = nil, nil, nil, nil
+}
+
 func trackedCopySourceMatch(s CopySourceSnapshot, c CopySourceConditions) *string {
 	if immutableCopySource(s) && c.HasDates() && c.IfMatch == "" {
 		// The version is the identity fence. Adding If-Match here would make
@@ -141,6 +168,9 @@ func (p *S3) copyEncryptedObject(ctx context.Context, sourceBucket, bucket, rece
 	in.CopySourceIfNoneMatch = stringPtrOrNil(conditions.IfNoneMatch)
 	in.CopySourceIfModifiedSince = conditions.IfModifiedSince
 	in.CopySourceIfUnmodifiedSince = conditions.IfUnmodifiedSince
+	if p.copySourceConditionsUnsupported() {
+		clearCopySourceConditions(in)
+	}
 	if copyMetadata {
 		in.Expires = source.Expires
 	}
@@ -160,6 +190,11 @@ func (p *S3) copyEncryptedObject(ctx context.Context, sourceBucket, bucket, rece
 		return CopyObjectResult{}, ErrUnavailable
 	}
 	result, err := copyObjectResult(out)
+	if err == nil && p.copySourceConditionsUnsupported() && !copyPreservedSnapshot(source, encryption != nil, result.ETag) {
+		// The copy wrote other bytes than the snapshot. Leave it uncertain:
+		// recovery settles the destination from its receipt.
+		return CopyObjectResult{}, ErrUnavailable
+	}
 	if err == nil {
 		result.Encryption = publicObjectEncryption(encryption)
 		if !capturedWriteProtection(ctx).Empty() {

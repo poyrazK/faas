@@ -1,6 +1,10 @@
 package gateway
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // withholdPreviewGateCredential removes the Authorization header a platform
 // gate verified before a preview's request goes upstream
@@ -13,13 +17,24 @@ import "net/http"
 // A verified consumer key is withheld the same way: on a preview it is
 // usually a production consumer's key (ADR-20261105090226).
 //
-// Production apps keep receiving the header, as before; so does a preview
-// whose Authorization no platform gate reads (an app's own scheme).
+// A preview whose Authorization no platform gate reads (an app's own scheme)
+// keeps it.
+//
+// A production app does not receive a Gregale API key either, once
+// require_authn or bearer public auth has verified it
+// (ADR-20261120060000): the key belongs to the caller's account, not the
+// app, and app code that logs or forwards headers leaked it. A production
+// app keeps its own basic-auth password, verified consumer keys, and any
+// Authorization no platform gate reads.
 func withholdPreviewGateCredential(r *http.Request, app App) {
-	if !app.IsPreview || len(r.Header.Values("Authorization")) == 0 {
+	if len(r.Header.Values("Authorization")) == 0 {
 		return
 	}
-	if !platformGateReadsAuthorization(app) && authenticatedFrom(r.Context()).ConsumerKeyID == "" {
+	if !app.IsPreview {
+		if !platformGateReadsAPIKey(app) || !api.ValidAPIKeyFormat(bearerTokenFromHeader(r.Header.Get("Authorization"))) {
+			return
+		}
+	} else if !platformGateReadsAuthorization(app) && authenticatedFrom(r.Context()).ConsumerKeyID == "" {
 		return
 	}
 	r.Header.Del("Authorization")
@@ -40,4 +55,11 @@ func platformGateReadsAuthorization(app App) bool {
 		return true
 	}
 	return false
+}
+
+// platformGateReadsAPIKey reports whether a platform gate on app verifies a
+// Gregale API key from the Authorization header: require_authn and bearer
+// public auth.
+func platformGateReadsAPIKey(app App) bool {
+	return app.RequireAuthn || app.PublicAuth.Mode == publicAuthModeBearer
 }

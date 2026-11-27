@@ -12,6 +12,45 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// ProductInvoiceExportReview contains the terms shown before an owner confirms an export.
+type ProductInvoiceExportReview struct {
+	StatementID, Provider, Customer, Currency, Collection string
+	AmountMinor                                           int64
+	Livemode, AutomaticTax                                bool
+	DaysUntilDue                                          int
+	Hash                                                  string
+}
+
+// ProductPaddleInvoiceIssueReview describes the existing draft to issue.
+type ProductPaddleInvoiceIssueReview struct {
+	InvoiceID, Customer, Currency, PaymentTermsInterval, Hash string
+	AmountMinor                                               int64
+	PaymentTermsFrequency                                     int
+	Livemode                                                  bool
+}
+
+// ProductStripeInvoiceSendReview is the approved recipient and terms of an existing Stripe invoice.
+type ProductStripeInvoiceSendReview struct {
+	InvoiceID, Recipient, Currency, Hash string
+	TotalMinor, AmountDueMinor           int64
+	DueAt                                time.Time
+	Livemode                             bool
+}
+
+// ProductStripeInvoiceSendCheck is the confirmed send and optional Stripe event.
+type ProductStripeInvoiceSendCheck struct {
+	InvoiceID, EventID string
+	EventAt            time.Time
+}
+
+// ProductStripeInvoiceReminderReview describes a reminder for an overdue invoice.
+type ProductStripeInvoiceReminderReview struct {
+	InvoiceID, Recipient, Currency, Hash string
+	AmountRemainingMinor                 int64
+	DueAt                                time.Time
+	Livemode                             bool
+}
+
 // productStores are the stores a Product Control statement export reads.
 type productStores struct {
 	exports   state.StatementInvoiceExportStore
@@ -49,6 +88,17 @@ func productDocumentProblem(err error) *api.Problem {
 // notes are not exported; they keep their recorded handoff.
 func (s *Service) ExportProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID,
 	provider, customer string) (api.StatementInvoiceExportResponse, *api.Problem) {
+	return s.exportProductStatement(ctx, acct, scope, documentID, provider, customer, "")
+}
+
+func (s *Service) ConfirmProductStatementExport(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer, expected string) (api.StatementInvoiceExportResponse, *api.Problem) {
+	if expected == "" {
+		return api.StatementInvoiceExportResponse{}, statementInvoiceReviewChanged()
+	}
+	return s.exportProductStatement(ctx, acct, scope, documentID, provider, customer, expected)
+}
+
+func (s *Service) exportProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer, expected string) (api.StatementInvoiceExportResponse, *api.Problem) {
 	if provider == "" {
 		provider = state.BillingProviderStripe
 	}
@@ -64,11 +114,33 @@ func (s *Service) ExportProductStatement(ctx context.Context, acct state.Account
 	if problem != nil {
 		return api.StatementInvoiceExportResponse{}, problem
 	}
+	src.expectedReview = expected
 	export, problem := s.exportStatementInvoice(ctx, acct, stores.exports, src, provider)
 	if problem != nil {
 		return api.StatementInvoiceExportResponse{}, problem
 	}
-	return statementInvoiceExportResponse(export), nil
+	return s.statementInvoiceExportResponse(export), nil
+}
+
+// ReviewProductStatementExport resolves the exact target and collection settings
+// without opening an export attempt or calling the provider.
+func (s *Service) ReviewProductStatementExport(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider, customer string) (ProductInvoiceExportReview, *api.Problem) {
+	stores, problem := s.productStores()
+	if problem != nil {
+		return ProductInvoiceExportReview{}, problem
+	}
+	src, problem := productStatementInvoiceSource(ctx, acct, stores, scope, documentID, customer)
+	if problem != nil {
+		return ProductInvoiceExportReview{}, problem
+	}
+	prepared, problem := s.prepareStatementInvoice(ctx, acct, stores.exports, src, provider)
+	if problem != nil {
+		return ProductInvoiceExportReview{}, problem
+	}
+	if prepared.terms.Status == state.StatementInvoiceExportCompleted {
+		return ProductInvoiceExportReview{}, exportConflict("this statement already has a completed invoice export")
+	}
+	return statementInvoiceReview(prepared.terms, prepared.connection), nil
 }
 
 func productStatementInvoiceSource(ctx context.Context, acct state.Account, stores productStores, scope state.ProductBillingScope,
@@ -120,7 +192,7 @@ func (s *Service) ProductStatementInvoice(ctx context.Context, accountID, docume
 	if err != nil {
 		return nil, fmt.Errorf("load product statement invoice: %w", err)
 	}
-	out := statementInvoiceExportResponse(export)
+	out := s.statementInvoiceExportResponse(export)
 	return &out, nil
 }
 
@@ -143,5 +215,5 @@ func (s *Service) GetProductStatementExport(ctx context.Context, acct state.Acco
 	if err != nil {
 		return api.StatementInvoiceExportResponse{}, api.ErrInternal("could not load the statement invoice export")
 	}
-	return statementInvoiceExportResponse(export), nil
+	return s.statementInvoiceExportResponse(export), nil
 }

@@ -32,6 +32,49 @@ func scenarioPGResource(v pgsql.ScenarioPostgresFixture) (rehearsalpg.Resource, 
 	}
 	return r, nil
 }
+
+type scenarioPostgresEnrollment interface {
+	ScenarioTestMemberByApp(context.Context, string) (ScenarioTestMember, error)
+	ScenarioTestAppByWorkload(context.Context, string, string, string) (App, error)
+}
+
+func (s *PgStore) ScenarioPostgresTaskParticipants(ctx context.Context, fixture rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	return scenarioPostgresTaskParticipants(ctx, s, fixture)
+}
+
+func (m *MemStore) ScenarioPostgresTaskParticipants(ctx context.Context, fixture rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	return scenarioPostgresTaskParticipants(ctx, m, fixture)
+}
+
+func scenarioPostgresTaskParticipants(ctx context.Context, enrollment scenarioPostgresEnrollment, fixture rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	primary, err := enrollment.ScenarioTestMemberByApp(ctx, fixture.AppID)
+	if err != nil {
+		return nil, err
+	}
+	if primary.AccountID != fixture.AccountID || primary.RunID != fixture.RunID || primary.NetworkMode != ScenarioNetworkContained {
+		return nil, ErrConflict
+	}
+	var plan rehearsalwork.Plan
+	if primary.ManagedWorkJSON != "" && json.Unmarshal([]byte(primary.ManagedWorkJSON), &plan) != nil {
+		return nil, ErrConflict
+	}
+	var participants []rehearsalpg.TaskParticipant
+	for _, participant := range plan.Participants {
+		if !rehearsalwork.TaskPostgresAccess(participant.Postgres) {
+			continue
+		}
+		app, err := enrollment.ScenarioTestAppByWorkload(ctx, fixture.AccountID, fixture.RunID, participant.Workload)
+		if err != nil {
+			return nil, err
+		}
+		if app.AccountID != fixture.AccountID || app.ID == fixture.AppID {
+			return nil, ErrConflict
+		}
+		participants = append(participants, rehearsalpg.TaskParticipant{AppID: app.ID, Access: participant.Postgres})
+	}
+	return participants, nil
+}
+
 func (s *PgStore) ReserveScenarioPostgres(ctx context.Context, r rehearsalpg.Resource) (rehearsalpg.Resource, error) {
 	if !r.ValidReservation() {
 		return r, ErrConflict

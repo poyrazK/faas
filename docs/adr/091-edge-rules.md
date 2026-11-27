@@ -1706,6 +1706,20 @@ A further edge-security review found two ways an access rule did not hold.
    throttle, validate, maintenance, waf, challenge) names one exact host. A
    setting that serves an app only on its custom domains is a separate
    decision.
+3. **A response without a cache policy stays out of shared caches**
+   (2026-11-19). A prod bug hunt found Cloudflare storing app responses that
+   declared no cache policy: on a static-extension path (`.pdf`, `.css`,
+   `.js`, `.png`, `.csv`, …) it caches for four hours keyed by URL alone, so a
+   cookie-authenticated `/me.pdf` written for one user was served to the next,
+   and an app's 404 for `/files/s.css` outlived the object that later filled
+   the path. Most apps authenticate in their own code, which no gate sees. The
+   gateway now also sets both targeted headers to `private` when neither the
+   app nor a `headers` rule set `Cache-Control`, `CDN-Cache-Control` or
+   `Cloudflare-CDN-Cache-Control`. A declared policy is kept, except where an
+   access control decided the request (item 1 still wins). Browser caching is
+   unchanged; an app opts into Cloudflare caching with a cache header such as
+   `Cache-Control: public, max-age=3600`. The gateway's own response cache
+   (docs/cache.md) is unaffected.
 
 ## Amendment (2026-11-02, later): method overrides, path parameters, unresolved countries, client-chosen scopes
 

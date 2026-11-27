@@ -3,10 +3,17 @@
 Implementation: ADR-570. Native Linux KVM, process-fence and leak acceptance
 remains pending; this is not a completed release capability.
 
-The VM node enforces the existing plan cap from the instance's trusted wake
-plan: Free 4, Hobby 5, Pro 25, Scale 80. It counts forwarded exchanges across
-gateway processes. No request header can raise it. Upgrading a plan affects
-new instances; an already-live VM reports its actual wake plan and cap.
+The VM node enforces the per-instance limit schedd sends with each serving
+wake (`AppSpec.request_concurrency`, ADR-20261101215228): the app's
+`per_instance_concurrency` up to `app_request_concurrency_max`, else that
+maximum (1,000 in production since 2026-11-21). Each gateway process admits
+at most the app's `per_instance_concurrency`, else `app_request_concurrency_default`
+(80), so for an app that declares nothing the node cap only bounds the sum
+across gateways. An instance woken without a limit (keys unset, or adopted
+after a vmmd restart) keeps its trusted wake plan's compiled cap: Free 4,
+Hobby 5, Pro 25, Scale 80. It counts forwarded exchanges across gateway
+processes. No request header can raise it. A changed value or plan affects
+new wakes; an already-live VM keeps the cap it woke with.
 
 | Path | Node HTTP cap |
 | --- | --- |

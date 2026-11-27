@@ -44,6 +44,7 @@ func (h *Harness) RestartVMMD() error {
 	procs := h.procs[:0]
 	for _, p := range h.procs {
 		if p != nil && isVMMDProc(p) && p.ProcessState != nil {
+			h.retired = append(h.retired, p)
 			continue
 		}
 		procs = append(procs, p)

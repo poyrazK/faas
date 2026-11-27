@@ -82,9 +82,9 @@ func (p *selectedCopyHTTPFixture) serve(t *testing.T, w http.ResponseWriter, r *
 		_, _ = io.WriteString(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated>`)
 		for _, o := range p.objects {
 			if o.marker {
-				_, _ = fmt.Fprintf(w, `<DeleteMarker><Key>%s</Key><VersionId>%s</VersionId><IsLatest>true</IsLatest><LastModified>2026-10-02T09:00:00Z</LastModified></DeleteMarker>`, url.PathEscape(o.key), o.version)
+				_, _ = fmt.Fprintf(w, `<DeleteMarker><Key>%s</Key><VersionId>%s</VersionId><IsLatest>true</IsLatest><LastModified>2026-10-02T09:00:00Z</LastModified></DeleteMarker>`, url.QueryEscape(o.key), o.version)
 			} else {
-				_, _ = fmt.Fprintf(w, `<Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%t</IsLatest><Size>%d</Size><ETag>&quot;source&quot;</ETag><LastModified>2026-10-02T09:00:00Z</LastModified></Version>`, url.PathEscape(o.key), o.version, p.current[o.key] == o.version, o.size)
+				_, _ = fmt.Fprintf(w, `<Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%t</IsLatest><Size>%d</Size><ETag>&quot;source&quot;</ETag><LastModified>2026-10-02T09:00:00Z</LastModified></Version>`, url.QueryEscape(o.key), o.version, p.current[o.key] == o.version, o.size)
 			}
 		}
 		_, _ = io.WriteString(w, `</ListVersionsResult>`)

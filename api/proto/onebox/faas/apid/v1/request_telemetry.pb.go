@@ -1730,7 +1730,11 @@ type TelemetryCoverage struct {
 	// A gateway that counts its own requests into analytics rollups reports
 	// its analytics part apart from raw delivery (ADR-20261103113952
 	// amendment 6); an older gateway leaves it unset.
-	Analytics     *AnalyticsCoverage `protobuf:"bytes,12,opt,name=analytics,proto3" json:"analytics,omitempty"`
+	Analytics *AnalyticsCoverage `protobuf:"bytes,12,opt,name=analytics,proto3" json:"analytics,omitempty"`
+	// The gateway's last heartbeat before it exits, sent only after every row
+	// was delivered or journaled: its node's next boot continues the coverage
+	// instead of starting a new one. An older gateway never sets it.
+	CleanStop     bool `protobuf:"varint,13,opt,name=clean_stop,json=cleanStop,proto3" json:"clean_stop,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1847,6 +1851,13 @@ func (x *TelemetryCoverage) GetAnalytics() *AnalyticsCoverage {
 		return x.Analytics
 	}
 	return nil
+}
+
+func (x *TelemetryCoverage) GetCleanStop() bool {
+	if x != nil {
+		return x.CleanStop
+	}
+	return false
 }
 
 type AnalyticsCoverage struct {
@@ -2025,6 +2036,231 @@ func (x *TelemetryCoverageReceipt) GetRecorded() bool {
 	return false
 }
 
+// InstanceRouteMinute is one route's requests on one instance in one UTC
+// minute. busy_ms is the time requests of the route were in flight within
+// the minute, summed over concurrent requests.
+type InstanceRouteMinute struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	AppId         string                 `protobuf:"bytes,2,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	InstanceId    string                 `protobuf:"bytes,3,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	MinuteUnix    int64                  `protobuf:"varint,4,opt,name=minute_unix,json=minuteUnix,proto3" json:"minute_unix,omitempty"`
+	Route         string                 `protobuf:"bytes,5,opt,name=route,proto3" json:"route,omitempty"`
+	Method        string                 `protobuf:"bytes,6,opt,name=method,proto3" json:"method,omitempty"`
+	Requests      int64                  `protobuf:"varint,7,opt,name=requests,proto3" json:"requests,omitempty"`
+	BusyMs        int64                  `protobuf:"varint,8,opt,name=busy_ms,json=busyMs,proto3" json:"busy_ms,omitempty"`
+	MaxLatencyMs  int32                  `protobuf:"varint,9,opt,name=max_latency_ms,json=maxLatencyMs,proto3" json:"max_latency_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstanceRouteMinute) Reset() {
+	*x = InstanceRouteMinute{}
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceRouteMinute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceRouteMinute) ProtoMessage() {}
+
+func (x *InstanceRouteMinute) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceRouteMinute.ProtoReflect.Descriptor instead.
+func (*InstanceRouteMinute) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *InstanceRouteMinute) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *InstanceRouteMinute) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *InstanceRouteMinute) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *InstanceRouteMinute) GetMinuteUnix() int64 {
+	if x != nil {
+		return x.MinuteUnix
+	}
+	return 0
+}
+
+func (x *InstanceRouteMinute) GetRoute() string {
+	if x != nil {
+		return x.Route
+	}
+	return ""
+}
+
+func (x *InstanceRouteMinute) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *InstanceRouteMinute) GetRequests() int64 {
+	if x != nil {
+		return x.Requests
+	}
+	return 0
+}
+
+func (x *InstanceRouteMinute) GetBusyMs() int64 {
+	if x != nil {
+		return x.BusyMs
+	}
+	return 0
+}
+
+func (x *InstanceRouteMinute) GetMaxLatencyMs() int32 {
+	if x != nil {
+		return x.MaxLatencyMs
+	}
+	return 0
+}
+
+type AddInstanceRouteMinutesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Rows          []*InstanceRouteMinute `protobuf:"bytes,2,rep,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddInstanceRouteMinutesRequest) Reset() {
+	*x = AddInstanceRouteMinutesRequest{}
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddInstanceRouteMinutesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddInstanceRouteMinutesRequest) ProtoMessage() {}
+
+func (x *AddInstanceRouteMinutesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddInstanceRouteMinutesRequest.ProtoReflect.Descriptor instead.
+func (*AddInstanceRouteMinutesRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *AddInstanceRouteMinutesRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *AddInstanceRouteMinutesRequest) GetRows() []*InstanceRouteMinute {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
+type AddInstanceRouteMinutesResponse struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Accepted int64                  `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	// Rows of apps without the flag, left out.
+	Disabled int64 `protobuf:"varint,2,opt,name=disabled,proto3" json:"disabled,omitempty"`
+	// Rows refused for their values, left out.
+	Invalid       int64 `protobuf:"varint,3,opt,name=invalid,proto3" json:"invalid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddInstanceRouteMinutesResponse) Reset() {
+	*x = AddInstanceRouteMinutesResponse{}
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddInstanceRouteMinutesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddInstanceRouteMinutesResponse) ProtoMessage() {}
+
+func (x *AddInstanceRouteMinutesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddInstanceRouteMinutesResponse.ProtoReflect.Descriptor instead.
+func (*AddInstanceRouteMinutesResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *AddInstanceRouteMinutesResponse) GetAccepted() int64 {
+	if x != nil {
+		return x.Accepted
+	}
+	return 0
+}
+
+func (x *AddInstanceRouteMinutesResponse) GetDisabled() int64 {
+	if x != nil {
+		return x.Disabled
+	}
+	return 0
+}
+
+func (x *AddInstanceRouteMinutesResponse) GetInvalid() int64 {
+	if x != nil {
+		return x.Invalid
+	}
+	return 0
+}
+
 var File_onebox_faas_apid_v1_request_telemetry_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
@@ -2200,7 +2436,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\brejected\x18\x03 \x01(\x05R\brejected\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
-	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\x8c\x04\n" +
+	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xab\x04\n" +
 	"\x11TelemetryCoverage\x12\x1b\n" +
 	"\tnode_name\x18\x01 \x01(\tR\bnodeName\x12\x17\n" +
 	"\aboot_id\x18\x02 \x01(\tR\x06bootId\x12\x1a\n" +
@@ -2215,7 +2451,9 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x1aunattributed_dropped_total\x18\n" +
 	" \x01(\x03R\x18unattributedDroppedTotal\x12?\n" +
 	"\bapp_gaps\x18\v \x03(\v2$.onebox.faas.apid.v1.TelemetryAppGapR\aappGaps\x12D\n" +
-	"\tanalytics\x18\f \x01(\v2&.onebox.faas.apid.v1.AnalyticsCoverageR\tanalytics\"m\n" +
+	"\tanalytics\x18\f \x01(\v2&.onebox.faas.apid.v1.AnalyticsCoverageR\tanalytics\x12\x1d\n" +
+	"\n" +
+	"clean_stop\x18\r \x01(\bR\tcleanStop\"m\n" +
 	"\x11AnalyticsCoverage\x12\x1a\n" +
 	"\bcounting\x18\x01 \x01(\bR\bcounting\x12<\n" +
 	"\x1aunattributed_dropped_total\x18\x02 \x01(\x03R\x18unattributedDroppedTotal\"\xe2\x01\n" +
@@ -2226,14 +2464,35 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x17analytics_dropped_count\x18\x04 \x01(\x03R\x15analyticsDroppedCount\x126\n" +
 	"\x17analytics_pending_count\x18\x05 \x01(\x05R\x15analyticsPendingCount\"6\n" +
 	"\x18TelemetryCoverageReceipt\x12\x1a\n" +
-	"\brecorded\x18\x01 \x01(\bR\brecorded2\xa7\x06\n" +
+	"\brecorded\x18\x01 \x01(\bR\brecorded\"\x96\x02\n" +
+	"\x13InstanceRouteMinute\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
+	"\x06app_id\x18\x02 \x01(\tR\x05appId\x12\x1f\n" +
+	"\vinstance_id\x18\x03 \x01(\tR\n" +
+	"instanceId\x12\x1f\n" +
+	"\vminute_unix\x18\x04 \x01(\x03R\n" +
+	"minuteUnix\x12\x14\n" +
+	"\x05route\x18\x05 \x01(\tR\x05route\x12\x16\n" +
+	"\x06method\x18\x06 \x01(\tR\x06method\x12\x1a\n" +
+	"\brequests\x18\a \x01(\x03R\brequests\x12\x17\n" +
+	"\abusy_ms\x18\b \x01(\x03R\x06busyMs\x12$\n" +
+	"\x0emax_latency_ms\x18\t \x01(\x05R\fmaxLatencyMs\"w\n" +
+	"\x1eAddInstanceRouteMinutesRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12<\n" +
+	"\x04rows\x18\x02 \x03(\v2(.onebox.faas.apid.v1.InstanceRouteMinuteR\x04rows\"s\n" +
+	"\x1fAddInstanceRouteMinutesResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\x03R\baccepted\x12\x1a\n" +
+	"\bdisabled\x18\x02 \x01(\x03R\bdisabled\x12\x18\n" +
+	"\ainvalid\x18\x03 \x01(\x03R\ainvalid2\xae\a\n" +
 	"\x10RequestTelemetry\x12p\n" +
 	"\x17RecordTelemetryCoverage\x12&.onebox.faas.apid.v1.TelemetryCoverage\x1a-.onebox.faas.apid.v1.TelemetryCoverageReceipt\x12\x8e\x01\n" +
 	"\x19IncrementRequestTelemetry\x125.onebox.faas.apid.v1.IncrementRequestTelemetryRequest\x1a6.onebox.faas.apid.v1.IncrementRequestTelemetryResponse(\x010\x01\x12i\n" +
 	"\x13RecordConsumerUsage\x12'.onebox.faas.apid.v1.ConsumerUsageEvent\x1a).onebox.faas.apid.v1.ConsumerUsageReceipt\x12\x81\x01\n" +
 	"\x16RecordRequestIDJournal\x122.onebox.faas.apid.v1.RecordRequestIDJournalRequest\x1a3.onebox.faas.apid.v1.RecordRequestIDJournalResponse\x12\x90\x01\n" +
 	"\x1bRecordRequestIDJournalBatch\x127.onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest\x1a8.onebox.faas.apid.v1.RecordRequestIDJournalBatchResponse\x12\x8d\x01\n" +
-	"\x1aAddRequestAnalyticsRollups\x126.onebox.faas.apid.v1.AddRequestAnalyticsRollupsRequest\x1a7.onebox.faas.apid.v1.AddRequestAnalyticsRollupsResponse2y\n" +
+	"\x1aAddRequestAnalyticsRollups\x126.onebox.faas.apid.v1.AddRequestAnalyticsRollupsRequest\x1a7.onebox.faas.apid.v1.AddRequestAnalyticsRollupsResponse\x12\x84\x01\n" +
+	"\x17AddInstanceRouteMinutes\x123.onebox.faas.apid.v1.AddInstanceRouteMinutesRequest\x1a4.onebox.faas.apid.v1.AddInstanceRouteMinutesResponse2y\n" +
 	"\x10RequestIDLookups\x12e\n" +
 	"\x05Serve\x12*.onebox.faas.apid.v1.RequestIDLookupAnswer\x1a,.onebox.faas.apid.v1.RequestIDLookupQuestion(\x010\x01BBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
@@ -2249,7 +2508,7 @@ func file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescData
 }
 
-var file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_onebox_faas_apid_v1_request_telemetry_proto_goTypes = []any{
 	(*RequestIDLookupQuestion)(nil),             // 0: onebox.faas.apid.v1.RequestIDLookupQuestion
 	(*RequestIDLookupAnswer)(nil),               // 1: onebox.faas.apid.v1.RequestIDLookupAnswer
@@ -2269,34 +2528,40 @@ var file_onebox_faas_apid_v1_request_telemetry_proto_goTypes = []any{
 	(*AnalyticsCoverage)(nil),                   // 15: onebox.faas.apid.v1.AnalyticsCoverage
 	(*TelemetryAppGap)(nil),                     // 16: onebox.faas.apid.v1.TelemetryAppGap
 	(*TelemetryCoverageReceipt)(nil),            // 17: onebox.faas.apid.v1.TelemetryCoverageReceipt
-	nil,                                         // 18: onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
+	(*InstanceRouteMinute)(nil),                 // 18: onebox.faas.apid.v1.InstanceRouteMinute
+	(*AddInstanceRouteMinutesRequest)(nil),      // 19: onebox.faas.apid.v1.AddInstanceRouteMinutesRequest
+	(*AddInstanceRouteMinutesResponse)(nil),     // 20: onebox.faas.apid.v1.AddInstanceRouteMinutesResponse
+	nil,                                         // 21: onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
 }
 var file_onebox_faas_apid_v1_request_telemetry_proto_depIdxs = []int32{
 	2,  // 0: onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest.records:type_name -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
 	8,  // 1: onebox.faas.apid.v1.ConsumerUsageEvent.audit:type_name -> onebox.faas.apid.v1.RequestAuditEvidence
-	18, // 2: onebox.faas.apid.v1.ConsumerUsageEvent.meter_units:type_name -> onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
+	21, // 2: onebox.faas.apid.v1.ConsumerUsageEvent.meter_units:type_name -> onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
 	10, // 3: onebox.faas.apid.v1.AddRequestAnalyticsRollupsRequest.rows:type_name -> onebox.faas.apid.v1.RequestAnalyticsRollupRow
 	16, // 4: onebox.faas.apid.v1.TelemetryCoverage.app_gaps:type_name -> onebox.faas.apid.v1.TelemetryAppGap
 	15, // 5: onebox.faas.apid.v1.TelemetryCoverage.analytics:type_name -> onebox.faas.apid.v1.AnalyticsCoverage
-	14, // 6: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:input_type -> onebox.faas.apid.v1.TelemetryCoverage
-	9,  // 7: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:input_type -> onebox.faas.apid.v1.IncrementRequestTelemetryRequest
-	6,  // 8: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:input_type -> onebox.faas.apid.v1.ConsumerUsageEvent
-	2,  // 9: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
-	4,  // 10: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest
-	11, // 11: onebox.faas.apid.v1.RequestTelemetry.AddRequestAnalyticsRollups:input_type -> onebox.faas.apid.v1.AddRequestAnalyticsRollupsRequest
-	1,  // 12: onebox.faas.apid.v1.RequestIDLookups.Serve:input_type -> onebox.faas.apid.v1.RequestIDLookupAnswer
-	17, // 13: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:output_type -> onebox.faas.apid.v1.TelemetryCoverageReceipt
-	13, // 14: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:output_type -> onebox.faas.apid.v1.IncrementRequestTelemetryResponse
-	7,  // 15: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:output_type -> onebox.faas.apid.v1.ConsumerUsageReceipt
-	3,  // 16: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalResponse
-	5,  // 17: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchResponse
-	12, // 18: onebox.faas.apid.v1.RequestTelemetry.AddRequestAnalyticsRollups:output_type -> onebox.faas.apid.v1.AddRequestAnalyticsRollupsResponse
-	0,  // 19: onebox.faas.apid.v1.RequestIDLookups.Serve:output_type -> onebox.faas.apid.v1.RequestIDLookupQuestion
-	13, // [13:20] is the sub-list for method output_type
-	6,  // [6:13] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	18, // 6: onebox.faas.apid.v1.AddInstanceRouteMinutesRequest.rows:type_name -> onebox.faas.apid.v1.InstanceRouteMinute
+	14, // 7: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:input_type -> onebox.faas.apid.v1.TelemetryCoverage
+	9,  // 8: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:input_type -> onebox.faas.apid.v1.IncrementRequestTelemetryRequest
+	6,  // 9: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:input_type -> onebox.faas.apid.v1.ConsumerUsageEvent
+	2,  // 10: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
+	4,  // 11: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest
+	11, // 12: onebox.faas.apid.v1.RequestTelemetry.AddRequestAnalyticsRollups:input_type -> onebox.faas.apid.v1.AddRequestAnalyticsRollupsRequest
+	19, // 13: onebox.faas.apid.v1.RequestTelemetry.AddInstanceRouteMinutes:input_type -> onebox.faas.apid.v1.AddInstanceRouteMinutesRequest
+	1,  // 14: onebox.faas.apid.v1.RequestIDLookups.Serve:input_type -> onebox.faas.apid.v1.RequestIDLookupAnswer
+	17, // 15: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:output_type -> onebox.faas.apid.v1.TelemetryCoverageReceipt
+	13, // 16: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:output_type -> onebox.faas.apid.v1.IncrementRequestTelemetryResponse
+	7,  // 17: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:output_type -> onebox.faas.apid.v1.ConsumerUsageReceipt
+	3,  // 18: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalResponse
+	5,  // 19: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchResponse
+	12, // 20: onebox.faas.apid.v1.RequestTelemetry.AddRequestAnalyticsRollups:output_type -> onebox.faas.apid.v1.AddRequestAnalyticsRollupsResponse
+	20, // 21: onebox.faas.apid.v1.RequestTelemetry.AddInstanceRouteMinutes:output_type -> onebox.faas.apid.v1.AddInstanceRouteMinutesResponse
+	0,  // 22: onebox.faas.apid.v1.RequestIDLookups.Serve:output_type -> onebox.faas.apid.v1.RequestIDLookupQuestion
+	15, // [15:23] is the sub-list for method output_type
+	7,  // [7:15] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_apid_v1_request_telemetry_proto_init() }
@@ -2310,7 +2575,7 @@ func file_onebox_faas_apid_v1_request_telemetry_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc), len(file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

@@ -68,6 +68,12 @@ func TestUploadSessionCommitKeepsTheReleasePolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			out := commitUploadSession(t, e, app.Slug, tt.options)
+			if tt.options.ReleaseAt != "" {
+				scheduled := out.ScheduledRelease
+				if scheduled == nil || scheduled.DeploymentID != out.ID || scheduled.ReleaseAt != tt.options.ReleaseAt {
+					t.Fatalf("scheduled upload receipt = %+v", scheduled)
+				}
+			}
 			d, err := (*e.Store()).DeploymentByID(ctx, out.ID)
 			if err != nil {
 				t.Fatalf("DeploymentByID: %v", err)

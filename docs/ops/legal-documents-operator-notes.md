@@ -17,5 +17,6 @@ least 30 days before a material change takes effect. Set `effective_date` in
 `pkg/legal/legal.json` to the new date (at least 30 days after the email) and
 `change_notice` to one or two plain sentences: every signed-in dashboard page
 shows it until that date. Clear it once the change is in effect. Send the email
-yourself; the 2026-12-20 support-access change is the worked example
-([support-access-legal-text.md](support-access-legal-text.md)).
+yourself. The support-access text (2026-11-21) took effect at once because
+Gregale had no customers to notify yet; see
+[support-access-legal-text.md](support-access-legal-text.md).

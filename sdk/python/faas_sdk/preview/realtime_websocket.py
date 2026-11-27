@@ -25,6 +25,7 @@ from .realtime_recovery import (
     RealtimeRecoveryEvent,
     RealtimeRecoveryRetry,
     RealtimeRecoveryTarget,
+    _RealtimeSubscriptionDenied,
 )
 from .realtime_subscriptions import _identity
 from .realtime_websocket_presence import _REJECTIONS, RealtimeWebSocketPresence
@@ -615,6 +616,8 @@ class RealtimeWebSocketSession:
         elif kind in ("error", "inbox_error", "read_error"):
             if frame.get("code") in ("history_read_failed", "checkpoint_write_failed"):
                 raise RealtimeRecoveryRetry()
+            if frame.get("code") in ("access_revoked", "not_authorized"):
+                raise _RealtimeSubscriptionDenied()
             raise RealtimeRecoveryError("subscription_rejected")
         else:
             raise RealtimeRecoveryError("unexpected_frame")

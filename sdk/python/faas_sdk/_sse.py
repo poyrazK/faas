@@ -11,7 +11,9 @@ buffer that carries trailing partial lines across reads.
 
 from __future__ import annotations
 
+import codecs
 import json
+import re
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -48,7 +50,8 @@ def _parse_frame(buffer: str) -> tuple[SseEvent | None, str]:
     event_id: str | None = None
     retry_ms: int | None = None
 
-    for raw in frame.splitlines():
+    for line in frame.split("\n"):
+        raw = line.removesuffix("\r")
         # Comments (start with ':') are ignored per the SSE spec.
         if not raw or raw.startswith(":"):
             continue
@@ -100,8 +103,12 @@ def iter_sse(response: httpx.Response) -> Iterator[SseEvent]:
             yield event
 
 
-async def aiter_sse(response: httpx.Response) -> AsyncIterator[SseEvent]:
+async def aiter_sse(response: httpx.Response, *, max_frame_bytes: int | None = None) -> AsyncIterator[SseEvent]:
     """Async SSE consumer over an `httpx.Response`."""
+    if max_frame_bytes is not None:
+        async for event in _bounded_sse(response, max_frame_bytes):
+            yield event
+        return
     buffer = ""
     async for line in response.aiter_lines():
         if line is None:
@@ -112,6 +119,24 @@ async def aiter_sse(response: httpx.Response) -> AsyncIterator[SseEvent]:
             if event is None:
                 break
             yield event
+
+
+
+async def _bounded_sse(response: httpx.Response, limit: int) -> AsyncIterator[SseEvent]:
+    decoder = codecs.getincrementaldecoder("utf-8-sig")()
+    terminator = re.compile(r"\r\n\r\n|\n\n|\r\r")
+    buffer = ""
+    async for chunk in response.aiter_bytes():
+        buffer += decoder.decode(chunk)
+        while (end := terminator.search(buffer)) is not None:
+            frame, buffer = buffer[:end.end()], buffer[end.end():]
+            if len(frame.encode()) > limit:
+                raise ValueError("SSE frame exceeds the byte limit")
+            event, _ = _parse_frame(frame.replace("\r\n", "\n").replace("\r", "\n"))
+            if event is not None:
+                yield event
+        if len(buffer.encode()) > limit:
+            raise ValueError("SSE frame exceeds the byte limit")
 
 
 def parse_data_json(event: SseEvent) -> object:

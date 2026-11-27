@@ -30,6 +30,22 @@
       - faas_billing_mode in ['disabled', 'live']
     fail_msg: "faas_billing_mode must be disabled or live"
 
+- name: control_plane_service — validate the quiet pause billing mode
+  ansible.builtin.assert:
+    that:
+      - meterd_quiet_pause_unbilled in ['off', 'shadow', 'on']
+    fail_msg: "meterd_quiet_pause_unbilled must be \"off\", \"shadow\" or \"on\" (quoted: YAML reads a bare on/off as a boolean)"
+
+# ADR-20261121210517: public forwarding (ADR-1749) moves response bytes onto
+# the instance veth, which net_tx_bytes already bills. Billing the gateway's
+# copy too would charge every response twice.
+- name: control_plane_service — refuse gateway response egress next to public forwarding
+  ansible.builtin.assert:
+    that:
+      - not (meterd_gateway_response_egress | bool) or
+        (groups.get('compute_nodes', []) | map('extract', hostvars) | selectattr('faas_public_forwarding', 'defined') | selectattr('faas_public_forwarding') | list | length == 0)
+    fail_msg: "meterd_gateway_response_egress must be false while any compute node sets faas_public_forwarding (ADR-20261121210517)"
+
 - name: control_plane_service — ensure per-daemon users exist (non-root, no shell)
   ansible.builtin.user:
     name: "{{ item }}"
@@ -662,19 +678,29 @@
     group: root
     mode: "0644"
 
-- name: control_plane_service — install traffic apps-domain drop-in for schedd
-  notify: restart faas-schedd
+# apid gets it too: apid.toml is hand-written operator config, so after the
+# apps-domain move its apps_domain still named the alias, and the layout
+# drop-in below made apid refuse to start ("apps domains overlap"), which took
+# the API down during the rc.364 converge (2026-11-21).
+- name: control_plane_service — install traffic apps-domain drop-in for schedd and apid
+  notify:
+    - restart faas-schedd
+    - restart faas-apid
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-apps-domain.conf.j2
-    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-apps-domain.conf
+    dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-apps-domain.conf"
     owner: root
     group: root
     mode: "0644"
+  loop:
+    - faas-schedd
+    - faas-apid
 
 - name: control_plane_service — install domain layout drop-in (ADR-20261026100000)
   notify:
     - restart faas-schedd
     - restart faas-apid
+    - restart faas-meterd
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-domain-layout.conf.j2
     dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-domain-layout.conf"
@@ -684,6 +710,22 @@
   loop:
     - faas-schedd
     - faas-apid
+    # meterd links customer alert notifications to the dashboard on the
+    # platform domain (Observe audit 2026-11-21).
+    - faas-meterd
+
+# ADR-20261112114642: meterd probes customers' synthetic checks at
+# <slug>.<apps domain> (ADR-748). Without this it fell back to gregale.dev,
+# which after the apps-domain move is an alias that redirect mode answers
+# with a 308 instead of the app.
+- name: control_plane_service — install apps-domain drop-in for meterd
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-apps-domain.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/99-faas-apps-domain.conf
+    owner: root
+    group: root
+    mode: "0644"
 
 # faas_apid_app_errors_listen (apid, the LISTENER) and
 # faas_gatewayd_app_errors_target (gatewayd-internal, the CLIENT) are a pair.
@@ -760,6 +802,72 @@
   loop:
     - faas-schedd
     - faas-apid
+
+# ADR-20261023171905: whether meterd subtracts the quiet-paused seconds the
+# pause ledger proves. Rendered unconditionally so a change of mode lands; the
+# hand drop-in production-us used before this switch goes.
+- name: control_plane_service — set meterd's quiet pause billing mode
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-quiet-pause-unbilled.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-quiet-pause-unbilled.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+# Release commands were hand drop-ins on GCP and were lost in the move to OVH
+# (2026-11), which made managed PostgreSQL migrations impossible; these keep
+# them on through rebuilds (same file names as the 2026-11-22 hand drop-ins).
+- name: control_plane_service — set whether apid admits release commands
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-release-phase-apid.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-release-phase.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set whether apid serves the public app-task API
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-app-task-api.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-app-task-api.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set whether schedd dispatches release tasks
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: zz-faas-release-phase-schedd.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-release-phase.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set whether meterd bills gateway response bytes as egress
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-gateway-response-egress.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-gateway-response-egress.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set whether meterd leaves internal egress unbilled
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-internal-egress-unbilled.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-internal-egress-unbilled.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — remove the hand-installed quiet pause billing drop-in
+  notify: restart faas-meterd
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-meterd.service.d/70-faas-quiet-pause-unbilled.conf
+    state: absent
 
 - name: control_plane_service — install split-box schedd routing drop-in
   notify: restart faas-schedd

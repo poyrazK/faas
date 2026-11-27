@@ -14,7 +14,7 @@ func TestUsageCollectorReplaysRecentCorrectionsAcrossMonthBoundary(t *testing.T)
 	ctx := context.Background()
 	now := time.Date(2026, 10, 1, 0, 17, 0, 0, time.UTC)
 	store, registry, provider := usageRecoveryFixture(t, now, 4*time.Hour)
-	registry.usage.ComputeUnitHourMillicents = 3600
+	registry.mutatePolicy(func(e *effectivePolicy) { e.usage.ComputeUnitHourMillicents = 3600 })
 	collect := func() {
 		t.Helper()
 		// Replay must survive a collector restart without a local checkpoint.
@@ -189,7 +189,7 @@ func TestPostgresUsageReplayUpdatesLateCorrectionsAfterRestart(t *testing.T) {
 	store, pool, ctx, account := postgresStoreFixture(t)
 	now := time.Date(2026, 10, 1, 0, 17, 0, 0, time.UTC)
 	_, registry, provider := usageRecoveryFixture(t, now, 3*time.Hour)
-	registry.usage.ComputeUnitHourMillicents = 3600
+	registry.mutatePolicy(func(e *effectivePolicy) { e.usage.ComputeUnitHourMillicents = 3600 })
 	database := postgresReadyDatabase(t, store, account, "late-correction", now.Add(-3*time.Hour))
 	backend := registry.backends[database.BackendID]
 	backend.Fingerprint = database.BackendFingerprint

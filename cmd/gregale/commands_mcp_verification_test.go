@@ -24,7 +24,7 @@ type mcpVerificationFixture struct {
 	promotions, parks, exact, initializes atomic.Int64
 	badInitialize                         bool
 	badReplica                            bool
-	badPing                               bool
+	badPublicCatalog                      bool
 	statefulReplica                       bool
 	cancelOnProbe                         context.CancelFunc
 	inFlight, peak                        atomic.Int64
@@ -117,8 +117,10 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 				return
 			}
 		}
-		if method == "ping" && f.badPing {
-			http.Error(w, "ping unavailable", 500)
+		// 2026-07-28 has no ping; a public endpoint that cannot serve its
+		// catalog is the readiness failure the release must refuse.
+		if method == "tools/list" && f.badPublicCatalog {
+			http.Error(w, "catalog unavailable", 500)
 			return
 		}
 		if method == "notifications/initialized" {
@@ -214,6 +216,9 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 		case "/v1/apps/previous/park/conditional":
 			f.parks.Add(1)
 			w.WriteHeader(204)
+		case "/v1/apps/web/env", "/v1/apps/observer/env":
+			// Runtime variables; the fixture keeps its settings in the manifest.
+			_ = json.NewEncoder(w).Encode(api.AppEnvListResponse{Env: []api.AppEnvResponse{}})
 		default:
 			t.Errorf("unexpected API request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)
@@ -225,7 +230,7 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 func writeMCPVerificationConfig(t *testing.T, count int) (string, string, mcphosting.Config) {
 	t.Helper()
 	root := t.TempDir()
-	body, err := os.ReadFile("templates/mcp-node/gregale-mcp.json")
+	body, err := os.ReadFile("templates/mcp-node-tasks/gregale-mcp.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,18 +273,18 @@ func TestMCPNativeReleaseRequiresProtocolQualification(t *testing.T) {
 		return nil
 	}
 	for _, test := range []struct {
-		name                                                   string
-		badInitialize, badReplica, badPing, stateful, noPolicy bool
+		name                                                            string
+		badInitialize, badReplica, badPublicCatalog, stateful, noPolicy bool
 	}{
 		{name: "healthy"}, {name: "healthy without release policy", noPolicy: true},
 		{name: "initialization fails", badInitialize: true}, {name: "one replica fails", badReplica: true},
-		{name: "public ping fails", badPing: true}, {name: "one replica creates a session", stateful: true},
+		{name: "public catalog read fails", badPublicCatalog: true}, {name: "one replica creates a session", stateful: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, _, restore := main.SwapIO(t)
 			defer restore()
 			f := newMCPVerificationFixture(t, test.badInitialize, 0)
-			f.badReplica, f.badPing, f.statefulReplica = test.badReplica, test.badPing, test.stateful
+			f.badReplica, f.badPublicCatalog, f.statefulReplica = test.badReplica, test.badPublicCatalog, test.stateful
 			root, policy, _ := writeMCPVerificationConfig(t, 1)
 			if test.noPolicy {
 				policy = ""
@@ -290,7 +295,7 @@ func TestMCPNativeReleaseRequiresProtocolQualification(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			err := main.DrainMCPNativeRelease(ctx, main.NewClient(f.control.URL, "operator"), p, &s, filepath.Join(t.TempDir(), "state.json"))
-			wantFailure := test.badInitialize || test.badReplica || test.badPing || test.stateful
+			wantFailure := test.badInitialize || test.badReplica || test.badPublicCatalog || test.stateful
 			if wantFailure {
 				if err == nil || f.promotions.Load() != 0 || f.parks.Load() != 0 {
 					t.Fatalf("invalid endpoint changed serving state: error=%v promotions=%d parks=%d", err, f.promotions.Load(), f.parks.Load())

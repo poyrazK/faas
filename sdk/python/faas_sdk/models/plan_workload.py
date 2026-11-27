@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.plan_workload_access import PlanWorkloadAccess, check_plan_workload_access
 from ..models.plan_workload_action import PlanWorkloadAction, check_plan_workload_action
 from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_class
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from ..models.secret_file import SecretFile
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
+    from ..models.workload_uses import WorkloadUses
 
 
 T = TypeVar("T", bound="PlanWorkload")
@@ -57,6 +59,10 @@ class PlanWorkload:
     visibility: PlanWorkloadVisibility | Unset = UNSET
     """Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
     service without `ports:`. Omitted means public."""
+    access: PlanWorkloadAccess | Unset = UNSET
+    """Declared access to the service's public URL (`x-gregale-access` in Compose or
+    `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every
+    production deploy applies it. Omitted when the source declares none."""
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
     """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
@@ -86,6 +92,15 @@ class PlanWorkload:
     depends_on_conditions: PlanWorkloadDependsOnConditions | Unset = UNSET
     """Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates
     release on the captured same-project, same-environment dependency deployment."""
+    uses: WorkloadUses | Unset = UNSET
+    """A service's cross-app grants from gregale.yaml: what its workload token may call on other apps of the same
+    account."""
+    release_command: str | Unset = UNSET
+    """Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined
+    by spaces). Omitted when it declares none."""
+    release_command_source: str | Unset = UNSET
+    """Where release_command is declared: a Compose service the workload waits for with
+    service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
@@ -170,6 +185,10 @@ class PlanWorkload:
         if not isinstance(self.visibility, Unset):
             visibility = self.visibility
 
+        access: str | Unset = UNSET
+        if not isinstance(self.access, Unset):
+            access = self.access
+
         dockerfile = self.dockerfile
 
         image = self.image
@@ -208,6 +227,14 @@ class PlanWorkload:
         depends_on_conditions: dict[str, Any] | Unset = UNSET
         if not isinstance(self.depends_on_conditions, Unset):
             depends_on_conditions = self.depends_on_conditions.to_dict()
+
+        uses: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.uses, Unset):
+            uses = self.uses.to_dict()
+
+        release_command = self.release_command
+
+        release_command_source = self.release_command_source
 
         service_binding_policy: str | Unset = UNSET
         if not isinstance(self.service_binding_policy, Unset):
@@ -308,6 +335,8 @@ class PlanWorkload:
             field_dict["platform_tenant_required"] = platform_tenant_required
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
+        if access is not UNSET:
+            field_dict["access"] = access
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if image is not UNSET:
@@ -330,6 +359,12 @@ class PlanWorkload:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
             field_dict["depends_on_conditions"] = depends_on_conditions
+        if uses is not UNSET:
+            field_dict["uses"] = uses
+        if release_command is not UNSET:
+            field_dict["release_command"] = release_command
+        if release_command_source is not UNSET:
+            field_dict["release_command_source"] = release_command_source
         if service_binding_policy is not UNSET:
             field_dict["service_binding_policy"] = service_binding_policy
         if service_reliability is not UNSET:
@@ -389,6 +424,7 @@ class PlanWorkload:
         from ..models.secret_file import SecretFile
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
+        from ..models.workload_uses import WorkloadUses
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -413,6 +449,13 @@ class PlanWorkload:
             visibility = UNSET
         else:
             visibility = check_plan_workload_visibility(_visibility)
+
+        _access = d.pop("access", UNSET)
+        access: PlanWorkloadAccess | Unset
+        if isinstance(_access, Unset):
+            access = UNSET
+        else:
+            access = check_plan_workload_access(_access)
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -462,6 +505,17 @@ class PlanWorkload:
             depends_on_conditions = UNSET
         else:
             depends_on_conditions = PlanWorkloadDependsOnConditions.from_dict(_depends_on_conditions)
+
+        _uses = d.pop("uses", UNSET)
+        uses: WorkloadUses | Unset
+        if isinstance(_uses, Unset):
+            uses = UNSET
+        else:
+            uses = WorkloadUses.from_dict(_uses)
+
+        release_command = d.pop("release_command", UNSET)
+
+        release_command_source = d.pop("release_command_source", UNSET)
 
         _service_binding_policy = d.pop("service_binding_policy", UNSET)
         service_binding_policy: ServiceBindingPolicy | Unset
@@ -574,6 +628,7 @@ class PlanWorkload:
             app_slug=app_slug,
             platform_tenant_required=platform_tenant_required,
             visibility=visibility,
+            access=access,
             dockerfile=dockerfile,
             image=image,
             image_healthcheck=image_healthcheck,
@@ -585,6 +640,9 @@ class PlanWorkload:
             resources=resources,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
+            uses=uses,
+            release_command=release_command,
+            release_command_source=release_command_source,
             service_binding_policy=service_binding_policy,
             service_reliability=service_reliability,
             service_binding_transport=service_binding_transport,

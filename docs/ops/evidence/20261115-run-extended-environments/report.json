@@ -1,0 +1,126 @@
+{
+  "bare_metal_host": false,
+  "customer_runs": 8,
+  "environment_publications": [
+    {
+      "artifact_bytes": 421527552,
+      "consumed_oci_producer_proof": true,
+      "exact_byte_scan_status": "complete",
+      "image_sha256": "e2d7506a1bcc61f7c4687157289c59947932a0c9fef2e42539363126b4ee4347",
+      "recipe_sha256": "396eb4dcbde7749aa93d86e241b626d908ceac279747b84d20794c2d1f8eaccc",
+      "runtime": "node24",
+      "scanner": "grype"
+    },
+    {
+      "artifact_bytes": 247463936,
+      "consumed_oci_producer_proof": true,
+      "exact_byte_scan_status": "complete",
+      "image_sha256": "bfa49e6751fb71f903547042120978b6fcec07cbd200b266da6d55496e9e62c4",
+      "recipe_sha256": "d137bcb0d913cb8d7ae4d858199f688d11385dc5703194e36229ceb9494738f4",
+      "runtime": "python313",
+      "scanner": "grype"
+    }
+  ],
+  "functional_pass": true,
+  "host": {
+    "architecture": "x86_64",
+    "host_kernel": "7.0.0-1014-gcp",
+    "kvm": true,
+    "virtualization": "google"
+  },
+  "limitations": [
+    "node24 npm and python313 binary wheel recipes; local storage only",
+    "functional evidence on operator-selected Google KVM host",
+    "platform runtime base uses an explicit test-only scan fixture; environment publication uses exact-byte Grype scan",
+    "other runtime/profile recipes and native production release eligibility remain separate gates",
+    "cold custom-environment guests only; no warm restore qualification",
+    "platform Node and builder scans use explicit fixtures; custom-environment publication requires real Grype",
+    "no production writers enabled; installer release, fleet capacity, remote OCI backend and full billing remain separate gates"
+  ],
+  "linux_changed_code_lint": {
+    "checks": [
+      {
+        "exit_code": 0,
+        "log": "linux-lint-guest-init.log",
+        "package": "guest/init"
+      },
+      {
+        "exit_code": 0,
+        "log": "linux-lint-guest-executor.log",
+        "package": "guest/executor"
+      },
+      {
+        "exit_code": 0,
+        "log": "linux-lint-pkg-builderd.log",
+        "package": "pkg/builderd"
+      },
+      {
+        "exit_code": 0,
+        "log": "linux-lint-pkg-e2etest-runlifecycle.log",
+        "package": "pkg/e2etest/runlifecycle"
+      }
+    ],
+    "complete": true,
+    "patch_sha256": "afae63ca38c01f1da0306c599bf985742fe87b3ea3c3db440c2574575be81521",
+    "raw_evidence_sha256": {
+      "linux-lint-guest-executor.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "linux-lint-guest-init.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "linux-lint-pkg-builderd.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "linux-lint-pkg-e2etest-runlifecycle.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "linux-lint-result.json": "8a5d3c775ee4e5bdfd2f5e6992001008aa942b9721bf5ee170bf6e6f31daac9a"
+    },
+    "scope": "Linux amd64, metal tag, selected packages; new issues against the uncommitted source patch",
+    "source_manifest_sha256": "efe3908c5fffca2cba05a2743453d335fc43682680166dce682e65f9d2794daf"
+  },
+  "p0_3_complete": false,
+  "pre_teardown_leakchecks": 1,
+  "process_exits": {
+    "extended_environments": 0,
+    "leakcheck_after": 0,
+    "leakcheck_before": 0
+  },
+  "raw_evidence_sha256": {
+    "artifacts.sha256": "c6471058600759ed0302f5a2d5b59d6380eacc25a0cc9632b0f6e8a35ea64d11",
+    "build.log": "cce4f184e26ff47cbc47373a984787c2d46b4a9b4aea026f672850e52464b1f3",
+    "extended-environments.jsonl": "57be91456292bf4e3face0a2449a0edb69fa087b2888bd7320e79aa048ea8442",
+    "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "process-exits.json": "ff95e22a8633bd1c5a75bd36d9b45c2a7ef03b4cf548c9c012ce9336dbc20ad2",
+    "report.json": "173d5082d2d590c7887e0055c7aebd4bc0d9672ea9cb46b0f7b54cf1cc5af9cd",
+    "source.json": "5176d51e1327c16e8818a2e8713a0284b0d789c2276f6098ba6351dc97f59972"
+  },
+  "runtime_release_eligibility": false,
+  "scenario_count": 8,
+  "scenario_elapsed_seconds": {
+    "TestSourceExtendedEnvironmentMetal": 634.34,
+    "dependency_import_and_fresh_vm_isolation": 2.75,
+    "five_minute_deadline_and_cancel_release_capacity": 305.47,
+    "isolated_builder_and_provenance_publication": 135.6,
+    "long_run_does_not_block_standard_lane": 46.46,
+    "payload_erasure_single_usage_and_no_live_resources": 1.63,
+    "python_hash_pinned_wheel_build_and_import": 90.09,
+    "retirement_preserves_admitted_run_then_collects": 6.55,
+    "unready_environment_and_recipe_reuse": 0.09
+  },
+  "schema": "gregale.run-extended-environments-summary/v1",
+  "source": {
+    "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+    "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+    "go_version": "go version go1.26.11 linux/amd64",
+    "source_files": 55366,
+    "source_manifest_sha256": "efe3908c5fffca2cba05a2743453d335fc43682680166dce682e65f9d2794daf"
+  },
+  "tests": [
+    "TestSourceExtendedEnvironmentMetal",
+    "TestSourceExtendedEnvironmentMetal/dependency_import_and_fresh_vm_isolation",
+    "TestSourceExtendedEnvironmentMetal/five_minute_deadline_and_cancel_release_capacity",
+    "TestSourceExtendedEnvironmentMetal/isolated_builder_and_provenance_publication",
+    "TestSourceExtendedEnvironmentMetal/long_run_does_not_block_standard_lane",
+    "TestSourceExtendedEnvironmentMetal/payload_erasure_single_usage_and_no_live_resources",
+    "TestSourceExtendedEnvironmentMetal/python_hash_pinned_wheel_build_and_import",
+    "TestSourceExtendedEnvironmentMetal/retirement_preserves_admitted_run_then_collects",
+    "TestSourceExtendedEnvironmentMetal/unready_environment_and_recipe_reuse"
+  ]
+}

@@ -63,7 +63,7 @@ func TestVotingAppHints(t *testing.T) {
 	if strings.Join(public.Commands, "|") != "gregale app update result --no-require-authn|gregale app update vote --no-require-authn" {
 		t.Errorf("public commands = %v", public.Commands)
 	}
-	if !strings.Contains(public.Change, "does not take --no-require-authn") {
+	if !strings.Contains(public.Change, "does not take --no-require-authn") || !strings.Contains(public.Change, "access: public") {
 		t.Errorf("public change must say the project deploy flag does not apply: %q", public.Change)
 	}
 	dev := got[featurehints.IDDevSetup]

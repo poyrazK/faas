@@ -87,7 +87,7 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 			if g := m.objectGatewayStorage[objectProviderRequestKey(b.ID, periodStart)]; g != nil {
 				u.StoredByteHours, u.StorageMeteredThrough = int64(g.byteHours), g.through
 			}
-			u.InventoryHeld = m.objectBucketTransitionLocked(b.ID)
+			u.InventoryHeld = m.objectInventoryHeldLocked(b.ID)
 			if a, ok := m.objectBucketActivity[b.ID]; ok {
 				u.MutatedAt, u.ActiveSince = a.mutatedAt, a.activeSince
 			}
@@ -383,7 +383,7 @@ func (m *MemStore) ObjectInventoryBacklog(ctx context.Context, quiet bool) (Obje
 		}
 		// A bucket fresh on any observation age is exempt: held, or listing
 		// within the progress window.
-		u.InventoryHeld = m.objectBucketTransitionLocked(b.ID)
+		u.InventoryHeld = m.objectInventoryHeldLocked(b.ID)
 		if !u.ObservedAt.IsZero() && !objectBucketInventoryStale(u, 0, now) {
 			continue
 		}

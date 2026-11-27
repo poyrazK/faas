@@ -40,7 +40,21 @@ type databaseQueryer interface {
 }
 
 func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit int) (Database, bool, error) {
-	if err := validateReservation(database, limit); err != nil {
+	return s.reserve(ctx, database, limit, nil)
+}
+
+func (s *PostgresStore) reserve(ctx context.Context, database Database, limit int, masked *maskedBranchPolicy) (Database, bool, error) {
+	check := database
+	if masked != nil {
+		if !database.IsMaskedBranch() || masked.sourceResourceID == "" {
+			return Database{}, false, ErrInvalid
+		}
+		// The admission rules for short-lived copies also apply to a logical
+		// branch. Its physical restore fields stay unset in the catalog.
+		check.RestoreSourceResourceID = masked.sourceResourceID
+		check.RestorePointInTime = check.CreatedAt
+	}
+	if err := validateReservation(check, limit); err != nil {
 		return Database{}, false, err
 	}
 	accountID, err := postgresUUID(database.AccountID)
@@ -97,7 +111,17 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		if source.AccountID != database.AccountID {
 			return Database{}, false, ErrNotFound
 		}
-		if source.State != StateReady || source.ProviderResourceID == "" || databaseDataResource(source) != database.RestoreSourceResourceID {
+		sameSource := databaseDataResource(source) == database.RestoreSourceResourceID
+		if masked != nil {
+			sameSource = source.OrgID == database.OrgID && source.ProviderResourceID == masked.sourceResourceID &&
+				source.BackendID == database.BackendID && source.BackendFingerprint == database.BackendFingerprint &&
+				source.Spec.Region == database.Spec.Region && source.Spec.PostgresMajor == database.Spec.PostgresMajor
+		}
+		if database.RestoreFromRecovery && (source.RecoveryRegion != database.Spec.Region || source.Spec.Region == database.Spec.Region ||
+			source.Spec.PostgresMajor < database.Spec.PostgresMajor || source.ObservedGeneration != source.DesiredGeneration) {
+			return Database{}, false, ErrConflict
+		}
+		if source.State != StateReady || source.ProviderResourceID == "" || !sameSource {
 			return Database{}, false, ErrConflict
 		}
 	}
@@ -125,6 +149,12 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, lifecycleInsertParams(database, accountID, databaseID))
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
+	}
+	if masked != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO native_postgres_masked_branches (database_id, source_resource_id, policy)
+			VALUES ($1, $2, $3::jsonb)`, databaseID, masked.sourceResourceID, masked.tables); err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
 	}
 	if slot {
 		row, err = q.TakeManagedPostgresRestoreSlot(ctx, tx, sqlc.TakeManagedPostgresRestoreSlotParams{
@@ -373,6 +403,7 @@ func lifecycleInsertParams(database Database, accountID, databaseID pgtype.UUID)
 		ScaleToZero: database.Spec.ScaleToZero, StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
 		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, RestoreSourceDatabaseID: databaseNullableUUID(database.RestoreSourceDatabaseID),
 		RestoreSourceResourceID: databaseNullableText(database.RestoreSourceResourceID), RestorePointInTime: databaseNullableTime(database.RestorePointInTime),
+		RestoreFromRecovery: database.RestoreFromRecovery, RestoreRecoveryTimeline: int64(database.RestoreRecoveryTimeline),
 		State: string(database.State), DesiredGeneration: database.DesiredGeneration, ObservedGeneration: database.ObservedGeneration,
 		RetryAt: databaseNullableTime(database.RetryAt), CreatedAt: databaseNullableTime(database.CreatedAt), UpdatedAt: databaseNullableTime(database.UpdatedAt),
 	}
@@ -393,6 +424,9 @@ func validateReservation(database Database, limit int) error {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {
+		if database.RestoreFromRecovery {
+			return ErrInvalid
+		}
 		return nil
 	}
 	if database.RestoreSourceDatabaseID == "" || database.RestoreSourceResourceID == "" || database.RestorePointInTime.IsZero() {
@@ -435,7 +469,9 @@ func mapPostgresError(err error) error {
 	case pgerrcode.ForeignKeyViolation:
 		return ErrNotFound
 	case pgerrcode.CheckViolation:
-		if postgresError.ConstraintName == "managed_postgres_resize_conflict" || postgresError.ConstraintName == "managed_postgres_cutover_conflict" || postgresError.ConstraintName == "managed_postgres_database_has_bindings" || postgresError.ConstraintName == "managed_postgres_database_has_restore_descendants" {
+		switch postgresError.ConstraintName {
+		case "managed_postgres_resize_conflict", "managed_postgres_cutover_conflict", "managed_postgres_database_has_bindings",
+			"managed_postgres_database_has_restore_descendants", "managed_postgres_sandbox_binding":
 			return ErrConflict
 		}
 		return fmt.Errorf("%w: %s", ErrInvalid, postgresError.ConstraintName)

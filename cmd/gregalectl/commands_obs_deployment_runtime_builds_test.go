@@ -49,7 +49,7 @@ func deploymentRuntimeBuildProfileTest(t *testing.T, now, after time.Time, relea
 func TestDeploymentRuntimeBuildsAdvisoryQualificationAndOwnership(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	opts := obsDeploymentOptions{release: strings.Repeat("a", 40), after: now.Add(-90 * time.Second), wait: time.Minute, poll: time.Second, expectedRole: "single-box-v1"}
-	for _, tc := range []string{"matching", "mixed", "older_server", "invalid", "stale"} {
+	for _, tc := range []string{"matching", "mixed", "older_server", "rate_limited", "invalid", "stale"} {
 		t.Run(tc, func(t *testing.T) {
 			snapshot := deploymentSnapshotTest(now)
 			builds := deploymentRuntimeBuildTest(t, now, opts.after, opts.release)
@@ -63,6 +63,9 @@ func TestDeploymentRuntimeBuildsAdvisoryQualificationAndOwnership(t *testing.T) 
 				want = "mixed"
 			case "older_server":
 				snapshot.runtimeBuildErr = obsFetchHTTPFailure("runtime-builds", 404)
+				want = "unknown"
+			case "rate_limited":
+				snapshot.runtimeBuildErr = obsFetchHTTPFailure("runtime-builds", http.StatusTooManyRequests)
 				want = "unknown"
 			case "invalid":
 				builds.Items[0].Node = "private://credentials"
@@ -90,8 +93,15 @@ func TestDeploymentRuntimeBuildsAdvisoryQualificationAndOwnership(t *testing.T) 
 }
 
 func TestCmdDeploymentRuntimeBuildsProtectedReadAndReport(t *testing.T) {
-	for _, older := range []bool{false, true} {
-		t.Run(map[bool]string{false: "mixed", true: "older_server"}[older], func(t *testing.T) {
+	for _, mode := range []string{"mixed", "older_server", "busy", "rate_limited"} {
+		t.Run(mode, func(t *testing.T) {
+			var want429Reason string
+			switch mode {
+			case "busy":
+				want429Reason = "source_runtime_busy"
+			case "rate_limited":
+				want429Reason = "source_rate_limited"
+			}
 			stdout, stderr := obsBundleTestStreams(t)
 			now := time.Now().UTC()
 			after := now.Add(-90 * time.Second).Truncate(time.Second)
@@ -110,12 +120,26 @@ func TestCmdDeploymentRuntimeBuildsProtectedReadAndReport(t *testing.T) {
 				switch r.URL.Path {
 				case operatorobs.RuntimeBuildsPath:
 					q := r.URL.Query()
-					if len(q) != 3 || q.Get("expected_role") != "single-box-v1" || q.Get("release") != release || q.Get("after") != after.Format(time.RFC3339Nano) {
+					wantQuerySize := 3
+					if want429Reason != "" {
+						wantQuerySize++
+						if q.Get("diagnostics") != "none" {
+							t.Error("429 response retried without the diagnostic selection")
+						}
+					}
+					if len(q) != wantQuerySize || q.Get("expected_role") != "single-box-v1" || q.Get("release") != release || q.Get("after") != after.Format(time.RFC3339Nano) {
 						t.Error("unexpected build selection")
 					}
-					if older {
+					switch mode {
+					case "older_server":
 						w.WriteHeader(404)
 						_, _ = w.Write([]byte("private-provider-response"))
+						return
+					case "busy":
+						api.WriteProblem(w, api.ErrObsRuntimeBusy(api.ObsRuntimeBuildCollectionsMax))
+						return
+					case "rate_limited":
+						api.WriteProblem(w, api.ErrAPIRateLimited(10, 1))
 						return
 					}
 					_ = json.NewEncoder(w).Encode(builds)
@@ -130,7 +154,11 @@ func TestCmdDeploymentRuntimeBuildsProtectedReadAndReport(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_APID_URL", srv.URL)
 			path := filepath.Join(t.TempDir(), "report.json")
-			code := cmdObsVerifyDeployment([]string{"--release", release, "--after", after.Format(time.RFC3339), "--expected-role", "single-box-v1", "--admin-token", "private-runtime-token", "--report", path, "--json"})
+			args := []string{"--release", release, "--after", after.Format(time.RFC3339), "--expected-role", "single-box-v1", "--admin-token", "private-runtime-token", "--report", path}
+			if want429Reason != "" {
+				args = append(args, "--runtime-diagnostics", "none")
+			}
+			code := cmdObsVerifyDeployment(args)
 			if code != 0 || calls.Load() != 3 {
 				t.Fatalf("exit=%d reads=%d stdout=%s stderr=%s", code, calls.Load(), stdout, stderr)
 			}
@@ -146,10 +174,21 @@ func TestCmdDeploymentRuntimeBuildsProtectedReadAndReport(t *testing.T) {
 			if strings.Contains(string(body), "private-runtime-token") || strings.Contains(string(body), "private-provider-response") {
 				t.Fatal("source secret retained")
 			}
-			var human bytes.Buffer
-			writeObsDeploymentHuman(&human, report)
-			if !strings.Contains(human.String(), "runtime_builds advisory=true") || !older && !strings.Contains(human.String(), "distinct_revisions=2") || older && report.RuntimeBuilds.SourceHTTPStatus == nil {
-				t.Fatal("human/JSON evidence missing", human.String())
+			if want429Reason != "" {
+				runtimeBuilds := report.RuntimeBuilds
+				if runtimeBuilds.State != "unknown" || runtimeBuilds.Reason != want429Reason || runtimeBuilds.Evidence != nil || runtimeBuilds.SourceHTTPStatus == nil || *runtimeBuilds.SourceHTTPStatus != http.StatusTooManyRequests || report.HadConfirmedFaults || len(report.Checks) != 3 {
+					t.Fatalf("429 changed advisory semantics: %+v", runtimeBuilds)
+				}
+				if h := runtimeBuilds.History; h == nil || len(h.Events) != 1 || h.Events[0].Reason != want429Reason || h.Events[0].SourceHTTPStatus == nil || *h.Events[0].SourceHTTPStatus != http.StatusTooManyRequests {
+					t.Fatalf("429 reason lost from poll history: %+v", runtimeBuilds.History)
+				}
+				if !strings.Contains(stdout.String(), "reason="+want429Reason+" source_http_status=429") ||
+					strings.Contains(stdout.String(), "Check for overlapping verifiers") != (mode == "busy") {
+					t.Fatalf("wrong terminal diagnostic for %s: %s", mode, stdout)
+				}
+			}
+			if !strings.Contains(stdout.String(), "runtime_builds advisory=true") || mode == "mixed" && !strings.Contains(stdout.String(), "distinct_revisions=2") || mode == "older_server" && report.RuntimeBuilds.SourceHTTPStatus == nil {
+				t.Fatal("human/JSON evidence missing", stdout.String())
 			}
 		})
 	}

@@ -30,12 +30,12 @@ A rule applies to a request when every selector it sets matches.
 | Field | Matches |
 |---|---|
 | `match_host` (required) | An exact host (`api.example.com`), `*` for any host, a glob such as `*.example.com` (subdomains, not the apex), or `@app` for every host the rule's app serves, including custom domains you add later. Hosts compare case-insensitively. |
-| `match_path` | A path glob; see below. Defaults to `/`, which matches only the root path. |
+| `match_path` | A path glob; see below. The CLI defaults it to `/`, which matches only the root path, except for `waf` and `challenge` rules, which default to `/**` (every path). The API requires it. |
 | `match_methods` | HTTP methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `CONNECT`, `TRACE`, in any letter case. Empty matches any method; `*` is rejected, so leave the field out instead. |
 | `match_headers` | Up to 10 request headers that must be present with an exact value. Names compare case-insensitively; any value of a repeated header can match. |
 | `match` | An optional condition over more request fields, ANDed with the selectors above. |
 
-Your app is always served at its own `<slug>.gregale.dev` address, and at any
+Your app is always served at its own `<slug>.gregale.app` address, and at any
 companion hostnames, as well as at its custom domains. A rule that protects
 the app (`jwt`, `ip`, `geo`, `waf`, `challenge` and the other gates) should
 use `@app`: one that names a single host leaves the app's other hosts open,
@@ -325,6 +325,9 @@ and the rewritten path; see [Order of kinds](#order-of-kinds).
 
 ### redirect
 
+A `redirect` rule answers at the edge, without calling your app, with a
+redirect from one path or host to another:
+
 ```json
 {"kind": "redirect", "match_host": "old.example.com", "match_path": "/**",
  "action": {"status_code": 308, "to": "https://new.example.com${path}", "template": true}}
@@ -521,7 +524,9 @@ unset to keep `max_body_bytes` there too. It also caps the streamed response.
             "key_fields": ["ip", "header:x-username"], "count_statuses": [401]}}
 ```
 
-A token bucket refilled at `requests_per_second` and holding `burst` tokens.
+A `throttle` rule rate-limits requests per client IP, API key or another
+key (`key_by` below). Each key gets a token bucket refilled at
+`requests_per_second` and holding `burst` tokens.
 A request that finds the bucket empty gets 429 `rate_limited`; responses on
 the route carry `X-RouteRateLimit-Limit`, `-Remaining`, `-Reset` and
 `-Policy`. Both values must stay within your plan's rate limit (see

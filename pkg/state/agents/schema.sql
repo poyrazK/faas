@@ -67,6 +67,7 @@ CREATE TABLE agent_versions (
  ai_budget_millicents bigint,
  deliveries jsonb NOT NULL DEFAULT '[]',
  pause_during_model_calls boolean NOT NULL DEFAULT true,
+ capability_policy jsonb,
  PRIMARY KEY (agent_id, version)
 );
 CREATE TABLE agent_runs (
@@ -82,6 +83,7 @@ CREATE TABLE agent_runs (
  state text NOT NULL DEFAULT 'queued',
  ram_mb integer,
  timeout_sec integer NOT NULL,
+ deadline_credit_max_sec integer NOT NULL DEFAULT 0,
  attempt integer NOT NULL DEFAULT 1,
  lease_token text,
  lease_expires_at timestamptz,
@@ -237,6 +239,7 @@ CREATE TABLE sandbox_sessions (
  lease_token text,
  lease_expires_at timestamptz,
  node_id text,
+ placed_node_id text CHECK (placed_node_id IS NULL OR (char_length(placed_node_id) >= 1 AND char_length(placed_node_id) <= 128)),
  instance_id text,
  close_requested_at timestamptz,
  last_activity_at timestamptz NOT NULL DEFAULT now(),
@@ -254,7 +257,56 @@ CREATE TABLE sandbox_sessions (
  task_url text,
  task_max_chars integer,
  task_exit_code integer,
- task_output bytea
+ task_output bytea,
+ vcpu smallint,
+ volume_gb integer,
+ pause_requested_at timestamptz,
+ resume_requested_at timestamptz,
+ paused_at timestamptz,
+ durability text,
+ resumed_cold boolean NOT NULL DEFAULT false,
+ forked_from uuid,
+ resume_not_before timestamptz
+);
+
+CREATE TABLE sandbox_session_captures (
+ id uuid PRIMARY KEY,
+ session_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ node_id text NOT NULL,
+ storage_key text NOT NULL,
+ vmstate_storage_key text NOT NULL,
+ fc_version text NOT NULL,
+ mem_bytes bigint NOT NULL,
+ vmstate_bytes bigint NOT NULL DEFAULT 0,
+ has_backing boolean NOT NULL DEFAULT false,
+ volume_backup_id uuid,
+ state text NOT NULL DEFAULT 'live',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ consumed_at timestamptz,
+ checked_at timestamptz
+);
+CREATE TABLE sandbox_volumes (
+ session_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ node_id text NOT NULL,
+ size_gb integer NOT NULL,
+ latest_backup_id uuid,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE sandbox_volume_backups (
+ id uuid PRIMARY KEY,
+ session_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ node_id text NOT NULL,
+ reason text NOT NULL,
+ state text NOT NULL,
+ size_bytes bigint NOT NULL DEFAULT 0,
+ data_chunks integer NOT NULL DEFAULT 0,
+ uploaded_bytes bigint NOT NULL DEFAULT 0,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ deleted_at timestamptz
 );
 CREATE TABLE agent_sandbox_task_calls (
  sandbox_id uuid PRIMARY KEY,
@@ -303,7 +355,16 @@ CREATE TABLE sandbox_session_usage (
  cold_boot boolean NOT NULL,
  final boolean NOT NULL DEFAULT false,
  recorded_at timestamptz NOT NULL DEFAULT now(),
- updated_at timestamptz NOT NULL DEFAULT now()
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ lease_token text,
+ base_samples integer NOT NULL DEFAULT 0,
+ base_expected_samples integer NOT NULL DEFAULT 0,
+ base_measured_ms bigint NOT NULL DEFAULT 0,
+ base_paused_ms bigint NOT NULL DEFAULT 0,
+ base_frozen_ms bigint NOT NULL DEFAULT 0,
+ base_private_mb_ms bigint NOT NULL DEFAULT 0,
+ base_unpaused_private_mb_ms bigint NOT NULL DEFAULT 0,
+ base_billable_mb_ms bigint NOT NULL DEFAULT 0
 );
 CREATE TABLE sandbox_session_domains (
  sandbox_id uuid NOT NULL,
@@ -368,4 +429,23 @@ CREATE TABLE sandbox_templates (
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE (account_id, name)
+);
+CREATE TABLE agent_run_approvals (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ run_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ tool text NOT NULL,
+ arguments_sha256 text NOT NULL,
+ arguments_summary text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ expires_at timestamptz NOT NULL,
+ released_at timestamptz
+);
+CREATE TABLE agent_run_approval_decisions (
+ approval_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ decision text NOT NULL,
+ note text NOT NULL DEFAULT '',
+ decided_by text NOT NULL DEFAULT '',
+ decided_at timestamptz NOT NULL DEFAULT now()
 );

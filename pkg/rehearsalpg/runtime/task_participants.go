@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +12,40 @@ import (
 	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding/taskacl"
 )
+
+var errTaskParticipantPrivileges = errors.New("restricted Task database privileges could not be verified")
+
+func writableTaskTables(read []string, observer bool) []string {
+	write := []string{}
+	if !observer {
+		for _, table := range read {
+			if taskacl.Writable(table) {
+				write = append(write, table)
+			}
+		}
+	}
+	return write
+}
+
+func verifyTaskParticipants(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, r rehearsalpg.Resource) error {
+	for _, participant := range r.TaskParticipants {
+		id, err := uuid.Parse(participant.AppID)
+		if err != nil || id.String() != participant.AppID || id == uuid.Nil || participant.AppID == r.AppID ||
+			!rehearsalwork.TaskPostgresAccess(participant.Access) {
+			return errTaskParticipantPrivileges
+		}
+		observer := participant.Access == rehearsalwork.PostgresTaskObserver
+		read := taskacl.ReadTables(observer)
+		role := rehearsalwork.PostgresParticipantRole(r.ID, participant.AppID, participant.Access)
+		valid, err := q.TaskParticipantPrivileges(ctx, tx, sqlc.TaskParticipantPrivilegesParams{
+			RoleName: role, OwnerRole: r.RoleName, ReadTables: read, WriteTables: writableTaskTables(read, observer),
+		})
+		if err != nil || !valid {
+			return errTaskParticipantPrivileges
+		}
+	}
+	return nil
+}
 
 func (p *Postgres) bindTaskParticipant(ctx context.Context, r rehearsalpg.Resource, app, password, access string) error {
 	id, err := uuid.Parse(app)
@@ -49,8 +84,11 @@ func (p *Postgres) bindTaskParticipant(ctx context.Context, r rehearsalpg.Resour
 	if q.ConfigureTaskGrantTransaction(ctx, tx) != nil {
 		return ErrFixture
 	}
-	read := taskacl.ReadTables(access == rehearsalwork.PostgresTaskObserver)
-	valid, err := q.TaskGrantTablesReady(ctx, tx, sqlc.TaskGrantTablesReadyParams{OwnerRole: r.RoleName, TableNames: read})
+	observer := access == rehearsalwork.PostgresTaskObserver
+	read := taskacl.ReadTables(observer)
+	valid, err := q.TaskGrantObjectsReady(ctx, tx, sqlc.TaskGrantObjectsReadyParams{
+		OwnerRole: r.RoleName, TableNames: read, RequireClaimOrder: !observer,
+	})
 	if err != nil || !valid {
 		return ErrFixture
 	}
@@ -66,15 +104,9 @@ func (p *Postgres) bindTaskParticipant(ctx context.Context, r rehearsalpg.Resour
 	if execFormatted(ctx, tx, command, err) != nil {
 		return ErrFixture
 	}
-	var write []string
-	if access == rehearsalwork.PostgresTaskRuntime {
-		for _, table := range read {
-			if taskacl.Writable(table) {
-				write = append(write, table)
-			}
-		}
-	}
-	command, err = q.FormatGrantTaskTables(ctx, tx, sqlc.FormatGrantTaskTablesParams{RoleName: role, ReadTables: read, WriteTables: write})
+	command, err = q.FormatGrantTaskObjects(ctx, tx, sqlc.FormatGrantTaskObjectsParams{
+		RoleName: role, ReadTables: read, WriteTables: writableTaskTables(read, observer),
+	})
 	if execFormatted(ctx, tx, command, err) != nil {
 		return ErrFixture
 	}

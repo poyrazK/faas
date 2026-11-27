@@ -72,7 +72,7 @@ func (q *Queries) CreateDeploymentReleaseApproval(ctx context.Context, db DBTX, 
 
 const deleteAppReleaseApprovalPolicy = `-- name: DeleteAppReleaseApprovalPolicy :one
 DELETE FROM app_release_approval_policies WHERE app_id = $1::uuid
-RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at
+RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at, require_passing_sandbox_suite
 `
 
 func (q *Queries) DeleteAppReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (AppReleaseApprovalPolicy, error) {
@@ -90,6 +90,7 @@ func (q *Queries) DeleteAppReleaseApprovalPolicy(ctx context.Context, db DBTX, a
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequirePassingSandboxSuite,
 	)
 	return i, err
 }
@@ -169,7 +170,7 @@ func (q *Queries) FinishReleaseApprovalEvent(ctx context.Context, db DBTX, arg F
 }
 
 const getAppReleaseApprovalPolicy = `-- name: GetAppReleaseApprovalPolicy :one
-SELECT app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at FROM app_release_approval_policies WHERE app_id = $1::uuid
+SELECT app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at, require_passing_sandbox_suite FROM app_release_approval_policies WHERE app_id = $1::uuid
 `
 
 func (q *Queries) GetAppReleaseApprovalPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (AppReleaseApprovalPolicy, error) {
@@ -187,6 +188,7 @@ func (q *Queries) GetAppReleaseApprovalPolicy(ctx context.Context, db DBTX, appI
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequirePassingSandboxSuite,
 	)
 	return i, err
 }
@@ -359,13 +361,14 @@ const upsertAppReleaseApprovalPolicy = `-- name: UpsertAppReleaseApprovalPolicy 
 
 INSERT INTO app_release_approval_policies (
   app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers,
-  allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at
+  allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at, require_passing_sandbox_suite
 )
 VALUES (
   $1::uuid, $2::uuid, $3::smallint,
   $4::smallint, $5::integer, $6::text,
   $7::boolean, $8::uuid[], $9::text,
-  $10::timestamptz, $10::timestamptz
+  $10::timestamptz, $10::timestamptz,
+  coalesce($11::boolean, false)
 )
 ON CONFLICT (app_id) DO UPDATE SET
   required_approvals = EXCLUDED.required_approvals,
@@ -375,21 +378,23 @@ ON CONFLICT (app_id) DO UPDATE SET
   allow_self_approval = EXCLUDED.allow_self_approval,
   notify_channel_ids = EXCLUDED.notify_channel_ids,
   updated_by = EXCLUDED.updated_by,
+  require_passing_sandbox_suite = coalesce($11::boolean, app_release_approval_policies.require_passing_sandbox_suite),
   updated_at = EXCLUDED.updated_at
-RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at
+RETURNING app_id, account_id, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channel_ids, updated_by, created_at, updated_at, require_passing_sandbox_suite
 `
 
 type UpsertAppReleaseApprovalPolicyParams struct {
-	AppID             pgtype.UUID
-	AccountID         pgtype.UUID
-	RequiredApprovals int16
-	AfterStage        int16
-	TimeoutMinutes    int32
-	Approvers         string
-	AllowSelfApproval bool
-	NotifyChannelIds  []pgtype.UUID
-	UpdatedBy         string
-	Now               pgtype.Timestamptz
+	AppID                      pgtype.UUID
+	AccountID                  pgtype.UUID
+	RequiredApprovals          int16
+	AfterStage                 int16
+	TimeoutMinutes             int32
+	Approvers                  string
+	AllowSelfApproval          bool
+	NotifyChannelIds           []pgtype.UUID
+	UpdatedBy                  string
+	Now                        pgtype.Timestamptz
+	RequirePassingSandboxSuite pgtype.Bool
 }
 
 // ADR-20261020085706: release approvals.
@@ -405,6 +410,7 @@ func (q *Queries) UpsertAppReleaseApprovalPolicy(ctx context.Context, db DBTX, a
 		arg.NotifyChannelIds,
 		arg.UpdatedBy,
 		arg.Now,
+		arg.RequirePassingSandboxSuite,
 	)
 	var i AppReleaseApprovalPolicy
 	err := row.Scan(
@@ -419,6 +425,7 @@ func (q *Queries) UpsertAppReleaseApprovalPolicy(ctx context.Context, db DBTX, a
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequirePassingSandboxSuite,
 	)
 	return i, err
 }

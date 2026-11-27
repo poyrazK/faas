@@ -33,11 +33,11 @@ func decodeSpec(t *testing.T, raw []byte) specShape {
 
 // The anonymous spec must not advertise the durable entity preview, while the
 // embedded source keeps it for SDK generation and contract tooling. API
-// monetization and the realtime preview are published here so only the
-// durable entity filter is measured.
+// monetization, realtime and catalog previews are included in this fixture
+// so only the operator path filter is measured.
 func TestPublicOpenAPIHidesDurableEntityPaths(t *testing.T) {
 	full := decodeSpec(t, OpenAPIYAML())
-	public := decodeSpec(t, PublicOpenAPIYAMLFor(allVisible))
+	public := decodeSpec(t, FilterSpec(OpenAPIYAML(), func(string) bool { return false }, allVisible))
 	hidden := 0
 	for path := range full.Paths {
 		if hiddenPublicPath(path) {
@@ -68,6 +68,19 @@ func TestPublicOpenAPIHidesDurableEntityPaths(t *testing.T) {
 	}
 }
 
+func TestPublicOpenAPIHidesNativePostgresPreview(t *testing.T) {
+	public := decodeSpec(t, PublicOpenAPIYAML())
+	if _, ok := public.Paths["/v1/postgres/databases/{id}/recovery-region"]; ok {
+		t.Error("anonymous spec exposes native PostgreSQL recovery configuration")
+	}
+	if _, ok := public.Paths["/v1/postgres/databases/{id}/restore"]; !ok {
+		t.Error("anonymous spec omits the existing PostgreSQL restore endpoint")
+	}
+	if _, ok := public.Components["schemas"]["ManagedPostgresStorageStatus"]; ok {
+		t.Error("anonymous spec exposes the native PostgreSQL storage status schema")
+	}
+}
+
 // The operator trace ring is never customer surface, whatever tier tracing
 // has: no capability's default may publish it.
 func TestPublicOpenAPIHidesOperatorTraceRing(t *testing.T) {
@@ -83,6 +96,27 @@ func TestPublicOpenAPIHidesOperatorTraceRing(t *testing.T) {
 		if _, ok := decodeSpec(t, raw).Paths[path]; ok {
 			t.Errorf("%s spec lists the operator trace ring %s", name, path)
 		}
+	}
+}
+
+func TestPublicOpenAPIHidesMonetizeConsoleRoutes(t *testing.T) {
+	full := decodeSpec(t, OpenAPIYAML())
+	public := decodeSpec(t, PublicOpenAPIYAMLFor(allVisible))
+	for _, path := range []string{
+		"/v1/account/billing-connections/stripe/setup",
+		"/v1/account/billing-run-schedule/draft",
+		"/v1/apps/{slug}/monetization-funnel",
+		"/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice/draft",
+	} {
+		if _, ok := full.Paths[path]; !ok {
+			t.Errorf("embedded spec omits %s", path)
+		}
+		if _, ok := public.Paths[path]; ok {
+			t.Errorf("public spec lists %s", path)
+		}
+	}
+	if _, ok := public.Components["schemas"]["PutStripeSetupRequest"]; ok {
+		t.Error("public spec still defines PutStripeSetupRequest")
 	}
 }
 
@@ -225,6 +259,40 @@ func TestPublicOpenAPIFollowsRealtimePreview(t *testing.T) {
 			t.Errorf("%s spec delivery values = %s", name, values)
 		}
 	}
+	// adr: 20261123074615 — principal send is released with core realtime;
+	// its retained delivery value stays the preview's.
+	for schema, byField := range realtimepreview.FieldValues {
+		for field, values := range byField {
+			for _, value := range values {
+				if !propertyEnumHas(full, schema, field, value) {
+					t.Fatalf("embedded spec lacks %s.%s=%s; update realtimepreview.FieldValues", schema, field, value)
+				}
+				if propertyEnumHas(hidden, schema, field, value) {
+					t.Errorf("hidden spec still offers %s.%s=%s", schema, field, value)
+				}
+				if !propertyEnumHas(shown, schema, field, value) {
+					t.Errorf("published spec dropped %s.%s=%s", schema, field, value)
+				}
+			}
+			if !propertyEnumHas(hidden, schema, field, "live") {
+				t.Errorf("hidden spec dropped the released %s.%s values", schema, field)
+			}
+		}
+	}
+}
+
+// propertyEnumHas reports whether a schema property's enum lists value.
+func propertyEnumHas(spec specShape, schema, field, value string) bool {
+	body, _ := spec.Components["schemas"][schema].(map[string]any)
+	properties, _ := body["properties"].(map[string]any)
+	property, _ := properties[field].(map[string]any)
+	values, _ := property["enum"].([]any)
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
 
 func hasProperty(spec specShape, schema, field string) bool {

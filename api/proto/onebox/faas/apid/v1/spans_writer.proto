@@ -66,6 +66,14 @@ service SpansWriter {
   // cap, translates the export like the public OTLP metrics endpoint and
   // stores the app's custom metrics. Outcomes ride on the response.
   rpc IngestGuestMetrics(IngestGuestSpansRequest) returns (IngestGuestMetricsResponse);
+
+  // IngestInstanceResourceMinutes stores what each app instance's cgroup
+  // did per minute (ADR-20261121170000), as vmmd folded it from guest-init's
+  // ten-second slots. Rows carry the host-owned identity; apid checks each
+  // instance belongs to the calling node and that the app's account has
+  // the route_resource_peaks flag, and names the apps it refused so vmmd
+  // stops forwarding them for a while. Outcomes ride on the response.
+  rpc IngestInstanceResourceMinutes(IngestInstanceResourceMinutesRequest) returns (IngestInstanceResourceMinutesResponse);
 }
 
 // WriteSpansSummaryRequest is one coalesced spans_summary
@@ -167,4 +175,36 @@ message IngestGuestMetricsResponse {
   int64 accepted_points = 2;
   int64 rejected_points = 3;
   int64 retry_after_ms = 4;
+}
+
+// InstanceResourceMinute is one app instance's cgroup in one UTC minute.
+// Memory is MiB of memory.current; CPU from cpu.stat.
+message InstanceResourceMinute {
+  string account_id = 1;
+  string app_id = 2;
+  string deployment_id = 3;
+  string instance_id = 4;
+  int64 minute_unix = 5;
+  int32 samples = 6;
+  int32 mem_start_mb = 7;
+  int32 mem_peak_mb = 8;
+  int32 mem_end_mb = 9;
+  int32 mem_limit_mb = 10;
+  int64 cpu_ms = 11;
+  int32 cpu_peak_millicores = 12;
+  int32 cpu_limit_millicores = 13;
+}
+
+message IngestInstanceResourceMinutesRequest {
+  repeated InstanceResourceMinute minutes = 1;
+}
+
+// IngestInstanceResourceMinutesResponse outcome ∈ {accepted, unavailable}.
+// disabled_app_ids are apps whose rows apid left out because the flag is
+// off for them; invalid counts rows refused for their identity or values.
+message IngestInstanceResourceMinutesResponse {
+  string outcome = 1;
+  int64 accepted = 2;
+  repeated string disabled_app_ids = 3;
+  int64 invalid = 4;
 }

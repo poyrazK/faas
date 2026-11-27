@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; edge = the gateways, deployed after the control plane by cd-edge-units.yml one host at a time (services name the host role they run on); shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only (and database nodes, ADR-1027: pgproxyd, dbbackupd and vmmd there wait for the full release too; and the agent egress gateway host, ADR-20261117185346: agentproxyd, installed by its ansible role); tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
+  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; edge = the gateways, deployed after the control plane by cd-edge-units.yml one host at a time (services name the host role they run on); shared = also runs on compute hosts; compute = compute hosts only (and database nodes, ADR-1027: pgproxyd, dbbackupd and vmmd there wait for the full release; and the agent egress gateway host, ADR-20261117185346: agentproxyd, installed by its ansible role). shared and compute binaries ride the unit lane only as compute_lane below says (ADR 20261123122457), and list the services each host role restarts; tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
   "binaries": {
     "apid": {
       "lane": "control-plane",
@@ -22,7 +22,13 @@
       "lane": "control-plane",
       "services": [{"name": "outboundd", "readyz": "http://127.0.0.1:8095/readyz"}]
     },
-    "s3-gatewayd": {"lane": "shared"},
+    "s3-gatewayd": {
+      "lane": "shared",
+      "services": [
+        {"name": "s3-gatewayd", "host": "control-plane", "optional": true, "readyz": "http://127.0.0.1:9096/readyz"},
+        {"name": "s3-gatewayd-compute", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9096/readyz"}
+      ]
+    },
     "livequeryd": {
       "lane": "control-plane",
       "services": [{"name": "livequeryd", "optional": true, "readyz": "http://127.0.0.1:9471/readyz"}]
@@ -55,7 +61,13 @@
       "lane": "control-plane",
       "services": [{"name": "maild", "optional": true}]
     },
-    "schedd": {"lane": "shared"},
+    "schedd": {
+      "lane": "shared",
+      "services": [
+        {"name": "schedd", "host": "control-plane", "readyz": "http://127.0.0.1:9103/readyz"},
+        {"name": "schedd", "host": "compute-only"}
+      ]
+    },
     "gatewayd-public": {
       "lane": "edge",
       "services": [
@@ -63,12 +75,18 @@
         {"name": "gatewayd-public-edge", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9109/readyz"}
       ]
     },
-    "realtimed": {"lane": "compute"},
+    "realtimed": {
+      "lane": "compute",
+      "services": [{"name": "realtimed", "host": "compute-only", "readyz": "http://127.0.0.1:9107/readyz"}]
+    },
     "gatewayd-internal": {
       "lane": "edge",
       "services": [{"name": "gatewayd-internal", "host": "compute-only", "readyz": "http://127.0.0.1:9090/readyz"}]
     },
-    "vmmd": {"lane": "compute"},
+    "vmmd": {
+      "lane": "compute",
+      "services": [{"name": "vmmd", "host": "compute-only"}]
+    },
     "pgproxyd": {"lane": "compute"},
     "agentproxyd": {"lane": "compute"},
     "dbbackupd": {"lane": "compute"},
@@ -78,9 +96,18 @@
     "vmmd-tcp-bridge": {"lane": "compute"},
     "vmmd-udp-bridge": {"lane": "compute"},
     "vmmd-stream-bridge": {"lane": "compute"},
-    "builderd": {"lane": "compute"},
-    "imaged": {"lane": "compute"},
-    "profiled": {"lane": "compute"},
+    "builderd": {
+      "lane": "compute",
+      "services": [{"name": "builderd", "host": "compute-only"}]
+    },
+    "imaged": {
+      "lane": "compute",
+      "services": [{"name": "imaged", "host": "compute-only"}]
+    },
+    "profiled": {
+      "lane": "compute",
+      "services": [{"name": "profiled", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9160/readyz"}]
+    },
     "hostage-gen": {"lane": "compute"},
     "mailctl": {"lane": "tool"},
     "mail-report": {"lane": "tool"},
@@ -90,17 +117,27 @@
     "mcp-bridged": {"lane": "control-plane", "services": [{"name": "mcp-bridge", "optional": true}]},
     "gregalectl": {"lane": "tool"}
   },
+  "activation": {
+    "_comment": "Parallel activation (docs/adr/20261122170000-continuous-unit-lane.md): a unit deploy restarts daemons of equal Lifecycle.After depth together, at most `parallel` at once, vmmd alone (cmd/deployctl/restart_waves.go, through DEPLOYCTL_RESTART_PARALLEL). 1 restarts one at a time, as full releases and rollbacks do.",
+    "parallel": 4
+  },
+  "compute_lane": {
+    "_comment": "Compute unit lane (docs/adr/20261123122457-compute-unit-lane.md). The shared and compute binaries ride the unit lane when the range has a commit that changes code only they read (needs_compute): the control-plane lane restarts their control-plane services (schedd, s3-gatewayd), and the edge lane's per-node job restarts their compute-only services, vmmd behind its adoption proof. A range that changes them only through a package every lane reads leaves them at base, as before, so a control-plane commit keeps its four-minute path and vmmd restarts only for a change of its own. helpers have no unit: the overlay replaces them and nothing restarts (vmmd starts the bridges per guest from /opt/faas/current/bin; the jail helper and guest-disk tool sit beside vmmd's executable). held run on hosts the lane does not deploy (database nodes, ADR-1027; the agent egress host; hostage-gen is an operator tool its role installs) and wait for the full release without blocking a commit (owner decision 2026-11-23). enabled: on since 2026-11-24 (owner decision, after the metal run and the bhs-2 canary proved the adoption guard). Off, the lane behaves as before it (compute binaries at base, a crossing commit blocks); a dispatch with compute_lane=true turns it on for one run.",
+    "enabled": true,
+    "helpers": ["vmmd-jail-helper", "vmmd-guestdisk", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge", "vmmd-stream-bridge"],
+    "held": ["pgproxyd", "dbbackupd", "agentproxyd", "hostage-gen"]
+  },
   "gates": {
     "_comment": "SLO gate per host (scripts/ci/slo_gate.py --duration/--max-hold). The canary is the first host of a lane: the control plane in the control-plane lane, the designated compute node in the edge lane (the control plane when no compute node restarts a gateway). Every later host gets the follower gate, long enough to catch crash loops and immediate error spikes. scripts/ci/plan_edge_rollout.py checks these against the 30-minute budget (ADR-1650).",
     "canary": {"duration": "4m", "max_hold": "2m"},
     "follower": {"duration": "90s", "max_hold": "30s"}
   },
   "watch": {
-    "_comment": "Post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md): the SLO gate keeps running for `window` after a run's last activation, each rule held for its own for: (max hold = window). `max_blind_rounds` rounds without evidence (5 minutes at the interval) make it inconclusive. A host holds at most `max_unwatched` unit releases not yet watched clean, so release retention (3 previous releases) still holds its known-good release.",
+    "_comment": "Post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md): the SLO gate keeps running for `window` after a run's last activation, each rule held for its own for: (max hold = window). `max_blind_rounds` rounds without evidence (5 minutes at the interval) make it inconclusive. A host holds at most `max_unwatched` unit releases not yet watched clean, so release retention (pkg/releaseretention DefaultKeepPrevious, 5 previous releases) still holds its known-good release; max_unwatched stays below it (pkg/releaseretention test). 4 since 2026-11-23 (was 2): with 2, a third release in a merge burst waited up to 30 min for the watch (ADR-20261122170000).",
     "window": "30m",
     "interval": "15s",
     "max_blind_rounds": 20,
-    "max_unwatched": 2
+    "max_unwatched": 4
   },
   "global_inputs": ["go.mod", "go.sum"],
   "_migrations_comment": "Goose migrations (*.sql directly in migrations_dir). When every one added since base is lane-eligible (declared -- migration-compat: expand, no contract change; docs/adr/20261018084150-unit-lane-expand-migrations.md), they are the data step the control-plane lane applies before restarting anything. Otherwise they block like any other path under blocking_paths.migrations.",
@@ -143,7 +180,7 @@
       "deploy/ansible/roles/neond_service/files/faas-neond.service"
     ]
   },
-  "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) Cloudflare workers, which deploy through their own workflows, and the backup bucket lifecycle (deploy/backup-lifecycle/), which an operator applies to the bucket by hand. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",
+  "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) Cloudflare workers, which deploy through their own workflows, the backup bucket lifecycle (deploy/backup-lifecycle/) and the OVH Object Storage user policies (deploy/ovh/), the source the MCP canary copies into its starter app (deploy/canary/, run from GitHub-hosted CI) and the unit-release build runner's bootstrap (build_runner.yml) and the github_actions_runner role it shares with the deployment runner (ADR-20261122170000), which an operator applies by hand and no release, full or unit, runs. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",
   "deploy_classes": {
     "inert": [
       "deploy/**/*.md",
@@ -156,7 +193,11 @@
       "deploy/systemd/",
       "deploy/grafana/",
       "deploy/cloudflare/",
-      "deploy/backup-lifecycle/"
+      "deploy/backup-lifecycle/",
+      "deploy/ovh/",
+      "deploy/canary/",
+      "deploy/ansible/build_runner.yml",
+      "deploy/ansible/roles/github_actions_runner/"
     ],
     "compute_only": [
       "deploy/ansible/node_join.yml",
@@ -190,8 +231,8 @@
       "deploy/ansible/roles/database_node_pki/",
       "deploy/ansible/roles/database_vmmd/",
       "deploy/ansible/roles/dbbackupd_service/",
-      "deploy/ansible/roles/github_actions_runner/",
       "deploy/ansible/roles/go_cache_retention/",
+      "deploy/ansible/roles/_shared/files/faas-reload-or-restart",
       "deploy/ansible/roles/metal-h2c-acceptance/",
       "deploy/ansible/roles/native_acceptance_host/",
       "deploy/ansible/roles/pgproxyd_service/",

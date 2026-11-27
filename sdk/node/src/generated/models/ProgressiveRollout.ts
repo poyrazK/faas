@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FlagRolloutMetric } from './FlagRolloutMetric.js';
 /**
  * Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
  */
@@ -34,5 +35,6 @@ export type ProgressiveRollout = {
    * Evidence lookback window; must fit within debugger retention.
    */
   window_seconds: number;
+  metric?: FlagRolloutMetric;
 };
 

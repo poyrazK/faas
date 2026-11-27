@@ -1,0 +1,26 @@
+---
+- name: managed_postgres_config — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-apid for managed postgres config
+
+# Only an apid that was running is restarted and then waited for; on a first
+# bootstrap apid starts later, from control_plane_service, with the drop-in
+# already in place.
+- name: managed_postgres_config — note whether apid is running
+  ansible.builtin.command:
+    argv: [systemctl, is-active, faas-apid.service]
+  register: faas_mpg_apid_was_active
+  changed_when: false
+  failed_when: false
+  listen: restart faas-apid for managed postgres config
+
+- name: managed_postgres_config — try-restart faas-apid
+  ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid for managed postgres config
+
+- name: managed_postgres_config — remember the restart
+  ansible.builtin.set_fact:
+    faas_mpg_apid_restarted: "{{ faas_mpg_apid_was_active.stdout == 'active' }}"
+  listen: restart faas-apid for managed postgres config

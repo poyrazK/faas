@@ -64,7 +64,7 @@ func (h *Handler) serveFork(w http.ResponseWriter, r *http.Request, app App) {
 	identity.ApplyGuestHeaders(r.Header)
 	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
 	stampTrustedClientIP(r)
-	r.Header.Set("x-faas-protocol", decideProtocol(app))
+	r.Header.Set("X-Faas-Protocol", decideProtocol(app))
 	w.Header().Set("X-Gregale-Fork-Served", "1")
 	if h.proxyByNode != nil {
 		h.proxyByNode(target).ServeHTTP(w, r)

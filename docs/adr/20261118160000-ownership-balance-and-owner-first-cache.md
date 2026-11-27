@@ -5,6 +5,8 @@
 - **Amends:** ADR-20261026170000 (a new app's owner is the least owned node),
   ADR-20261114182830 (node cache retention tiers), ADR-20261115140000 (fetching
   back evicted replicas)
+- **Amended by:** ADR-20261121203000 (drained apps return to their home
+  node first; a drain move no longer resets the 24 h idle guard)
 - **Related:** ADR-20261110210000 (owner authority), ADR-20261028200212
   (parked-only owner moves), ADR-063 (the fetch/evict loop),
   ADR-20261024225612 (CPU-compatible restore)

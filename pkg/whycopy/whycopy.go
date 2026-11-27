@@ -116,7 +116,7 @@ var catalog = map[string]Render{
 		Title: "Missing environment variable",
 		Hint:  "your code references an env var we haven't been given",
 		Why:   "the preflight scanner found a reference to $ENV_VAR_NAME in your source that is not declared in the app's env config; the runtime would crash on first access",
-		Fix:   "• `gregale env push --app <app-slug> -f .env` for non-secret values\n• `gregale secrets set --app <app-slug> ENV_VAR_NAME=<value>` for sensitive values\n• add a source fallback or declare it optional when absence is intentional",
+		Fix:   "• `gregale env push --app <app-slug> -f .env` for non-secret values\n• `gregale env set --app <app-slug> ENV_VAR_NAME=<value>` for sensitive values\n• add a source fallback or declare it optional when absence is intentional",
 		Observed: func(observed any) (why, fix string) {
 			if observed == nil {
 				return "", ""
@@ -126,7 +126,7 @@ var catalog = map[string]Render{
 				return "", ""
 			}
 			return fmt.Sprintf("source references $%s but it is not declared in the app's env config.", name),
-				fmt.Sprintf("• `gregale env push --app <app-slug> -f .env` (add %s=... to .env)\n• or `gregale secrets set --app <app-slug> %s=<value>`\n• if absence is intentional, add a source fallback or list %s under optional in `.gregale/env.json`", name, name, name)
+				fmt.Sprintf("• `gregale env push --app <app-slug> -f .env` (add %s=... to .env)\n• or `gregale env set --app <app-slug> %s=<value>`\n• if absence is intentional, add a source fallback or list %s under optional in `.gregale/env.json`", name, name, name)
 		},
 	},
 	api.CodeAppHealthzUnauthorized: {
@@ -154,6 +154,17 @@ var catalog = map[string]Render{
 			v, ok := observed.(struct{ PeakMB, PlanMB int })
 			if !ok {
 				return "", ""
+			}
+			// The VM's RAM is the app's plan RAM, and the guest kernel and
+			// init use part of it, so a small app is killed with its own peak
+			// well under the plan figure. "Killed at 76 MB (plan cap 128 MB)"
+			// with "raise to at least 84 MB" read as a contradiction
+			// (deploy-path probe 2026-11-21, R4-2: gunicorn apps at 128 MB).
+			if v.PeakMB > 0 && v.PeakMB < v.PlanMB {
+				return fmt.Sprintf("your app's processes reached %d MB and the microVM ran out of memory: its %d MB also holds the guest kernel and runtime, which leave a small app noticeably less than its plan figure",
+						v.PeakMB, v.PlanMB),
+					fmt.Sprintf("• raise the app's memory, e.g. `gregale app <app> --ram %d` (your account plan sets the per-app maximum)\n• trim startup memory (fewer worker processes, lazy imports)",
+						OOMSuggestedRAMMB(v.PeakMB, v.PlanMB))
 			}
 			return fmt.Sprintf("the cgroup memory controller killed the process at %d MB (plan cap %d MB + 8 MB overhead); the kernel OOM-killer fired inside the microVM",
 					v.PeakMB, v.PlanMB),
@@ -185,13 +196,16 @@ var catalog = map[string]Render{
 		// Every later cold boot gets the same deadline (H12-10,
 		// ADR-20261114120000), so name the plan windows rather than an
 		// open-ended "raise the deadline" (Hunt 14 H14-4).
-		Fix: "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: " + startupWindowCopy("answer", "every later cold boot gets the same window"),
+		// A server on a hard-coded port never answers the probe and prints
+		// nothing, so the timeout was all the customer saw (prod
+		// 2026-11-19: listen(8081) under PORT=3000).
+		Fix: "• make the server listen on the PORT environment variable (the deploy output's `listener:` line shows the port Gregale probes); a hard-coded port never becomes ready\n• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: " + startupWindowCopy("answer", "every later cold boot gets the same window"),
 	},
 	api.CodeAppStartupCrash: {
 		Title: "Application exited during startup",
 		Hint:  "your app crashed before it became ready",
-		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows; the last lines it printed are in the error detail",
-		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
+		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows",
+		Fix:   "• read what it printed with the logs command in the detail (`gregale logs <slug> --since 30m`); the build log does not have it\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
 	},
 	api.CodeFunctionInitFailed: {
 		Title: "Function init failed",
@@ -294,7 +308,7 @@ var catalog = map[string]Render{
 		Title: "Snapshot prepare timed out",
 		Hint:  "the snapshot_prepare stage exceeded the scheduler's wall-clock ceiling",
 		Why:   "snapshot_prepare boots the generated guest, waits for its handler, and captures the first snapshot; the scheduler deadline elapsed before vmmd completed that sequence",
-		Fix:   "• check `gregale deploys status <id>` and `gregale logs <slug>` for the last completed startup step\n• retry once in case the compute node was temporarily saturated\n• if the same artifact fails again, include the deployment id in a support report",
+		Fix:   "• check `gregale logs <slug>` for how far startup got\n• if your app needs longer to start, raise `startup_deadline_s` in gregale.yaml (or `--startup-deadline-s` on deploy)\n• otherwise retry once in case the node was saturated; include the deployment id in a support report if it repeats",
 	},
 	api.CodeBeforeCheckpointFailed: {
 		Title: "Before checkpoint callback failed",
@@ -307,6 +321,38 @@ var catalog = map[string]Render{
 		Hint:  "the deployed VM's /healthz never returned 200",
 		Why:   "the readiness stage boots the VM and polls /healthz on the plan's readiness timeout (default 35s). The VM reached the snapshot boot but the application inside did not become ready in time — distinct from CodeAppStartupTimeout which is the wake-side counterpart",
 		Fix:   "• check `gregale logs <slug>` for the boot sequence inside the guest\n• defer heavy init work until after /healthz starts listening\n• if your app genuinely needs more time, raise `startup_deadline_s` in gregale.yaml (or `--startup-deadline-s` on deploy)",
+	},
+	// Deploy failure codes that reached customers with no why/fix (deploy-path
+	// probe 2026-11-21, R4-3: 15, 5, 3 and 6 prod failures in 30 days).
+	api.CodeDeploymentVerificationUnavailable: {
+		Hint: "Gregale could not start your new release to check it; your current release keeps serving",
+		Why:  "the platform check that boots the new release once before it takes traffic could not get a slot or a node in time, usually because the app's instances were all busy or a node was being replaced; nothing in your code was tested",
+		Fix:  "• deploy again; the previous release is still serving\n• if it repeats, check `gregale app health <slug> --explain` for instances held at the app's concurrency limit\n• include the deployment id in a support report if a third attempt fails",
+	},
+	api.CodeReleaseCommandFailed: {
+		Hint: "your release command exited non-zero or timed out; the previous release keeps serving",
+		Why:  "the deployment's release_command (often a database migration) ran before the new release took traffic and did not succeed; its output is in the release log",
+		Fix:  "• read its output: `gregale release logs <id> --app <slug>`\n• fix the command or the migration, then deploy again\n• keep migrations compatible with the previous release, which serves while the command runs",
+	},
+	api.CodeDeploymentSmokeFailed: {
+		Hint: "your new release started but did not answer its first request correctly",
+		Why:  "before taking traffic Gregale sends the new release one request on its health path; the app answered with an error or closed the connection, so the release was not promoted",
+		Fix:  "• check `gregale logs <slug> --since 30m` for the error the request hit\n• make sure the health path answers 2xx without external dependencies being slow\n• set hosting.health in gregale.yaml if your app serves health elsewhere",
+	},
+	api.CodeDeploymentVerificationContractFailed: {
+		Hint: "your new release failed a required check in gregale.verify.yaml",
+		Why:  "before taking traffic Gregale ran the app's verification contract against the new release; a required check failed or could not run, so the release was not promoted and the previous one keeps serving",
+		Fix:  "• run `gregale deployment <id> --json` and read hosting_receipt.smoke.verification_contract for the failing check\n• fix the app or the check, then deploy again\n• mark a check `advisory: true` to report it without blocking",
+	},
+	api.CodeImageNotFound: {
+		Hint: "the container image you asked for could not be pulled",
+		Why:  "the registry answered that the image or tag does not exist, or it is private and Gregale had no credentials for it",
+		Fix:  "• check the image name and tag (`docker pull <image>` locally)\n• for a private registry, add its credentials: `gregale registry set --app <slug> --registry <host> --user <user> --password-stdin`\n• pin a digest (`image@sha256:…`) to avoid a moved tag",
+	},
+	api.CodeApplicationStandardsPending: {
+		Hint: "your organization's application standards are still being applied to this app",
+		Why:  "the organization requires standards (such as security settings) on every app, and this app's enrollment had not finished when the deploy started",
+		Fix:  "• wait a minute and deploy again\n• if it persists, check `gregale app get <slug>` for the standards status, or ask your organization admin",
 	},
 }
 
@@ -358,7 +404,9 @@ func Decorate(p *api.Problem, code string, observed any) *api.Problem {
 	if row.DocsURL != "" {
 		p.DocsURL = row.DocsURL
 	}
-	return p
+	// Runnable commands and retryability come with the prose; a caller that
+	// knows the app fills placeholders with Complete (ADR-20261123230000).
+	return Complete(p, Values{})
 }
 
 // Lookup returns the catalog row for code (used by tests + the

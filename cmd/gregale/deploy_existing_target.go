@@ -4,7 +4,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // A deploy to an app that already exists replaces its running release. When
@@ -34,6 +37,30 @@ func deployTargetSummary(exists, linked bool) string {
 	}
 }
 
+// rememberCreatedApp links dir to the app this deploy just created when no
+// saved or committed context covers dir. Without it a later plain `gregale
+// deploy` there targeted an app named after the directory: on prod
+// 2026-11-19, `deploy --name bh1119-probe` then `deploy` created a second app
+// and took the bare global slug probe.gregale.dev. An existing app is never
+// linked implicitly (see guardUnlinkedExistingApp).
+func rememberCreatedApp(dir, slug string) {
+	if dir == "" || slug == "" {
+		return
+	}
+	if _, _, err := targetProjectContext(dir); !errors.Is(err, errProjectContextNotFound) && !otherAppLinkedAbove(dir, slug) {
+		return
+	}
+	if err := rememberInitApp(dir, slug); err != nil {
+		if !jsonOutput {
+			_, _ = fmt.Fprintf(osStderr, "warning: could not remember %s in %s: %v; run `gregale link --app %s` there\n", slug, dir, err, slug)
+		}
+		return
+	}
+	if !jsonOutput {
+		PrintOK(osStdout, "Remembered app %s in %s", slug, projectContextPath(dir))
+	}
+}
+
 func unlinkedExistingAppNotice(slug string) string {
 	return fmt.Sprintf("%s already exists and this directory is not linked to it, so this deploy replaces its running release. "+
 		"If it is not the app you mean to replace, stop and deploy under an unused --name (`gregale app list` shows the taken ones); "+
@@ -47,8 +74,14 @@ func guardUnlinkedExistingApp(ctx context.Context, client *Client, slug, dir str
 	if sourceLinkedTo(dir, slug) {
 		return 0
 	}
-	if _, err := client.GetApp(ctx, slug); err != nil {
+	app, err := client.GetApp(ctx, slug)
+	if err != nil {
 		return 0 // missing (a create) or unreadable: the deploy path reports it
+	}
+	if app.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
+		// Reserved (`deploy --create-only`) or never deployed: there is no
+		// running release to replace (MCP Tasks prod re-probe 2026-11-23).
+		return 0
 	}
 	// --json keeps stderr to one machine-readable Problem; a prose note
 	// before it broke every JSON deploy error to an unlinked app.

@@ -44,5 +44,17 @@ export type PutConsumerSignupRequest = {
    * Let customers close their account with their own key.
    */
   customer_closing?: boolean;
+  /**
+   * One of plan_ids whose rate cards charge nothing; joining it needs no card.
+   */
+  free_plan_id?: string;
+  /**
+   * People signed in through the app's MCP oauth-proxy issuer become consumers on free_plan_id; needs free_plan_id.
+   */
+  oauth_consumers?: boolean;
+  /**
+   * Add the account_usage and account_plans tools to the app's MCP server for people signed in through it; needs oauth_consumers.
+   */
+  account_tools?: boolean;
 };
 

@@ -346,6 +346,13 @@ func (k authKeyCommand) waitFor(ctx context.Context, done func(authPublicSetting
 }
 
 // authPublicSettings is a running Auth app's /settings/v1.
+// authAdminKeySetting is an admin key as the running Auth app reports it.
+type authAdminKeySetting struct {
+	ID        string   `json:"id"`
+	Scopes    []string `json:"scopes"`
+	ExpiresAt *string  `json:"expires_at"`
+}
+
 type authPublicSettings struct {
 	App          string   `json:"app"`
 	SiteURL      string   `json:"site_url"`
@@ -358,7 +365,8 @@ type authPublicSettings struct {
 		BlockDisposable bool     `json:"block_disposable"`
 		BlockedDomains  int      `json:"blocked_domains"`
 	} `json:"signup"`
-	Providers []string `json:"providers"`
+	Providers []string              `json:"providers"`
+	AdminKeys []authAdminKeySetting `json:"admin_keys"`
 	Password  struct {
 		MinLength           int      `json:"min_length"`
 		Required            []string `json:"required"`

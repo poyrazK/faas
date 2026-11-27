@@ -33,9 +33,10 @@ the local database's boot time to scheduler readiness.
   resolver maps that private service alias to the control plane.
 - `zz-faas-api-hosting-smoke.conf.j2` — enables the public post-readiness
   smoke verifier and makes it fail closed on compute-only production nodes.
-  The origin is derived from `gatewayd_apps_domain`; the verifier sends the
-  tenant slug in the Host header so the shared public gateway exercises the
-  same route customers use.
+  The origin is `hosting-smoke.<gatewayd_apps_domain>` (a label under the
+  apps domain, which resolves like every tenant host; the bare apex need not
+  resolve); the verifier sends the tenant slug in the Host header so the
+  shared public gateway exercises the same route customers use.
 - `zz-faas-api-contract-diff.conf.j2` — enables the OpenAPI promotion gate on
   public-beta compute-only nodes. The control-plane role installs the matching
   apid drop-in so preview and promotion share the stored production baseline.

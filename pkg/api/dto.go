@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -550,7 +551,9 @@ type ServiceReliabilityPolicy struct {
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug string `json:"slug"`
+	// ProjectID places a new app in an existing project in the same workspace.
+	ProjectID string `json:"project_id,omitempty"`
+	Slug      string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
 	// defaults to public; internal is available on every plan.
 	Visibility string `json:"visibility,omitempty"`
@@ -905,6 +908,10 @@ type DevPostgresResponse struct {
 	BindingID      string `json:"binding_id"`
 	BindingState   string `json:"binding_state"`
 	EnvironmentKey string `json:"environment_key"`
+	// MigrationEnvironmentKey names the release-only migration credential the
+	// database is also bound to (MIGRATION_DATABASE_URL). Empty from a control
+	// plane that binds none.
+	MigrationEnvironmentKey string `json:"migration_environment_key,omitempty"`
 }
 
 // DevSessionResponse is returned when a developer preview is created or its
@@ -1505,6 +1512,9 @@ type APIConsumerResponse struct {
 	UpdatedAt               time.Time  `json:"updated_at"`
 	RevokedAt               *time.Time `json:"revoked_at,omitempty"`
 	ManagedByPlatformTenant bool       `json:"managed_by_platform_tenant,omitempty"`
+	// EnvironmentID is the project environment the consumer belongs to;
+	// omitted for production.
+	EnvironmentID string `json:"environment_id,omitempty"`
 }
 
 // CreateConsumerKeyRequest creates a credential for an API consumer.
@@ -1554,14 +1564,42 @@ type APIConsumerUsageBucketResponse struct {
 // retained separately under the internal __anonymous__ key and is never
 // exposed through this consumer-specific endpoint.
 type APIConsumerUsageResponse struct {
-	ConsumerID    string                           `json:"consumer_id"`
-	PeriodStart   time.Time                        `json:"period_start"`
-	PeriodEnd     time.Time                        `json:"period_end"`
-	RequestCount  int64                            `json:"request_count"`
-	ErrorCount    int64                            `json:"error_count"`
-	BillableUnits int64                            `json:"billable_units"`
-	Buckets       []APIConsumerUsageBucketResponse `json:"buckets"`
-	AsOf          string                           `json:"as_of"`
+	ConsumerID     string                           `json:"consumer_id"`
+	PeriodStart    time.Time                        `json:"period_start"`
+	PeriodEnd      time.Time                        `json:"period_end"`
+	RequestCount   int64                            `json:"request_count"`
+	ErrorCount     int64                            `json:"error_count"`
+	BillableUnits  int64                            `json:"billable_units"`
+	Buckets        []APIConsumerUsageBucketResponse `json:"buckets"`
+	AsOf           string                           `json:"as_of"`
+	RouteBreakdown []APIConsumerRouteUsage          `json:"route_breakdown,omitempty"`
+	MeterBreakdown []APIConsumerMeterUsage          `json:"meter_breakdown,omitempty"`
+}
+
+// APIConsumerRouteUsage gives unweighted billable requests by route template.
+type APIConsumerRouteUsage struct {
+	Route            string `json:"route"`
+	BillableRequests int64  `json:"billable_requests"`
+}
+
+// APIConsumerMeterUsage reports the names and counts supplied by the app.
+type APIConsumerMeterUsage struct {
+	Meter string `json:"meter"`
+	Units int64  `json:"units"`
+}
+
+type APIConsumerQuoteBreakdown struct {
+	WaivedUnits            int64  `json:"waived_units,omitempty"`
+	Route                  string `json:"route,omitempty"`
+	Unit                   string `json:"unit"`
+	Model                  string `json:"model,omitempty"`
+	RateCardID             string `json:"rate_card_id,omitempty"`
+	PriceMillicentsPerUnit int64  `json:"price_millicents_per_unit"`
+	BillableUnits          int64  `json:"billable_units"`
+	IncludedUnits          int64  `json:"included_units"`
+	ChargedUnits           int64  `json:"charged_units"`
+	AmountMillicents       int64  `json:"amount_millicents"`
+	Trial                  bool   `json:"trial,omitempty"`
 }
 
 // CreateAPIConsumerRateCardRequest creates an immutable app-level request
@@ -1579,6 +1617,7 @@ type CreateAPIConsumerRateCardRequest struct {
 	// RouteWeights counts each request on a listed "METHOD /template" route
 	// as that many units (ADR-952); unlisted routes count 1.
 	RouteWeights map[string]int64 `json:"route_weights,omitempty"`
+	ModelPrices  map[string]int64 `json:"model_prices,omitempty"`
 	// PlanID adds the version to a consumer plan's price history (ADR-953);
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
@@ -1623,6 +1662,7 @@ type APIConsumerRateCardResponse struct {
 	Tiers                  []APIConsumerRateCardTier `json:"tiers,omitempty"`
 	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
+	ModelPrices            map[string]int64          `json:"model_prices,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
 	// Monthly base fee and minimum spend per consumer (ADR-1316), prorated
 	// in a consumer's first month when prorate_monthly_fees (ADR-1325).
@@ -1642,6 +1682,8 @@ type APIConsumerRateCardListResponse struct {
 // APIConsumerUsageQuoteBucketResponse is one usage minute priced by the rate
 // card effective at that minute. An empty rate_card_id marks unpriced usage.
 type APIConsumerUsageQuoteBucketResponse struct {
+	WaivedUnits            int64     `json:"waived_units,omitempty"`
+	Model                  string    `json:"model,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -1672,18 +1714,41 @@ type APIConsumerUsageQuoteResponse struct {
 	Priced           bool                                  `json:"priced"`
 	Buckets          []APIConsumerUsageQuoteBucketResponse `json:"buckets"`
 	AsOf             string                                `json:"as_of"`
+	RouteBreakdown   []APIConsumerQuoteBreakdown           `json:"route_breakdown,omitempty"`
+	MeterBreakdown   []APIConsumerQuoteBreakdown           `json:"meter_breakdown,omitempty"`
 }
 
-// CreateAPIConsumerUsageStatementRequest snapshots the usage quote for an
-// explicit UTC-minute period. The natural period key makes retries safe.
+// APIConsumerUsageWaiverRequest selects the exact unpriced model units an
+// administrator approved from one draft.
+type APIConsumerUsageWaiverRequest struct {
+	SourceStatementID string    `json:"source_statement_id"`
+	Unit              string    `json:"unit"`
+	Model             string    `json:"model"`
+	Since             time.Time `json:"since"`
+	Until             time.Time `json:"until"`
+	Units             int64     `json:"units"`
+	Reason            string    `json:"reason"`
+}
+
+type APIConsumerUsageWaiverResponse struct {
+	APIConsumerUsageWaiverRequest
+	ApprovedBy string    `json:"approved_by"`
+	ApprovedAt time.Time `json:"approved_at"`
+}
+
+// CreateAPIConsumerUsageStatementRequest snapshots usage or approves a waiver
+// for an explicit UTC-minute period.
 type CreateAPIConsumerUsageStatementRequest struct {
-	PeriodStart *time.Time `json:"period_start"`
-	PeriodEnd   *time.Time `json:"period_end"`
+	Waiver      *APIConsumerUsageWaiverRequest `json:"waiver,omitempty"`
+	PeriodStart *time.Time                     `json:"period_start"`
+	PeriodEnd   *time.Time                     `json:"period_end"`
 }
 
 // APIConsumerUsageStatementBucketResponse is one bucket in a durable usage
 // statement. Empty pricing fields indicate explicitly unpriced usage.
 type APIConsumerUsageStatementBucketResponse struct {
+	WaivedUnits            int64     `json:"waived_units,omitempty"`
+	Model                  string    `json:"model,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -1719,6 +1784,7 @@ type APIConsumerStatementFeeResponse struct {
 // usage_statement.finalized webhook. Revision orders the snapshots of one
 // period; revisions after a finalized one carry only later usage.
 type APIConsumerUsageStatementResponse struct {
+	Waiver           *APIConsumerUsageWaiverResponse           `json:"waiver,omitempty"`
 	ID               string                                    `json:"id"`
 	ConsumerID       string                                    `json:"consumer_id"`
 	PeriodStart      time.Time                                 `json:"period_start"`
@@ -2312,6 +2378,9 @@ type AppResponse struct {
 	// dashboards can show the "auth required" pill alongside
 	// streaming / warm-snapshot / require_signed.
 	RequireAuthn bool `json:"require_authn"`
+	// DeclaredAccess is the access the app's source declares ("public" or
+	// "key"), applied on every deploy; omitted when it declares none.
+	DeclaredAccess string `json:"declared_access,omitempty"`
 	// ConsumerAuthMode (ADR-120) is the app-level end-customer credential
 	// policy. It is "optional" by default and becomes "required" when the
 	// app owner wants every request attributed to a consumer identity.
@@ -4945,6 +5014,11 @@ type ResumeEnvironmentAutomationResponse struct {
 	// 2026-11-14).
 	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
 	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
+	// BucketNotificationsResumed and BucketIDs are the buckets whose copied
+	// notification rules the call resumed (ADR-20261104120000 amendment
+	// 2026-11-16).
+	BucketNotificationsResumed int      `json:"bucket_notifications_resumed"`
+	BucketIDs                  []string `json:"bucket_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -5613,7 +5687,7 @@ func ValidateAppCPUMillicores(cpuMillicores int) *Problem {
 		return nil
 	}
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppCPU,
-		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000")
+		"Invalid CPU", "cpu_millicores must be one of: 250, 500, 1000").WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // --- G6 account self-service (spec §17 G6, ADR-021) -------------------------
@@ -6741,6 +6815,12 @@ type DeadLetterEvent struct {
 	LastFailedAt  time.Time       `json:"last_failed_at"`
 	ReplayedAt    *time.Time      `json:"replayed_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+	// ReplayCount and LastReplayedAt report earlier replays of an invocation
+	// entry. A replay that fails again reopens the same entry (replayed_at
+	// clears so it can be replayed again); these keep the history visible.
+	// Set by the single-entry read only.
+	ReplayCount    int64      `json:"replay_count,omitempty"`
+	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 }
 
 type DeadLetterEventsResponse struct {
@@ -7086,6 +7166,13 @@ type AppMetricsResponse struct {
 	// in four made it 18 s) and clients show it as unavailable, as the
 	// status page does (Hunt 12 H12-40). Nil when the count is unknown.
 	WakeSamples *int64 `json:"wake_samples,omitempty"`
+	// AppWakeP95MS is this app's own wake p95
+	// (gateway_app_wake_latency_seconds), and AppWakeSamples the wakes it
+	// was computed from. Below FleetWakeP95MinSamples clients show it as
+	// unavailable. Nil when the gateway does not export the series yet
+	// (Observe audit 2026-11-21, finding 6).
+	AppWakeP95MS   *float64 `json:"app_wake_p95_ms,omitempty"`
+	AppWakeSamples *int64   `json:"app_wake_samples,omitempty"`
 	// QueueDepth (issue #1233 / ADR-123) is the current waiters
 	// in the per-app wake gate queue, sourced from
 	// gateway_queue_depth{app}. Bounded by per-plan MaxQueueDepth
@@ -7223,9 +7310,10 @@ type AppRoutesResponse struct {
 	Source             string     `json:"source"`
 	CollectorsExpected int        `json:"collectors_expected"`
 	CollectorsHealthy  int        `json:"collectors_healthy"`
-	// CapHit is true when a collector emitted __route_other__ or the fleet
-	// union reaches RouteMetricsPerAppCap. It is encoded false when Source is
-	// unavailable, where cap state is unknown.
+	// CapHit is true when the fleet union reaches RouteMetricsPerAppCap. A
+	// __route_other__ series alone does not set it: that bucket also counts
+	// requests that ended without a route label. It is encoded false when
+	// Source is unavailable, where cap state is unknown.
 	CapHit bool `json:"cap_hit"`
 }
 
@@ -7529,8 +7617,8 @@ type WakeTimelineApp struct {
 //     this app in the window. GBHours is the rounded float
 //     (6-decimal precision — mirrors MonthlyUsageGB's rounding).
 //   - Requests / TxBytes: cumulative HTTP activity (informational).
-//   - BuilderSeconds: cumulative builder-microVM CPU-time
-//     (informational — surfaced as a sidebar line on the dashboard).
+//   - BuilderSeconds: wall-clock seconds of the app's builds that
+//     finished in the window (informational — a dashboard sidebar line).
 //   - ColdBootCount: WAKE_RESTORE→WAKE_COLD_BOOT transitions.
 //   - PlanIncludedGBHours: echoed from acct.Plan.PlanIncludedGBHours()
 //     so the dashboard can render the included-band badge without
@@ -7539,7 +7627,7 @@ type WakeTimelineApp struct {
 //     app shares the plan allowance, so one app's usage has no overage
 //     of its own. Kept for older clients; GET /v1/usage/summary reports
 //     the account's billed overage (ADR-20261101113742).
-//   - Source: "usage_minutes" today (after the 30d retention cap).
+//   - Source: "usage_minutes" today (13-month retention).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.
 //   - AsOf: RFC3339Nano UTC stamping the envelope's authoritative
@@ -7836,6 +7924,17 @@ type PlanWorkload struct {
 	Command             []string          `json:"command"`
 	DependsOn           []string          `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
+	// Uses is the service's cross-app grants from gregale.yaml
+	// (ADR-20261122191423), shown so a plan says what each service may call.
+	Uses *capgrant.Uses `json:"uses,omitempty"`
+	// ReleaseCommand is the command the service runs once before each of
+	// its releases goes live, as one shell string or exec-form argv joined
+	// by spaces; empty when it declares none. ReleaseCommandSource names the
+	// declaration: a Compose service it waits for with
+	// service_completed_successfully, a Procfile release: process or a
+	// gregale.yaml release.command.
+	ReleaseCommand       string `json:"release_command,omitempty"`
+	ReleaseCommandSource string `json:"release_command_source,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
@@ -7857,6 +7956,11 @@ type PlanWorkload struct {
 	// public edge: an existing internal app, or a new Compose service without
 	// `ports:` (ADR-20261022131852). Omitted means public.
 	Visibility AppVisibility `json:"visibility,omitempty"`
+	// Access is the service's declared public-URL access
+	// (ADR-20261124090000): "public" or "key", from gregale.yaml
+	// project.services.<name>.access or Compose x-gregale-access. Omitted
+	// when nothing is declared.
+	Access string `json:"access,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`
@@ -9672,8 +9776,8 @@ func (a *EdgeRuleJWTAction) Validate() *Problem {
 		if err := a.MCP.Validate(); err != nil {
 			return ErrValidation(err.Error())
 		}
-		if len(a.Audience) != 1 || a.Audience[0] != a.MCP.Resource {
-			return ErrValidation("MCP JWT audience must contain exactly the canonical resource")
+		if !validMCPJWTAudience(a.Audience, a.MCP) {
+			return ErrValidation("MCP JWT audience must contain exactly the canonical resource, or the policy's declared audience")
 		}
 		u, err := url.Parse(a.Issuer)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -13137,6 +13241,10 @@ type RecoverRolloutRequest struct {
 	// the recovery transaction; other recovery actions retain legacy behavior.
 	DeploymentID                    string `json:"deployment_id,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id,omitempty"`
+	// ExpectedStep, for advance and promote, is the canary step the caller
+	// observed; the recovery is refused with canary_step_conflict when the
+	// running canary is elsewhere, as `deployment advance` does.
+	ExpectedStep *int `json:"expected_step,omitempty"`
 }
 
 // RecoverDeploymentRolloutRequest is the loopback deployment-addressed variant
@@ -14463,4 +14571,32 @@ type SelectedTraceLookupResponse struct {
 	InvocationsStatus    string                    `json:"invocations_status"`
 	InvocationsTruncated bool                      `json:"invocations_truncated"`
 	Partial              bool                      `json:"partial"`
+}
+
+// validMCPJWTAudience accepts exactly one audience: the canonical resource
+// (RFC 8707), or the audience the policy declares for an external issuer
+// (MCPResourcePolicy.Audience, ADR-20261123192254).
+func validMCPJWTAudience(audience []string, p *MCPResourcePolicy) bool {
+	return len(audience) == 1 && (audience[0] == p.Resource || p.Audience != "" && audience[0] == p.Audience)
+}
+
+// AppNameReportResponse is GET /v1/admin/app-names/report: the existing apps
+// whose names an app name blocklist matches. source is "live"
+// (app_name_blocklist) or "preview" (the request's ?blocklist=). Nothing is
+// changed; truncated means more apps matched than were listed.
+type AppNameReportResponse struct {
+	Source    string               `json:"source"`
+	Entries   int                  `json:"entries"`
+	Matches   []AppNameReportMatch `json:"matches"`
+	Truncated bool                 `json:"truncated"`
+}
+
+// AppNameReportMatch is one existing app a blocklist entry matches.
+type AppNameReportMatch struct {
+	Slug      string `json:"slug"`
+	AppID     string `json:"app_id"`
+	AccountID string `json:"account_id"`
+	OrgID     string `json:"org_id,omitempty"`
+	Status    string `json:"status"`
+	Entry     string `json:"entry"`
 }

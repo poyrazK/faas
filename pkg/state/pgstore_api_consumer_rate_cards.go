@@ -12,7 +12,7 @@ import (
 
 const apiConsumerRateCardSelectCols = `id, account_id, app_id, currency, unit,
        price_millicents_per_unit, included_units_per_month, tiers, route_weights, coalesce(plan_id::text, ''), effective_from, created_at, tier_mode,
-       base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees`
+       base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees, model_prices`
 
 type apiConsumerRateCardRowScanner interface {
 	Scan(dest ...any) error
@@ -20,7 +20,7 @@ type apiConsumerRateCardRowScanner interface {
 
 func scanAPIConsumerRateCardRow(row apiConsumerRateCardRowScanner) (APIConsumerRateCard, error) {
 	var card APIConsumerRateCard
-	var tiers, weights []byte
+	var tiers, weights, modelPrices []byte
 	if err := row.Scan(
 		&card.ID,
 		&card.AccountID,
@@ -38,6 +38,7 @@ func scanAPIConsumerRateCardRow(row apiConsumerRateCardRowScanner) (APIConsumerR
 		&card.BaseFeeMillicentsPerMonth,
 		&card.MinimumMillicentsPerMonth,
 		&card.ProrateMonthlyFees,
+		&modelPrices,
 	); err != nil {
 		return APIConsumerRateCard{}, err
 	}
@@ -53,6 +54,10 @@ func scanAPIConsumerRateCardRow(row apiConsumerRateCardRowScanner) (APIConsumerR
 	if len(card.RouteWeights) == 0 {
 		card.RouteWeights = nil
 	}
+	if err := json.Unmarshal(modelPrices, &card.ModelPrices); err != nil {
+		return APIConsumerRateCard{}, err
+	}
+	card.ModelPrices = cloneRateCardValues(card.ModelPrices)
 	card.EffectiveFrom = card.EffectiveFrom.UTC()
 	card.CreatedAt = card.CreatedAt.UTC()
 	return card, nil
@@ -85,14 +90,32 @@ func (s *PgStore) CreateAPIConsumerRateCardVersion(ctx context.Context, in APICo
 	if err != nil {
 		return APIConsumerRateCard{}, err
 	}
-	row := s.pool.QueryRow(ctx,
+	modelPrices := in.ModelPrices
+	if modelPrices == nil {
+		modelPrices = map[string]int64{}
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return APIConsumerRateCard{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, appMeter := AppMeterOfUnit(in.Unit); appMeter {
+		// Serialize names reserved by model cards with other app-meter cards.
+		if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended('consumer-meter:' || $1::text || ':' || $2::text, 0))`, in.AccountID, in.AppID); err != nil {
+			return APIConsumerRateCard{}, err
+		}
+		if err := checkModelMeterHistory(ctx, tx, in); err != nil {
+			return APIConsumerRateCard{}, err
+		}
+	}
+	row := tx.QueryRow(ctx,
 		`insert into api_consumer_rate_cards
 		       (account_id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, tiers, route_weights, plan_id, effective_from, tier_mode,
-		        base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees)
-		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8::jsonb, nullif($9::text, '')::uuid, $10, $11, $12, $13, $14)
+		        base_fee_millicents_per_month, minimum_millicents_per_month, prorate_monthly_fees, model_prices)
+		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8::jsonb, nullif($9::text, '')::uuid, $10, $11, $12, $13, $14, $15::jsonb)
 		 returning `+apiConsumerRateCardSelectCols,
 		in.AccountID, in.AppID, in.Currency, in.Unit, in.PriceMillicentsPerUnit, in.IncludedUnitsPerMonth, rawTiers, rawWeights, in.PlanID, in.EffectiveFrom, in.TierMode,
-		in.BaseFeeMillicentsPerMonth, in.MinimumMillicentsPerMonth, in.ProrateMonthlyFees)
+		in.BaseFeeMillicentsPerMonth, in.MinimumMillicentsPerMonth, in.ProrateMonthlyFees, modelPrices)
 	card, err := scanAPIConsumerRateCardRow(row)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -104,7 +127,27 @@ func (s *PgStore) CreateAPIConsumerRateCardVersion(ctx context.Context, in APICo
 		}
 		return APIConsumerRateCard{}, err
 	}
-	return card, nil
+	return card, tx.Commit(ctx)
+}
+
+func checkModelMeterHistory(ctx context.Context, tx pgx.Tx, in APIConsumerRateCardInput) error {
+	rows, err := tx.Query(ctx, `select distinct unit, model_prices from api_consumer_rate_cards
+		where account_id = $1::uuid and app_id = $2::uuid and unit like 'app:%' and unit <> $3`, in.AccountID, in.AppID, in.Unit)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var unit string
+		var prices map[string]int64
+		if err := rows.Scan(&unit, &prices); err != nil {
+			return err
+		}
+		if err := CheckModelMeterOverlap(in.Unit, in.ModelPrices, unit, prices); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func (s *PgStore) ListAPIConsumerRateCardsForApp(ctx context.Context, accountID, appID string) ([]APIConsumerRateCard, error) {

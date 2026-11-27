@@ -505,7 +505,14 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 		Port:         int32(res.Port),
 		DeploymentId: res.DeploymentID,
 		Identity:     platformIdentityToProto(wakeResultIdentity(res)),
+		StartupOom:   res.StartupOOM,
 	}, nil
+}
+
+// staleInstanceHintReconciler is the optional engine seam AdmitInstance
+// uses for a request carrying stale_instance_id (*sched.Engine implements it).
+type staleInstanceHintReconciler interface {
+	ReconcileStaleInstanceHint(ctx context.Context, appID, instanceID string) bool
 }
 
 // AdmitInstance (issue #168) is the schedule scale-out RPC. Unlike
@@ -526,11 +533,25 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 //     so the gateway can treat it as a no-op.
 func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceRequest) (*scheddpb.AdmitInstanceResponse, error) {
 	const op = "AdmitInstance"
+	received := time.Now()
+	s.log.Debug("schedd: admit instance received", "app_id", req.GetAppId(), "deployment", req.GetDeploymentId(), "trigger", req.GetTrigger())
+	defer func() {
+		s.log.Debug("schedd: admit instance returned", "app_id", req.GetAppId(), "took", time.Since(received).String())
+	}()
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
+		s.log.Debug("schedd: admit instance unauthorized", "app_id", req.GetAppId(), "err", err)
 		return nil, err
 	}
 	start := time.Now()
 	ctx = withIncomingCorrelation(ctx)
+	// The gateway's forward to this instance came back "target not found on
+	// node". Fail the row first if its vmmd confirms the VM is gone, so a
+	// ghost RUNNING row stops holding the app's concurrency slot.
+	if staleID := req.GetStaleInstanceId(); staleID != "" && !req.GetIsMirror() {
+		if r, ok := s.engine.(staleInstanceHintReconciler); ok {
+			r.ReconcileStaleInstanceHint(ctx, req.GetAppId(), staleID)
+		}
+	}
 	// PR-A3 (issue #72 / ADR-125): is_mirror routes the admit
 	// through Engine.AdmitMirrorInstance so the per-rule slot
 	// cap fires and mode='mirror' is stamped on the instances
@@ -570,6 +591,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 			DeploymentId: res.DeploymentID,
 			Port:         int32(res.Port),
 			Identity:     platformIdentityToProto(wakeResultIdentity(res)),
+			StartupOom:   res.StartupOOM,
 		}, nil
 	}
 	// PR-B (issue #272): scope threaded through AdmitInstance the
@@ -617,6 +639,7 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 		// wire for the gateway's per-instance cache.
 		RequestCount: int32(res.RequestCount),
 		Identity:     platformIdentityToProto(wakeResultIdentity(res)),
+		StartupOom:   res.StartupOOM,
 	}, nil
 }
 
@@ -631,12 +654,18 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 	// The pre-wake clock starts before authorization so wake.boot_started
 	// accounts for the whole RPC up to Engine.Wake.
 	ctx = sched.WithEnsureWakeRPCStarted(ctx, time.Now())
+	received := time.Now()
+	s.log.Debug("schedd: ensure wake received", "app_id", req.GetAppId(), "trigger", req.GetTrigger(), "desired", req.GetDesiredInstances())
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
+		s.log.Debug("schedd: ensure wake unauthorized", "app_id", req.GetAppId(), "err", err)
 		return nil, err
 	}
 	start := time.Now()
 	var out sched.CoordOutcome
 	var err error
+	defer func() {
+		s.log.Debug("schedd: ensure wake done", "app_id", req.GetAppId(), "took", time.Since(received).String(), "err", err)
+	}()
 	ctx = withIncomingCorrelation(ctx)
 	desired := int(req.GetDesiredInstances())
 	spanDesired := desired
@@ -683,6 +712,7 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 		Port:         out.Instance.Port,
 		DeploymentId: out.Instance.DeploymentID,
 		Identity:     platformIdentityToProto(out.Instance.Identity),
+		StartupOom:   out.Instance.StartupOOM,
 	}
 	for _, instance := range out.Additional {
 		if instance != nil {
@@ -690,7 +720,8 @@ func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest
 				InstanceId: instance.InstanceID, NodeId: instance.NodeID,
 				DeploymentId: instance.DeploymentID, WakeId: instance.WakeID,
 				Port: instance.Port, Method: coordMethodToWakeMethod(instance),
-				Identity: platformIdentityToProto(instance.Identity),
+				Identity:   platformIdentityToProto(instance.Identity),
+				StartupOom: instance.StartupOOM,
 			})
 		}
 	}

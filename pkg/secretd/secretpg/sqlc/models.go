@@ -28,6 +28,11 @@ type AppSecret struct {
 	Ciphertext []byte
 }
 
+type AppVerificationContract struct {
+	AppID    pgtype.UUID
+	Contract []byte
+}
+
 type Build struct {
 	ID              pgtype.UUID
 	DeploymentID    pgtype.UUID
@@ -47,6 +52,8 @@ type Deployment struct {
 	ID                 pgtype.UUID
 	AppID              pgtype.UUID
 	BuildRegistryScope []string
+	Status             string
+	Scope              string
 }
 
 type DeploymentImagePreparation struct {
@@ -54,6 +61,13 @@ type DeploymentImagePreparation struct {
 	NodeName     string
 	Phase        string
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type DeploymentVerificationLease struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	NodeName     string
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type EdgeRule struct {
@@ -67,6 +81,14 @@ type EdgeRuleHeaderSecret struct {
 	ID         pgtype.UUID
 	AppID      pgtype.UUID
 	Ciphertext []byte
+}
+
+type Instance struct {
+	ID     pgtype.UUID
+	AppID  pgtype.UUID
+	JobID  pgtype.UUID
+	NodeID pgtype.UUID
+	State  string
 }
 
 type Job struct {
@@ -120,6 +142,21 @@ type ManagedPostgresDatabase struct {
 	PostgresMajor      int16
 }
 
+type SandboxSession struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	NodeID       pgtype.Text
+	PlacedNodeID pgtype.Text
+	State        string
+	TemplateID   pgtype.UUID
+	ImageJobID   pgtype.UUID
+}
+
+type SandboxTemplate struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
 type SecretGrant struct {
 	AppID           pgtype.UUID
 	NodeID          pgtype.UUID
@@ -154,6 +191,17 @@ type Snapshot struct {
 	DeletePending   bool
 	SealedKey       []byte
 	SealedCaptureID pgtype.UUID
+}
+
+type StorageGrantAudit struct {
+	ID           int64
+	NodeID       pgtype.UUID
+	SubjectClass string
+	SubjectID    pgtype.UUID
+	AppID        pgtype.UUID
+	Access       string
+	Objects      int32
+	GrantedAt    pgtype.Timestamptz
 }
 
 type Trigger struct {

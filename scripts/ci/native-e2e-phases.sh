@@ -50,7 +50,8 @@ native_e2e_phase_files() {
     # phase by far (a stalled build rides out its 10-minute budget), and the
     # one everything below depends on.
     build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go source_start_pin_metal_test.go binary_function_metal_test.go \
-      dockerfile_healthcheck_metal_test.go deferred_cache_export_metal_test.go buildkit_seed_metal_test.go ;;
+      dockerfile_healthcheck_metal_test.go deferred_cache_export_metal_test.go buildkit_seed_metal_test.go \
+      elastic_builder_slots_metal_test.go reserved_builder_slots_metal_test.go ;;
     # Deploy and safe-release paths: image, canary progression, healthcheck,
     # rollback, port override and secrets.
     deploy) printf '%s\n' \
@@ -67,6 +68,7 @@ native_e2e_phase_files() {
       queue_push_parallel_metal_test.go \
       dev_loop_metal_test.go \
       dev_watch_metal_test.go \
+      dev_prime_serves_metal_test.go \
       environment_gitops_native_metal_test.go \
       environment_gitops_source_jobs_native_metal_test.go \
       deploy_override_port_metal_test.go \
@@ -81,6 +83,7 @@ native_e2e_phase_files() {
       real_image_smoke_metal_test.go \
       function_concurrency_metal_test.go \
       guest_tracing_metal_test.go \
+      route_resource_peaks_metal_test.go \
       single_process_oom_metal_test.go \
       profile_capture_metal_test.go \
       profile_capture_pprof_metal_test.go \
@@ -91,6 +94,7 @@ native_e2e_phase_files() {
       source_deploy_wake_metal_test.go \
       shared_runtime_rollback_metal_test.go \
       shared_runtime_python_metal_test.go \
+      js_framework_free_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       object_storage_native_metal_test.go \
       managed_postgres_database_node_metal_test.go \
@@ -127,6 +131,7 @@ native_e2e_phase_files() {
       fleet_wake_dedup_e2e_test.go \
       private_service_tcp_stale_metal_test.go \
       private_tcp_wake_ahead_metal_test.go \
+      managed_redis_metal_test.go \
       service_stale_endpoint_metal_test.go \
       wake_platform_bench_metal_test.go \
       fork_metal_test.go \
@@ -138,6 +143,7 @@ native_e2e_phase_files() {
       environment_branch_restore_metal_test.go \
       environment_branch_seed_metal_test.go \
       vmmd_restart_metal_test.go \
+      vmmd_unit_lane_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).
     streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go function_streaming_metal_test.go instance_bridge_sessions_metal_test.go ;;
@@ -253,6 +259,12 @@ native_e2e_assert_phase_partition() {
 # normal preflight, service restoration, and leakcheck.
 # managed-operation-only — source deployment, guest process death, in-place
 # managed workflow retry, and signed effect delivery on dedicated KVM.
+# managed-redis-only — a managed Valkey cache's create, park, restart and
+# resize handoff (ADR-20261116192126), without the platform-wide matrix.
+# storage-grants-only — source deploy -> build -> wake and image deploy ->
+# wake with the compute daemons holding no store key: every object goes
+# through secretd's signed grants over a loopback MinIO (ADR-20261117190000).
+# Needs FAAS_E2E_MINIO_BIN.
 # customer-job-operations-only derives every Customer Job Operations scenario.
 # Missing or skipped scenarios fail its dedicated blocking verdict.
 # project-worker-release-only qualifies mixed HTTP/push-worker cutover,
@@ -261,7 +273,7 @@ native_e2e_assert_phase_partition() {
 # its selected tests are blocking independently of the full matrix's phases.
 # customer-http-operations-only derives every ordinary HTTP Operations scenario
 # (ADR-521); it is the native gate before a customer preview cohort opens.
-NATIVE_E2E_LANES=(smoke containers app-task-interactive-only exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
+NATIVE_E2E_LANES=(smoke containers app-task-interactive-only dev-loop-only exclusive-operations-only managed-operation-only managed-redis-only storage-grants-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system route-resource-peaks-only js-frameworks-free-only)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -279,6 +291,21 @@ NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS=(
 
 NATIVE_E2E_MANAGED_OPERATION_TESTS=(
   TestManagedOperationWorkflowMetal
+)
+
+NATIVE_E2E_MANAGED_REDIS_TESTS=(
+  TestManagedRedisMetal
+)
+
+NATIVE_E2E_STORAGE_GRANTS_TESTS=(
+  TestSourceDeployWakeMetal
+  TestDeployWakeMetal
+)
+
+# With FAAS_E2E_REDIS_SOAK=1 the managed-redis-only lane runs only the
+# handoff soak (100 handoffs under write load; hours, so never by default).
+NATIVE_E2E_MANAGED_REDIS_SOAK_TESTS=(
+  TestManagedRedisHandoffSoakMetal
 )
 
 # native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
@@ -302,8 +329,27 @@ native_e2e_lane_tests() {
       grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/app_task_interactive_metal_test.go" |
         sed -E 's/^func //; s/\($//' | sort -u
       ;;
+    dev-loop-only)
+      # `gregale dev` (ADR-740 live patches, ADR-1170 watch mode), for
+      # changes to guest-init's developer paths without the whole deploy
+      # phase.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/dev_loop_metal_test.go" "${root}/cmd/e2e/dev_watch_metal_test.go" "${root}/cmd/e2e/dev_prime_serves_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
     financial-system)
       grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/financial_system_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    js-frameworks-free-only)
+      # ADR-20261124160000: Next.js standalone and Bun builds that fit the
+      # Free plan, without the whole deploy phase.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/js_framework_free_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    route-resource-peaks-only)
+      # ADR-20261121170000: guest cgroup sampler, vmmd minutes, gateway route
+      # minutes and the apid join, without the whole deploy phase.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/route_resource_peaks_metal_test.go" |
         sed -E 's/^func //; s/\($//' | sort -u
       ;;
     exclusive-operations-only)
@@ -311,6 +357,16 @@ native_e2e_lane_tests() {
       ;;
     managed-operation-only)
       printf '%s\n' "${NATIVE_E2E_MANAGED_OPERATION_TESTS[@]}"
+      ;;
+    managed-redis-only)
+      if [[ "${FAAS_E2E_REDIS_SOAK:-}" == 1 ]]; then
+        printf '%s\n' "${NATIVE_E2E_MANAGED_REDIS_SOAK_TESTS[@]}"
+      else
+        printf '%s\n' "${NATIVE_E2E_MANAGED_REDIS_TESTS[@]}"
+      fi
+      ;;
+    storage-grants-only)
+      printf '%s\n' "${NATIVE_E2E_STORAGE_GRANTS_TESTS[@]}"
       ;;
     customer-job-operations-only)
       # Every customer_job_operations*_metal_test.go file, as the HTTP and

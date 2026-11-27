@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -247,6 +249,12 @@ func readTarballFilesAtRoot(path, sourceRoot string, entryNames ...string) map[s
 		}
 		// The first entry with a name decides it, as before.
 		delete(needles, name)
+		// An in-archive link has no body here; the build guest resolves it.
+		// Reading it as an empty file made a linked package.json look
+		// invalid (ADR-20261029103512 accepts in-archive links).
+		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+			continue
+		}
 		// Cap read. io.LimitReader silently truncates at N; we use
 		// ReadAll with a hard cap so a 1 GB file doesn't OOM the
 		// build goroutine.
@@ -418,4 +426,39 @@ func versionFromGoModDirective(body string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// NodePackageJSONProblemAtRoot reports why the source's package.json cannot
+// be parsed, or "" when it parses or is absent (or larger than the marker
+// read cap, which the build then judges). Railpack builds an invalid
+// package.json into an image with no app layer and the deploy then failed
+// with an internal "runtime base does not match the build artifact" error
+// blamed on the platform (prod 2026-11-23).
+//
+// A leading UTF-8 byte order mark is a problem: npm strips it, but
+// Railpack's hujson reader rejects it and the build exports an empty image
+// (prod 2026-11-24). Comments and trailing commas are not: hujson and Bun
+// accept them, so they are blanked out first (see lenientJSON), keeping byte
+// offsets so the reported line stays right.
+func NodePackageJSONProblemAtRoot(path, sourceRoot string) string {
+	raw, ok := readTarballFilesAtRoot(path, sourceRoot, "package.json")["package.json"]
+	if !ok {
+		return ""
+	}
+	// builderd appends "; fix the file and deploy again" to the problem.
+	if strings.HasPrefix(raw, "\xef\xbb\xbf") {
+		return "package.json starts with a UTF-8 byte order mark (BOM), which the build cannot read (save it as UTF-8 without a BOM)"
+	}
+	raw = lenientJSON(raw)
+	var v map[string]any
+	err := json.Unmarshal([]byte(raw), &v)
+	if err == nil {
+		return ""
+	}
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		line := 1 + strings.Count(raw[:min(int(syntax.Offset), len(raw))], "\n")
+		return fmt.Sprintf("package.json is not valid JSON: %s (line %d)", syntax.Error(), line)
+	}
+	return "package.json is not a JSON object: " + err.Error()
 }

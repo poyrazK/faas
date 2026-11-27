@@ -52,7 +52,7 @@ func (s *PgStore) CreateExecutionArtifactGrant(ctx context.Context, params Creat
 		return ExecutionArtifactGrant{}, ErrExecutionInvalid
 	}
 	source, err := s.ExecutionByID(ctx, params.AccountID, params.SourceExecutionID)
-	if err != nil || source.Status != api.ExecutionStatusSucceeded {
+	if err != nil || source.Status != api.ExecutionStatusSucceeded || source.ResultValidation != nil && source.ResultValidation.Status == "invalid" {
 		return ExecutionArtifactGrant{}, ErrNotFound
 	}
 	artifactFound := false

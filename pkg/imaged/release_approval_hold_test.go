@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -84,6 +85,79 @@ func TestReleaseCommandWaitsForApproval(t *testing.T) {
 	}
 }
 
+func TestReleaseCommandHoldQueuesOptedInSandboxSuite(t *testing.T) {
+	fx := seedReleaseGate(t, true)
+	fx.requireApprovals(t)
+	ctx := t.Context()
+	if err := fx.store.SetDeploymentRootfs(ctx, fx.candidate.ID, "/apps/held.ext4", "/apps/held.ext4", 1024); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := fx.store.DeploymentByID(ctx, fx.candidate.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenario, err := fx.store.PutAPISandboxLibraryScenario(ctx, fx.app.ID, uuid.NewString(), api.APISandboxScenarioInput{
+		Seed: json.RawMessage(`{}`),
+		APISandboxScenarioGuide: api.APISandboxScenarioGuide{
+			Name: "Check checkout", Requests: []api.APISandboxExampleRequest{{Title: "Read order", Method: "GET", Path: "/orders/demo", ExpectedStatus: 200}},
+		},
+	}, state.APISandboxScenarioOrigin{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if _, err := fx.store.PutAPISandboxSuite(ctx, fx.app.ID, "", []string{scenario.ID}, &enabled); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		held, err := fx.handler.holdReleaseCommandForApproval(ctx, fx.app, candidate)
+		if err != nil || !held {
+			t.Fatalf("release command should still wait: %t %v", held, err)
+		}
+	}
+	now := time.Now().UTC()
+	request, err := fx.store.ClaimAPISandboxSuiteAutomatic(ctx, now, time.Minute)
+	if err != nil || request.DeploymentID != candidate.ID || request.RunID == "" {
+		t.Fatalf("expected one durable automatic request: %+v %v", request, err)
+	}
+	if _, err := fx.store.ClaimAPISandboxSuiteAutomatic(ctx, now, time.Minute); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("replaying the hold queued another request: %v", err)
+	}
+	fx.requireNoReleaseTask(t)
+}
+
+func TestReleaseCommandStillWaitsForRequiredSandboxSuiteAfterApproval(t *testing.T) {
+	fx := seedReleaseGate(t, true)
+	fx.requireApprovals(t)
+	ctx := t.Context()
+	policy, err := fx.store.ReleaseApprovalPolicy(ctx, fx.app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required := true
+	policy.RequirePassingSandboxSuite = &required
+	if _, err := fx.store.SetReleaseApprovalPolicy(ctx, policy, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	fx.decide(t, state.ReleaseApprovalApprove)
+	fx.decide(t, state.ReleaseApprovalApprove)
+	if err := fx.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: fx.app.ID, DeploymentID: fx.candidate.ID}); err != nil {
+		t.Fatalf("handleSnapshotBoot while waiting for evidence: %v", err)
+	}
+	fx.requireNoReleaseTask(t)
+
+	policy.RequirePassingSandboxSuite = new(bool)
+	if _, err := fx.store.SetReleaseApprovalPolicy(ctx, policy, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: fx.app.ID, DeploymentID: fx.candidate.ID}); err != nil {
+		t.Fatalf("handleSnapshotBoot after turning off the requirement: %v", err)
+	}
+	if task, err := fx.store.ReleaseAppTaskByDeployment(ctx, fx.candidate.ID); err != nil || task.Status != state.AppTaskQueued {
+		t.Fatalf("release task = %+v, %v; want queued after approved policy change", task, err)
+	}
+}
+
 func TestReleaseCommandRejectedFailsWithoutRunning(t *testing.T) {
 	fx := seedReleaseGate(t, true)
 	fx.requireApprovals(t)
@@ -120,12 +194,10 @@ func TestReleaseCommandRunsWhenNotGated(t *testing.T) {
 		}
 	})
 	t.Run("staging", func(t *testing.T) {
-		fx := seedReleaseGate(t, true)
+		fx := seedReleaseGateInScope(t, true, true, "staging")
 		fx.requireApprovals(t)
 		ctx := context.Background()
-		staged := fx.candidate
-		staged.Scope = "staging"
-		if err := fx.handler.handoffSnapshotPrime(ctx, fx.app, staged); err != nil {
+		if err := fx.handler.handoffSnapshotPrime(ctx, fx.app, fx.candidate); err != nil {
 			t.Fatalf("handoffSnapshotPrime: %v", err)
 		}
 		if _, err := fx.store.ReleaseAppTaskByDeployment(ctx, fx.candidate.ID); err != nil {

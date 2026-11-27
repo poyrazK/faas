@@ -184,7 +184,7 @@ func reviewUploadedTaskSource(dir, expected string, worker bool) (mcphosting.Con
 		defer func() { _ = root.Close() }()
 		file, err := root.Lstat("tasks-release.js")
 		if err != nil || !file.Mode().IsRegular() {
-			return cfg, "", invalid("unsupported_task_source", "Node Task worker must include its regular tasks-release.js adapter")
+			return cfg, "", invalid("unsupported_task_source", "Node Task worker must include its regular tasks-release.js adapter; start from the mcp-node-tasks starter")
 		}
 	}
 	return cfg, digest, nil

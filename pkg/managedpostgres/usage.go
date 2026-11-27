@@ -58,6 +58,10 @@ type UsageCollectorOptions struct {
 	Logger       *slog.Logger
 	Observe      func(UsageCollectionObservation)
 	ObserveSweep func(UsageCollectionSummary, error)
+	// ObserveIdleTail, when set, gets each scale-to-zero database's newly
+	// collected latest window and its idle tail, read in a capped pass after
+	// the sweep and AfterSweep (readIdleTails).
+	ObserveIdleTail func(IdleTailObservation)
 	// AfterSweep runs after every sweep, successful or not, on the
 	// collector's goroutine (the compute cap enforcer, ADR-20261025094915).
 	AfterSweep func(context.Context)
@@ -83,6 +87,13 @@ type UsageCollector struct {
 	observeSweep func(UsageCollectionSummary, error)
 	afterSweep   func(context.Context)
 	exclusive    func(context.Context) (func(), bool, error)
+
+	idleTailObserver func(IdleTailObservation)
+	// pendingIdleTails is the last Collect's work for readIdleTails.
+	pendingIdleTails []pendingIdleTail
+	// activityPrunedAt is when the last prune of recorded compute starts
+	// ran.
+	activityPrunedAt time.Time
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {
@@ -123,6 +134,8 @@ func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollec
 		observeSweep: options.ObserveSweep,
 		afterSweep:   options.AfterSweep,
 		exclusive:    options.Exclusive,
+
+		idleTailObserver: options.ObserveIdleTail,
 	}, nil
 }
 
@@ -185,7 +198,9 @@ func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSu
 	sort.SliceStable(work, func(i, j int) bool {
 		return work[i].observedAt.Before(work[j].observedAt)
 	})
-	if err := c.collectUsageRounds(ctx, work, now, false); err != nil {
+	err := c.collectUsageRounds(ctx, work, now, false)
+	c.queueIdleTails(work)
+	if err != nil {
 		return summary, err
 	}
 	// Exhaust every eligible recovery turn before any correction request.
@@ -210,6 +225,9 @@ type usageCollectionWork struct {
 	requests        int
 	included        bool
 	err             error
+	// latest is the database's latest closed window when this sweep
+	// collected it for the first time.
+	latest *Usage
 }
 
 func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Database, to time.Time) *usageCollectionWork {
@@ -345,7 +363,11 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 			}
 			attempted = true
 			item.requests++
-			item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt)
+			var usage Usage
+			usage, item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt)
+			if item.err == nil && !corrections && usage.Window.To.Equal(item.to) {
+				item.latest = &usage
+			}
 			if item.err == nil {
 				if corrections {
 					item.replayUntil = from
@@ -431,18 +453,18 @@ func (c *UsageCollector) recordSharedUsage(ctx context.Context, database Databas
 	return c.store.RecordSharedUsage(ctx, database.AccountID, database.ID, source.ID, c.policy.Window)
 }
 
-func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) error {
+func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) (Usage, error) {
 	usage, err := backend.Provider.Usage(ctx, database.ProviderResourceID, UsageWindow{From: from, To: to})
 	if err != nil {
-		return normalizeProviderError(err)
+		return Usage{}, normalizeProviderError(err)
 	}
 	if err := usage.Validate(); err != nil {
-		return ErrUnavailable
+		return Usage{}, ErrUnavailable
 	}
 	// PostgreSQL checkpoints can carry time.Local; compare instants rather
 	// than time.Time's location pointer or monotonic clock representation.
 	if !usage.Window.From.Equal(from) || !usage.Window.To.Equal(to) {
-		return ErrUnavailable
+		return Usage{}, ErrUnavailable
 	}
 	for _, meter := range backend.Capabilities.UsageMeters {
 		found := false
@@ -453,14 +475,14 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 			}
 		}
 		if !found {
-			return ErrUnavailable
+			return Usage{}, ErrUnavailable
 		}
 	}
 	records := make([]UsageRecord, 0, len(usage.Readings))
 	for _, reading := range usage.Readings {
 		cost, err := c.policy.Cost(reading)
 		if err != nil {
-			return err
+			return Usage{}, err
 		}
 		record := UsageRecord{
 			AccountID: database.AccountID, DatabaseID: database.ID,
@@ -469,14 +491,17 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 			Meter: reading.Meter, Quantity: reading.Quantity, CostMillicents: cost,
 		}
 		if err := record.Validate(); err != nil {
-			return err
+			return Usage{}, err
 		}
 		records = append(records, record)
 	}
 	if len(records) == 0 {
-		return ErrUnavailable
+		return Usage{}, ErrUnavailable
 	}
-	return c.store.RecordUsage(ctx, records)
+	if err := c.store.RecordUsage(ctx, records); err != nil {
+		return Usage{}, err
+	}
+	return usage, nil
 }
 
 func (c *UsageCollector) Run(ctx context.Context) error {
@@ -517,6 +542,7 @@ func (c *UsageCollector) sweep(ctx context.Context) {
 	if c.afterSweep != nil && ctx.Err() == nil {
 		c.afterSweep(ctx)
 	}
+	c.readIdleTails(ctx)
 }
 
 // Admit rejects new database reservations when the account's observed usage
@@ -621,7 +647,9 @@ func (p UsagePolicy) Cost(reading MeterReading) (int64, error) {
 		rate, denominator = p.ComputeUnitHourMillicents, secondsPerHour
 	case MeterStorageByteSeconds:
 		rate, denominator = p.StorageGiBHourMillicents, byteSecondsPerGiBHour
-	case MeterHistoryByteSeconds:
+	case MeterHistoryByteSeconds, MeterSnapshotByteSeconds:
+		// Snapshots cost the provider less than restore history; the
+		// operator's estimate uses the history rate, an upper bound.
 		rate, denominator = p.HistoryGiBHourMillicents, byteSecondsPerGiBHour
 	case MeterEgressBytes:
 		rate, denominator = p.EgressGiBMillicents, bytesPerGiB

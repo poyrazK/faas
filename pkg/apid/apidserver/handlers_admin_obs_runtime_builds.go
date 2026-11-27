@@ -21,5 +21,10 @@ func (s *server) obsRuntimeBuilds(w http.ResponseWriter, r *http.Request, caller
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, operatorobs.RuntimeBuildsWithLoopHealth(r.Context(), s.promqlClient, s.store, selected, now))
+	out, problem := s.runtimeBuildAdmission.Collect(r.Context(), s.promqlClient, s.store, selected, now, s.runtimeDiagnosticsMetrics)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }

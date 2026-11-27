@@ -8,6 +8,10 @@ state between requests. A run may include a bounded multi-file source bundle;
 the files are sealed with the request and materialized only in the guest's
 ephemeral scratch filesystem.
 
+See the [customer examples](../examples/gregale-run/README.md) for runnable CSV
+reports, structured invoice checks, parallel task reports, failed-branch recovery
+and an Agent report tool.
+
 ## CLI
 
 ```sh
@@ -40,6 +44,121 @@ relative path present in the bundle. Repeat `--artifact-input
 RUN_ID:ARTIFACT_NAME=DESTINATION_PATH` with `--dir` to stage successful
 same-account run artifacts in that bundle. Use `--json` for a machine-readable
 receipt.
+
+### Larger data files and standalone contracts
+
+With extended admissions enabled, keep code and JSON small while streaming
+larger data separately:
+
+```sh
+gregale run --runtime node24 --file process.mjs \
+  --input-file data/input.csv=./large-input.csv \
+  --artifact-storage stored --output-file report.csv \
+  --max-artifact-bytes 8388608 \
+  --input-schema input.schema.json --result-schema result.schema.json \
+  --idempotency-key report-42 --output-dir ./results --json
+```
+
+`--input-file` is repeatable, up to eight normalized relative paths. The
+Node handler reads `context.input_dir + '/data/input.csv'`; Python uses
+`context['input_dir']`. Source bundles and JSON input retain their 1 MiB caps.
+Input and output directories live on the guest's bounded ephemeral drive.
+No host directory, object-store URL, or storage credential reaches the guest.
+
+| Plan | Maximum single file / total input / total stored output per Run | Retained account storage | File count |
+| --- | ---: | ---: | ---: |
+| Hobby | 8 MiB | 64 MiB | 32 |
+| Pro | 32 MiB | 1 GiB | 256 |
+| Scale | 64 MiB | 4 GiB | 1024 |
+
+Files expire 24 hours after reservation. Inputs plus the output allowance must
+fit the selected ephemeral disk with source, JSON and scratch headroom. The
+default output allowance is reduced to available space; an explicit allowance
+that does not fit is rejected. Transfers share the existing overall Run
+deadline and do not extend it. Stored bytes have their own budget; result JSON,
+logs and artifact metadata continue to share `max_output_bytes`.
+
+Stored artifacts contain `file_id`, `size_bytes`, `sha256` and null `content`.
+`gregale sandbox artifacts ID --output-dir DIR` streams authenticated downloads,
+checks length and SHA-256 and removes an incomplete local file on failure.
+Expiry is independent of VM destruction. Downloads and metadata follow the
+same account and Runs-key-family boundary as receipts; file IDs are locators,
+not bearer capabilities. Use `--input-file-id data/input.csv=FILE_UUID` to reuse retained data without
+a local copy. API clients import stored outputs using `input_files` with a
+`file_id`, or a single-use artifact `grant_token` for cross-family handoff.
+The legacy `artifact_inputs` bundle mechanism remains for inline artifacts.
+
+`input_schema` and `result_schema` accept local JSON Schema Draft 2020-12,
+including boolean schemas, with a 64 KiB bound per schema and no remote
+references. Invalid input is rejected before admission or quota consumption.
+A successful execution whose result violates its schema retains its result,
+artifacts, usage and `status: succeeded`, and adds
+`result_validation: {status: invalid, message: "Run result does not match result_schema"}`.
+CLI waits return nonzero, and workflow dependents stop on this contract failure.
+Neither validation nor receipt recovery executes the code again.
+
+Extended requests use `POST /v2/executions`; SDK helpers choose this route
+when contracts or stored files are present. They never fall back to v1.
+Retained-file API calls are `POST /v1/execution-files` (prepare only),
+`PUT /v1/execution-files/{id}/content` (length/checksum verified upload),
+`GET /v1/execution-files/{id}` and `GET /v1/execution-files/{id}/content`, and
+`DELETE /v1/execution-files/{id}` (revoke future use and schedule cleanup).
+Preparation derives a stable ID from account, key family, digest and size and
+does not reserve quota. CLI submission first probes the same admission key;
+it uploads only after an explicit `execution_files_not_ready` rejection and
+then retries the unchanged request/key. An uncertain acknowledgement requires
+receipt recovery using the original key. Cleanup releases account capacity only
+after storage confirms deletion; active admitted inputs remain protected.
+
+Operators apply the additive migrations and upgrade schedd, vmmd, guest images,
+apid and the public/internal API proxies before setting
+`FAAS_EXECUTION_V2_ENABLED=1` on apid. This separate
+writer gate defaults off. Disable it before rollback, drain queued extended
+Runs and retain compatible file readers, keys, storage and GC until all retained
+files expire or are deleted. `extended_admissions` in Runs capabilities reports
+the new admission gate. The feature remains preview.
+
+### Retry a source Run submission
+
+Give a logical submission a stable key when it may need to be retried:
+
+```sh
+gregale run --runtime python313 --profile python-data-v1 --file analyze.py --input @input.json \
+  --idempotency-key customer-42-report-1 --wait --json
+```
+
+Reuse the key with the same source, input, dependency profile, limits and artifact
+references, on the same API origin and account and with the same API-key family.
+Keys contain 1–255 printable ASCII characters without spaces. On a fully
+upgraded control plane, the API commits the key and Run atomically and retains
+the binding for 24 hours from admission. A retry returns the same Run's current
+receipt with `Idempotent-Replayed: true`, even after it finishes, quota fills,
+or an artifact grant is consumed. Concurrent retries wait for the admission
+transaction. Changing the request while reusing a live key returns
+`422 idempotency_key_reused`.
+Choose a new key for a new logical task. Without this flag, each CLI invocation
+gets a new SDK-generated key, even when the source is identical.
+
+If submission ends without a readable receipt, retry the same request and key
+within that window to recover its receipt. Keep the source, input and artifact
+references unchanged. After expiry, the same key can create another Run.
+Requests admitted before atomic admission may return `409` for a legacy key;
+inspect `gregale sandbox list` for their existing receipt before submitting new
+work. An empty list does not establish that the original request failed.
+Idempotent admission does not guarantee exactly-once execution or external
+side effects. This option applies to source Runs; image runs have a separate
+submission and interactive-attachment contract.
+
+Operators must apply the additive migration and upgrade every source-admitting
+apid replica before relying on atomic replay. Replicas must share the same
+host HMAC key; a rotation that removes the original key fails retries closed
+until that key is restored or the binding expires. See the
+[admission ADR](adr/20261113010000-atomic-source-run-admission.md) for cutover and
+rollback requirements.
+
+With `--wait` or `--follow`, a failed, timed-out, out-of-memory or cancelled Run
+returns a nonzero CLI exit code, including with `--json`. A queued receipt from
+a command without either waiting option confirms admission only.
 
 Agents can call `gregale sandbox capabilities --json` before submitting work. The
 response reports the account's Runs entitlement, accepted runtimes and
@@ -556,3 +675,222 @@ Exports require guest protocol v2 and rebuilt guest images/runtime snapshots.
 Legacy runs retain v1. Older nodes reject export requests; a missing export is
 never silently accepted as success. Native KVM isolation and leak checks must
 pass before enabling this release's export path.
+
+## Five-minute execution class
+
+Source Runs can opt into `limits.execution_class: extended` through v2 admission.
+The default and maximum deadline for that class is **300000 ms**, measured from
+admission through queueing, restore, execution and output publication. Omit the
+class to retain the existing five-second default and standard plan ceiling
+(10 seconds on Hobby, 30 seconds on Pro/Scale). A longer class grants the same
+memory, CPU, PID, scratch and output envelopes. Existing RAM-second usage applies.
+
+Extended Runs share the account's total live Run cap and have an additional cap:
+one on Hobby/Pro, two on Scale. A separate bounded scheduler lane reserves
+standard worker capacity while extended Runs are active. Cancellation and teardown retain their existing
+acknowledgement semantics. Submitting a class without the operator preview gate
+returns an unavailable response; it never silently shortens the deadline.
+Retrying an already admitted idempotency key still returns its original receipt
+when the writer gate is disabled.
+
+```sh
+gregale run --runtime node24 --file transform.mjs \
+  --execution-class extended --timeout-ms 300000 --wait --json
+```
+
+The CLI waits up to six minutes by default so the admitted deadline can settle.
+`--wait-timeout` changes only the client's wait, and never extends or cancels the
+server's Run. Capabilities expose each class's resolved duration, concurrency
+and current admission switch.
+
+## Dependency environments
+
+Build an immutable dependency environment once, then select its ID on later
+source Runs. Each Run receives a fresh writable scratch filesystem. Environment
+reuse preserves installed dependencies; data and runtime mutations remain local
+to the individual Run.
+
+```sh
+gregale sandbox environment publish --runtime python313 \
+  --requirements requirements.lock --wait --json
+
+gregale run --runtime python313 --environment ENVIRONMENT_UUID \
+  --execution-class extended --file analyze.py --wait --json
+```
+
+Python requirements must contain exact `name==version` pins and SHA-256 hashes
+for all transitive dependencies. Only binary wheels are installed. Requirement
+URLs, editable installs, index options and source distributions are rejected.
+Dependencies live in an explicit import path; package startup hooks are not run.
+
+For npm, pass the dependency manifest and a matching lockfile v3:
+
+```sh
+gregale sandbox environment publish --runtime node24 \
+  --package-json package.json --package-lock package-lock.json --wait --json
+```
+
+Every package must resolve from the public npm registry with SHA-512 integrity.
+Install scripts are disabled. Workspaces, registry overrides, URL dependencies
+and private registry credentials are excluded from this preview. Packages that
+need installation scripts require a different environment preparation path.
+Supported runtimes depend on the installer images published by the operator;
+building an environment never runs a package manager on the Gregale host.
+
+Environment requests contain dependency metadata only. They accept no custom
+Dockerfile, shell command, secret or base-image reference. The control plane pins
+the complete recipe, format and operator-selected installer image. Matching
+recipes reuse the same environment within the same account and key family.
+Changing dependencies or the installer image produces a new environment.
+Before readiness, imaged retains the verified OCI chain, actual consumed-layer
+proof, exact artifact identity and a complete vulnerability scan; a fixable
+critical finding or unavailable scan refuses publication. The guest checks the immutable selection before starting customer code, and
+Run receipts include `environment_id` and the selected `runtime_image_digest`.
+Custom environments use the standard profile; they cannot be combined with
+`python-data-v1`.
+
+The API provides `POST/GET /v1/execution-environments` and
+`GET/DELETE /v1/execution-environments/{id}`. Poll a build until `ready` before
+selecting it on `POST /v2/executions`. Reads return metadata, without manifests,
+host paths, storage keys or credentials. Runs-only keys see their own family;
+account-wide credentials retain account-wide access. The Go preview client and
+the generated Node/Python preview Runs APIs expose the same operations.
+
+```sh
+gregale run environments list
+gregale run environments get ENVIRONMENT_UUID
+gregale run environments delete ENVIRONMENT_UUID
+```
+
+Retirement immediately blocks new selections. Previously admitted Runs retain
+their pinned environment until completion. Physical deletion waits for active
+Runs and build/image leases, and the environment counts toward quota until GC
+acknowledges deletion. Ownership survives account removal so cleanup can finish.
+Hobby/Pro/Scale can retain 2/5/10 environments, with a final base-plus-layer
+allowance of 256/512/1024 MiB per environment. Recipes share a combined 1 MiB
+limit and at most 2048 dependencies. Builders use the existing isolated build
+slot and 15-minute timeout; imaging has a five-minute host deadline.
+
+New writers default off. Apply migrations and upgrade all readers, workers,
+vmmd and protocol-v5 guest artifacts first. Then configure digest-pinned
+`FAAS_EXECUTION_ENVIRONMENT_<RUNTIME>_BASE_REF` installer images on apid and enable
+`FAAS_EXECUTION_V2_ENABLED=1`, plus the desired feature gates:
+`FAAS_EXECUTION_EXTENDED_ENABLED=1` on apid and
+`FAAS_EXECUTION_ENVIRONMENTS_ENABLED=1` on apid, builderd and imaged. The installer
+image must match the selected runtime/architecture and include npm or pip.
+Operator image recipes are in `images/execution-environment-*.Dockerfile`.
+Pass each base as an image and a digest: `RUNTIME_BASE_IMAGE` and
+`RUNTIME_BASE_DIGEST` (`sha256:...`), plus `NODE_TOOLS_IMAGE` and
+`NODE_TOOLS_DIGEST` for Node. A build without a digest fails.
+Local deployments also need `/srv/fc/run-environments` owned by `root:faas`, mode
+0770; the compute bootstrap and generated unit permissions include it. Shared
+artifact backends carry the same immutable objects across nodes.
+
+Disable new writers to roll back, drain admitted v5 work, and retain compatible
+readers and imaged GC. Publication and native production eligibility remain
+separate qualification gates.
+
+### System package environments
+
+Environment recipes may add `system_packages` containing up to 32 exact Wolfi
+`NAME=VERSION-rN` pins. Use `gregale sandbox environment publish --runtime python313
+--system-package poppler-utils=26.08.0-r0 --wait` with a compatible installer.
+Repeat the flag for additional packages. A packages-only recipe needs no Python
+requirements or npm manifest. Existing locked language dependencies may also be
+included. The combined recipe and produced image keep their existing limits.
+
+Builds use the installer's configured repositories and verify that the selected
+Node/Python runtime still matches after installation. Package changes produce a
+new immutable environment. The produced image must pass the existing provenance
+and vulnerability checks before use. See the [PDF report example](../examples/gregale-run/pdf-report/README.md)
+for a complete task and SDK invocation.
+
+## Build diagnostics
+
+Follow package-manager output and build, export, verification, scan and publication
+progress while preparing an environment:
+
+```sh
+gregale run environments logs ENVIRONMENT_UUID --follow
+gregale run environments logs ENVIRONMENT_UUID --after 42 --follow --json
+```
+
+`build --wait` shows progress on stderr in human-readable mode. With `--json`,
+it preserves a single final receipt on stdout. A CLI talking to an older server
+falls back to status polling when the diagnostics endpoint is unavailable.
+
+`GET /v1/execution-environments/{id}/events?after=N` returns `events`,
+`next_sequence`, `status`, and an optional `gap`. Events contain a durable
+`sequence`, `stage`, `code`, `message`, worker `attempt`, and `created_at`.
+Persist `next_sequence` and pass it as `after` to resume. Cursors must be
+nonnegative and cannot exceed the current sequence; invalid cursors return 400.
+The endpoint retains the latest 128 events, each at most 1024 UTF-8 bytes. A
+`gap` means earlier events have left that tail. This is polling, with no SSE
+connection to keep alive. Retirement GC erases the retained diagnostics.
+
+The Go preview client exposes `ExecutionEnvironmentEvents` and
+`WatchExecutionEnvironment`; Node preview exports `watchExecutionEnvironment`,
+and Python preview provides `watch_execution_environment` and
+`awatch_execution_environment`. Watchers resume cursors, report gaps, and stop
+on a terminal environment status. Interrupting a watch leaves the build running.
+Reads keep the same account and runs-only key-family boundaries as environment
+receipts and remain available when new environment writers are disabled.
+
+Only bounded BuildKit/package-manager lines enter customer diagnostics. Boot
+output, known credential fields, URL user information/query parameters and host
+paths are filtered.
+Avoid secrets in dependency metadata or package names. Live output is best
+effort: `log_gap` and `logs_unavailable` explain interruptions, and workers retain
+a bounded final output tail. Actionable failure codes distinguish dependency
+resolution, integrity mismatch, size limits, build timeout, unavailable builders,
+unavailable scans and scan rejection. They never override publication checks.
+To rebuild an unchanged failed recipe, retire its environment and wait for
+collection before issuing the build again; matching recipes reuse the existing
+environment record.
+
+## Durable completion callbacks
+
+An account administrator can subscribe an existing account receiver to
+`execution.finished` while the Run API and V2 preview writers are enabled:
+
+```sh
+gregale webhook account add \
+  --target-url https://agents.example.com/gregale/completions \
+  --event execution.finished --delivery-format cloudevents
+```
+
+The CLI displays the generated signing secret once. Store it in the receiver's
+secret manager. The event covers succeeded, failed, timed-out, out-of-memory and
+cancelled source Runs, including queued cancellation and recovery. Run completion
+and enqueueing commit together. Existing retry, signature, delivery-history,
+dead-letter and manual-redrive APIs apply; retrying a delivery never creates a Run.
+Pending deliveries continue when new Run writers are disabled. A subscription
+receives future terminal transitions, without backfilling historical receipts.
+
+The payload contains `event_id`, `execution_id`, `status`, `runtime`,
+`finished_at`, `receipt_url`, and optional `environment_id`, `workflow_id` and
+`result_validation_status`. It carries no source, input, result, logs or artifact
+bytes. A `succeeded` Run with `result_validation_status: invalid` has a result
+contract failure; check it before using the result. `receipt_url` is an
+API-relative path; fetch it from your configured
+Gregale API origin using credentials authorized for that Run, then retrieve
+results and artifacts through their normal scoped APIs.
+
+Verify the signature and timestamp against the raw body before acting. Deduplicate
+`event_id`, which equals the Run ID and remains stable across retries and redrive.
+Delivery is at least once, so persist that deduplication alongside your receiver's
+effects. With CloudEvents, the payload is in `data`; with the default Gregale
+JSON envelope, it is in `payload.data`. See
+[receiver verification](webhook-receiver-verification.md) and
+[account receiver operations](account-release-webhooks.md) for SDK verification,
+secret rotation, retry policy and retention. Runs-only keys cannot administer
+account receivers.
+
+See [versioned Run tasks](run-tasks.md) for reusable code publication and stateless Agent continuation.
+
+See [durable artifact delivery](run-artifact-delivery.md) to promote selected
+outputs into app-owned storage and issue customer download capabilities after
+temporary Run files or Agent callbacks expire.
+
+See [Run controls](run-controls.md) for authenticated customer/agent attribution,
+source/task admission allowances and payload-free invocation history.

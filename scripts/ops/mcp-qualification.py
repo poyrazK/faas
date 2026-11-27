@@ -34,7 +34,8 @@ OAUTH_PROBE_RUNNER = "gregale-mcp-oauth-v1"
 OAUTH_LIFECYCLE_RUNNER = "gregale-mcp-oauth-lifecycle-v1"
 SDK_INTEROP_RUNNER = "gregale-mcp-sdk-interop-v3"
 SDK_INTEROP_VERSION = "2.3.1"
-TASKS_RESTART_RUNNER = "gregale-mcp-tasks-restart-v1"
+TASKS_RESTART_RUNNER = CHECKER.TASKS_RESTART_RUNNER
+TASKS_RESTART_REVIEWED_RUNNER = CHECKER.TASKS_RESTART_REVIEWED_RUNNER
 TASKS_SCALE_ZERO_RUNNER = "gregale-mcp-tasks-scale-zero-v2"
 NATIVE_WAKE_TIERS = {
     "native_cold_boot": "cold",
@@ -207,15 +208,17 @@ def record_evidence(directory, name, target, artifact, status):
             body = json.loads(receipt.read_text(encoding="utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             body = None
-        if isinstance(body, dict) and body.get("runner") in set(AUTOMATED_RUNNERS.values()):
+        if isinstance(body, dict) and body.get("runner") in (*AUTOMATED_RUNNERS.values(), TASKS_RESTART_REVIEWED_RUNNER):
             expected_runner = AUTOMATED_RUNNERS.get(name)
+            if name == "tasks_restart_replicas" and body.get("runner") == TASKS_RESTART_REVIEWED_RUNNER:
+                expected_runner = TASKS_RESTART_REVIEWED_RUNNER
             if body.get("runner") != expected_runner:
                 raise ValueError("automated receipt runner does not match the selected qualification")
             if body.get("check") != name or body.get("target") != target.strip():
                 raise ValueError("automated probe receipt does not match the selected check and target")
             if body.get("status") != status:
                 raise ValueError("automated probe status cannot be changed when recording its receipt")
-            if expected_runner == TASKS_RESTART_RUNNER:
+            if expected_runner in CHECKER.TASKS_RESTART_RUNNERS.values():
                 CHECKER.validate_tasks_restart_receipt(body, name, target.strip(), require_passed=False)
             elif expected_runner == TASKS_SCALE_ZERO_RUNNER:
                 CHECKER.validate_tasks_scale_zero_receipt(body, name, target.strip(), require_passed=False)
@@ -1243,10 +1246,10 @@ def sdk_interop(args):
         raise SystemExit(1)
 
 
-def _tasks_restart_failure_receipt(target):
-    return {
-        "version": 1,
-        "runner": TASKS_RESTART_RUNNER,
+def _tasks_restart_failure_receipt(target, version):
+    receipt = {
+        "version": version,
+        "runner": CHECKER.TASKS_RESTART_RUNNERS[version],
         "check": "tasks_restart_replicas",
         "status": "failed",
         "target": target,
@@ -1267,6 +1270,10 @@ def _tasks_restart_failure_receipt(target):
         },
         "failures": [{"stage": "qualification_runner", "reason": "qualification_failed"}],
     }
+    if version == 2:
+        receipt["checks"][CHECKER.TASKS_RESTART_REVIEWED_CHECK] = "failed"
+        receipt["observations"].update(dict.fromkeys(CHECKER.TASKS_RESTART_REVIEWED_OBSERVATIONS, 0))
+    return receipt
 
 
 def tasks_restart(args):
@@ -1288,9 +1295,14 @@ def tasks_restart(args):
     if not runner.is_file() or runner.is_symlink() or not pg_package.is_file() or pg_package.is_symlink():
         raise ValueError("--starter-dir must be a materialized MCP Node starter with npm dependencies installed")
 
+    command = [args.node, str(runner), "--target", target, "--confirm-disposable-database"]
+    version = 1
+    if args.gregale:
+        command.extend(["--gregale", str(args.gregale.resolve())])
+        version = 2
     try:
         result = subprocess.run(
-            [args.node, str(runner), "--target", target, "--confirm-disposable-database"],
+            command,
             cwd=starter,
             env={"PATH": os.environ.get("PATH", os.defpath), "MCP_TASKS_TEST_DATABASE_URL": database_url},
             stdin=subprocess.DEVNULL,
@@ -1313,8 +1325,10 @@ def tasks_restart(args):
             receipt = None
     try:
         CHECKER.validate_tasks_restart_receipt(receipt, "tasks_restart_replicas", target, require_passed=False)
+        if receipt["version"] != version:
+            raise ValueError("Task restart receipt did not prove the requested qualification")
     except (ValueError, TypeError):
-        receipt = _tasks_restart_failure_receipt(target)
+        receipt = _tasks_restart_failure_receipt(target, version)
     if result is None or result.returncode != 0:
         if receipt["status"] == "passed":
             receipt["status"] = "failed"
@@ -1857,6 +1871,7 @@ def main():
     tasks_restart_parser.add_argument("--confirm-disposable-database", action="store_true", help="confirm the database can accept a temporary schema that will be dropped")
     tasks_restart_parser.add_argument("--timeout", type=int, default=180, help="whole-run timeout in seconds (default 180; max 600)")
     tasks_restart_parser.add_argument("--node", default="node", help="Node executable (default: node on PATH)")
+    tasks_restart_parser.add_argument("--gregale", type=Path, help="also qualify reviewed input after worker replacement with this CLI binary")
     tasks_restart_parser.set_defaults(run=tasks_restart)
 
     tasks_scale_zero_parser = commands.add_parser(

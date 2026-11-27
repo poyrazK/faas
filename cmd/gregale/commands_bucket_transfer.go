@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -93,12 +94,32 @@ func parseBucketTransfer(args []string) (bucketTransferOptions, error) {
 	if o.versionID != "" && !validBucketImmutableVersion(o.versionID) {
 		return o, errors.New("invalid immutable version selector")
 	}
+	if o.action == "upload" && !o.contentTypeSet {
+		o.contentType = uploadContentTypeFor(o.key, o.path)
+	}
 	return o, nil
+}
+
+// uploadContentTypeFor picks the stored type from the key's (else the file's)
+// extension when --content-type is not given. Every upload was stored as
+// application/octet-stream, so a public bucket served style sheets and
+// scripts that browsers refuse under nosniff (prod 2026-11-19).
+func uploadContentTypeFor(key, path string) string {
+	for _, name := range []string{key, path} {
+		if ext := filepath.Ext(name); ext != "" {
+			if contentType := mime.TypeByExtension(strings.ToLower(ext)); contentType != "" {
+				return contentType
+			}
+		}
+	}
+	return "application/octet-stream"
 }
 
 func cmdBucketTransfer(args []string) int {
 	o, err := parseBucketTransfer(args)
 	if err != nil {
+		// An over-long key printed only the usage line (prod 2026-11-19).
+		printCommandValidation(osStderr, "%v\n", err)
 		PrintUsage(osStderr, bucketTransferUsage, "bucket")
 		return 1
 	}

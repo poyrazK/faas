@@ -24,5 +24,9 @@ export type RecoverRolloutRequest = {
    * Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding policies check this exact recipient before routing can change.
    */
   expected_predecessor_deployment_id?: string;
+  /**
+   * For advance and promote: the canary step the caller observed. The recovery is refused with canary_step_conflict when the running canary is at another step, and with 404 when no canary is running. Not allowed with abort or deployment_id.
+   */
+  expected_step?: number;
 };
 

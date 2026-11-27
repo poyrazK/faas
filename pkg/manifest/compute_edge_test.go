@@ -62,8 +62,9 @@ func TestPublicEdgeEntry(t *testing.T) {
 		{name: "tunnel", edge: PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryTunnel}},
 		{name: "both", edge: PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth}, wantDirect: true},
 		{name: "both without compute edges", edge: PublicEdge{Entry: PublicEdgeEntryBoth}, wantErr: "needs public_edge.compute_nodes"},
-		{name: "direct is not ready", edge: PublicEdge{ComputeNodes: true, Entry: "direct"}, wantErr: "use both"},
-		{name: "unknown", edge: PublicEdge{ComputeNodes: true, Entry: "anycast"}, wantErr: `"anycast" is not tunnel or both`},
+		{name: "direct", edge: PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryDirect}, wantDirect: true},
+		{name: "direct without compute edges", edge: PublicEdge{Entry: PublicEdgeEntryDirect}, wantErr: "needs public_edge.compute_nodes"},
+		{name: "unknown", edge: PublicEdge{ComputeNodes: true, Entry: "anycast"}, wantErr: `"anycast" is not tunnel, both or direct`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := tc.edge.validate(fleet)
@@ -76,6 +77,28 @@ func TestPublicEdgeEntry(t *testing.T) {
 			}
 			if got := tc.edge.DirectEntry(); got != tc.wantDirect {
 				t.Fatalf("DirectEntry = %v, want %v", got, tc.wantDirect)
+			}
+		})
+	}
+}
+
+// adr: 20261102081618 step 6 — entry direct runs no tunnel connector; every
+// other entry on compute edges does, and a cell without them runs none.
+func TestPublicEdgeTunnel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edge PublicEdge
+		want bool
+	}{
+		{"default", PublicEdge{ComputeNodes: true}, true},
+		{"tunnel", PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryTunnel}, true},
+		{"both", PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth}, true},
+		{"direct", PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryDirect}, false},
+		{"no compute edges", PublicEdge{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.edge.Tunnel(); got != tc.want {
+				t.Fatalf("Tunnel = %v, want %v", got, tc.want)
 			}
 		})
 	}

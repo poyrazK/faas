@@ -14,9 +14,6 @@ import (
 	"time"
 )
 
-// docsEvalRoot is the repository root, seen from this package's directory.
-const docsEvalRoot = "../.."
-
 // docsEvalSiteEnv points the eval at a deployed site's /llms.txt and
 // /llms-full.txt instead of the repository's docs:
 //
@@ -80,7 +77,7 @@ func TestDocsSearchRetrieval(t *testing.T) {
 	var hit1, hit5, mrr float64
 	var misses []string
 	for _, c := range eval.Cases {
-		hits := corpus.search(c.Query, docsDefaultResults)
+		hits := corpus.search(c.Query, docsDefaultResults, nil)
 		rank := 0
 		for i, h := range hits {
 			if docsEvalMatches(routes[h.Page], h.Section, c.Want) {
@@ -142,7 +139,7 @@ func docsEvalMatches(stem, section string, want []string) bool {
 // file under docs/ without .md. The site's slugs are routes.
 func docsEvalRoutes(t *testing.T) map[string]string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(docsEvalRoot, "docs", "customer-pages.json"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "customer-pages.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +199,7 @@ func docsEvalCorpus(t *testing.T, routes map[string]string) *docsCorpus {
 	index.WriteString("# Gregale\n\n## Docs\n\n")
 	for _, stem := range stems {
 		slug := slugs[stem]
-		b, err := os.ReadFile(filepath.Join(docsEvalRoot, "docs", stem+".md"))
+		b, err := os.ReadFile(filepath.Join("..", "..", "docs", stem+".md"))
 		if err != nil {
 			t.Fatal(err)
 		}

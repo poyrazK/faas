@@ -2,7 +2,9 @@ name: Customer platform starter
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `labeled`: adding the run-customer-platform label runs the acceptance job on that pull
+    # request (see "Pull-request tier" below).
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
     # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
     # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
     # pull request; ci.yml runs this suite nightly and on dispatch.
@@ -19,8 +21,10 @@ on:
 # superseded push kept its runners until completion.
 concurrency:
   # A literal name: when ci.yml calls this workflow, github.workflow is the
-  # caller's name, which the other called suites would share.
-  group: customer-platform-starter-${{ github.ref }}
+  # caller's name, which the other called suites would share. Adding any
+  # other label starts a run whose jobs all skip; give it its own group so it
+  # cannot cancel the pull request's real run.
+  group: customer-platform-starter-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'run-customer-platform' && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -29,9 +33,14 @@ permissions:
 env:
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
 
+# Pull-request tier. The acceptance job is a ~38-minute cold build and test of
+# the API/state suite and is not a required check, so it runs nightly (ci.yml
+# calls this workflow), on workflow_dispatch, and on pull requests labelled
+# run-customer-platform. The one-minute MCP Tasks PostgreSQL job still runs on every matching
+# pull request.
 jobs:
   acceptance:
-    if: github.event.pull_request.draft != true
+    if: ${{ github.event.pull_request.draft != true && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-customer-platform')) && !(github.event.action == 'labeled' && github.event.label.name != 'run-customer-platform') }}
     runs-on: ubuntu-latest
     # Cold builds of the complete API/state suite now need about forty
     # minutes (39 on a passing run, 2026-11-18); a slower runner hit 45 twice
@@ -104,7 +113,7 @@ jobs:
 
   mcp-task-postgres:
     name: MCP durable Tasks PostgreSQL integration
-    if: github.event.pull_request.draft != true
+    if: ${{ github.event.pull_request.draft != true && !(github.event.action == 'labeled' && github.event.label.name != 'run-customer-platform') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -126,11 +135,11 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: cmd/gregale/templates/mcp-node/package-lock.json
+          cache-dependency-path: cmd/gregale/templates/mcp-node-tasks/package-lock.json
       - name: Install MCP starter dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund --prefix cmd/gregale/templates/mcp-node
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix cmd/gregale/templates/mcp-node-tasks
       - name: Verify durable task SQL against PostgreSQL 16
         env:
           MCP_TASKS_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
           MCP_TASKS_REQUIRE_POSTGRES: "1"
-        run: npm run test:postgres --prefix cmd/gregale/templates/mcp-node
+        run: npm run test:postgres --prefix cmd/gregale/templates/mcp-node-tasks

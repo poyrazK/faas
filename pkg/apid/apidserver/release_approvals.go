@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/schedule"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
@@ -87,6 +88,11 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, p)
 		return
 	}
+	if req.RequirePassingSandboxSuite != nil && *req.RequirePassingSandboxSuite {
+		if !s.checkRequiredSandboxSuitePolicy(w, r, acct, app) {
+			return
+		}
+	}
 	channelIDs, problem := s.releaseApprovalChannelIDs(r.Context(), acct.ID, req.NotifyChannels)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -96,6 +102,7 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		AppID: app.ID, AccountID: app.AccountID, RequiredApprovals: req.RequiredApprovals, AfterStage: req.AfterStage,
 		TimeoutMinutes: req.TimeoutMinutes, Approvers: req.Approvers, AllowSelfApproval: req.AllowSelfApproval,
 		NotifyChannelIDs: channelIDs, UpdatedBy: releaseApprovalActorLabel(r, acct),
+		RequirePassingSandboxSuite: req.RequirePassingSandboxSuite,
 	}, time.Now())
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "save release approval policy",
@@ -107,8 +114,33 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		"app": app.Slug, "required_approvals": view.RequiredApprovals, "after_stage": view.AfterStage,
 		"timeout_minutes": view.TimeoutMinutes, "approvers": view.Approvers, "allow_self_approval": view.AllowSelfApproval,
 		"notify_channels": view.NotifyChannels, "actor": view.UpdatedBy,
+		"require_passing_sandbox_suite": view.RequirePassingSandboxSuite,
 	}))
 	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *server) checkRequiredSandboxSuitePolicy(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) bool {
+	if !apiSandboxHTTPSourceApp(app) || app.PreviewOfSlug != "" || !s.apiSandboxWorkerEnabled() {
+		api.WriteProblem(w, api.ErrValidation("required sandbox suites need an app with API sandbox support"))
+		return false
+	}
+	if !s.allowAPISandboxProvisioning(w, r, acct, app) {
+		return false
+	}
+	store, ok := s.sandboxSuiteStore(w)
+	if !ok {
+		return false
+	}
+	suite, err := store.GetAPISandboxSuite(r.Context(), app.ID)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not verify the app's sandbox suite"))
+		return false
+	}
+	if len(suite.ScenarioIDs) == 0 {
+		api.WriteProblem(w, api.ErrValidation("save a regression suite for this app before requiring a passing suite"))
+		return false
+	}
+	return true
 }
 
 // executionModeApprovalProblem refuses moving an app that requires release
@@ -1004,17 +1036,26 @@ func (s *server) releaseApprovalCanaryProblem(ctx context.Context, app state.App
 	if !approval.TakesTrafficWithoutCanary(req) {
 		return nil
 	}
-	if p := s.releaseGateWatchProblem(ctx, app, req); p != nil {
-		return p
+	problem := s.releaseGateWatchProblem(ctx, app, req)
+	if problem == nil {
+		required, err := approval.CanaryRequired(ctx, s.store, app, req.Scope, req.Environment)
+		if err != nil {
+			logCustomerFailure(s.log, "read release approval policy", err)
+			return api.ErrInternal("Gregale could not read this app's release approval policy.").WithHint("Retry in a moment.")
+		}
+		if !required {
+			return nil
+		}
+		problem = api.ErrReleaseApprovalCanaryRequired(app.Slug)
 	}
-	required, err := approval.CanaryRequired(ctx, s.store, app, req.Scope, req.Environment)
-	if err != nil {
-		logCustomerFailure(s.log, "read release approval policy", err)
-		return api.ErrInternal("Gregale could not read this app's release approval policy.").WithHint("Retry in a moment.")
+	// A managed cache's resize or update must cut over at once (ADR-1446
+	// amendment of 2026-11-23), so neither gates nor approvals can demand a
+	// canary of it. Checked last so ordinary deploys pay no extra lookup.
+	if release.IsManagedCache(ctx, s.store, s.log, app.ID) {
+		return nil
 	}
-	if required {
+	if problem.Code == api.CodeReleaseApprovalCanaryRequired {
 		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
-		return api.ErrReleaseApprovalCanaryRequired(app.Slug)
 	}
-	return nil
+	return problem
 }

@@ -15,6 +15,7 @@ func pollProjectDeployment(ctx context.Context, client rolloutStatusClient, buil
 	phase := "deployment"
 	remembered := build.Configuration
 	backoff := time.Second
+	var steps projectBuildStepPoller
 	for {
 		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		dep, err := client.GetDeployment(callCtx, build.DeploymentID)
@@ -32,7 +33,18 @@ func pollProjectDeployment(ctx context.Context, client rolloutStatusClient, buil
 				last.Configuration = remembered
 			}
 			phase = waiting
-			projectWaitProgressFrom(ctx).observe(build, dep, waiting, done, failure)
+			progress := projectWaitProgressFrom(ctx)
+			var logs []api.LogExcerpt
+			if progress != nil && projectDeploymentStage(dep, waiting, done, failure) == "failed" {
+				// Read before observe takes its lock (ADR-20261123230000).
+				if logClient, ok := client.(failureLogClient); ok {
+					logs = recentFailureLogs(ctx, logClient, build.Slug, build.DeploymentID)
+				}
+			}
+			progress.observe(build, dep, waiting, done, failure, logs)
+			if !done {
+				steps.poll(ctx, client, progress, build, dep, waiting)
+			}
 			if done {
 				return projectApplyWaitResult{deployment: last, ok: true, err: failure}
 			}

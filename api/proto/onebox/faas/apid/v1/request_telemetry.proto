@@ -75,6 +75,12 @@ service RequestTelemetry {
   // whose apid answers Unimplemented leaves its raw rows uncounted, so apid
   // counts them as before.
   rpc AddRequestAnalyticsRollups(AddRequestAnalyticsRollupsRequest) returns (AddRequestAnalyticsRollupsResponse);
+
+  // AddInstanceRouteMinutes stores each instance's route activity per
+  // minute (ADR-20261121170000), counted by the gateway for apps with the
+  // route_resource_peaks flag. Best-effort: the gateway sends a batch once
+  // and does not resend it, so a lost answer never counts twice.
+  rpc AddInstanceRouteMinutes(AddInstanceRouteMinutesRequest) returns (AddInstanceRouteMinutesResponse);
 }
 
 // RequestIDLookups lets apid resolve request IDs kept on compute nodes
@@ -466,6 +472,10 @@ message TelemetryCoverage {
   // its analytics part apart from raw delivery (ADR-20261103113952
   // amendment 6); an older gateway leaves it unset.
   AnalyticsCoverage analytics = 12;
+  // The gateway's last heartbeat before it exits, sent only after every row
+  // was delivered or journaled: its node's next boot continues the coverage
+  // instead of starting a new one. An older gateway never sets it.
+  bool clean_stop = 13;
 }
 message AnalyticsCoverage {
   // Whether the gateway counts every request it records.
@@ -483,3 +493,31 @@ message TelemetryAppGap {
   int32 analytics_pending_count = 5;
 }
 message TelemetryCoverageReceipt { bool recorded = 1; }
+
+// InstanceRouteMinute is one route's requests on one instance in one UTC
+// minute. busy_ms is the time requests of the route were in flight within
+// the minute, summed over concurrent requests.
+message InstanceRouteMinute {
+  string account_id = 1;
+  string app_id = 2;
+  string instance_id = 3;
+  int64 minute_unix = 4;
+  string route = 5;
+  string method = 6;
+  int64 requests = 7;
+  int64 busy_ms = 8;
+  int32 max_latency_ms = 9;
+}
+
+message AddInstanceRouteMinutesRequest {
+  string node_id = 1;
+  repeated InstanceRouteMinute rows = 2;
+}
+
+message AddInstanceRouteMinutesResponse {
+  int64 accepted = 1;
+  // Rows of apps without the flag, left out.
+  int64 disabled = 2;
+  // Rows refused for their values, left out.
+  int64 invalid = 3;
+}

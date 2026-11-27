@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -156,6 +157,95 @@ func TestStorageLimitRefusal(t *testing.T) {
 	} {
 		if got := storageLimitRefusal(tc.err); got != tc.want {
 			t.Errorf("%s: %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// Neon publishes a branch's logical size only after its compute suspends:
+// on 2026-11-22 a 2 MB write was still unreported 20 minutes later on a
+// compute that stayed active, and sizes appeared 76 s and 287 s after a
+// compute went idle. The probe suspends the compute and waits well past that.
+func TestStorageCapProbeWaitsOutNeonsSizeLag(t *testing.T) {
+	const measuredLag = 287 * time.Second
+	if storageCapProbeSizeWait < 2*measuredLag {
+		t.Fatalf("storageCapProbeSizeWait = %v, want at least twice the measured %v", storageCapProbeSizeWait, measuredLag)
+	}
+}
+
+type suspendFixture struct {
+	mu        sync.Mutex
+	state     string
+	busy      int
+	suspends  int
+	failCalls bool
+}
+
+func suspendProvider(t *testing.T, f *suspendFixture) *Provider {
+	t.Helper()
+	const project = "/api/v2/projects/quiet-river-12345678"
+	return testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		switch {
+		case r.URL.Path == project && r.Method == http.MethodGet:
+			writeResponse(t, w, http.StatusOK, map[string]any{"project": map[string]any{"id": "quiet-river-12345678"}})
+		case r.URL.Path == project+"/branches":
+			writeResponse(t, w, http.StatusOK, map[string]any{"branches": []map[string]any{
+				{"id": "br-main-123", "default": true, "current_state": "ready"},
+				{"id": "br-restore-123", "default": false, "current_state": "ready"},
+			}})
+		case r.URL.Path == project+"/endpoints":
+			writeResponse(t, w, http.StatusOK, map[string]any{"endpoints": []map[string]any{
+				{"id": "ep-main-123", "branch_id": "br-main-123", "type": "read_write", "current_state": f.state},
+				{"id": "ep-restore-123", "branch_id": "br-restore-123", "type": "read_write", "current_state": "active"},
+			}})
+		case r.URL.Path == project+"/endpoints/ep-main-123/suspend" && r.Method == http.MethodPost:
+			f.suspends++
+			if f.busy > 0 {
+				f.busy--
+				writeResponse(t, w, http.StatusLocked, map[string]any{"code": "", "message": "project already has running conflicting operations, scheduling of new ones is prohibited"})
+				return
+			}
+			if f.failCalls {
+				writeResponse(t, w, http.StatusServiceUnavailable, nil)
+				return
+			}
+			f.state = "idle"
+			writeResponse(t, w, http.StatusOK, map[string]any{"endpoint": map[string]any{"id": "ep-main-123", "current_state": "idle"}})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			writeResponse(t, w, http.StatusNotFound, nil)
+		}
+	}))
+}
+
+// The probe suspends the database's own compute, never another branch's,
+// leaves an idle one alone, and waits out a busy project.
+func TestSuspendForSizeReport(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		state     string
+		busy      int
+		failCalls bool
+		want      error
+		suspends  int
+	}{
+		"active compute":      {state: "active", suspends: 1},
+		"idle compute":        {state: "idle", suspends: 0},
+		"busy project":        {state: "active", busy: 2, suspends: 3},
+		"suspend refused":     {state: "active", failCalls: true, want: managedpostgres.ErrUnavailable, suspends: 1},
+		"busy past the bound": {state: "active", busy: endpointHoldBusyAttempts + 1, want: managedpostgres.ErrUnavailable, suspends: endpointHoldBusyAttempts},
+	} {
+		f := &suspendFixture{state: tc.state, busy: tc.busy, failCalls: tc.failCalls}
+		err := suspendProvider(t, f).suspendForSizeReport(ctx, "quiet-river-12345678/br-main-123")
+		if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
+			t.Errorf("%s: err = %v, want %v", name, err, tc.want)
+		}
+		f.mu.Lock()
+		suspends := f.suspends
+		f.mu.Unlock()
+		if suspends != tc.suspends {
+			t.Errorf("%s: %d suspend requests, want %d", name, suspends, tc.suspends)
 		}
 	}
 }

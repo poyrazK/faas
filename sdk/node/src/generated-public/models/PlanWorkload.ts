@@ -13,6 +13,7 @@ import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
+import type { WorkloadUses } from './WorkloadUses.js';
 /**
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
@@ -38,6 +39,10 @@ export type PlanWorkload = {
    * Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:`. Omitted means public.
    */
   visibility?: 'internal';
+  /**
+   * Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none.
+   */
+  access?: 'public' | 'key';
   /**
    * Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory.
    */
@@ -81,6 +86,15 @@ export type PlanWorkload = {
    * Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment.
    */
   depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
+  uses?: WorkloadUses;
+  /**
+   * Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined by spaces). Omitted when it declares none.
+   */
+  release_command?: string;
+  /**
+   * Where release_command is declared: a Compose service the workload waits for with service_completed_successfully, a Procfile release: process, or gregale.yaml release.command.
+   */
+  release_command_source?: string;
   /**
    * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project`; existing workloads retain their persisted policy when the extension is omitted.
    */

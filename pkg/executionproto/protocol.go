@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runenv"
+	"github.com/onebox-faas/faas/pkg/runfile"
 )
 
 const (
@@ -97,18 +99,26 @@ var (
 // vmmd adapter decrypts them in host memory immediately before this request is
 // sent to the already-restored disposable guest.
 type Request struct {
-	Profile     api.ExecutionProfile     `json:"profile,omitempty"`
-	Version     uint16                   `json:"version"`
-	ExecutionID string                   `json:"execution_id"`
-	Runtime     api.ExecutionRuntime     `json:"runtime"`
-	Source      string                   `json:"source,omitempty"`
-	Entrypoint  string                   `json:"entrypoint,omitempty"`
-	Files       []api.ExecutionFile      `json:"files,omitempty"`
-	OutputFiles []string                 `json:"output_files,omitempty"`
-	Input       json.RawMessage          `json:"input"`
-	TimeoutMS   int                      `json:"timeout_ms"`
-	MaxOutput   int                      `json:"max_output_bytes"`
-	NetworkMode api.ExecutionNetworkMode `json:"network_mode"`
+	EnvironmentID    string                   `json:"environment_id,omitempty"`
+	Class            api.ExecutionClass       `json:"execution_class,omitempty"`
+	InputFiles       []runfile.Descriptor     `json:"input_files,omitempty"`
+	StoredOutputs    []runfile.Descriptor     `json:"stored_outputs,omitempty"`
+	MaxArtifactBytes int64                    `json:"max_artifact_bytes,omitempty"`
+	Manifest         *FileManifest            `json:"-"`
+	HostFiles        *HostFileIO              `json:"-"`
+	GuestFiles       *GuestFileIO             `json:"-"`
+	Profile          api.ExecutionProfile     `json:"profile,omitempty"`
+	Version          uint16                   `json:"version"`
+	ExecutionID      string                   `json:"execution_id"`
+	Runtime          api.ExecutionRuntime     `json:"runtime"`
+	Source           string                   `json:"source,omitempty"`
+	Entrypoint       string                   `json:"entrypoint,omitempty"`
+	Files            []api.ExecutionFile      `json:"files,omitempty"`
+	OutputFiles      []string                 `json:"output_files,omitempty"`
+	Input            json.RawMessage          `json:"input"`
+	TimeoutMS        int                      `json:"timeout_ms"`
+	MaxOutput        int                      `json:"max_output_bytes"`
+	NetworkMode      api.ExecutionNetworkMode `json:"network_mode"`
 	// OutboundEnabled exposes the short-lived loopback helper only when a
 	// scheduler restored this Run with at least one explicit integration grant.
 	// No grant IDs or bearer material cross the guest boundary.
@@ -264,7 +274,16 @@ func RequestFromResolvedExecution(id string, req api.ResolvedExecutionRequest) R
 	} else {
 		version = ProfileVersion
 	}
+	if len(req.StoredInputs)+len(req.StoredOutputs) > 0 {
+		version = FileVersion
+	}
+	if req.EnvironmentID != "" || req.Limits.Class == api.ExecutionClassExtended {
+		version = ClassVersion
+	}
 	return Request{
+		EnvironmentID: req.EnvironmentID,
+		Class:         req.Limits.Class,
+		InputFiles:    descriptors(req.StoredInputs), StoredOutputs: descriptors(req.StoredOutputs), MaxArtifactBytes: req.Limits.MaxArtifactBytes,
 		Profile:     profile,
 		Version:     version,
 		ExecutionID: id,
@@ -293,13 +312,19 @@ type ErrorFrame struct {
 // called; these checks defend the guest boundary if a future caller bypasses
 // apid or a stale scheduler sends malformed state.
 func (r Request) Validate() error {
-	if r.Version != Version && r.Version != ArtifactVersion && r.Version != ProfileVersion {
+	if err := r.validateFiles(); err != nil {
+		return err
+	}
+	if r.EnvironmentID != "" && (r.Version < ClassVersion || !runenv.ValidID(r.EnvironmentID) || r.Profile.Normalized() != api.ExecutionProfileStandard) {
+		return ErrInvalidRequest
+	}
+	if r.Version != Version && r.Version != ArtifactVersion && r.Version != ProfileVersion && r.Version != FileVersion && r.Version != ClassVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidRequest, r.Version)
 	}
 	if len(r.OutputFiles) != 0 && r.Version < ArtifactVersion {
 		return fmt.Errorf("%w: artifacts require version 2", ErrInvalidRequest)
 	}
-	if err := r.Profile.Validate(r.Runtime); err != nil || (r.Profile.Normalized() != api.ExecutionProfileStandard && r.Version != ProfileVersion) {
+	if err := r.Profile.Validate(r.Runtime); err != nil || (r.Profile.Normalized() != api.ExecutionProfileStandard && r.Version < ProfileVersion) {
 		return fmt.Errorf("%w: profile requires compatible runtime and protocol v3", ErrInvalidRequest)
 	}
 	if err := api.ValidateExecutionOutputFiles(r.OutputFiles); err != nil {
@@ -324,7 +349,7 @@ func (r Request) Validate() error {
 	if len(r.Input) > api.ExecutionPlaintextFieldMaxBytes || !json.Valid(r.Input) {
 		return fmt.Errorf("%w: input is invalid or too large", ErrInvalidRequest)
 	}
-	if r.TimeoutMS < api.ExecutionTimeoutMinMS || r.TimeoutMS > api.ExecutionTimeoutHardMaxMS {
+	if !r.Class.ValidTimeout(r.TimeoutMS) || r.Class == api.ExecutionClassExtended && r.Version < ClassVersion {
 		return fmt.Errorf("%w: timeout_ms is outside the hard range", ErrInvalidRequest)
 	}
 	if r.MaxOutput < api.ExecutionOutputMinBytes || r.MaxOutput > api.ExecutionOutputHardMaxBytes {
@@ -439,6 +464,11 @@ func (c *Client) ExecuteWithOutputAndBroker(ctx context.Context, req Request, re
 		return zero, err
 	}
 
+	if err := c.sendInputs(ctx, req); err != nil {
+		return zero, err
+	}
+	transfers := &outputTransfer{req: req}
+	defer transfers.close()
 	var out Result
 	var brokerMu sync.Mutex
 	var writeMu sync.Mutex
@@ -466,6 +496,10 @@ func (c *Client) ExecuteWithOutputAndBroker(ctx context.Context, req Request, re
 			return zero, err
 		}
 		switch frameType {
+		case FrameOutputStart, FrameOutputChunk, FrameOutputEnd:
+			if err := transfers.frame(ctx, frameType, frameBody); err != nil {
+				return zero, err
+			}
 		case FrameStdout:
 			if len(out.Stdout)+len(out.Stderr)+len(frameBody) > req.MaxOutput {
 				return zero, ErrOutputLimitExceeded
@@ -560,6 +594,9 @@ func (c *Client) ExecuteWithOutputAndBroker(ctx context.Context, req Request, re
 			}
 			if out.Status == api.ExecutionStatusSucceeded && !api.ExecutionArtifactsMatch(req.OutputFiles, out.Artifacts) {
 				return zero, fmt.Errorf("%w: artifact selection mismatch", ErrInvalidResult)
+			}
+			if err := transfers.validate(out); err != nil {
+				return zero, err
 			}
 			return out, nil
 		case FrameError:
@@ -681,6 +718,7 @@ func ServeWithBroker(ctx context.Context, conn net.Conn, handler HandlerWithBrok
 	defer cancel()
 	stdout := &OutputWriter{conn: conn, max: req.MaxOutput, mu: &streamMu, used: &used, usedMu: &usedMu, ctx: outCtx, frameType: FrameStdout}
 	stderr := &OutputWriter{conn: conn, max: req.MaxOutput, mu: &streamMu, used: &used, usedMu: &usedMu, ctx: outCtx, frameType: FrameStderr}
+	req.GuestFiles = guestFiles(outCtx, conn, req, &streamMu)
 	broker := &guestOutboundBroker{conn: conn, ctx: outCtx, writeMu: &streamMu}
 	result, handlerErr := handler(outCtx, req, stdout, stderr, broker)
 	if handlerErr != nil {
@@ -845,6 +883,9 @@ func readFrame(ctx context.Context, conn net.Conn) (uint32, []byte, error) {
 	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
 	if bodyLen > MaxFrameBytes {
 		return zero, nil, fmt.Errorf("%w: %d bytes", ErrFrameTooLarge, bodyLen)
+	}
+	if frameType >= FrameInputChunk && frameType <= FrameOutputEnd && bodyLen > api.ExecutionFileStreamChunkBytes+4 {
+		return zero, nil, ErrFrameTooLarge
 	}
 	body := make([]byte, int(bodyLen))
 	if _, err := io.ReadFull(conn, body); err != nil {

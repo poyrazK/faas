@@ -34,13 +34,18 @@ func (p *S3) copyMultipartPart(ctx context.Context, sourceBucket, bucket string,
 	if err := r.Conditions.Check(source); err != nil {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, err)
 	}
-	out, err := p.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
+	in := &s3.UploadPartCopyInput{
 		Bucket: aws.String(bucket), Key: aws.String(r.Key), UploadId: aws.String(r.ProviderUploadID),
 		PartNumber: aws.Int32(r.PartNumber), CopySource: aws.String(trackedCopySource(sourceBucket, r.SourceKey, source)),
 		CopySourceIfMatch: trackedCopySourceMatch(source, r.Conditions), CopySourceIfNoneMatch: stringPtrOrNil(r.Conditions.IfNoneMatch),
 		CopySourceIfModifiedSince: r.Conditions.IfModifiedSince, CopySourceIfUnmodifiedSince: r.Conditions.IfUnmodifiedSince,
 		CopySourceRange: stringPtrOrNil(r.Range.String()),
-	}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
+	}
+	if p.copySourceConditionsUnsupported() {
+		// See copySourceConditionsUnsupported; r.Conditions were checked above.
+		in.CopySourceIfMatch, in.CopySourceIfNoneMatch, in.CopySourceIfModifiedSince, in.CopySourceIfUnmodifiedSince = nil, nil, nil, nil
+	}
+	out, err := p.client.UploadPartCopy(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return CopyObjectResult{}, trackedCopyError(err)
 	}
@@ -48,6 +53,10 @@ func (p *S3) copyMultipartPart(ctx context.Context, sourceBucket, bucket string,
 		return CopyObjectResult{}, ErrUnavailable
 	}
 	if !validCopyResponseSource(out.ResultMetadata, aws.ToString(out.CopySourceVersionId), source.ProviderVersionID) {
+		return CopyObjectResult{}, ErrUnavailable
+	}
+	if p.copySourceConditionsUnsupported() && r.Range == nil && !copyPreservedSnapshot(source, false, aws.ToString(out.CopyPartResult.ETag)) {
+		// A whole-object part copy of a single-part source returns its MD5.
 		return CopyObjectResult{}, ErrUnavailable
 	}
 	d := objectchecksum.Digest{Policy: r.Checksum}

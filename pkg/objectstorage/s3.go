@@ -39,6 +39,30 @@ type S3 struct {
 	signer                 *s3.PresignClient
 	region                 string
 	origins                []string
+	// unversioned marks a BackendVersioningUnsupported backend: listed
+	// version IDs read as "null" and versioning is never enabled.
+	unversioned bool
+}
+
+// listedVersionID is the version ID a listing reports for one stored object
+// version. On an unversioned backend every stored object is the "null"
+// version, whatever opaque ID the provider printed; delete markers keep
+// their IDs, since an unversioned bucket never has one.
+func (p *S3) listedVersionID(id string) string {
+	if p.unversioned {
+		return "null"
+	}
+	return id
+}
+
+// listVersionMarker is the version-ID marker a listing sends. The "null"
+// version an unversioned backend reports is not an ID the provider knows, and
+// each key there has one version, so the key marker alone resumes the page.
+func (p *S3) listVersionMarker(marker string) *string {
+	if p.unversioned && marker == "null" {
+		return nil
+	}
+	return stringPtrOrNil(marker)
 }
 
 func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
@@ -52,7 +76,8 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 		attribute.String("gregale.binding.type", "object_storage"),
 		attribute.String("gregale.binding.provider", "s3"),
 	)
-	httpClient.Transport = s3ResponseTransport{base: httpClient.Transport}
+	unversioned := c.Versioning == BackendVersioningUnsupported
+	httpClient.Transport = s3ResponseTransport{base: httpClient.Transport, unversioned: unversioned}
 	client := s3.New(s3.Options{
 		Region:                     c.S3Region,
 		BaseEndpoint:               aws.String(c.Endpoint),
@@ -66,6 +91,7 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 	p := &S3{ownedNodeReceipts: c.OwnedNodeReceipts, client: client, signer: s3.NewPresignClient(client), region: c.S3Region, origins: append([]string(nil), c.AllowedOrigins...), encryption: cloneEncryptionConfig(c.Encryption)}
 	p.ownedNodeSettlements = c.OwnedNodeSettlements
 	p.ownedNodeUsageCounters = c.OwnedNodeUsageCounters
+	p.unversioned = unversioned
 	if len(c.Encryption.Keys) != 0 {
 		p.kms = kms.New(kms.Options{Region: c.S3Region, BaseEndpoint: stringPtrOrNil(c.Encryption.KMSEndpoint), Credentials: client.Options().Credentials, HTTPClient: encryptionKeyReadClient{base: httpClient}, RetryMaxAttempts: 1})
 	}

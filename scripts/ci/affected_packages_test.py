@@ -29,6 +29,7 @@ PKGS = {
 
 class SelectTest(unittest.TestCase):
     def test_docs_only_selects_nothing(self):
+        # No package here reads docs/; TextContractTest covers the ones that do.
         everything, changed, vet, test = ap.select(["docs/quickstart.md", "README.md"], PKGS)
         self.assertFalse(everything)
         self.assertEqual(changed, [])
@@ -96,6 +97,16 @@ class TextContractTest(unittest.TestCase):
                 self.assertEqual(changed, want)
                 self.assertEqual(test, want)
 
+    def test_text_inputs_do_not_run_the_invariants(self):
+        # tests/property imports pkg/sched; a text file its tests read is no
+        # code change for the invariants to check. A code change still is.
+        inputs = {"pkg/sched": {"docs/"}}
+        _, changed, _, test = ap.select(["docs/crons.md"], PKGS, inputs)
+        self.assertEqual(changed, ["pkg/sched"])
+        self.assertEqual(test, ["pkg/sched"])
+        _, _, _, test = ap.select(["docs/crons.md", "pkg/sched/x.go"], PKGS, inputs)
+        self.assertEqual(test, ["pkg/sched", "tests/property"])
+
     def test_literal_path(self):
         self.assertEqual(ap.literal_path(['"scripts"', '"ci"', '"unit_deploy.sh"']), "scripts/ci/unit_deploy.sh")
         self.assertEqual(ap.literal_path(['"deploy"', '"roles"', "role", '"main.yml"']), "deploy/roles/")
@@ -146,6 +157,23 @@ class TextContractTest(unittest.TestCase):
             for path in paths:
                 with self.subTest(pkg=pkg, path=path):
                     self.assertTrue(ap.reads(path, inputs), path)
+
+    def test_docs_tests_run_when_the_docs_they_read_change(self):
+        # The docs search eval regression: a docs-only change selected no
+        # package, so pkg/mcpmanagement's eval did not run on it.
+        repo = str(pathlib.Path(__file__).parents[2])
+        for pkg, paths in (
+            ("pkg/mcpmanagement", ("docs/customer-pages.json", "docs/auth.md", "docs/runtimes/node24.md")),
+            ("pkg/docsindex", ("docs/customer-pages.json", "docs/redis.md")),
+            ("pkg/gregalemanifest", ("docs/crons.md",)),
+            ("pkg/legal", ("docs/DPA.md",)),
+        ):
+            self.assertIn(pkg, ap.TEXT_CONTRACT_PACKAGES)
+            inputs = ap.text_inputs(pkg, repo)
+            for path in paths:
+                with self.subTest(pkg=pkg, path=path):
+                    self.assertTrue(ap.reads(path, inputs), path)
+        self.assertFalse(ap.reads("docs/auth.md", ap.text_inputs("pkg/legal", repo)))
 
 
 class ShardTest(unittest.TestCase):

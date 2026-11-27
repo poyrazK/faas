@@ -21,6 +21,12 @@ import (
 // CapEnforcementEnv selects off, shadow (the default) or on.
 const CapEnforcementEnv = "FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT"
 
+// CapNoticeWaiverEnv lets compute cap enforcement run without the cap notice
+// email when it is exactly 1 (ADR-20261025094915 amendment 2026-11-22). The
+// owner waives the warning while production has no customers and no internal
+// mail. A database reaching its ceiling is then held without an email.
+const CapNoticeWaiverEnv = "FAAS_MANAGED_POSTGRES_CAP_NOTICE_WAIVED"
+
 type CapEnforcementMode string
 
 const (
@@ -366,6 +372,9 @@ type CapEnforcerOptions struct {
 	// election move its databases' egress hold to twice the allowance;
 	// otherwise the election would make database egress free.
 	EgressBillingLive bool
+	// HistoryMode runs the restore history limit pass (ADR-20261123062111
+	// D2): off (the zero value), shadow or on.
+	HistoryMode CapEnforcementMode
 }
 
 // EgressAllowance is each of a subject's databases' own monthly egress
@@ -586,6 +595,22 @@ type CapSweepSummary struct {
 	EgressQuotasShadowed  int
 	EgressQuotasUnchanged int
 	EgressQuotasFailed    int
+
+	// The restore history limit (ADR-20261123062111 D2), counted apart like
+	// the storage pass: subjects swept, limited, without a plan allowance,
+	// on a provider that cannot change the window, or failed; scopes whose
+	// window was set, only logged, already right, or left alone because it
+	// matched neither the spec nor the limited window.
+	HistoryMode            CapEnforcementMode
+	HistorySubjects        int
+	HistoryLimitedSubjects int
+	HistoryUncapped        int
+	HistoryUnsupported     int
+	HistoryFailed          int
+	HistoryScopesApplied   int
+	HistoryScopesShadowed  int
+	HistoryScopesUnchanged int
+	HistoryScopesDrift     int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -608,6 +633,8 @@ type CapEnforcer struct {
 
 	planExcessDelete CapEnforcementMode
 	planDelete       PlanExcessDeleteFunc
+
+	historyMode CapEnforcementMode
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -658,6 +685,13 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	default:
 		return nil, ErrInvalid
 	}
+	switch options.HistoryMode {
+	case "":
+		options.HistoryMode = CapEnforcementOff
+	case CapEnforcementOff, CapEnforcementShadow, CapEnforcementOn:
+	default:
+		return nil, ErrInvalid
+	}
 	if options.BatchSize == 0 {
 		options.BatchSize = defaultUsageBatchSize
 	}
@@ -676,6 +710,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		batchSize: options.BatchSize, planExcess: options.PlanExcessMode, planNotify: options.NotifyPlanExcess,
 		egress: options.Egress, egressBillingLive: options.EgressBillingLive,
 		planExcessDelete: options.PlanExcessDeleteMode, planDelete: options.DeletePlanExcess,
+		historyMode: options.HistoryMode,
 	}, nil
 }
 
@@ -685,13 +720,14 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 	ctx = WithBackgroundRequests(ctx)
 	summary.Mode, summary.StorageMode, summary.PlanExcessMode = e.mode, e.storageMode, e.planExcess
 	summary.PlanExcessDeleteMode = e.planExcessDelete
+	summary.HistoryMode = e.historyMode
 	defer func() {
 		summary.CompletedAt = e.now().UTC()
 		if e.observe != nil {
 			e.observe(summary)
 		}
 	}()
-	if e.mode == CapEnforcementOff && e.storageMode == CapEnforcementOff {
+	if e.mode == CapEnforcementOff && e.storageMode == CapEnforcementOff && e.historyMode == CapEnforcementOff {
 		return summary, nil
 	}
 	accounts, err := e.liveDatabasesBySubject(ctx)
@@ -731,6 +767,18 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 			if err != nil {
 				summary.StorageFailed++
 				e.logger.Warn("managed postgres storage cap sweep failed", "subject_id", accountID, "error", err)
+			}
+		}
+		if e.historyMode != CapEnforcementOff {
+			// Independent of both passes above, as they are of each other.
+			err := limitsErr
+			summary.HistorySubjects++
+			if err == nil {
+				err = e.enforceHistoryLimit(ctx, accountID, accounts[accountID], limits, &summary)
+			}
+			if err != nil {
+				summary.HistoryFailed++
+				e.logger.Warn("managed postgres history limit sweep failed", "subject_id", accountID, "error", err)
 			}
 		}
 	}

@@ -35,11 +35,12 @@ func TestMCPPrivateOnboardingEachRuntime(t *testing.T) {
 			if config.Auth.Mode != "external-oauth" || config.Auth.Resource != "https://mcp.example.com/mcp" || strings.Join(config.Auth.Scopes, ",") != "mcp:tools,mcp:read" {
 				t.Fatalf("private config: %+v", config.Auth)
 			}
-			if config.Auth.ToolScopes["build_report"] == nil || config.Auth.ResourceScopes["customer://records/{recordId}"] == nil || config.Auth.PromptScopes["summarize"] == nil {
+			if config.Auth.ToolScopes["add"] == nil || config.Auth.ResourceScopes["customer://records/{recordId}"] == nil || config.Auth.PromptScopes["summarize"] == nil {
 				t.Fatal("lost explicit catalog allowlists")
 			}
-			if config.Tasks == nil || *config.Tasks.Enabled {
-				t.Fatal("Tasks unexpectedly enabled")
+			// The plain starters have no Tasks block; Tasks stacks use -tasks.
+			if config.Tasks != nil {
+				t.Fatalf("Tasks unexpectedly enabled or declared: %+v", config.Tasks)
 			}
 			if !strings.Contains(out.String(), "--token-env MCP_ACCESS_TOKEN") || strings.Contains(out.String(), "uses public access") {
 				t.Fatalf("incorrect next steps: %s", out.String())
@@ -208,6 +209,19 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 				if runtime == "go" && manifest.Hosting != nil && manifest.Hosting.Start != "" {
 					t.Fatalf("Go %s role declares start %q", role, manifest.Hosting.Start)
 				}
+				// MCP Tasks prod probe 2026-11-22: the schema must exist before
+				// any role starts, and only web's release can apply it.
+				wantRelease := map[string]string{"node": "node tasks-migrate.js apply", "python": "python task_schema.py apply", "go": "/app/out tasks-migrate apply"}[runtime]
+				gotRelease := ""
+				if manifest.Release != nil {
+					gotRelease = manifest.Release.Command
+				}
+				if role != "web" {
+					wantRelease = ""
+				}
+				if gotRelease != wantRelease {
+					t.Fatalf("%s %s release = %q, want %q", runtime, role, gotRelease, wantRelease)
+				}
 				if role == "web" {
 					if manifest.Worker != nil || manifest.Hosting == nil || manifest.Hosting.Health != "/healthz" {
 						t.Fatal("web configured as worker")
@@ -241,12 +255,25 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 			if !bytes.Contains(guide, []byte("--token-env MCP_ACCESS_TOKEN")) || !bytes.Contains(guide, []byte("--observer-app reports-observer --min 0")) {
 				t.Fatal("private or scale-to-zero setup guidance missing")
 			}
-			if runtime == "node" {
-				if !bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
-					t.Fatal("Node release guidance missing")
+			for _, attach := range []string{"attach reports-db reports-web --env MCP_TASK_MIGRATION_DATABASE_URL --access migration", "attach reports-db reports-observer --env DATABASE_URL --access read_only"} {
+				if !bytes.Contains(guide, []byte(attach)) {
+					t.Fatalf("guide lacks %q", attach)
 				}
-			} else if !bytes.Contains(guide, []byte("manual rollout")) || bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
-				t.Fatal("Go/Python guide recommends an unsupported automated release")
+			}
+			// The --create-only reservations list web first for every runtime;
+			// compare the real deploys. Every runtime's web release applies the
+			// schema (Go runs its compiled binary), so web deploys first.
+			webFirst := bytes.Index(guide, []byte("deploy --path ./web --name reports-web")) < bytes.Index(guide, []byte("deploy --path ./worker --name reports-worker"))
+			if !webFirst {
+				t.Fatalf("%s guide deploys web first = %v", runtime, webFirst)
+			}
+			// Every runtime's workers release through the gated deploy
+			// (ADR-20261123160000); Go/Python recovery stays manual.
+			if !bytes.Contains(guide, []byte("use `gregale mcp server tasks deploy`")) {
+				t.Fatalf("%s release guidance missing", runtime)
+			}
+			if (runtime != "node") != bytes.Contains(guide, []byte("CLI runs the release gate itself")) {
+				t.Fatalf("%s guide misstates who gates the release", runtime)
 			}
 		})
 	}

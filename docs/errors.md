@@ -8,9 +8,33 @@ command when one is known. `type` defaults to `about:blank` when no specific
 problem URI is supplied. `instance` identifies the specific occurrence when
 the caller supplies an occurrence URI.
 
+## What an error looks like
+
+An error response looks like this:
+
+```json
+{
+  "type": "about:blank",
+  "title": "App limit reached",
+  "status": 403,
+  "code": "plan_limit_apps",
+  "detail": "free plan allows 1 deployed app(s); you have 1.",
+  "limit": 1,
+  "observed": 1,
+  "docs_url": "https://gregale.dev/docs/plans#at-a-glance"
+}
+```
+
+A limit error carries the plan's `limit` and the `observed` value. Some codes
+add fields of their own, such as `retry_after_seconds`.
+
 The [error code reference](error-codes.md) lists every code with the HTTP
 status it is sent with, its title and hint, and the page that explains it.
 This page covers the codes you are most likely to meet and what to do next.
+For a deployment that failed, start with
+[Troubleshooting](troubleshooting.md#a-deploy-failed).
+
+## 502, 503 and 504 responses
 
 On app and API requests, Gregale sends its own timeouts and failed
 connections to your app as 503 rather than 502 or 504. The response carries
@@ -29,51 +53,84 @@ codes. Preserving arbitrary origin 502/504 bodies requires a separately
 supported front; Cloudflare documents origin error page pass-through as an
 Enterprise feature.
 
+## Common codes
+
+### Deploy and startup
+
+The build or the app's start failed. `app_runtime_oom` can also appear for a release that is already serving, when an instance is killed and replaced. `gregale logs APP` has the full output; [Troubleshooting](troubleshooting.md) walks through each symptom.
+
 | Code family | Meaning | Next step |
 |---|---|---|
-| `plan_*` | The current plan does not include a feature or quota | Check [plans](plans.md) and upgrade or reduce the request. |
 | `app_not_listening`, `app_loopback_bound` | The process did not expose a reachable listener | Bind `0.0.0.0:$PORT`; rerun `gregale deploy --dry-run`. |
 | `dep_install_failed` | Dependencies could not be installed | Pin the lockfile and inspect `gregale logs APP`. |
-| `app_startup_timeout` | Readiness budget was exceeded | Run `gregale doctor` and select a compatible profile. |
+| `app_startup_timeout` | Readiness budget was exceeded | Run `gregale deploy check` and select a compatible profile. |
 | `app_runtime_oom` | The kernel killed the app for using more memory than its plan allows (the detail carries the peak). A deployment that is starting or rolling out fails and the previous release keeps serving; a live release is not failed and the instance is replaced | Raise the app's memory to at least the reported peak plus 8 MB with `gregale app <app> --ram <MB>` (your account plan sets the per-app maximum), or lower its peak memory. `gregale inspect <app>` lists kills from the last 24 hours. |
 | `app_startup_crash` | The app process exited before it became ready (the detail carries its last output lines) | Fix the error in that output; `gregale logs APP` has the full startup log. |
 | `function_init_failed` | A function's `init` hook threw, so its worker never became ready (the detail carries its error). An `init` that never finishes fails as `app_startup_timeout` | Fix the error in that output; `gregale dev --local` runs `init` the same way. See [functions](functions.md). |
-| `function_input_invalid` | 422 from a function: an SDK functions client called it with input that does not match the function's `input` schema in `gregale.yaml` (the detail names the failing field, e.g. `input.email is required`). Only calls from the SDK's `functions` client are checked | Fix the caller's input, or change the callee's `input` schema and redeploy it. See [functions](functions.md). |
 | `execution_mode_conflict` | The app's startup behavior contradicts its `execution_mode` (a worker bound a port or exited, a job served; a worker with a push queue binding may listen for its deliveries) | Set `execution_mode` to match the app, or change its start command. |
+
+### Requests, limits and quotas
+
+The request was refused before or while it ran. A refused request wrote nothing; after `request_budget_exceeded` the app may already have done part of the work.
+
+| Code family | Meaning | Next step |
+|---|---|---|
+| `plan_*` | The current plan does not include a feature or quota | Check [plans](plans.md) and upgrade or reduce the request. |
 | `validation_failed` | A request or manifest is malformed | Correct the named field; no write is committed. |
+| `function_input_invalid` | 422 from a function: an SDK functions client called it with input that does not match the function's `input` schema in `gregale.yaml` (the detail names the failing field, e.g. `input.email is required`). Only calls from the SDK's `functions` client are checked | Fix the caller's input, or change the callee's `input` schema and redeploy it. See [functions](functions.md). |
 | `request_budget_exceeded` (503) | The request ran past its wall-clock budget (30 s for apps by default) before the app sent response headers; `limit` and `observed` are in milliseconds | Return headers sooner (stream, or accept and process asynchronously with `gregale invocation run --async`), or lower the work per request. A `kind=budget` edge rule can set a route budget up to the plan maximum. |
 | `capacity_unavailable` | The platform cannot admit work now | Retry with backoff; the response includes `Retry-After` where applicable. |
 | `idempotency_key_reused` (422) | The request's `Idempotency-Key` was used in the last 24 hours for a different request (another body, query, or precondition header); nothing ran, and the first request's result is kept | Send a new key for a new request. To get the first request's result, resend it unchanged with the same key. |
-| `auth_rate_limited` (429) | Too many failed authentication attempts came from this address, or password sign-in for this email address is paused after repeated failures from any address | Wait for `Retry-After`, then retry with valid credentials, or reset the password to lift the pause. |
 | `api_rate_limited` (429) | The account made more authenticated API requests this minute than its plan allows (Free 600, Hobby 1,200, Pro 3,000, Scale 6,000 a minute) | Wait for `Retry-After` and spread requests out. |
+| `obs_runtime_busy` (429) | Runtime diagnostic collection is temporarily at capacity | Wait for `Retry-After` or reduce overlapping runtime diagnostics requests. |
 | `queue_receive_busy` (429) | The account already has 32 queue receive long-polls waiting | Retry after one of them returns, or run fewer concurrent consumers. |
-| `ip_denied`, `geo_denied`, `waf_blocked` (403) | An app edge rule refused the client's IP address or country, or a blocking WAF rule matched the request | Check the rule with `gregale edge rule list --app APP` and any list it references with `gregale edge rule-list get NAME`. |
-| `unauthorized` (401) | The dashboard session or API credential is missing or expired | Sign in again or refresh the API credential, then retry. |
-| `oauth_provider_unavailable` (503) | A third-party sign-in or GitHub connection provider is unavailable on this Gregale installation | Use another sign-in method if available, retry later, or contact support to enable the provider. |
-| `event_publish_batch_too_large` (413) | Batch publication exceeds its 1 MiB body limit; no items accepted | Reduce the batch size, preserving each event's source and id. |
-| `event_publish_not_attempted` (batch item) | The request budget ended before this item was attempted | Retry the item with its original identity and content. |
-| `event_storage_capacity_exhausted` (429 or batch item) | A new event exceeds retained storage count or bytes | Use the supplied limit/observed diagnostics; retry after pruning or a plan upgrade. |
-| `event_stream_unavailable` (SSE) | Gregale could not open the account event stream | Reconnect in a moment; if it persists, check Gregale status. |
 | `bad_request` (400) | A dashboard action is malformed or incomplete | Return to the form, check the requested fields, and retry. |
+| `not_found` (404) | The requested resource is missing or not visible to this account | Check the URL and account, then retry. |
+
+### Reaching your app
+
+Gregale could not get a response from the app or a platform service, so it answered 503. `transport_error` is different: the CLI raises it itself when it cannot reach Gregale's API.
+
+| Code family | Meaning | Next step |
+|---|---|---|
 | `transport_error` (503, CLI) | The CLI could not reach Gregale's API | Check connectivity and the configured API URL, then retry. |
 | `bad_gateway` (503) | Gregale could not complete a connection to the app | Retry the request; if it continues, check app logs. |
 | `app_unavailable` (503) | The gateway could not reach the selected app instance | Retry after the supplied delay; inspect app logs if the app remains unavailable. |
 | `app_health_unavailable` (503) | The app's last known wake did not leave a live instance | Retry after the supplied delay; inspect app logs if the app remains unavailable. |
 | `realtime_unavailable` (503) | Gregale cannot currently reach the managed realtime service | Retry after the supplied delay. |
+
+### Sign-in and access
+
+| Code family | Meaning | Next step |
+|---|---|---|
+| `auth_rate_limited` (429) | Too many failed authentication attempts came from this address, or password sign-in for this email address is paused after repeated failures from any address | Wait for `Retry-After`, then retry with valid credentials, or reset the password to lift the pause. |
+| `ip_denied`, `geo_denied`, `waf_blocked` (403) | An app edge rule refused the client's IP address or country, or a blocking WAF rule matched the request | Check the rule with `gregale edge rule list --app APP` and any list it references with `gregale edge rule-list get NAME`. |
+| `unauthorized` (401) | The dashboard session or API credential is missing or expired | Sign in again or refresh the API credential, then retry. |
+| `oauth_provider_unavailable` (503) | A third-party sign-in or GitHub connection provider is unavailable on this Gregale installation | Use another sign-in method if available, retry later, or contact support to enable the provider. |
+| `verification_link_invalid` (410) | A verification link is malformed, expired, or already used | Request a new verification email and open its latest link. |
+
+### Events and logs
+
+| Code family | Meaning | Next step |
+|---|---|---|
+| `event_publish_batch_too_large` (413) | Batch publication exceeds its 1 MiB body limit; no items accepted | Reduce the batch size, preserving each event's source and id. |
+| `event_publish_not_attempted` (batch item) | The request budget ended before this item was attempted | Retry the item with its original identity and content. |
+| `event_storage_capacity_exhausted` (429 or batch item) | A new event exceeds retained storage count or bytes | Use the supplied limit/observed diagnostics; retry after pruning or a plan upgrade. |
+| `event_stream_unavailable` (SSE) | Gregale could not open the account event stream | Reconnect in a moment; if it persists, check Gregale status. |
 | `app_logs_unavailable`, `log_archive_unconfigured` (503) | Live or archived logs could not be retrieved | Retry shortly; use live logs when archived logs are unavailable. |
 | `log_archive_invalid_query` (400) | An archived-log request is missing or has malformed filters | Provide an instance and a date in `YYYY-MM-DD` format. |
 | `log_archive_retention_exceeded` (403) | The requested log date is outside the plan's retention window | Choose a more recent date or review plans with longer retention. |
-| `verification_link_invalid` (410) | A verification link is malformed, expired, or already used | Request a new verification email and open its latest link. |
-| `not_found` (404) | The requested resource is missing or not visible to this account | Check the URL and account, then retry. |
+
+### Bindings
+
+| Code family | Meaning | Next step |
+|---|---|---|
 | `bindings_check_failed` (409) | Candidate binding preflight has blockers | Inspect `bindings_check.blockers`, resolve them and verify the candidate with `gregale app binding verify APP --release ID --all`. |
 | `bindings_check_changed` (409) | Configuration, evidence or runtime facts changed, or a proof/push-consumer poll expired before promotion | Inspect `bindings_check.blockers` and retry. For `verification_expired`, verify the candidate again. For `queue_consumer_stale`, wait for the queue consumer to poll again; the consumer window is thirty seconds, independent of probe age. Traffic remains unchanged. |
 | `bindings_gate_unavailable` (503) | Gregale cannot enforce the binding promotion fence right now; traffic is unchanged | Retry later; contact support if it persists. |
 | `outbound_probe_unavailable` (503) | Gregale cannot read or save the outbound probe policy right now | Retry later before configuring or verifying the binding; contact support if it persists. |
 
-Never paste secrets into an error report. Request IDs and deployment IDs are
-safe correlation handles for support and `gregale debug`.
-
-### Managed binding application acknowledgement blockers
+#### Managed binding application acknowledgement blockers
 
 With `--require-application-ack`, bindings checks and promotion reports include:
 
@@ -90,3 +147,8 @@ and `promotion_observations_changed` finding; recheck before retrying. Strict
 promotion must use the dedicated `promote-with-application-ack` route. If that
 route answers 404, this Gregale installation does not offer strict promotion
 yet and nothing is written; do not fall back to an ordinary traffic write.
+
+## Reporting an error
+
+Never paste secrets into an error report. Request IDs and deployment IDs are
+safe correlation handles for support and `gregale debug`.

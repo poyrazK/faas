@@ -1,7 +1,7 @@
 # The production topology template every release materializes
 # (scripts/release-template.sh). One file name in this directory, nothing
 # else. Changing it moves the next release to another fleet, so it changes
-# only in its own reviewed PR: at the GCP → OVHcloud cutover
-# (docs/runbooks/GcpToOvhMigration.md, phase 2) it becomes
-# ovh-live.template.yaml.
-gcp-live.template.yaml
+# only in its own reviewed PR. It moved from gcp-live.template.yaml to
+# ovh-live.template.yaml at the GCP → OVHcloud cutover on 2026-11-20
+# (docs/runbooks/GcpToOvhMigration.md, step 12).
+ovh-live.template.yaml

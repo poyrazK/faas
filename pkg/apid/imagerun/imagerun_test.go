@@ -95,7 +95,7 @@ func TestCreateRejectsBeforeTouchingState(t *testing.T) {
 		status  int
 		code    string
 	}{
-		"gate off":          {plan: api.PlanPro, disable: true, body: api.CreateImageRunRequest{Image: "alpine"}, status: http.StatusNotFound},
+		"gate off":          {plan: api.PlanPro, disable: true, body: api.CreateImageRunRequest{Image: "alpine"}, status: http.StatusNotImplemented, code: api.CodeNotImplemented},
 		"free plan":         {plan: api.PlanFree, body: api.CreateImageRunRequest{Image: "alpine"}, status: http.StatusPaymentRequired, code: api.CodeJobsNotAllowed},
 		"missing image":     {plan: api.PlanPro, body: api.CreateImageRunRequest{}, status: http.StatusBadRequest, code: api.CodeValidation},
 		"bad pull":          {plan: api.PlanPro, body: api.CreateImageRunRequest{Image: "alpine", Pull: "sometimes"}, status: http.StatusBadRequest, code: api.CodeValidation},

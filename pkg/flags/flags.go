@@ -36,6 +36,9 @@ type Rule struct {
 	// Value is a boolean for boolean flags, or a variant key for variant flags.
 	// Variant rules may omit it to use the configured weighted allocation.
 	Value any `json:"value,omitempty"`
+	// Experiment is the running experiment of a weighted rule: its layer
+	// slice and the environment holdout apply (ADR 20261119173702 §2).
+	Experiment *RuleExperiment `json:"experiment,omitempty"`
 }
 
 // Condition matches one request attribute. A missing attribute never
@@ -48,9 +51,14 @@ type Condition struct {
 
 // Attribute names and operators (ADR 20261114150000 §2).
 const (
-	AttributeCountry   = "gregale.country"
-	AttributeUAFamily  = "gregale.ua_family"
+	AttributeCountry  = "gregale.country"
+	AttributeUAFamily = "gregale.ua_family"
+	// AttributeCohort is the gateway-stamped cohorts of the request's
+	// customer (ADR 20261119102741 §4).
+	AttributeCohort    = "gregale.cohort"
 	AppAttributePrefix = "app."
+	// CohortsNone is the gregale.cohort value of a customer in no cohort.
+	CohortsNone = "-"
 
 	OpIn       = "in"
 	OpNotIn    = "not_in"
@@ -64,7 +72,7 @@ var (
 
 // ValidAttributeName accepts the gateway attributes and app.<name>.
 func ValidAttributeName(name string) bool {
-	if name == AttributeCountry || name == AttributeUAFamily {
+	if name == AttributeCountry || name == AttributeUAFamily || name == AttributeCohort {
 		return true
 	}
 	rest, ok := strings.CutPrefix(name, AppAttributePrefix)
@@ -88,9 +96,67 @@ func ValidAttributeValue(value string) bool {
 	return true
 }
 
+// ParseCohorts reads a gregale.cohort attribute: the sorted, comma-separated
+// cohort keys the gateway stamped, or CohortsNone for a customer in none.
+// ok is false for a malformed value, which reads as missing.
+func ParseCohorts(value string) (keys []string, ok bool) {
+	if value == CohortsNone {
+		return nil, true
+	}
+	if value == "" {
+		return nil, false
+	}
+	keys = strings.Split(value, ",")
+	if len(keys) > api.AnalyticsCohortsMaxPerEnvironment {
+		return nil, false
+	}
+	for _, k := range keys {
+		if !ValidKey(k) {
+			return nil, false
+		}
+	}
+	return keys, true
+}
+
+// FormatCohorts is the X-Faas-Flag-Cohorts value for keys: sorted and
+// comma-separated, or CohortsNone.
+func FormatCohorts(keys []string) string {
+	if len(keys) == 0 {
+		return CohortsNone
+	}
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	return strings.Join(slices.Compact(sorted), ",")
+}
+
+// matchCohorts applies a gregale.cohort condition: in matches a member of
+// any listed cohort, not_in a customer in none of them.
+func matchCohorts(c Condition, value string) bool {
+	keys, ok := ParseCohorts(value)
+	if !ok {
+		return false
+	}
+	member := slices.ContainsFunc(c.Values, func(v string) bool { return slices.Contains(keys, v) })
+	switch c.Op {
+	case OpIn:
+		return member
+	case OpNotIn:
+		return !member
+	default:
+		return false
+	}
+}
+
 // MatchConditions reports whether every condition holds for attrs.
 func MatchConditions(conditions []Condition, attrs map[string]string) bool {
 	for _, c := range conditions {
+		if c.Attribute == AttributeCohort {
+			value, ok := attrs[c.Attribute]
+			if !ok || !matchCohorts(c, value) {
+				return false
+			}
+			continue
+		}
 		value, ok := attrs[c.Attribute]
 		if !ok || !ValidAttributeValue(value) {
 			return false
@@ -186,6 +252,8 @@ type ProgressiveRollout struct {
 	MaximumHTTP5xxRateBasisPoints int   `json:"maximum_http_5xx_rate_basis_points"`
 	MaximumP95LatencyMS           int   `json:"maximum_p95_latency_ms"`
 	WindowSeconds                 int   `json:"window_seconds"`
+	// Metric gates stages on a product metric (ADR 20261119173702 §5).
+	Metric *RolloutMetric `json:"metric,omitempty"`
 }
 type Flag struct {
 	Key         string `json:"key"`
@@ -204,6 +272,9 @@ type Flag struct {
 	Seed      string        `json:"seed"`
 	Rules     []Rule        `json:"rules"`
 	Variants  []FlagVariant `json:"variants,omitempty"`
+	// Edge routes the flag's variants at the gateway, without an SDK
+	// (ADR-20261124212701). Runtime bundles leave it out.
+	Edge *Edge `json:"edge,omitempty"`
 }
 type FlagVariant struct {
 	Key    string `json:"key"`
@@ -212,6 +283,9 @@ type FlagVariant struct {
 type Config struct {
 	Flags  []Flag              `json:"flags"`
 	Groups map[string][]string `json:"groups"`
+	// Holdout and Layers isolate experiments (ADR 20261119173702 §2).
+	Holdout *Holdout `json:"holdout,omitempty"`
+	Layers  []Layer  `json:"layers,omitempty"`
 }
 type Bundle struct {
 	EnvironmentID string `json:"environment_id"`
@@ -420,6 +494,16 @@ func evaluateFlag(b Bundle, f Flag, c EvaluationContext, fallback any) Decision 
 		if len(r.Subjects) > 0 && !slices.Contains(r.Subjects, subject) {
 			continue
 		}
+		if r.Experiment != nil {
+			inSlice, held := experimentGate(b.Config, *r.Experiment, customer, subject)
+			if !inSlice {
+				continue
+			}
+			if held {
+				d.Value, d.RuleID, d.Reason = r.Experiment.Control, r.ID, ReasonHoldout
+				return d
+			}
+		}
 		if r.Rollout != nil {
 			bucket := Bucket(f.Seed, f.Key, customer)
 			if r.RolloutUnit == "subject" {
@@ -599,6 +683,9 @@ func Validate(c Config) error {
 				if p.MinimumUsedRequests < 1 || p.MinimumUsedRequests > api.FlagsMaxProgressiveMinimumRequests || p.MaximumHTTP5xxRateBasisPoints < 0 || p.MaximumHTTP5xxRateBasisPoints > 10000 || p.MaximumP95LatencyMS < 1 || p.MaximumP95LatencyMS > api.FlagsMaxProgressiveLatencyMS || p.WindowSeconds < api.FlagsMinProgressiveWindowSeconds || p.WindowSeconds > api.FlagsMaxProgressiveWindowSeconds {
 					return fmt.Errorf("invalid progressive rollout evidence thresholds")
 				}
+				if err := validateRolloutMetric(r); err != nil {
+					return err
+				}
 			}
 			if len(r.Customers) == 0 && r.Group == "" && len(r.Subjects) == 0 && len(r.Attributes) == 0 && r.Rollout == nil {
 				return fmt.Errorf("rule requires customer, group, attribute, or rollout targeting")
@@ -617,7 +704,10 @@ func Validate(c Config) error {
 			}
 		}
 	}
-	return nil
+	if err := validateEdge(c); err != nil {
+		return err
+	}
+	return validateExperiments(c)
 }
 
 func validateConditions(conditions []Condition) error {
@@ -626,7 +716,10 @@ func validateConditions(conditions []Condition) error {
 	}
 	for _, c := range conditions {
 		if !ValidAttributeName(c.Attribute) {
-			return fmt.Errorf("invalid attribute %q: use gregale.country, gregale.ua_family or app.<name>", c.Attribute)
+			return fmt.Errorf("invalid attribute %q: use gregale.country, gregale.ua_family, gregale.cohort or app.<name>", c.Attribute)
+		}
+		if c.Attribute == AttributeCohort && c.Op == OpEndsWith {
+			return fmt.Errorf("gregale.cohort takes in or not_in")
 		}
 		switch c.Op {
 		case OpIn, OpNotIn:
@@ -647,6 +740,9 @@ func validateConditions(conditions []Condition) error {
 			}
 			if c.Attribute == AttributeCountry && !countryPattern.MatchString(v) {
 				return fmt.Errorf("gregale.country values are two uppercase letters, not %q", v)
+			}
+			if c.Attribute == AttributeCohort && !ValidKey(v) {
+				return fmt.Errorf("gregale.cohort values are cohort keys, not %q", v)
 			}
 			seen[v] = true
 		}

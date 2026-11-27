@@ -63,6 +63,12 @@ func (m *MemStore) CreateAPIConsumerUsageStatement(_ context.Context, input APIC
 		if latest.Status != input.PriorStatus {
 			return APIConsumerUsageStatement{}, false, ErrConflict
 		}
+		if err := checkAPIConsumerWaiverPlan(latest, input); err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
+		if err := m.checkWaiverPeriodLocked(input); err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
 		if latest.Status == APIConsumerUsageStatementDraft {
 			if sameAPIConsumerUsageStatementSnapshot(latest, input) {
 				return cloneAPIConsumerUsageStatement(latest), false, nil
@@ -78,7 +84,7 @@ func (m *MemStore) CreateAPIConsumerUsageStatement(_ context.Context, input APIC
 		Currency: input.Currency, BillableUnits: input.BillableUnits, UnpricedUnits: input.UnpricedUnits,
 		AmountMillicents: input.AmountMillicents, Priced: input.Priced,
 		Buckets: append([]APIConsumerUsageStatementBucket(nil), input.Buckets...), AsOf: input.AsOf, CreatedAt: now,
-		Fees: slices.Clone(input.Fees),
+		Fees: slices.Clone(input.Fees), Waiver: cloneAPIConsumerUsageWaiver(input.Waiver),
 	}
 	m.apiConsumerUsageStatements[statement.ID] = statement
 	return cloneAPIConsumerUsageStatement(statement), true, nil
@@ -122,6 +128,14 @@ func (m *MemStore) ListAPIConsumerUsageStatements(_ context.Context, accountID, 
 }
 
 func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountID, appID, consumerID, statementID string) (APIConsumerUsageStatement, bool, error) {
+	return m.finalizeAPIConsumerUsageStatement(accountID, appID, consumerID, statementID, nil)
+}
+
+func (m *MemStore) FinalizeReviewedAPIConsumerUsageStatement(_ context.Context, accountID, appID, consumerID, statementID string, due int64) (APIConsumerUsageStatement, bool, error) {
+	return m.finalizeAPIConsumerUsageStatement(accountID, appID, consumerID, statementID, &due)
+}
+
+func (m *MemStore) finalizeAPIConsumerUsageStatement(accountID, appID, consumerID, statementID string, expectedDue *int64) (APIConsumerUsageStatement, bool, error) {
 	if accountID == "" || appID == "" || consumerID == "" || statementID == "" {
 		return APIConsumerUsageStatement{}, false, ErrNotFound
 	}
@@ -132,6 +146,9 @@ func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountI
 		return APIConsumerUsageStatement{}, false, ErrNotFound
 	}
 	if statement.Status == APIConsumerUsageStatementFinalized {
+		if expectedDue != nil && statement.AmountDueMillicents() != *expectedDue {
+			return APIConsumerUsageStatement{}, false, ErrConflict
+		}
 		return cloneAPIConsumerUsageStatement(statement), false, nil
 	}
 	if statement.Status != APIConsumerUsageStatementDraft || statement.UnpricedUnits > 0 {
@@ -140,7 +157,11 @@ func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountI
 	now := time.Now().UTC()
 	statement.Status = APIConsumerUsageStatementFinalized
 	statement.FinalizedAt = &now
-	statement.CreditAppliedMillicents = m.applyAPIConsumerCreditsLocked(statement, now)
+	credit, applications := m.planAPIConsumerCreditsLocked(statement, now)
+	statement.CreditAppliedMillicents = credit
+	if expectedDue != nil && statement.AmountDueMillicents() != *expectedDue {
+		return APIConsumerUsageStatement{}, false, ErrConflict
+	}
 	var recipients []string
 	for _, hook := range m.appWebhooks {
 		if hook.Scope == AppWebhookScopeApp && hook.AppID == appID && hook.AccountID == accountID && hook.Enabled &&
@@ -163,6 +184,12 @@ func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountI
 			SourceID: statement.ID, Payload: payload, RecipientWebhookIDs: recipients, CreatedAt: now,
 		}
 	}
+	for _, application := range applications {
+		grant := m.apiConsumerCreditGrants[application.GrantID]
+		grant.RemainingMillicents -= application.AmountMillicents
+		m.apiConsumerCreditGrants[grant.ID] = grant
+	}
+	m.apiConsumerCreditApplications = append(m.apiConsumerCreditApplications, applications...)
 	m.apiConsumerUsageStatements[statement.ID] = statement
 	return cloneAPIConsumerUsageStatement(statement), true, nil
 }

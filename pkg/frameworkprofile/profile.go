@@ -77,6 +77,12 @@ type Profile struct {
 	// amendment 4). Profiles written before it lack the mark and keep the
 	// image's command.
 	StartPinned bool `json:"start_pinned,omitempty"`
+	// GoBuiltStart reports that StartCommand is the inferred Go `go run .`,
+	// which `gregale dev` runs, while the Railpack build compiles the app and
+	// starts its ./out binary. A Procfile, railpack.json or gregale.yaml start
+	// clears it: that command is what the guest runs (prod hunt r47).
+	// Profiles written before it report their start command unchanged.
+	GoBuiltStart bool `json:"go_built_start,omitempty"`
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
 	// port (ADR-20261027090000).
@@ -95,6 +101,46 @@ type Profile struct {
 	ImageHealthcheck *ImageHealthcheck `json:"image_healthcheck,omitempty"`
 	// ImageHealthcheckRequired is imaged's effective immutable-manifest receipt.
 	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
+	// UploadedImage marks a Dockerfile-kind deployment whose source is an
+	// already built single-image OCI archive (ADR-20261127120000): builderd
+	// hands it to imaged without a builder VM.
+	UploadedImage *UploadedImage `json:"uploaded_image,omitempty"`
+}
+
+// UploadedImage records the uploaded archive apid accepted.
+type UploadedImage struct {
+	ManifestDigest string `json:"manifest_digest"`
+	// Name is the local repository tag the CLI read, informational only.
+	Name string `json:"name,omitempty"`
+}
+
+// UploadedImageIn returns the uploaded image a persisted profile records, or
+// nil when the profile is absent, unreadable or describes a source build.
+func UploadedImageIn(raw []byte) *UploadedImage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var p struct {
+		UploadedImage *UploadedImage `json:"uploaded_image"`
+	}
+	if json.Unmarshal(raw, &p) != nil {
+		return nil
+	}
+	return p.UploadedImage
+}
+
+// ForUploadedImage is the profile of a prebuilt image: a Dockerfile build
+// with nothing left to build. Readiness is the port accepting connections,
+// as for a registry image, because the image never promised /healthz.
+func ForUploadedImage(manifestDigest, name string, port int) Profile {
+	if port <= 0 {
+		port = api.DefaultAppPort
+	}
+	return Profile{
+		Version: Version, Framework: string(markers.FrameworkDocker), Family: string(markers.FrameworkDocker),
+		Port: port, HealthPath: "/healthz", HealthDefaulted: true,
+		UploadedImage: &UploadedImage{ManifestDigest: manifestDigest, Name: name},
+	}
 }
 
 // Warning is actionable profile feedback. Source paths are relative to the
@@ -177,12 +223,12 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		// showed `gunicorn handler:app --bind 0.0.0.0:$PORT` while the
 		// guest ran `gunicorn --workers 2 handler:app` (Hunt 12 H12-3).
 		if web := procfileWebCommand(fsys); web != "" {
-			profile.StartCommand, profile.StartPinned = web, false
+			profile.StartCommand, profile.StartPinned, profile.GoBuiltStart = web, false, false
 		}
 		// railpack.json's deploy.startCommand outranks the Procfile and
 		// Railpack's own detection, so it is the command the guest runs.
 		if start := railpackConfigStartCommand(fsys); start != "" {
-			profile.StartCommand, profile.StartPinned = start, false
+			profile.StartCommand, profile.StartPinned, profile.GoBuiltStart = start, false, false
 		}
 	}
 	// An unknown tree may be a home directory, not a project: do not scan it.
@@ -227,7 +273,7 @@ func rootHealthPathWarning(configFile string) Warning {
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	if start := strings.TrimSpace(cfg.Start); start != "" {
 		profile.StartCommand = start
-		profile.StartFromConfig, profile.StartPinned = true, false
+		profile.StartFromConfig, profile.StartPinned, profile.GoBuiltStart = true, false, false
 	}
 	if cfg.Port != 0 {
 		profile.Port = cfg.Port
@@ -356,6 +402,22 @@ func pythonDependencyNamed(content, name string) bool {
 	return regexp.MustCompile(pattern).MatchString(content)
 }
 
+// goLocalStart is the Go start command for `gregale dev`, which runs the
+// source directly.
+const goLocalStart = "go run ."
+
+// DeployedStartCommand is the command a deployed build runs. It differs
+// from StartCommand only for Go: StartCommand is the local `go run .` that
+// `gregale dev` uses, while the Railpack build compiles the app and starts
+// its ./out binary. The deploy summary and build plan showed `go run .`, as
+// if every cold start compiled the source (prod hunt r47).
+func DeployedStartCommand(p Profile) string {
+	if p.GoBuiltStart && p.StartCommand == goLocalStart && !p.StartFromConfig {
+		return "./out"
+	}
+	return p.StartCommand
+}
+
 func inferGo(fsys fs.FS, profile *Profile) {
 	profile.Framework = "go-net-http"
 	profile.PackageManager = "go"
@@ -367,7 +429,7 @@ func inferGo(fsys fs.FS, profile *Profile) {
 			break
 		}
 	}
-	profile.StartCommand = "go run ."
+	profile.StartCommand, profile.GoBuiltStart = goLocalStart, true
 }
 
 func inferDocker(fsys fs.FS, profile *Profile) {
@@ -566,6 +628,19 @@ func isSourceCodeFile(name string) bool {
 	return strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".go")
 }
 
+// isTestSourceFile reports test code by the Go, Node and Python conventions.
+func isTestSourceFile(name string) bool {
+	name = filepath.ToSlash(name)
+	base := filepath.Base(name)
+	for _, dir := range strings.Split(filepath.Dir(name), "/") {
+		if dir == "test" || dir == "tests" || dir == "__tests__" {
+			return true
+		}
+	}
+	return strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") ||
+		strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
+}
+
 // Source inference reads conventional project layouts, so the walk is bounded:
 // it stops at the file limit, below sourceWalkMaxDepth directory levels, and
 // after sourceWalkMaxDirs directories. An unbounded walk made `gregale doctor`
@@ -677,12 +752,41 @@ func pythonModuleName(name string) string {
 	return strings.ReplaceAll(name, "/", ".")
 }
 
+// loopbackBindLine reports whether a line names a loopback address where an
+// address is bound: beside listen, bind, host or serve. rest-api-postgres's
+// check that a caller's remoteAddress is 127.0.0.1, and a client URL such as
+// http://localhost:5432, warned on every deploy of our own starter (prod hunt
+// r42).
+func loopbackBindLine(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "127.0.0.1") && !strings.Contains(lower, "localhost") {
+			continue
+		}
+		rest := strings.ReplaceAll(lower, "localhost", "")
+		// run( and run_app( catch positional binds: Flask `app.run("127.0.0.1", 5000)`,
+		// `uvicorn.run(app, "127.0.0.1")`, aiohttp `web.run_app(app, host=...)`.
+		for _, word := range []string{"listen", "bind", "host", "serve", "run(", "run_app("} {
+			if strings.Contains(rest, word) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func loopbackWarnings(fsys fs.FS) []Warning {
 	var warnings []Warning
 	files := collectSourceFiles(fsys, 256, isSourceCodeFile)
 	for _, path := range files {
+		// Tests never serve traffic, and a source that also names 0.0.0.0
+		// chooses its bind address (the MCP starters bind loopback only
+		// off-platform); warning on either was noise on our own starters.
+		if isTestSourceFile(path) {
+			continue
+		}
 		body := readFile(fsys, path)
-		if strings.Contains(body, "127.0.0.1") || strings.Contains(body, "localhost") {
+		if loopbackBindLine(body) && !strings.Contains(body, "0.0.0.0") {
 			warnings = append(warnings, Warning{Code: "loopback_bind_possible", Message: "The source references localhost or 127.0.0.1; bind to 0.0.0.0 for public API traffic.", Sources: []string{path}})
 		}
 	}

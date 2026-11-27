@@ -127,6 +127,13 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	if err != nil {
 		return err
 	}
+	if lifted, err := e.liftLivenessParkForNewWorkerRelease(ctx, app, deployments); err != nil {
+		return err
+	} else if lifted {
+		if app, err = e.store.AppByID(ctx, appID); err != nil {
+			return err
+		}
+	}
 	attempt, proceed, err := e.beginWorkerRecovery(ctx, app, deployments, onlyScope)
 	if err != nil || !proceed {
 		return err

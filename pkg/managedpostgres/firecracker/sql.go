@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -22,7 +23,7 @@ const schemaOwner = "gregale_schema_owner"
 
 var (
 	identifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
-	rolePattern       = regexp.MustCompile(`^gregale_(rt|ro|mig|api)_[0-9a-f]{40}$`)
+	rolePattern       = regexp.MustCompile(`^gregale_(rt|ro|mig|api|replica)_[0-9a-f]{40}$`)
 	verifierPattern   = regexp.MustCompile(`^SCRAM-SHA-256\$[0-9]+:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$`)
 	scopePattern      = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
@@ -47,6 +48,8 @@ func credentialRoleName(resourceID, identityKey string, access managedpostgres.C
 	switch access {
 	case managedpostgres.CredentialReadOnly:
 		prefix = "gregale_ro_"
+	case managedpostgres.CredentialReplicaOnly:
+		prefix = dbguest.ReplicaOnlyRolePrefix
 	case managedpostgres.CredentialMigration:
 		prefix = "gregale_mig_"
 	case managedpostgres.CredentialDataAPI:
@@ -134,6 +137,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %[1]s;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %[1]s;
 ALTER DEFAULT PRIVILEGES FOR ROLE %[2]s IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %[1]s;
 ALTER DEFAULT PRIVILEGES FOR ROLE %[2]s IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO %[1]s;
+GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO %[1]s;
+ALTER DEFAULT PRIVILEGES FOR ROLE %[2]s IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO %[1]s;
 `, role, schemaOwner)
 	case managedpostgres.CredentialDataAPI:
 		fmt.Fprintf(&b, `DO $gregale$ BEGIN

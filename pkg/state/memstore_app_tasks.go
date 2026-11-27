@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -82,10 +83,22 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 			return AppTask{}, ErrNotFound
 		}
 	}
+	var suiteRunID string
 	if resolved.Kind == AppTaskKindRelease {
 		for _, task := range m.appTasks {
 			if task.DeploymentID == resolved.DeploymentID && task.Kind == AppTaskKindRelease {
 				return AppTask{}, ErrConflict
+			}
+		}
+		if revision := resolved.ReleaseApprovalPolicyUpdatedAt; revision != nil {
+			if policy, ok := m.releaseApprovalPolicies[app.ID]; !ok || !policy.UpdatedAt.Equal(*revision) {
+				return AppTask{}, ErrReleaseApprovalPolicyChanged
+			}
+			if gate := m.sandboxReleaseGateLocked(resolved.AppID, resolved.DeploymentID); gate != nil {
+				if gate.Status != "passed" {
+					return AppTask{}, ErrPassingSandboxSuiteRequired
+				}
+				suiteRunID = gate.SuiteRunID
 			}
 		}
 	}
@@ -119,6 +132,12 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 		UpdatedAt:            now,
 	}
 	m.appTasks[task.ID] = task
+	if suiteRunID != "" {
+		if m.apiSandboxReleaseAdmissions == nil {
+			m.apiSandboxReleaseAdmissions = make(map[string]string)
+		}
+		m.apiSandboxReleaseAdmissions[task.DeploymentID] = suiteRunID
+	}
 	if resolved.Interactive != nil {
 		if m.appTaskAttach == nil {
 			m.appTaskAttach = make(map[string]AppTaskAttach)
@@ -981,6 +1000,9 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	if err := validateCompleteAppTask(params, task.MaxOutputBytes); err != nil {
 		return AppTask{}, err
 	}
+	if err := validateDataAPIInspectionExecution(task, params); err != nil {
+		return AppTask{}, err
+	}
 	if err := m.validateRehearsalTaskCompletionLocked(task, params); err != nil {
 		return AppTask{}, err
 	}
@@ -1029,6 +1051,12 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	task.LeaseOwner = nil
 	task.LeaseExpiresAt = nil
 	m.appTasks[task.ID] = task
+	if params.DataAPIInspectionProtocol != 0 {
+		if m.dataAPIInspectionExecutions == nil {
+			m.dataAPIInspectionExecutions = make(map[string]DataAPIInspectionExecution)
+		}
+		m.dataAPIInspectionExecutions[task.ID] = DataAPIInspectionExecution{TaskID: task.ID, AppID: task.AppID, DeploymentID: task.DeploymentID, ProtocolVersion: params.DataAPIInspectionProtocol, StdoutSHA256: sha256.Sum256([]byte(params.StdoutTail)), FinishedAt: finishedAt}
+	}
 	m.syncAppTaskOccurrenceLocked(task, finishedAt)
 	return cloneAppTask(task), nil
 }

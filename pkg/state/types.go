@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
@@ -847,6 +848,9 @@ type APIConsumer struct {
 	// PlatformTenantManaged marks rows created by the account owner's
 	// platform-tenant bundle apply. A tenant link alone does not imply ownership.
 	PlatformTenantManaged bool
+	// EnvironmentID is the project environment the consumer belongs to;
+	// empty is production (ADR-20261104120000 amendment 2026-11-22).
+	EnvironmentID string
 }
 
 // Active reports whether the consumer can authenticate requests.
@@ -887,6 +891,9 @@ type ConsumerKey struct {
 	ExpiresAt  *time.Time
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
+	// EnvironmentID is the key's consumer's environment; empty is
+	// production (ADR-20261104120000 amendment 2026-11-22).
+	EnvironmentID string
 }
 
 // APIConsumerUsageEvent is the durable, billing-oriented usage increment
@@ -978,6 +985,8 @@ type RequestAuditRecord struct {
 // APIConsumerUsageBucket is the read-side aggregate for one app, attributed
 // consumer, verified surface, or verified JWT rule, and UTC minute.
 type APIConsumerUsageBucket struct {
+	// Model is populated only by the pricing engine for a model-rated bucket.
+	Model                  string
 	AccountID              string
 	AppID                  string
 	ConsumerKey            string
@@ -1059,6 +1068,7 @@ type APIConsumerRateCard struct {
 	// units (ADR-952); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
+	ModelPrices  map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
 	// to (ADR-953); empty is the app default plan.
 	PlanID string
@@ -1073,7 +1083,10 @@ type APIConsumerRateCard struct {
 	// (ADR-1325).
 	ProrateMonthlyFees bool
 	EffectiveFrom      time.Time
-	CreatedAt          time.Time
+	// EffectiveUntil is the exclusive end of a resolved plan assignment.
+	// Stored rate cards have an open end until superseded.
+	EffectiveUntil time.Time
+	CreatedAt      time.Time
 }
 
 // MonthlyFees reports whether the card charges a base fee or a minimum.
@@ -1217,6 +1230,8 @@ const (
 // APIConsumerUsageStatementBucket is the priced snapshot for one UTC minute.
 // Empty RateCardID/Currency denotes an explicitly unpriced bucket.
 type APIConsumerUsageStatementBucket struct {
+	WaivedUnits            int64     `json:"waived_units,omitempty"`
+	Model                  string    `json:"model,omitempty"`
 	WindowStart            time.Time `json:"window_start"`
 	BillableUnits          int64     `json:"billable_units"`
 	RateCardID             string    `json:"rate_card_id,omitempty"`
@@ -1259,6 +1274,7 @@ func (b APIConsumerUsageStatementBucket) Charged() int64 {
 // period can hold several revisions: every revision after a finalized one
 // carries only the usage that arrived later, as an additive adjustment.
 type APIConsumerUsageStatement struct {
+	Waiver           *APIConsumerUsageWaiver
 	ID               string
 	AccountID        string
 	AppID            string
@@ -1320,6 +1336,7 @@ type APIConsumerUsageStatementHandoffInput struct {
 // and PriorStatus name the latest revision the quote was planned against, so
 // a concurrent change is rejected instead of overwritten.
 type APIConsumerUsageStatementInput struct {
+	Waiver           *APIConsumerUsageWaiver
 	AccountID        string
 	AppID            string
 	ConsumerID       string
@@ -1454,8 +1471,14 @@ type DeployToken struct {
 // runner-scaffold payload (env, healthz path, entrypoint) the guest-init
 // consumes inside the microVM (spec §4.6, §4.9).
 type App struct {
-	ID        string
-	AccountID string
+	// The sandbox configuration is a create-only input persisted on its provisioning row.
+	APISandboxSmokePath         string
+	APISandboxPartnerLabel      string
+	APISandboxRunID             string
+	APISandboxRunPartnerWebhook bool
+	APISandboxScenario          *api.APISandboxScenario
+	ID                          string
+	AccountID                   string
 	// AccountID is an immutable storage namespace, not a human ownership FK.
 	// OrgID owns shared authorization, runtime policy, billing and lifecycle.
 	OrgID string
@@ -1566,6 +1589,9 @@ type App struct {
 	// project's hard delete (Phase 5) orphans the app rather than
 	// cascading it.
 	ProjectID string
+	// AddToProject asks the create path to validate a direct project addition
+	// under the same lock as the insert. It is never persisted on an App.
+	AddToProject bool `json:"-"`
 	// RootDir is the build context relative to the repo root
 	// ("" = repo root). Defaults to '' so standalone apps keep the
 	// pre-projects deploy contract bit-for-bit.
@@ -2118,6 +2144,17 @@ type WorkerScaling struct {
 // as jsonb in Postgres; lifecycle fields are overlaid onto each deployment's
 // image manifest before it is written into the snapshot for guest-init.
 type AppManifest struct {
+	// APISandboxSourceDeploymentID identifies an owner-created shareable sandbox.
+	// It is set only during sandbox provisioning.
+	APISandboxSourceDeploymentID string `json:"api_sandbox_source_deployment_id,omitempty"`
+	APISandboxPartner            bool   `json:"api_sandbox_partner,omitempty"`
+	APISandboxRun                bool   `json:"api_sandbox_run,omitempty"`
+	// DeclaredAccess is the public-URL access the app's project service
+	// declares in gregale.yaml or Compose ("public" or "key",
+	// ADR-20261124090000). A deploy that finds it set but no declaration
+	// in the source restores the plan's auth defaults; an app whose access
+	// was never declared keeps what its owner set by hand.
+	DeclaredAccess string `json:"declared_access,omitempty"`
 	// PublicBuildURLs are explicitly reviewed, non-secret frontend build inputs.
 	// New production source deployments capture an immutable copy at INSERT.
 	PublicBuildURLs map[string]string `json:"public_build_urls,omitempty"`
@@ -2179,6 +2216,10 @@ type AppManifest struct {
 	// AllowedServiceCallScopes is an optional, target-owned method/path policy.
 	// A non-nil empty map denies all callers; map keys are logical app names.
 	AllowedServiceCallScopes *api.ServiceCallerScopes `json:"allowed_service_call_scopes,omitempty"`
+	// Uses are the gregale.yaml `uses:` grants: what the app's workload
+	// identity may do on itself or a sibling app without an API key
+	// (ADR-20261122191423). Project apply replaces it on every reconcile.
+	Uses *capgrant.Uses `json:"uses,omitempty"`
 
 	WorkingDir string `json:"working_dir,omitempty"`
 	Port       int    `json:"port,omitempty"`
@@ -2276,8 +2317,8 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // It keeps the legacy empty-manifest JSON shape while allowing lifecycle-only
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
-	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+	return m.APISandboxSourceDeploymentID == "" && !m.APISandboxPartner && !m.APISandboxRun && len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && (m.Uses == nil || m.Uses.IsZero()) && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2314,10 +2355,13 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.PreviewServiceCallsPolicy = desired.PreviewServiceCallsPolicy
 	existing.AllowedServiceCallers = desired.AllowedServiceCallers
 	existing.AllowedServiceCallScopes = desired.AllowedServiceCallScopes
+	existing.Uses = desired.Uses.Clone()
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
-			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) {
+			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) ||
+				key == api.WorkloadCredentialsEnv && value == api.WorkloadObjectCredentialsEndpoint {
+				// Platform-managed values come back from desired only.
 				continue
 			}
 			merged[key] = value
@@ -2698,6 +2742,9 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// ProjectDeployGroupID is a server-assigned production fan-out identity used during creation only.
+	ProjectDeployGroupID   string `json:"-"`
+	projectDeployProjectID string
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
 	submissionAttemptID string
 	// eventSubscriptionIntent is creation-only: the event subscriptions a
@@ -2924,6 +2971,8 @@ type Deployment struct {
 	// explicitly requested zero. It is persisted for activation semantics but
 	// remains internal; TrafficPercent is the customer-visible value.
 	TrafficPercentExplicit bool `json:"-"`
+	// ServingEndedAt records when this revision last stopped receiving traffic.
+	ServingEndedAt *time.Time `json:"-"`
 	// Scan columns (issue #464 / ADR-055 / PR-3). Per-deploy grype
 	// scan result, status, and scanned_at. Mirror the deployments
 	// table columns added by migrations/00135. The pgstore reads
@@ -3961,6 +4010,10 @@ const (
 	// the app's bound integrations within the window (ADR 20261027132936
 	// amendment 2).
 	AlertMetricAIBudgetAlerts AlertMetric = "ai_budget_alerts"
+	// AlertMetricOOMKills counts the app's instances the kernel killed for
+	// running out of memory within the window (Observe audit 2026-11-21,
+	// finding 18).
+	AlertMetricOOMKills AlertMetric = "oom_kills"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -4142,10 +4195,13 @@ func IsValidAlertAction(v string) bool {
 // ignore a FailureSource change, which is a footgun — the field
 // exists nowhere on this struct on purpose.
 type UpdateAlertRuleParams struct {
+	PromotionChannelIDs             *[]string // bound atomically when switching an observation to notifications
 	MCPMinCalls, MCPForMinutes      *int
 	PostDeployRollbackWindowSeconds *int
 	Name                            *string
 	Enabled                         *bool
+	ObserveOnly                     *bool
+	EnvironmentScope                *string
 	Metric                          *AlertMetric
 	Comparison                      *AlertComparison
 	Threshold                       *float64
@@ -4155,11 +4211,12 @@ type UpdateAlertRuleParams struct {
 	// Validated against pkg/api.AllowedAlertRuleActions at the
 	// handler boundary (cmd/apid/handlers_alerts.go). Storage shape
 	// is a plain string in migrations/00481.
-	Action              *string
-	WebhookURL          *string
-	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
-	CooldownMinutes     *int
-	NotifyResolved      *bool
+	Action                     *string
+	WebhookURL                 *string
+	WebhookSecretSealed        *[]byte // nil = don't reseal; non-nil replaces
+	CooldownMinutes            *int
+	RecoveryConfirmationChecks *int
+	NotifyResolved             *bool
 }
 
 // AlertRule is one customer-configurable rule (issue #396, ADR-045).
@@ -4180,12 +4237,19 @@ type AlertRule struct {
 	ID                              string
 	AccountID                       string
 	AppID                           string // empty = account-wide
+	// EnvironmentID is the project environment the rule belongs to; empty is
+	// production (ADR-20261104120000 amendment 2026-11-22). A stage rule
+	// reads only signals counted per environment and is enabled only for
+	// them (StageAlertRuleRunnable).
+	EnvironmentID string
 	// CreatedByAccountID is the member who created the rule
 	// (ADR-20261026151103); empty for a rule older than the column, which
 	// only the app's creator could create.
 	CreatedByAccountID string
 	Name               string
 	Enabled            bool
+	ObserveOnly        bool
+	EnvironmentScope   string
 	Metric             AlertMetric
 	Comparison         AlertComparison
 	Threshold          float64
@@ -4203,13 +4267,17 @@ type AlertRule struct {
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
 	// NotifyResolved also sends the webhook a signed resolve event when the
 	// rule recovers (ADR-20261029203000); channels always get one.
-	NotifyResolved  bool
-	CooldownMinutes int
-	State           AlertState
-	LastFiredAt     time.Time // zero until first fire
-	LastEvaluatedAt time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	NotifyResolved             bool
+	CooldownMinutes            int
+	RecoveryConfirmationChecks int
+	State                      AlertState
+	LastFiredAt                time.Time // zero until first fire
+	LastEvaluatedAt            time.Time
+	AnomalyEvaluation          api.AlertAnomalyEvaluation
+	ObservedIncidents          []api.AlertObservedIncident
+	observationChecks          []alertObservationCheck
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is
@@ -4302,6 +4370,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // application-outbox calls; those names never participate in subscription
 // fan-out matching.
 type AppWebhookEvent string
+
+const AppWebhookEventExecutionFinished AppWebhookEvent = api.ExecutionFinishedWebhookEvent
 
 const (
 	AppWebhookEventConsumerUsageThreshold                  AppWebhookEvent = "consumer.usage_threshold"
@@ -8556,6 +8626,10 @@ type CreateAccountWithPersonalOrgParams struct {
 	// TermsAcceptance, when set, records the Terms of Service version the
 	// account accepted at sign-up in the same transaction (legal_acceptances).
 	TermsAcceptance *TermsAcceptance
+	// Unclaimed, when set, records the account as created by an anonymous
+	// deploy (ADR-20261124080000) in the same transaction, so an account
+	// never exists without the expiry that bounds it.
+	Unclaimed *UnclaimedAccountParams
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted

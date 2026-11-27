@@ -291,3 +291,57 @@ tests:
                 run a tick late. meterd logs the account (\"account spent its tick budget\"); look at its
                 slow rules: log-search queries, an unresponsive webhook, or Prometheus."
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
+  - name: platform alert emails that gave up page the platform inbox
+    interval: 1m
+    input_series:
+      - series: meterd_platform_alert_notices_total{job="meterd",instance="a",kind="app_outage",outcome="failed"}
+        values: 0+0x10 1+0x20
+      - series: meterd_platform_alert_notices_total{job="meterd",instance="a",kind="slo_burn",outcome="failed"}
+        values: 0+0x30
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasPlatformAlertEmailsFailing
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: FaasPlatformAlertEmailsFailing
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: a
+              kind: app_outage
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: "Platform alert emails (app_outage) gave up without being delivered"
+              description: "meterd exhausted its attempts on at least one platform alert notice in the last hour. The account was not told its app is failing, its check is failing, its SLO is burning or its cron was paused."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+
+  - name: guest span writes fire only when none succeed
+    interval: 1m
+    input_series:
+      - series: apid_otel_spans_writes_total{job="apid",instance="a",outcome="db_error"}
+        values: 0+5x40
+      - series: apid_otel_spans_writes_total{job="apid",instance="a",outcome="inserted"}
+        values: 0+0x40
+      - series: apid_otel_spans_writes_total{job="apid",instance="b",outcome="db_error"}
+        values: 0+5x40
+      - series: apid_otel_spans_writes_total{job="apid",instance="b",outcome="inserted"}
+        values: 0+10x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasGuestSpansWritesFailing
+        exp_alerts:
+          - exp_labels:
+              job: apid
+              instance: a
+              severity: warn
+              component: apid
+              family: debug_telemetry
+              public_status: internal
+            exp_annotations:
+              summary: "apid's spans writer has failed every write for 15 minutes"
+              description: "Guest and OTLP spans reach apid but every UPDATE of request_telemetry.spans_summary fails (db_error) and none succeeded. Traces, span evidence and dependency breakdowns go dark for every traced app."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"

@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
+	"github.com/onebox-faas/faas/pkg/pgextension"
 )
 
 var (
@@ -232,12 +233,16 @@ type ProvisionRequest struct {
 type UpdateRequest struct {
 	// ResourceID is the persisted provider lifecycle identity. DataResourceID
 	// pins its exact dataset; an adapter must never substitute a current default.
-	ResourceID     string
-	DataResourceID string
-	PreviousSpec   Spec
-	Spec           Spec
-	Generation     int64
-	IdempotencyKey string
+	ResourceID      string
+	DataResourceID  string
+	PreviousSpec    Spec
+	Spec            Spec
+	Generation      int64
+	IdempotencyKey  string
+	AutomaticResize bool
+	// SuspendTimeoutSeconds is the database's own suspend timeout for a
+	// change back to scale-to-zero; 0 is the platform default.
+	SuspendTimeoutSeconds int64
 }
 
 type ObservedDatabase struct {
@@ -362,11 +367,13 @@ type DeleteRequest struct {
 // resource at a point in time. The source is never mutated and the target
 // receives its own provider resource identity and credential bindings.
 type RestoreRequest struct {
-	ResourceID       string
-	SourceResourceID string
-	Spec             Spec
-	PointInTime      time.Time
-	IdempotencyKey   string
+	FromRecoveryArchive bool
+	RecoveryTimeline    uint32
+	ResourceID          string
+	SourceResourceID    string
+	Spec                Spec
+	PointInTime         time.Time
+	IdempotencyKey      string
 	// Verification, when recorded, is confirmed against the target's current
 	// immutable metadata instead of remapping PointInTime (ADR-1259).
 	Verification *RestoreVerification
@@ -405,6 +412,7 @@ type ImportState string
 
 const (
 	ImportNone    ImportState = "none"
+	ImportChecked ImportState = "checked"
 	ImportRunning ImportState = "running"
 	ImportDone    ImportState = "done"
 	ImportFailed  ImportState = "failed"
@@ -424,7 +432,8 @@ type ImportStatus struct {
 	// MissingExtensions names, for extension_unavailable, the source
 	// extensions the target cannot create: plain identifiers only, never
 	// connection data.
-	MissingExtensions []string
+	MissingExtensions      []string
+	IncompatibleExtensions []pgextension.Installed
 	// RequiredVolumeBytes is, for target_too_small, the storage size the
 	// target needs for the copy (zero when the estimate fell short during
 	// the copy).
@@ -482,7 +491,9 @@ type CredentialAccess string
 const (
 	CredentialReadWrite CredentialAccess = "read_write"
 	CredentialReadOnly  CredentialAccess = "read_only"
-	CredentialMigration CredentialAccess = "migration"
+	// Replica-only logins use read_only privileges and require a healthy standby.
+	CredentialReplicaOnly CredentialAccess = "replica_only"
+	CredentialMigration   CredentialAccess = "migration"
 	// Data API logins receive only api-schema DML, without owner memberships.
 	CredentialDataAPI CredentialAccess = "data_api"
 	// Auth logins act as a separate owner of only the auth and gregale_auth
@@ -497,7 +508,7 @@ const (
 )
 
 // knownCredentialAccess lists every portable credential mode.
-var knownCredentialAccess = [...]CredentialAccess{CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth, CredentialSession}
+var knownCredentialAccess = [...]CredentialAccess{CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth, CredentialSession, CredentialReplicaOnly}
 
 // Known reports whether access is a portable credential mode. Every
 // validation site uses it so a new mode cannot be missed by one of them.
@@ -511,12 +522,16 @@ func (a CredentialAccess) Known() bool {
 }
 
 // Privileges is the SQL privilege class a login of this access mode receives.
-// Only the endpoint distinguishes session from read_write.
+// Routing variants share the privilege classes of their base modes.
 func (a CredentialAccess) Privileges() CredentialAccess {
-	if a == CredentialSession {
+	switch a {
+	case CredentialSession:
 		return CredentialReadWrite
+	case CredentialReplicaOnly:
+		return CredentialReadOnly
+	default:
+		return a
 	}
-	return a
 }
 
 // DirectOnly reports whether the login must bypass the transaction pooler.
@@ -529,9 +544,10 @@ func (a CredentialAccess) DirectOnly() bool {
 type EndpointRole string
 
 const (
-	EndpointPooled   EndpointRole = "pooled"
-	EndpointDirect   EndpointRole = "direct"
-	EndpointReadOnly EndpointRole = "read_only"
+	EndpointPooled      EndpointRole = "pooled"
+	EndpointDirect      EndpointRole = "direct"
+	EndpointReadOnly    EndpointRole = "read_only"
+	EndpointReplicaOnly EndpointRole = "replica_only"
 )
 
 type Endpoint struct {
@@ -572,7 +588,7 @@ func (c CredentialMaterial) Validate() error {
 		if endpoint.Host == "" || endpoint.Port == 0 {
 			return ErrInvalid
 		}
-		if endpoint.Role != EndpointPooled && endpoint.Role != EndpointDirect && endpoint.Role != EndpointReadOnly {
+		if endpoint.Role != EndpointPooled && endpoint.Role != EndpointDirect && endpoint.Role != EndpointReadOnly && endpoint.Role != EndpointReplicaOnly {
 			return ErrInvalid
 		}
 		if _, ok := seen[endpoint.Role]; ok {
@@ -584,6 +600,7 @@ func (c CredentialMaterial) Validate() error {
 }
 
 type CredentialRequest struct {
+	TimeoutPolicy      BindingTimeoutPolicy
 	ProviderResourceID string
 	// Nonzero only when a durable capacity reservation bounds this login.
 	ConnectionLimit int64
@@ -600,6 +617,9 @@ type CredentialRequest struct {
 	// SET ROLE to (ADR-20261116213000). Roles not yet created are skipped;
 	// the next custom-role apply grants them.
 	CustomRoles CustomRoleGrants
+	// CustomRoleDefault is the custom role, among CustomRoles, the login
+	// starts every session as (ALTER ROLE ... SET role); "" for none.
+	CustomRoleDefault string
 }
 
 type Meter string
@@ -611,8 +631,12 @@ const (
 	MeterComputeUnitSeconds Meter = "compute_unit_seconds"
 	MeterStorageByteSeconds Meter = "storage_byte_seconds"
 	MeterHistoryByteSeconds Meter = "history_byte_seconds"
-	MeterEgressBytes        Meter = "egress_bytes"
-	MeterOperations         Meter = "operations"
+	// MeterSnapshotByteSeconds is snapshot storage, apart from restore
+	// history because the provider prices it differently
+	// (ADR-20261123062111).
+	MeterSnapshotByteSeconds Meter = "snapshot_byte_seconds"
+	MeterEgressBytes         Meter = "egress_bytes"
+	MeterOperations          Meter = "operations"
 )
 
 type UsageWindow struct {
@@ -755,7 +779,9 @@ type UsageSnapshot struct {
 	ComputeUnitSeconds int64
 	StorageByteSeconds int64
 	HistoryByteSeconds int64
-	EgressBytes        int64
+	// SnapshotByteSeconds is snapshot storage (ADR-20261123062111).
+	SnapshotByteSeconds int64
+	EgressBytes         int64
 	// DatabaseEgress is each database's egress this month, by database ID.
 	// Neon's transfer allowance is per project and every database is its own
 	// project, so a database's egress allowance is its own
@@ -835,6 +861,7 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 		{"managed_postgres.compute", MeterComputeUnitSeconds, "compute_unit_seconds", snapshot.ComputeUnitSeconds},
 		{"managed_postgres.storage", MeterStorageByteSeconds, "byte_seconds", snapshot.StorageByteSeconds},
 		{"managed_postgres.restore_history", MeterHistoryByteSeconds, "byte_seconds", snapshot.HistoryByteSeconds},
+		{"managed_postgres.snapshots", MeterSnapshotByteSeconds, "byte_seconds", snapshot.SnapshotByteSeconds},
 		{"managed_postgres.egress", MeterEgressBytes, "bytes", snapshot.EgressBytes},
 	}
 	items := make([]UsageLineItem, 0, len(readings))
@@ -926,7 +953,7 @@ func (s UsageSnapshot) hasHeadroom(policy UsagePolicy) bool {
 	return below(s.CostMillicents, policy.MaxMonthlyCostMillicents) &&
 		below(s.ComputeUnitSeconds, policy.MaxMonthlyComputeUnitSeconds) &&
 		below(s.StorageByteSeconds, policy.MaxMonthlyStorageByteSeconds) &&
-		(policy.MaxMonthlyHistoryByteSeconds <= 0 || below(s.HistoryByteSeconds, policy.MaxMonthlyHistoryByteSeconds)) &&
+		(policy.MaxMonthlyHistoryByteSeconds <= 0 || below(s.historyAndSnapshots(), policy.MaxMonthlyHistoryByteSeconds)) &&
 		below(s.EgressBytes, policy.MaxMonthlyEgressBytes)
 }
 
@@ -937,8 +964,15 @@ func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
 	return s.CostMillicents >= policy.MaxMonthlyCostMillicents ||
 		s.ComputeUnitSeconds >= policy.MaxMonthlyComputeUnitSeconds ||
 		s.StorageByteSeconds >= policy.MaxMonthlyStorageByteSeconds ||
-		(policy.MaxMonthlyHistoryByteSeconds > 0 && s.HistoryByteSeconds >= policy.MaxMonthlyHistoryByteSeconds) ||
+		(policy.MaxMonthlyHistoryByteSeconds > 0 && s.historyAndSnapshots() >= policy.MaxMonthlyHistoryByteSeconds) ||
 		s.EgressBytes >= policy.MaxMonthlyEgressBytes
+}
+
+// historyAndSnapshots is what the operator's history ceiling bounds: restore
+// history and snapshot storage together, as the single history meter
+// recorded them before snapshots had their own (ADR-20261123062111).
+func (s UsageSnapshot) historyAndSnapshots() int64 {
+	return saturatingAdd(max(s.HistoryByteSeconds, 0), max(s.SnapshotByteSeconds, 0))
 }
 
 type Capabilities struct {
@@ -1211,6 +1245,9 @@ type Database struct {
 	// survives failure, retries, and deletion. It must never be cleared.
 	AccountingRequired          bool
 	DataResourceID              string
+	RecoveryRegion              string
+	RestoreFromRecovery         bool
+	RestoreRecoveryTimeline     uint32
 	RestoreSourceDatabaseID     string
 	RestoreSourceResourceID     string
 	RestorePointInTime          time.Time
@@ -1492,7 +1529,7 @@ func providerErrorCode(err error) string {
 
 func validMeter(meter Meter) bool {
 	switch meter {
-	case MeterActiveSeconds, MeterComputeUnitSeconds, MeterStorageByteSeconds, MeterHistoryByteSeconds, MeterEgressBytes, MeterOperations:
+	case MeterActiveSeconds, MeterComputeUnitSeconds, MeterStorageByteSeconds, MeterHistoryByteSeconds, MeterSnapshotByteSeconds, MeterEgressBytes, MeterOperations:
 		return true
 	default:
 		return false

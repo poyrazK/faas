@@ -122,6 +122,40 @@ type InsightRetention struct {
 	Truncated  bool                  `json:"truncated"`
 }
 
+// InsightCohortRequest creates a cohort (ADR 20261119102741 §3). Kind is
+// did (Event sent at least MinCount times, default 1), did_not (customers
+// active in the last 30 days that did not send Event) or funnel (Steps
+// completed within Window); all look back WithinDays.
+type InsightCohortRequest struct {
+	Key        string               `json:"key"`
+	Kind       string               `json:"kind"`
+	Event      string               `json:"event,omitempty"`
+	Where      map[string]string    `json:"where,omitempty"`
+	WithinDays int                  `json:"within_days"`
+	MinCount   int                  `json:"min_count,omitempty"`
+	Steps      []InsightStepRequest `json:"steps,omitempty"`
+	Window     string               `json:"window,omitempty"`
+}
+
+// InsightCohort is a cohort and its last refresh. Rules target it with the
+// gregale.cohort attribute.
+type InsightCohort struct {
+	InsightCohortRequest
+	Members            int        `json:"members"`
+	Truncated          bool       `json:"truncated"`
+	MaxMembers         int        `json:"max_members"`
+	RefreshedAt        *time.Time `json:"refreshed_at,omitempty"`
+	RefreshRequestedAt time.Time  `json:"refresh_requested_at"`
+	RefreshError       string     `json:"refresh_error,omitempty"`
+	CreatedBy          string     `json:"created_by"`
+	CreatedAt          time.Time  `json:"created_at"`
+}
+
+// InsightCohortList is an environment's cohorts.
+type InsightCohortList struct {
+	Cohorts []InsightCohort `json:"cohorts"`
+}
+
 // InsightRequestVariant is request telemetry for one value of a flag.
 type InsightRequestVariant struct {
 	Value           string  `json:"value"`
@@ -138,4 +172,89 @@ type InsightRequests struct {
 	From     time.Time               `json:"from"`
 	Until    time.Time               `json:"until"`
 	Variants []InsightRequestVariant `json:"variants"`
+}
+
+// Saved insights (ADR-20261122190000), under
+// /v1/projects/{slug}/environments/{environment}/insights/saved.
+
+// Saved insight kinds.
+const (
+	SavedInsightKindEvents    = "events"
+	SavedInsightKindFunnel    = "funnel"
+	SavedInsightKindRetention = "retention"
+)
+
+// Saved insight digest schedules.
+const (
+	SavedInsightDigestDaily  = "daily"
+	SavedInsightDigestWeekly = "weekly"
+)
+
+// InsightEventsQuery is a saved events insight: the query parameters of
+// GET .../insights/events and the measure its value totals (events, the
+// default, or value).
+type InsightEventsQuery struct {
+	Event    string            `json:"event"`
+	Where    map[string]string `json:"where,omitempty"`
+	Interval string            `json:"interval,omitempty"`
+	Unit     string            `json:"unit,omitempty"`
+	By       string            `json:"by,omitempty"`
+	Measure  string            `json:"measure,omitempty"`
+}
+
+// SavedInsightAlert fires when the insight's value compares to Threshold
+// (gt, gte, lt, lte).
+type SavedInsightAlert struct {
+	Comparison string  `json:"comparison"`
+	Threshold  float64 `json:"threshold"`
+}
+
+// SavedInsightRequest creates or replaces a saved insight. Exactly the
+// query of its kind is set, without from or until: a saved insight covers
+// the last RangeDays days whenever it runs.
+type SavedInsightRequest struct {
+	Key        string                   `json:"key"`
+	Name       string                   `json:"name,omitempty"`
+	Kind       string                   `json:"kind"`
+	Events     *InsightEventsQuery      `json:"events,omitempty"`
+	Funnel     *InsightFunnelRequest    `json:"funnel,omitempty"`
+	Retention  *InsightRetentionRequest `json:"retention,omitempty"`
+	RangeDays  int                      `json:"range_days,omitempty"`
+	Digest     string                   `json:"digest,omitempty"`
+	Alert      *SavedInsightAlert       `json:"alert,omitempty"`
+	ChannelIDs []string                 `json:"channel_ids,omitempty"`
+}
+
+// SavedInsight is a saved insight and its last scheduled run. Value is the
+// number digests report and alerts compare: an events insight's total,
+// a funnel's overall conversion and a retention query's first-period rate.
+type SavedInsight struct {
+	SavedInsightRequest
+	AlertState   string     `json:"alert_state"`
+	LastValue    *float64   `json:"last_value,omitempty"`
+	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
+	LastError    string     `json:"last_error,omitempty"`
+	NextDigestAt *time.Time `json:"next_digest_at,omitempty"`
+	CreatedBy    string     `json:"created_by"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// SavedInsightList is GET .../insights/saved.
+type SavedInsightList struct {
+	Insights []SavedInsight `json:"insights"`
+}
+
+// SavedInsightResult is one run of a saved insight: its value and the
+// result of its kind. Value is absent when there is no data to compute it
+// from: a funnel without entrants or retention before a period has ended.
+type SavedInsightResult struct {
+	Key       string              `json:"key"`
+	Kind      string              `json:"kind"`
+	Value     *float64            `json:"value,omitempty"`
+	From      time.Time           `json:"from"`
+	Until     time.Time           `json:"until"`
+	Events    *InsightEventSeries `json:"events,omitempty"`
+	Funnel    *InsightFunnel      `json:"funnel,omitempty"`
+	Retention *InsightRetention   `json:"retention,omitempty"`
 }

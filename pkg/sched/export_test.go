@@ -513,8 +513,8 @@ func (r *Engine) NoteEgressAbuseRecycle(p0 string, p1 time.Time) bool {
 func (r *Engine) ParkForCapacity(p0 context.Context, p1 string, p2 string, p3 error) bool {
 	return r.parkForCapacity(p0, p1, p2, p3)
 }
-func (r *Engine) ParkZeroTrafficSibling(p0 context.Context, p1 string, p2 string) bool {
-	return r.parkZeroTrafficSibling(p0, p1, p2)
+func (r *Engine) ParkZeroTrafficSibling(p0 context.Context, p1 string, p2 string, p3 bool) bool {
+	return r.parkZeroTrafficSibling(p0, p1, p2, p3)
 }
 func (r *Engine) PressureSweepCounterValue(p0 string) int    { return r.pressureSweepCounterValue(p0) }
 func (r *Engine) PrimeColdBootBudget(p0 int32) time.Duration { return r.primeColdBootBudget(p0) }
@@ -1084,6 +1084,22 @@ var CronDue = cronDue
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
 func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
 
+// XRunCronPrewakeRetention runs the hourly cron pre-wake intent sweep once.
+func (l *Loop) XRunCronPrewakeRetention(ctx context.Context) { l.runCronPrewakeRetention(ctx) }
+
+// XCronPrewakeFires exposes cronPrewakeFires: per app the fire time and cron
+// ID it would pre-wake for, and the apps it leaves to a fire under way.
+func XCronPrewakeFires(crons []state.Cron, now time.Time, lead time.Duration) (map[string]time.Time, map[string]string, map[string]bool) {
+	fires, busy := cronPrewakeFires(crons, now, lead)
+	at := map[string]time.Time{}
+	ids := map[string]string{}
+	for app, f := range fires {
+		at[app] = f.at
+		ids[app] = f.cron.ID
+	}
+	return at, ids, busy
+}
+
 // XEventJobContinue is the recovery and backfill sweeps' failure decision.
 // adr: 20261028095548 — a job whose own work failed was backed off, so the
 // sweep goes on to the next one.
@@ -1382,6 +1398,9 @@ func XFillLedger(t testing.TB, r *SnapshotRefresher, nodeID string, percent int)
 // XSetNow replaces the refresher's clock.
 func (r *SnapshotRefresher) XSetNow(now func() time.Time) { r.now = now }
 
+// XSetNow pins the engine clock (stale instance hint tests).
+func (e *Engine) XSetNow(now func() time.Time) { e.now = now }
+
 // XResidentRAMForNode is the refresher engine's ledger residency on nodeID.
 func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
 	return r.e.ledger.ResidentRAMForNode(nodeID)
@@ -1437,4 +1456,23 @@ var XInitPrimePath = initPrimePath
 // trigger t, as dispatchOneTrigger does after the record-rate reservation.
 func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
 	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
+}
+
+// DrainQueuePushLane runs one push lane over dispatch (ADR-972 amendment
+// 2026-11-19).
+func DrainQueuePushLane(ctx context.Context, dispatch func(context.Context) error) error {
+	return drainQueuePushLane(ctx, dispatch)
+}
+
+// ReportTriggerPoll records a poll's record count, as dispatchOneTrigger does.
+func ReportTriggerPoll(ctx context.Context, records int) { reportTriggerPoll(ctx, records) }
+
+// ErrTriggerGatewayDispatch marks a batch the gateway could not take.
+var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch
+
+// InvocationErrorText is the last_error text of a failed invocation.
+var InvocationErrorText = invocationErrorText
+
+func (e *Engine) XWithWorkloadS3Env(app state.App, env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	return e.withWorkloadS3Env(app, env)
 }

@@ -6,19 +6,21 @@ Gregale CLI and API, short-lived signed URLs, or any S3 SDK pointed at
 `https://s3.gregale.dev`. Buckets are separate from your app's instances, which
 stay stateless: a bucket is not a disk mounted into the VM.
 
-> **Preview.** Object storage and every feature on this page are preview
-> capabilities, released per account. Ask support to enable them. Behavior and
-> limits can change before general availability.
-
-Operators running Gregale themselves should read the
-[object storage operator notes](ops/object-storage-operator-notes.md).
+> **Generally available:** buckets (private and public), uploads and
+> downloads, signed URLs and upload routes, S3 credentials and the S3 endpoint,
+> multipart uploads, app bindings (including key-scoped ones), and bucket
+> notifications.
+>
+> **Preview, released per account:** versioning, Object Lock, lifecycle rules,
+> bucket encryption settings, CORS rules and bucket grants for API keys. The
+> sections below mark them. Gregale's storage region does not support
+> versioning or Object Lock yet.
 
 ## Plans and pricing
 
 Object storage is available on every plan. Each plan includes an amount of
 storage, measured as the average bytes you keep over the billing month, and
-has a ceiling on what you can store
-([ADR-20261101214152](adr/20261101214152-object-storage-ceiling-follows-spend-cap.md)):
+has a ceiling on what you can store:
 
 | Plan | Included storage | Storage ceiling |
 |---|---|---|
@@ -42,6 +44,16 @@ spend cap), downloads are refused with `402 account_bytes`; listing, `HEAD` and
 When your account reaches its spend cap, existing buckets keep working within
 your plan's limits. Retained object versions count toward stored bytes until
 they are deleted.
+
+## Region and durability
+
+Buckets live in one region, served at `https://s3.gregale.dev` as region
+`us-east-1`. Gregale stores objects on OVHcloud Object Storage and relies on
+the provider's durability. There is no second region, and Gregale keeps no copy
+of your objects outside the provider.
+
+This region does not support versioning, so an overwrite or a delete cannot be
+undone. Keep your own copy of data you cannot recreate.
 
 ## Create a bucket
 
@@ -99,6 +111,14 @@ redirected (`301`) to the same path without it before anything is counted, so
 query strings never reach your bucket: put an asset's version in its key, such
 as `/assets/app.3f9c2e.js`, not in `?v=`. The mount path cannot change after
 creation. Buckets are private unless created public.
+
+A public bucket serves each object with the type it was stored with, on your
+app's own hostname, so an HTML or SVG object runs as a page of your app. That
+is what hosting a static site needs, but it also means anyone who can write to
+the bucket can publish script on your origin. If your users upload files (for
+example through upload URLs from `gregale bucket sign`), keep those uploads in a
+private bucket and hand out signed download URLs, which always serve HTML and
+SVG as attachments.
 
 When public mount paths overlap, the longest matching path serves the request.
 For example, `/assets/images/logo.png` uses the bucket mounted at
@@ -263,9 +283,23 @@ const s3 = new S3Client({
   endpoint: "https://s3.gregale.dev",
   region: "us-east-1",
   forcePathStyle: true,
+  // Required for presigned URLs that browsers upload to (see below).
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 await s3.send(new PutObjectCommand({ Bucket: "assets", Key: "hello.txt", Body: "hello" }));
 ```
+
+Two settings matter with AWS SDK v3 (and boto3 1.36 or later):
+
+- `forcePathStyle: true`. Without it the SDK sends requests to
+  `assets.s3.gregale.dev`, which does not exist.
+- `requestChecksumCalculation: "WHEN_REQUIRED"` (boto3:
+  `Config(request_checksum_calculation="when_required")`). Newer SDKs sign a
+  CRC32 checksum into every presigned PUT and upload-part URL. When you
+  presign before you have the file, that is the checksum of an empty body.
+  Gregale validates signed checksums, so the browser's upload of the real
+  file is then refused. Direct SDK uploads work either way.
 
 What the endpoint does not support:
 
@@ -306,8 +340,12 @@ buckets:
     prefix: GREGALE_S3_ASSETS
 ```
 
-`gregale deploy` creates or reuses the binding but never creates the bucket, so
-create it first with `gregale add bucket`. Rotate or revoke a binding's key with:
+`gregale deploy` creates or reuses the binding. It creates the bucket only when
+the entry says `create: true` (or `create: {region: …}`) and no bucket with that
+name exists; otherwise create it first with `gregale add bucket`. A deploy never
+changes or deletes an existing bucket. To run your app when files land in the
+bucket, add `triggers` to the same entry ([run code on upload](#run-code-on-upload)).
+Rotate or revoke a binding's key with:
 
 ```sh
 gregale app binding object-storage list my-api assets
@@ -320,7 +358,7 @@ the old one is retired. Your app must be allowed to reach `s3.gregale.dev` under
 its egress rules. See [object storage from compute workloads](object-storage-compute.md)
 for SDK helpers.
 
-### Limit a binding to part of a bucket (preview)
+### Limit a binding to part of a bucket
 
 A binding can be limited to object keys under one prefix. Give each service
 only the keys it needs, with its own secret-name prefix:
@@ -361,7 +399,9 @@ Or `gregale add bucket segments --app store --permission write --key-prefix v1/L
 
 Bucket management needs an API key with the `storage:manage` scope. Reading and
 writing objects need `storage:read` and `storage:write`, and a key without the
-`admin` scope also needs a grant on each bucket it uses:
+`admin` scope also needs a grant on each bucket it uses. Bucket grants are in
+preview: until they are released to your account, use an `admin` key, S3
+credentials or an app binding.
 
 ```http
 PUT /v1/apps/{app}/buckets/{bucket-id}/access-grants/{key-id}
@@ -372,7 +412,9 @@ PUT /v1/apps/{app}/buckets/{bucket-id}/access-grants/{key-id}
 `permission` is `read`, `write` or `read_write`. `storage:manage` alone does not
 read or write objects.
 
-## Versioning
+## Versioning (preview)
+
+Versioning is in preview, and Gregale's storage region does not support it yet.
 
 With versioning on, overwriting or deleting an object keeps the previous
 version, and you can read or restore it:
@@ -388,7 +430,9 @@ until it is ready. Suspending it keeps the versions you have. Retained versions
 count toward your stored bytes. S3 SDKs can also list versions
 (`ListObjectVersions`) and read or delete a specific version.
 
-## Lifecycle rules
+## Lifecycle rules (preview)
+
+Lifecycle rules are in preview.
 
 Lifecycle rules delete objects for you: current objects after a number of days
 or on a date, older versions, expired delete markers, and abandoned multipart
@@ -419,7 +463,9 @@ Older-version rules continue to apply after the last live object is deleted.
 Current-object age starts when the upload completes; changing tags does not
 restart its expiration clock.
 
-## Object Lock, retention and legal holds
+## Object Lock, retention and legal holds (preview)
+
+Object Lock is in preview, and Gregale's storage region does not support it yet.
 
 Where your region's storage supports it, Object Lock keeps chosen object versions
 from being deleted or overwritten:
@@ -429,8 +475,7 @@ from being deleted or overwritten:
   `COMPLIANCE` cannot be changed to `GOVERNANCE`.
 - **A legal hold** protects a version until you turn it off.
 
-Object Lock is included on paid plans, and retention is capped by plan
-([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)):
+Object Lock is included on paid plans, and retention is capped by plan:
 
 | Plan | Longest retention | Legal holds |
 |---|---|---|
@@ -466,15 +511,16 @@ gregale bucket protection retention my-api BUCKET_ID notes.txt VERSION_ID GOVERN
 
 A bucket or account holding protected versions cannot be deleted until the
 protection ends. Run `gregale bucket object-lock set --help` for the bucket
-defaults. (Object storage is in preview, so the public CLI reference does not
+defaults. (Object Lock is in preview, so the public CLI reference does not
 list its commands.)
 
 ## Encryption
 
-Objects are encrypted at rest by the storage provider. You can also choose a
-bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`) or, where
-enabled for your account, your own enrolled keys. Run
-`gregale bucket encryption set --help` for the options.
+Objects are encrypted at rest by the storage provider. Bucket encryption
+settings are in preview. Where they are released to your account, you can also
+choose a bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`)
+or your own enrolled keys. Run `gregale bucket encryption set --help` for the
+options.
 
 Public asset GET and HEAD responses also validate provider encryption metadata.
 An unknown or another account's KMS key, customer-supplied encryption, or ambiguous
@@ -505,14 +551,84 @@ is served.
 ## Events and notifications
 
 Every confirmed write emits an `object.created` event, and deletions emit
-`object.removed`, from the `gregale.storage` source. Subscribe an app to them
-with `event_triggers` in its `gregale.yaml` (see
-[events](events.md#internal-event-subscriptions)), or send them to a function
-or queue with the bucket's notification configuration:
+`object.removed`, from the `gregale.storage` source. That includes writes
+through signed URLs, upload routes, multipart uploads and S3 SDKs. There are
+three ways to act on them:
+
+- **Run your app on upload:** `triggers` on a `gregale.yaml` bucket entry
+  (below). Simplest; calls the app that owns the bucket.
+- **Send to a queue, or to another app:** the bucket's notification rules.
+- **Subscribe through the event router (preview):** `event_triggers` in
+  `gregale.yaml` (see [events](events.md#internal-event-subscriptions)).
+
+### Run code on upload
+
+Declare the trigger next to the bucket binding. On each deploy Gregale makes
+the bucket's notification rules match the list:
+
+```yaml
+buckets:
+  - bucket: uploads
+    permission: read_write
+    triggers:
+      - id: new-image          # stable name; renaming it replaces the rule
+        prefix: incoming/      # optional
+        suffix: .png           # optional
+```
+
+Each matching write sends one `POST /` to your app, as an asynchronous
+invocation, with an S3-style body:
+
+```json
+{"Records": [{"eventVersion": "2.1", "eventSource": "aws:s3", "awsRegion": "…",
+  "eventTime": "…", "eventName": "ObjectCreated:Put",
+  "s3": {"configurationId": "…", "bucket": {"name": "uploads", "arn": "…"},
+         "object": {"key": "incoming%2Fcat.png", "size": 18231, "eTag": "…"}}}]}
+```
+
+- The object key is URL-encoded, as in AWS S3 events; decode it before use.
+- `events` defaults to every `ObjectCreated` event. Triggers do not fire on
+  deletes; use a notification rule for those.
+- Delivery is at least once. The `x-gregale-event-id` header stays the same
+  across retries, so record it before applying side effects. Failed deliveries
+  follow the async retry policy and end in the app's dead-letter queue
+  (`gregale dlq list my-api`).
+- The trigger always calls the app that owns the bucket. Leaving out `triggers`
+  keeps the current rules; `triggers: []` removes the ones the manifest created.
+  Rules you set by hand with `gregale bucket notifications` are kept, and a
+  trigger whose `id` or filter clashes with one fails the deploy instead of
+  overwriting it.
+- `gregale dev` accepts the same `triggers` on `dev.buckets`; they call your dev
+  workspace, not production.
+
+**Browser uploads without a "complete" call.** Your backend issues a signed PUT
+URL ([signed URLs](#signed-urls)) and returns it to the browser; the browser
+uploads straight to `s3.gregale.dev`; the trigger then runs your processing
+code. The browser never needs to call back to say the upload finished, and
+your app sleeps while the upload is in flight.
+
+### Notification rules: queues and other apps
+
+To put work on a queue instead of calling the app directly, or to reach an app
+other than the bucket's owner, set the bucket's notification rules:
 
 ```sh
 gregale bucket notifications set my-api BUCKET_ID notifications.json
+gregale bucket notifications get my-api BUCKET_ID
 ```
+
+```json
+{"rules": [{"id": "thumbnails", "events": ["s3:ObjectCreated:*"], "prefix": "incoming/",
+  "destination": "arn:gregale:sqs:REGION:ACCOUNT_ID:APP_ID/thumbnail-jobs"}]}
+```
+
+A function destination is `arn:gregale:lambda:REGION:ACCOUNT_ID:function:APP_ID`.
+`REGION` is the bucket's region (`gregale bucket list`), `ACCOUNT_ID` is the
+`id` from `gregale whoami --json`, and `APP_ID` is the `id` from
+`gregale app get APP --json`. Queue messages carry the same body as above.
+Rules support `ObjectCreated:Put`, `:Copy`, `:CompleteMultipartUpload`,
+`ObjectRemoved:Delete`, `:DeleteMarkerCreated` and the lifecycle expiration
+events. Notification rules are not declared in `gregale.yaml` yet.
 
 Notifications and compute triggers run app code, so they need a paid plan;
 Free answers `402`, like other triggers. Company apps use the organization's
@@ -521,7 +637,9 @@ Queue destinations must have a unique enabled queue name across the app's
 environments. Notifications enter the captured queue's environment and retain
 that destination if the queue is renamed.
 
-## Browser access (CORS)
+## Uploads from your own sites (preview)
+
+Cross-origin bucket rules are in preview.
 
 To let your own sites use signed URLs and upload routes from the browser, set
 CORS rules on the bucket:
@@ -590,7 +708,6 @@ current values are in `GET /v1/account/object-storage-usage` under `policy`.
   read or write its buckets. After the grace period, every bucket it owns is
   emptied and deleted. Gregale releases legal and event holds and deletes
   `GOVERNANCE` versions too; versions under `COMPLIANCE` retention, which no
-  one can remove early, are kept until their retention ends and then deleted
-  ([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)).
+  one can remove early, are kept until their retention ends and then deleted.
 - A bucket created for an organization belongs to the organization, not to the
   member who created it.

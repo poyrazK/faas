@@ -46,15 +46,23 @@ func (j *hostedMCPJourney) budgetKey(t *testing.T) {
 	}
 }
 
-// probeFloor reads the probe app's min_instances through the admin key.
+// probeFloor reads the probe app's min_instances through the admin key. The
+// API omits a zero floor (min_instances is omitempty), the state of a
+// scale-to-zero app, so a missing field is 0.
 func (j *hostedMCPJourney) probeFloor(t *testing.T) int {
 	t.Helper()
 	got := jsonBody(t, j.tg.apiCall(http.MethodGet, "/v1/apps/"+j.probe, nil, j.adminKey(t)))
-	n, ok := got["min_instances"].(float64)
-	if !ok {
-		t.Fatalf("GET /v1/apps/%s has no min_instances: %s", j.probe, compact(got))
+	raw, present := got["min_instances"]
+	if !present {
+		return 0
 	}
-	return int(n)
+	// jsonBody decodes numbers as json.Number.
+	n, ok := raw.(json.Number)
+	floor, err := n.Int64()
+	if !ok || err != nil {
+		t.Fatalf("GET /v1/apps/%s has a non-numeric min_instances: %s", j.probe, compact(got))
+	}
+	return int(floor)
 }
 
 // raiseFloor sends the agent's PATCH adding one warm instance to the probe,

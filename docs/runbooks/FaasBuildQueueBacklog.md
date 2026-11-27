@@ -23,8 +23,11 @@ when work starts, so it cannot establish wait for work that remains queued.
 but has no complete fresh queue observation for five minutes.
 
 Each compute
-node admits one builder because two ordinary builders can exceed the 5 GiB
-parent cgroup. The queue grows when arrival rate exceeds that safe drain rate.
+node admits the reserved builders its build slice is sized for
+(`builder_reserved_slots`, default 1; ADR-20261118154632 amendment 1), because
+more ordinary builders than that can exceed the parent cgroup. The queue grows
+when arrival rate exceeds that safe drain rate; raise the count in the deploy
+manifest for a node with spare RAM and CPU.
 
 ## Verify
 

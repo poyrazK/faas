@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateExecutionRequest } from './CreateExecutionRequest.js';
+import type { ExecutionRetryPolicy } from './ExecutionRetryPolicy.js';
+import type { InvokeExecutionTaskRequest } from './InvokeExecutionTaskRequest.js';
 import type { ManagedExecutionWorkflowArtifactInput } from './ManagedExecutionWorkflowArtifactInput.js';
 /**
  * One disposable Run in the DAG and its dependency, result, and artifact handoff rules.
@@ -29,9 +31,11 @@ export type CreateManagedExecutionWorkflowStep = {
    * Optional JSON Schema Draft 2020-12 contract for this Run's JSON result. The control plane enforces it before dependents can consume the result. Local fragment references are supported; external resources are not loaded. Each schema is limited to 64 KiB and all schemas in a workflow together are limited to 1 MiB.
    */
   result_schema?: (Record<string, any> | boolean);
+  task?: InvokeExecutionTaskRequest;
+  retry?: ExecutionRetryPolicy;
   /**
    * Must not include workflow_id, step_label, or artifact_inputs.
    */
-  request: CreateExecutionRequest;
+  request?: CreateExecutionRequest;
 };
 

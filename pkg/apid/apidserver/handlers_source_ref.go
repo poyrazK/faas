@@ -142,16 +142,17 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, problem)
 		return
 	}
-	installID, p := s.resolveInstallToken(r.Context(), acct, app, req.Repo)
+	access, p := s.resolveSourceRefDeployAccess(r.Context(), acct, app, req)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
+	installID := access.installID
 	if problem := s.checkReviewedSource(r.Context(), acct, app, req, installID); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	branchRef, branchProblem := s.resolveSourceRefBranch(r.Context(), acct.ID, installID, req.Repo, req.Ref)
+	branchRef, branchProblem := s.sourceRefDeployBranch(r.Context(), acct.ID, access, req.Repo, req.Ref)
 	if branchProblem != nil {
 		api.WriteProblem(w, branchProblem)
 		return
@@ -169,7 +170,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(maxBytes))
 	defer cancel()
 	r = r.WithContext(ctx)
-	stream, p := s.streamSourceTarball(r.Context(), acct.ID, installID, req.Repo, req.Ref, maxBytes)
+	stream, p := s.streamSourceRefArchive(r.Context(), acct.ID, access, req.Repo, req.Ref, maxBytes)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -344,7 +345,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	if branchRef != "" {
 		sourceInstallationID = installID
 	}
-	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
+	if !ok {
+		return
+	}
+	res, err := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
 		ExpectedReview:            rolloutReq.ExpectedReview,
 		ReviewedRolloutMode:       req.NativeRollout,
 		ReviewedSettings:          reviewedSettings,
@@ -416,7 +421,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	manifestCommitted = true
 	sourceAccepted = true
 	s.auditSourceRefManifestScaling(r.Context(), acct, app, stagedManifest)
-	s.auditSourceRefDeploy(r, acct, app, res, prev, req, resolvedSHA, installID, ann)
+	s.auditSourceRefDeploy(r, acct, app, res, prev, req, resolvedSHA, access, ann)
 	// Reload the deployment row so the response carries the
 	// canonical wire shape (mirrors createDeployment's
 	// LatestDeployment re-read).
@@ -426,10 +431,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	d.StagedReview = res.StagedReview
-	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
+	s.auditDeploymentSchedule(r, acct, app, d, scheduleResult)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 
@@ -623,7 +625,7 @@ func (s *server) streamSourceTarball(ctx context.Context, installOwner string, i
 // mergeAnnotationAudit (see handlers_source_tarball.go). nil/zero
 // values are omitted so pre-feature rows stay byte-identical at
 // the JSON layer.
-func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app state.App, res apidsource.EnqueueResult, prev state.Deployment, req api.SourceRefDeployRequest, resolvedSHA string, installID int64, ann annotationForm) {
+func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app state.App, res apidsource.EnqueueResult, prev state.Deployment, req api.SourceRefDeployRequest, resolvedSHA string, access sourceRefAccess, ann annotationForm) {
 	ctx := r.Context()
 
 	s.log.Info("source-ref deployment enqueued",
@@ -673,8 +675,12 @@ func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app s
 		"repo":          req.Repo,
 		"ref":           req.Ref,
 		"source_sha":    resolvedSHA,
-		"install_id":    installID,
+		"install_id":    access.installID,
 		"supersedes":    supersedes,
+	}
+	if access.public {
+		// ADR-20261126164847: read as a public repository, no installation.
+		data["access"] = "public"
 	}
 	// Issue #977 / ADR-116: mirror the annotation surface into
 	// the deploy.source_ref audit row. mergeAnnotationAudit is

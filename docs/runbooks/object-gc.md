@@ -35,6 +35,10 @@ one once nothing references it. Both switches are off by default.
 
 ## Read it
 
+- The worker also lists `jobs/` and `sources/` every 6 hours and requests
+  the objects their compute-side sweeps would delete (job attempts of
+  deleted, failed or superseded jobs; sources of finished builds older
+  than 24 hours). Look for `objectgc: sweep` in schedd's journal.
 - `refused` rows are evidence. A refused snapshot or layer key means a node
   asked to delete something still live; `requested_by` names the node. A
   refused `platform` or `unclassified` key means a request the control plane

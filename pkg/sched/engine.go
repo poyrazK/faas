@@ -432,6 +432,8 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
+	// smokeRefusals throttles the refused-smoke diagnostic (smoke_refusal_log.go).
+	smokeRefusals smokeRefusalThrottle
 	// environmentBranchEgress caches deployments outside any contained
 	// environment branch (ADR-20261031193635).
 	environmentBranchEgress environmentBranchEgressCache
@@ -538,6 +540,11 @@ type Engine struct {
 	// publicAPIURL is this installation's public API, handed to workloads
 	// as GREGALE_API_URL (WithPublicAPIURL). Empty leaves the SDK default.
 	publicAPIURL string
+
+	// workloadS3Endpoint and workloadS3Region are the public S3 API that
+	// apps with a workload bucket grant reach (WithWorkloadS3).
+	workloadS3Endpoint string
+	workloadS3Region   string
 
 	// tracer is the OTel Tracer that emits sched.wake + vmmd.create_*
 	// spans (issue #555 PR-3). nil = no spans emitted (the OTel
@@ -710,10 +717,17 @@ type Engine struct {
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
 	frozenTier atomic.Bool
+	// probeHostAppsSuffix (ADR-20261119140000) is the leading-dot apps
+	// domain readiness probes name as Host; nil keeps the legacy probe.
+	probeHostAppsSuffix atomic.Pointer[string]
 	// frozenFastPath (ADR-1740, schedd `frozen_fast_path`) thaws a frozen
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
 	thawTickets    frozenTickets
+	// devPrimeServes (ADR-20261122200000, runtime config
+	// dev_prime_serves_enabled) lets a `gregale dev` deployment go live from
+	// its healthy prime instead of capturing, publishing and parking it.
+	devPrimeServes atomic.Bool
 	// leavingNodes holds the IDs of nodes that no longer admit work
 	// (draining, maintenance, ...), from the recovery runner's node list
 	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
@@ -1545,6 +1559,53 @@ func (e *Engine) WithPublicAPIURL(url string) *Engine {
 	return e
 }
 
+// WithWorkloadS3 sets the public S3 endpoint and region that apps holding a
+// workload bucket grant receive as AWS_ENDPOINT_URL_S3 and AWS_REGION
+// (ADR-20261122191423). Empty values fall back to the platform defaults.
+func (e *Engine) WithWorkloadS3(endpoint, region string) *Engine {
+	if e != nil {
+		e.workloadS3Endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+		e.workloadS3Region = strings.TrimSpace(region)
+	}
+	return e
+}
+
+// withWorkloadS3Env completes an app's workload S3 credential setup: when
+// the platform pointed AWS_CONTAINER_CREDENTIALS_FULL_URI at the guest's
+// credential endpoint, an AWS SDK also needs the region and the S3 endpoint
+// to work without code, so they are added unless the app sets either itself
+// (api_env outranks manifest env in the guest, so the manifest is checked).
+func (e *Engine) withWorkloadS3Env(app state.App, env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	if e == nil || app.Manifest.Env[api.WorkloadCredentialsEnv] != api.WorkloadObjectCredentialsEndpoint {
+		return env
+	}
+	endpoint, region := e.workloadS3Endpoint, e.workloadS3Region
+	if endpoint == "" {
+		endpoint = api.DefaultObjectStoragePublicEndpoint
+	}
+	if region == "" {
+		region = api.DefaultObjectStoragePublicRegion
+	}
+	set := func(key string) bool {
+		if _, ok := app.Manifest.Env[key]; ok {
+			return true
+		}
+		for _, entry := range env {
+			if entry.Key == key {
+				return true
+			}
+		}
+		return false
+	}
+	if !set(api.WorkloadS3EndpointEnv) {
+		env = append(env, fcvm.APIEnvEntry{Key: api.WorkloadS3EndpointEnv, Value: endpoint})
+	}
+	if !set("AWS_REGION") && !set("AWS_DEFAULT_REGION") {
+		env = append(env, fcvm.APIEnvEntry{Key: "AWS_REGION", Value: region})
+	}
+	return env
+}
+
 // withPublicAPIURL adds GREGALE_API_URL to a workload's platform env unless
 // the app sets it itself.
 func (e *Engine) withPublicAPIURL(env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
@@ -1876,6 +1937,10 @@ type WakeResult struct {
 	InstanceID        string
 	NodeID            string // compute_nodes.id (uuid), empty only on error
 	Method            vmmdpb.WakeMethod
+	// StartupOOM: the app ran out of memory while this wake booted it
+	// (vmmd WakeResponse.startup_oom). Gateways keep such a wake out of the
+	// platform wake SLO. False on the already-running fast path.
+	StartupOOM bool
 	// WakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 before CreateInstance;
 	// gatewayd-internal propagates it back to the client as x-faas-wake-id and
@@ -2815,8 +2880,11 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	res, err := e.admitInstance(ctx, appID, deploymentID, scope, trigger)
 	if e.parkForCapacity(ctx, appID, trigger, err) ||
-		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID)) {
+		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID, trigger == TriggerDeploymentSmoke)) {
 		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
+	}
+	if trigger == TriggerDeploymentSmoke && (res.AtCapacity || err != nil) {
+		e.logSmokeRefusal(ctx, appID, deploymentID, res, err)
 	}
 	return res, err
 }
@@ -4119,6 +4187,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: %w", err)
 	}
+	app = app.WithAPISandboxEgress()
 	spec := AppSpec{
 		BaseKey: pinnedBase, LayerKey: layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount: int32(appVCPUs(app)), MemSizeMiB: int32(app.RAMMB), CPUMillicores: int32(appCPUMillicores(app)),
@@ -4139,10 +4208,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
+		APIEnv: e.withWorkloadS3Env(app, e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		)),
+		))),
 		// ADR-031: surface the per-app egress allowlist on the
 		// wake wire. vmmd translates the CIDRs into the per-netns
 		// forward chain. Empty slice = no allowlist rule (current
@@ -4182,6 +4251,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// modes target :8080 (ADR-009/portnorm); an empty override
 		// keeps the legacy TCP probe.
 		HealthcheckPath:          healthcheckPath,
+		ProbeHost:                e.probeHostFor(app, dep),
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		RoutedPortRawTCP:         routedPortRawTCPForApp(dep, app, healthcheckPath, healthcheckGRPC),
@@ -4850,7 +4920,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 
 	bootInput.identity.InstanceID = fresh.ID
 	bootInput.identity.NodeID = fresh.NodeID
-	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
+	return WakeResult{InstanceID: bootInput.insID, NodeID: fresh.NodeID, Method: out.Method, StartupOOM: out.StartupOOM, WakeID: bootInput.wakeID, Port: bootInput.spec.Port, DeploymentID: bootInput.depID, RequestCount: fresh.RequestCount, Identity: bootInput.identity}, nil
 }
 
 // recordBootCharacterization persists the workload class a cold boot's
@@ -5676,14 +5746,15 @@ func (e *Engine) warnRestorePressureFallback(operation string, err error) {
 // both observe app.NodeID != "" and return nil. Returns the
 // underlying store / chooser error wrapped with %w+op when
 // placement cannot proceed (capacity exhausted, FK rejection,
-// etc.); the subscriber logs and continues — the next notify
-// (e.g. a later admin update) is a fresh opportunity.
+// etc.); the caller logs and continues. Only kind=created triggers a
+// claim, so a later update is not a retry: the next unplaced sweep
+// (about a minute later) is.
 //
 // Caller contract:
 //   - ctx must be cancellable; the subscriber drops on cancel.
-//   - The cold-start sweep calls this once per ListUnplacedApps
-//     row at schedd startup (closes the pg_notify missed-event
-//     window).
+//   - The unplaced sweep (Engine.SweepUnplaced) calls this for each
+//     ListUnplacedApps row at boot and then about once a minute
+//     (closes the pg_notify missed-event window).
 func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 	if appID == "" {
 		return fmt.Errorf("sched: claim unplaced: empty app id")
@@ -6300,6 +6371,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: %w", err)
 	}
+	app = app.WithAPISandboxEgress()
 	return AppSpec{
 		migrationRuntime:   migrationInputs,
 		WakeID:             ins.WakeID,
@@ -6357,6 +6429,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// Issue #460 / ADR-053, ADR-057 (PR-D): per-deployment
 		// override readiness probe path. "" = legacy TCP-accept.
 		HealthcheckPath:          healthcheckPath,
+		ProbeHost:                e.probeHostFor(app, dep),
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		RoutedPortRawTCP:         routedPortRawTCPForApp(dep, app, healthcheckPath, healthcheckGRPC),
@@ -7318,6 +7391,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 		return nil
 	}
 
+	// ADR-20261122200000: a developer environment's prime keeps running and
+	// serves; its first capture happens at its first idle park.
+	if upgradeTarget == nil && e.serveDeveloperPrime(ctx, app, limits, dep, ins) {
+		primeCompleted = true
+		return nil
+	}
+
 	// Request/service boot succeeded; capture the reusable init snapshot and
 	// park the prime. Non-snapshot modes returned above.
 	err = e.snapshotAndParkPrime(ctx, ins)
@@ -7494,9 +7574,17 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 		// into deploy_failed. Prime retryability still keys off the original
 		// cause returned by Prime, so this customer-facing classification does
 		// not change retry behavior.
+		// Name the budget the prime actually had: an app with a raised
+		// startup_deadline_s gets more than the plain cold-boot budget, and
+		// the message used to print 35 s regardless (deploy-path probe
+		// 2026-11-21, R3-2).
+		var startupDeadlineS int32
+		if app, appErr := e.store.AppByID(markCtx, dep.AppID); appErr == nil {
+			startupDeadlineS = int32(min(app.Manifest.StartupDeadlineS, 1<<31-1)) //nolint:gosec // clamped to int32
+		}
 		problem = api.NewProblem(422, api.CodeStageSnapshotPrepareTimeout,
 			"snapshot prime exceeded the scheduler deadline",
-			fmt.Sprintf("startup_phase=scheduler_timeout: snapshot prime exceeded the %s cold-boot RPC budget", e.budgetFor(state.StateColdBooting)))
+			fmt.Sprintf("startup_phase=scheduler_timeout: snapshot prime exceeded the %s cold-boot RPC budget", e.primeColdBootBudget(startupDeadlineS)))
 		code = problem.Code
 	}
 	var observed any
@@ -7505,6 +7593,12 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 		observed = serviceConflict
 	}
 	_ = whycopy.Decorate(problem, code, observed)
+	// The fix names this app and deployment, not <slug> (ADR-20261123230000).
+	values := whycopy.Values{Deployment: deploymentID}
+	if app, appErr := e.store.AppByID(markCtx, dep.AppID); appErr == nil {
+		values.App = app.Slug
+	}
+	_ = whycopy.Complete(problem, values)
 
 	message := "snapshot prime failed: " + cause.Error()
 	if capacity != nil {
@@ -8154,8 +8248,21 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 
 // Evict destroys a RUNNING instance under RAM pressure (spec §4.3). Unlike Park
 // it does not snapshot — the next wake cold-boots (ADR-005), so the state lands
-// in STOPPED rather than PARKED.
+// in STOPPED rather than PARKED. Rollouts also stop replicas through it; the
+// pressure paths go through EvictUnderPressure, which records why. A replica
+// that froze before the lock parks with reason superseded, so it is not
+// counted as a memory pressure park.
 func (e *Engine) Evict(ctx context.Context, instanceID string) error {
+	return e.evict(ctx, instanceID, "state_transition", "", parkReasonSuperseded)
+}
+
+// parkReasonSuperseded is the frozen_park reason when Evict, not memory
+// pressure, parks a frozen instance.
+const parkReasonSuperseded = "superseded"
+
+// evict stops a running instance with a kind/reason transition, or parks a
+// frozen one with parkReason.
+func (e *Engine) evict(ctx context.Context, instanceID, kind, reason, parkReason string) error {
 	ins, err := e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateFrozen)
 	if err != nil || ins == nil {
 		return err
@@ -8164,7 +8271,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	if state.State(ins.State) == state.StateFrozen {
 		// ADR-1151: under memory pressure frozen VMs go first. The
 		// deployment's snapshot stays, so the instance parks, not stops.
-		e.parkFrozenLocked(ctx, *ins, "memory_pressure")
+		e.parkFrozenLocked(ctx, *ins, parkReason)
 		return nil
 	}
 
@@ -8177,7 +8284,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
-	e.transition(ctx, instanceID, ins.AppID, state.StateStopped)
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, kind, reason)
 	if ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}
@@ -9030,7 +9137,9 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// ADR-20261115113000: with no init snapshot to reuse on this node, the
 	// capture below would hold what this instance's requests left in memory.
 	// Retire it and let the refresher capture a fresh, primed boot instead.
-	if allowReuse && e.parkNeedsCleanRecapture(ctx, ins, app,
+	// A managed cache's memory is its data: capture it, never reuse or discard.
+	keepMemory := allowReuse && e.keepsMemoryAtPark(ctx, ins.AppID)
+	if allowReuse && !keepMemory && e.parkNeedsCleanRecapture(ctx, ins, app,
 		app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled, frozenFunction) {
 		return e.parkForCleanRecapture(ctx, ins)
 	}
@@ -9128,7 +9237,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// and loses the process state needed to qualify park/restore (ADR-824).
 	profilingEnabled := app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled
 	beforeCheckpoint := app.Manifest.BeforeCheckpoint != nil || profilingEnabled || frozenFunction
-	if allowReuse && !profilingEnabled {
+	if allowReuse && !profilingEnabled && !keepMemory {
 		b, reused, err = e.captureInitOrReuse(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, beforeCheckpoint)
 	} else {
 		b, err = e.captureSnapshotWithStandards(snapCtx, ins, vmstate, storageKey, vmstateStorageKey, beforeCheckpoint, "park")
@@ -9167,10 +9276,16 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"err", err)
 	}
 	// A transient capture error keeps the prime's retry (dispatchPrime);
-	// any other platform capture failure activates without a snapshot.
+	// any other platform capture failure activates without a snapshot,
+	// except a managed cache's handoff, which fails so the running cache
+	// keeps serving (isManagedCacheHandoff).
 	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && !retryableSnapshotPrimeError(err) &&
 		!allowReuse && state.HasSnapshotPrimeAttempt(ctx) {
-		return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+		if !e.isManagedCacheHandoff(ctx, ins.DeploymentID) {
+			return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+		}
+		e.log.Warn("sched: managed cache handoff prime capture failed; failing the handoff so the running cache keeps serving",
+			"instance", ins.ID, "app", ins.AppID, "deployment", ins.DeploymentID, "err", err)
 	}
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake

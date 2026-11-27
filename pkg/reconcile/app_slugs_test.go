@@ -73,7 +73,8 @@ func TestReconcileMappedMembersRetainNamesAndDependencies(t *testing.T) {
 func TestAllocateAppSlugsPrefixesNamesThatCannotBeSlugs(t *testing.T) {
 	rows := map[string]state.App{
 		"worker":    {Slug: "worker", AccountID: "acct-b", Status: state.AppActive},
-		"tombstone": {Slug: "tombstone", AccountID: "acct-a", Status: state.AppDeleted},
+		"tombstone": {Slug: "tombstone", AccountID: "acct-a", Status: state.AppDeleted, ProjectID: "project"},
+		"old-web":   {Slug: "old-web", AccountID: "acct-a", Status: state.AppDeleted, ProjectID: "other-project"},
 		"foreign-x": {Slug: "foreign-x", AccountID: "acct-b", Status: state.AppDeleted},
 	}
 	lookup := func(_ context.Context, slug string) (state.App, error) {
@@ -88,7 +89,7 @@ func TestAllocateAppSlugsPrefixesNamesThatCannotBeSlugs(t *testing.T) {
 	}
 	workloads := []reposcan.Workload{
 		{Name: "api"}, {Name: "ui"}, {Name: "worker"}, {Name: "mine"}, {Name: "tombstone"},
-		{Name: "foreign-x"}, {Name: "fresh"}, {Name: "ledger"}, {Name: "billing", AppSlug: "my-billing"},
+		{Name: "foreign-x"}, {Name: "old-web"}, {Name: "fresh"}, {Name: "ledger"}, {Name: "billing", AppSlug: "my-billing"},
 	}
 	got, err := AllocateAppSlugs(t.Context(), lookup, workloads, accountApps, "acct-a", "project", "shop")
 	if err != nil {
@@ -99,7 +100,10 @@ func TestAllocateAppSlugsPrefixesNamesThatCannotBeSlugs(t *testing.T) {
 		"ui":        "shop-ui",     // too short to be a slug
 		"worker":    "shop-worker", // another account's app
 		"mine":      "shop-mine",   // another of the account's apps
-		"tombstone": "",            // the account's own app in its grace window keeps the restore offer
+		"tombstone": "",            // this project's own deleted member keeps the restore offer
+		// prod hunt 2026-11-21: an app deleted from another project cannot be
+		// restored into this one, so its name is stepped around.
+		"old-web":   "shop-old-web",
 		"foreign-x": "shop-foreign-x",
 		"fresh":     "",
 		"ledger":    "shop-ledger", // existing member

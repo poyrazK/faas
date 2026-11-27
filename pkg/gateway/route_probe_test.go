@@ -113,6 +113,43 @@ func TestRouteProbePinsDeploymentProvesResponseAndStripsHeaders(t *testing.T) {
 	}
 }
 
+// ADR-847 amendment 2026-11-19: a route probe proves the target alive to the
+// gateway's cache but never resets the instance's idle timer, so a probed app
+// still parks; an ordinary request to the same app does reset it.
+func TestRouteProbeDoesNotResetIdleTimer(t *testing.T) {
+	app := App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro, MaxConcurrency: 2}
+	h, _, candidate := routeProbeHandler(t, app, http.StatusOK, http.StatusOK)
+	sink := newFakeFlakySink()
+	h.WithLastSeenSink(sink)
+	for i := 0; i < 3; i++ {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, probeRequest("probe-token"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("probe status = %d; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	candidate.mu.Lock()
+	hits := candidate.hits
+	candidate.mu.Unlock()
+	if hits != 3 {
+		t.Fatalf("candidate hits = %d, want 3 probes served", hits)
+	}
+	if n := sink.TouchCount("candidate-1") + sink.TouchCount("stable-1"); n != 0 {
+		t.Fatalf("route probes touched the idle timer %d times, want 0", n)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://demo.apps.dom/reports/7", nil)
+	req.Host = "demo.apps.dom"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("customer request status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if n := sink.TouchCount("candidate-1") + sink.TouchCount("stable-1"); n != 1 {
+		t.Fatalf("a customer request touched the idle timer %d times, want 1", n)
+	}
+}
+
 func TestRouteProbeInvalidTokenIsRefusedWithoutTelemetry(t *testing.T) {
 	app := App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro, MaxConcurrency: 2}
 	h, stable, candidate := routeProbeHandler(t, app, http.StatusOK, http.StatusNoContent)

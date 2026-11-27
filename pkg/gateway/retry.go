@@ -103,6 +103,10 @@ type retryWriter struct {
 	committed   bool
 	interimSent bool
 	buffer      bytes.Buffer
+	// platformResponse marks this attempt as gateway-written
+	// (markPlatformResponse). It reaches the statusRecorder only when the
+	// attempt commits, so a discarded failure never unbills the replay.
+	platformResponse bool
 }
 
 func newRetryWriter(dst http.ResponseWriter) *retryWriter {
@@ -160,6 +164,9 @@ func (w *retryWriter) commit() {
 		return
 	}
 	w.committed = true
+	if w.platformResponse {
+		markPlatformResponse(w.dst)
+	}
 	for key, values := range w.header {
 		w.dst.Header()[key] = append([]string(nil), values...)
 	}
@@ -185,6 +192,7 @@ func (w *retryWriter) finish() {
 func (w *retryWriter) discard() {
 	w.buffer.Reset()
 	w.status = 0
+	w.platformResponse = false
 	w.header = w.dst.Header().Clone()
 }
 
@@ -555,6 +563,14 @@ func (h *Handler) proxyAttempt(
 		// WakeID is a cause of this request, not the sibling's cached history.
 		selected.WakeID = target.WakeID
 		completed = selected
+		// Record the attempted deployment after repicking, so an API sandbox
+		// check can attribute the public response to the release that served it.
+		if app.IsAPISandbox {
+			dst.Header().Del(api.RevisionHeader)
+			if selected.DeploymentID != "" {
+				dst.Header().Set(api.RevisionHeader, selected.DeploymentID)
+			}
+		}
 		if h.sessionAffinity(app) {
 			if _, ok := h.backend.(affinityPicker); ok {
 				h.setSessionAffinityCookie(dst, app.ID, selected.InstanceID)
@@ -562,6 +578,29 @@ func (h *Handler) proxyAttempt(
 		}
 		recordTrafficAttempt(ctx)
 		unguarded(dst, req, selected)
+	}
+	// Scenario runs checkpoint their guest requests and retain one pinned
+	// deployment. Retrying here could repeat a mutation before its receipt.
+	if app.APISandboxRun {
+		forward(w, r, target)
+		return completed
+	}
+	// A node capacity refusal is the app's warm saturation: queue it like
+	// the gateway's own saturation instead of answering 429 at once.
+	if queue := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth); queue.MaxWaiters > 0 {
+		busyRouting, busyHasRouting := publicRoutingSnapshot(r.Context())
+		forward = waitOutNodeBusy(queue.MaxWait, forward, func(prev Target) (Target, bool) {
+			var pick PickResult
+			if busyHasRouting {
+				pick = pickPublicDeployment(h.backend, app.ID, busyRouting.SelectedDeploymentID, "")
+			} else {
+				pick = h.backend.Pick(app.ID)
+			}
+			if !pick.OK || pick.Target.InstanceID == prev.InstanceID {
+				return Target{}, false
+			}
+			return pick.Target, true
+		})
 	}
 	// An authenticated candidate smoke owns its retry loop in imaged. The
 	// generic picker can select the currently serving sibling revision and

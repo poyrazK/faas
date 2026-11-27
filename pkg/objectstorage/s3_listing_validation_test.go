@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -64,7 +65,9 @@ func TestS3PartsListingRejectsIncompleteProof(t *testing.T) {
 		name, body string
 	}{
 		{"missing completeness", ``},
-		{"contradictory completion", `<IsTruncated>false</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker>` + part},
+		// A final page may name its own last part (AWS, OVH); one past it
+		// claims parts the page did not return.
+		{"contradictory completion", `<IsTruncated>false</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker>` + part},
 		{"duplicate part", `<IsTruncated>false</IsTruncated>` + part + part},
 		{"before marker", `<IsTruncated>false</IsTruncated><Part><PartNumber>1</PartNumber><ETag>&quot;part&quot;</ETag><Size>10</Size></Part>`},
 		{"out of order", `<IsTruncated>false</IsTruncated><Part><PartNumber>3</PartNumber><ETag>&quot;part&quot;</ETag><Size>10</Size></Part>` + part},
@@ -186,6 +189,24 @@ func TestS3ListingDecodesKeysWithoutDecodingOpaqueToken(t *testing.T) {
 	page, err := p.ListObjects(t.Context(), "gregale-test", "folder/", "", 1)
 	if err != nil || len(page.Items) != 1 || page.Items[0].Key != "folder/a+b 世界" || page.NextCursor != "opaque%2Ftoken+" {
 		t.Fatalf("incorrect decoding: %+v, %v", page, err)
+	}
+}
+
+// s3ListEncode encodes a key the way an S3 provider does for
+// encoding-type=url: form encoding, so a space is "+" and a plus is "%2B".
+func s3ListEncode(key string) string { return url.QueryEscape(key) }
+
+// OVH (like AWS) form-encodes listed keys: "u/a b+c ü.txt" comes back as
+// "u/a+b%2Bc+%C3%BC.txt". Decoding with path rules listed it as
+// "u/a+b+c+ü.txt", which names no object (rc.367 journey, 2026-11-22).
+func TestS3ListingDecodesFormEncodedKeys(t *testing.T) {
+	p := listingFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, `<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>u/a+b%2Bc+%C3%BC.txt</Key><Size>1</Size></Contents><CommonPrefixes><Prefix>u/dir+one/</Prefix></CommonPrefixes></ListBucketResult>`)
+	})
+	page, err := p.(*S3).ListObjectsV2(t.Context(), "gregale-test", ObjectListRequest{Prefix: "u/", Delimiter: "/", Limit: 10})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Key != "u/a b+c ü.txt" || len(page.CommonPrefixes) != 1 || page.CommonPrefixes[0] != "u/dir one/" {
+		t.Fatalf("form-encoded listing decoded wrongly: %+v, %v", page, err)
 	}
 }
 

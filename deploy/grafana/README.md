@@ -17,6 +17,34 @@ triage an alert. The heatmap trace click-through follows
 `docs/runbooks/FaasTraceExemplars.md`. The duration histogram continues to
 record all calls even when tracing is unsampled.
 
+## `runtime-diagnostics.json`
+
+**Gregale Runtime Diagnostics** shows active collections and capacity refusals
+by apid instance, report outcomes, and query failures and latency by diagnostic
+group. The coverage panel shows which apid instances report runtime metrics,
+which are missing metrics despite a successful scrape, and which fail scrapes.
+Use the apid instance selector to filter every panel to one replica.
+Use the evidence group selector to focus evidence panels and core warning rows.
+The warning timeline shows pending, firing, clear, and scrape coverage states.
+Core evidence rows show **Insufficient evaluations** when the warning's source
+metric is present and the group has fewer than 10 evaluations in 30 minutes.
+Revision markers show when a scrape first observed a different apid commit.
+Restart markers show where successful scrapes observed an apid uptime drop.
+Compare the last complete report's age with the latest finished collection's
+age and outcome for each apid.
+The incomplete reports panel identifies the evidence groups to investigate.
+The 30-minute table pairs each group's incomplete rate with its sample count.
+The core gaps table counts affected reports by group and reason.
+The source failure table breaks down transport, HTTP, and response errors
+by apid and evidence group.
+Phase timing and inventory outcomes help locate delays on each apid.
+The deadline panel identifies the phase and the governing deadline.
+Response size and omitted previews help explain how much detail a report
+kept. The two-slot, three-second, and 64 KiB reference lines follow the
+runtime collector's limits. See the
+[operator guide](../../docs/ops/post-deployment-monitoring.md#runtime-collector-metrics).
+UID `faas-runtime-diagnostics`.
+
 ## `bridge-protection.json` (ADR-127 §D3 / G19)
 
 Four-panel dashboard for the bridge wire-protocol framing protection
@@ -130,6 +158,19 @@ wake-tier mix stacked (`schedd_wake_snapshot_tier_total{tier}`), and
 snapshot-population-by-tier stat panel. UID `faas-warm-snapshot-pr-c`;
 land via `dashboards/warm-snapshot.json` import after the ansible role
 provisions the fleet dashboard (PR #141, ADR-031).
+
+## `managed-postgres-scale-to-zero.json`
+
+Four-panel dashboard for managed PostgreSQL (Neon) scale-to-zero cost:
+the day's idle tail share per service class
+(`faas_managed_postgres_idle_tail_share:ratio24h`), idle suspends per hour
+(`apid_managed_postgres_idle_suspends_total{class}`), compute used against
+idle tail in CU-hours (`apid_managed_postgres_scale_to_zero_compute_unit_seconds_total`,
+`apid_managed_postgres_idle_tail_compute_unit_seconds_total`), and idle tail
+read outcomes (`apid_managed_postgres_idle_tail_reads_total{outcome}`). The
+idle tail is suspend timeout × minimum CU per suspend, read from Neon's
+operation list in the usage sweep; it tunes the suspend timeout and class
+minimums and is never billed. UID `faas-managed-postgres-s2z`.
 
 ## `edge-rules.json` (issue #561 / PR B / ADR-091)
 

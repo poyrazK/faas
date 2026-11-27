@@ -131,17 +131,23 @@
     faas_require_host_firewall_on: "{{ faas_require_host_firewall | bool }}"
   notify: reload systemd for the host-firewall start guard
 
+# The release installer (pkg/roleTemplating) writes 99-faas-role.conf for
+# every daemon with only the role lines, after this role on a fresh join and
+# at every release install. Sharing that name dropped the manifest hot_path
+# switches on OVH from the 2026-11-20 cutover. This drop-in has its own name
+# and sorts after the installer's, so both apply and these settings win
+# (as zz-faas-realtimed-role.conf did for realtimed).
 - name: compute_only_service — install schedd role gate (M9)
   notify: restart faas-schedd
   ansible.builtin.template:
     src: 99-faas-schedd-role.conf.j2
-    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-role.conf
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-schedd-role.conf
     owner: root
     group: root
     mode: "0644"
 
 # Manifest hot_path: these switches were first turned on by hand on
-# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# production (2026-11-06). The role drop-in now carries them, so the hand-made
 # drop-ins go; left behind they would keep a switch on after the manifest
 # turned it off.
 - name: compute_only_service — remove the hand-made hot-path drop-ins
@@ -232,6 +238,43 @@
     path: /etc/systemd/system/faas-imaged.service.d/99-faas-imaged-secretd.conf
     state: absent
   when: not (faas_imaged_secretd_registry_pulls | default(false) | bool)
+
+# ADR-20261117190000: per node, after the control plane's secretd signs
+# grants (faas_secretd_storage_grants) and the object GC worker runs. The
+# drop-in takes effect at each daemon's next restart: restart imaged,
+# builderd, vmmd and schedd node by node (docs/runbooks/object-gc.md).
+- name: compute_only_service — create the storage-grant drop-in directories (ADR-20261117190000)
+  ansible.builtin.file:
+    path: "/etc/systemd/system/faas-{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [imaged, builderd, vmmd, schedd]
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - faas_storage_grants | default(false) | bool
+
+- name: compute_only_service — install the storage-grant drop-ins (ADR-20261117190000)
+  ansible.builtin.template:
+    src: 98-faas-storage-grants.conf.j2
+    dest: "/etc/systemd/system/faas-{{ item }}.service.d/98-faas-storage-grants.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [imaged, builderd, vmmd, schedd]
+  notify: reload systemd for storage grants
+  when:
+    - (faas_box_role | default('single-box')) == 'compute-only'
+    - faas_storage_grants | default(false) | bool
+
+- name: compute_only_service — remove the storage-grant drop-ins while off (ADR-20261117190000)
+  ansible.builtin.file:
+    path: "/etc/systemd/system/faas-{{ item }}.service.d/98-faas-storage-grants.conf"
+    state: absent
+  loop: [imaged, builderd, vmmd, schedd]
+  notify: reload systemd for storage grants
+  when: not (faas_storage_grants | default(false) | bool)
 
 - name: compute_only_service — install schedd node identity (M9)
   notify: restart faas-schedd
@@ -496,19 +539,23 @@
       - >-
         (((faas_storage_env_content.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=s3$')) is none) or
         ((((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_BUCKET=[a-z0-9][a-z0-9.-]+$') | length) == 1) and
-        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_ENDPOINT=https://[^\\s]+$') | length) == 1) and
-        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_REGION=[^\\s]+$') | length) == 1) and
-        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_ACCESS_KEY_ID=[^\\s]+$') | length) == 1) and
-        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_SECRET_ACCESS_KEY=[^\\s]+$') | length) == 1))
+        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_ENDPOINT=https://[^\s]+$') | length) == 1) and
+        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_REGION=[^\s]+$') | length) == 1) and
+        (((((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_ACCESS_KEY_ID=[^\s]+$') | length) == 1) and
+        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_SECRET_ACCESS_KEY=[^\s]+$') | length) == 1)) or
+        ((faas_storage_grants | default(false) | bool) and
+        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_S3_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)=') | length) == 0))))
       - >-
         (((((faas_storage_env_content.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_BACKEND=oci$')) is none) and
         (((faas_storage_env_content.content | b64decode) | regex_search('(?m)^FAAS_STORAGE_FALLBACK_BACKEND=oci$')) is none)) or
-        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\\s]+$') | length) == 1))
+        (((faas_storage_env_content.content | b64decode) | regex_findall('(?m)^FAAS_OCI_REGISTRY=https://[^\s]+$') | length) == 1))
     fail_msg: >-
       /etc/faas/storage.env must declare the strict shared-artifact
       contract: FAAS_STORAGE_BACKEND=oci, gcs or s3,
       FAAS_STORAGE_LOCAL_PREFIXES=none, FAAS_REQUIRE_SHARED_ARTIFACTS=1,
       FAAS_STORAGE_CACHE_SERVE_STALE=0, and the selected remote endpoint.
+      For S3 that is a key pair, or no key at all on a node with
+      faas_storage_grants (ADR-20261117190000 slice 5).
       Without this gate a compute node may
       restore a different local copy for the same snapshot key.
   no_log: true
@@ -823,6 +870,7 @@
     - /srv/fc/snap
     - /srv/fc/base
     - /srv/fc/base-staging
+    - /srv/fc/run-environments
     - /srv/fc/sigs
     - /srv/fc/scans
     - /var/log/faas
@@ -986,6 +1034,11 @@
 # actually run on (rather than the control-plane where the units
 # never activate). The role loops over the per-unit lookup so
 # adding a fourth unit is a one-line list append.
+#
+# systemd's "-" prefix (ignore a missing path) and "+" prefix (relative to
+# the host root) are not part of the path. Stat the path itself: the role
+# still creates every listed directory, optional or not (#7747 added
+# -/srv/fc/run-environments; the literal "-/srv/..." stat failed rc.366).
 - name: compute_only_service — assert ReadWritePaths= targets exist per unit (spec §11)
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -1001,6 +1054,7 @@
          | map('first')
          | map('split')
          | flatten
+         | map('regex_replace', '^[-+]', '')
          | unique
          | list }}
   register: faas_rwp_stat

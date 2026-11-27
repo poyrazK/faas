@@ -21,21 +21,48 @@
 #
 # builderd_buildkit_seed (ADR-20261030122204): builderd keeps a per-node
 # BuildKit seed of the platform images and gives each Railpack build a reflink
-# copy, so the builder image step (p50 34 s) becomes a cache hit. Off until a
-# one-node canary; a hand drop-in that sets FAAS_BUILD_BUILDKIT_SEED=1 sorts
-# after this file and runs the canary.
+# copy, so the builder image step (p50 34 s) becomes a cache hit. On after
+# the fsn-2 canary (2026-11-18 19:59Z to 2026-11-19 07:15Z, hand drop-in):
+# all 8 builds seeded, vm_build p50 41 s / p90 72 s against 74 s / 108 s on
+# fsn-3 without the seed in the same window (85 s / 120 s on fsn-2 the three
+# days before); no seedless build, no builderd error. A release in the window
+# changed the platform images and builderd replaced the seed (87 s). The seed
+# holds ~2.4 GiB of /srv/fc per node.
 #
 # builderd_defer_cache_export (ADR-20261029171525): a build with a dependency
 # cache hands its image to imaged before exporting the cache, from a second
-# builder VM on the same drive. The ADR estimates ~115 s off a cold deploy's
-# handoff; a 2026-11-17 Kroki deploy spent 130.8 s exporting its cache against
-# 12.4 s for the image. Off until a one-node canary compares build start to
-# imaged handoff; a hand drop-in that sets FAAS_BUILD_DEFER_CACHE_EXPORT=1
-# sorts after this file and runs the canary.
+# builder VM on the same drive. A build defers only on a vmmd whose Ping
+# reports supports_cache_export_staging (amendment 2). Canary 2026-11-21 on
+# OVH bhs-3 then bhs-2 (hand drop-in, 5f2ead4713), same node, same app, changed
+# dependencies each build:
+#   heavy Node app (Next, AWS SDK, Prisma, sharp; 153 KB lockfile): vm_build
+#   59.0/60.9/59.0 s inline -> 42.7/39.8/43.1 s deferred (about 17 s, 28%);
+#   deploy wall 177-197 s -> 154-169 s warm. The deferred save took ~24.5 s
+#   after the handoff (inline export inside the build was 16.4-17.5 s).
+#   small Express app: about 1 s (vm_build - build_command 2.3-2.7 -> 1.7-1.8 s).
+# 10 of 11 deferred exports saved and the next build restored the cache; the
+# other was refused by vmmd's base scan gate while a prepared release rescanned
+# base/runner-builder-amd64.ext4 (scan_failed placeholder for ~1 min). That
+# failure is logged and skips the cache save only; the build and deploy
+# succeed. Cost: the builder slot is held for the deferred run (5-25 s here),
+# a little longer than an inline export.
+#
+# builderd_layer_zstd (ADR-20261028084018): builder VMs export the OCI image
+# and the dependency cache with zstd instead of gzip; imaged and rootfs read
+# both (step 1 of the ADR, released everywhere). Trial 2026-11-21 on OVH
+# bhs-2/bhs-3 (release 8e9583e487, with deferred cache export on), same heavy
+# Node app (Next, AWS SDK, Prisma, sharp), a dependency changed per build:
+#   build in VM 39.7-44.1 s gzip -> 32.2-35.1 s zstd; image export
+#   11.2-12.5 -> 3.8-4.5 s; deferred cache save (builder slot held)
+#   21.8-25.3 -> 11.6-13.1 s; imaged layer phase 51-55 -> 37-44 s; deploy
+#   wall 146-165 -> 112-136 s. Dependency caches 245 -> 224 MB per build.
+# No builderd, imaged or vmmd warnings; the zstd-built app served. Before
+# rolling imaged back past ADR step 1 on a node, turn this off there.
 #
 # false renders 0, so turning one off takes effect at the next daemon start.
 schedd_async_wake_finalize: true
 imaged_app_layer_reuse: true
 builderd_shared_platform_blobs: true
-builderd_buildkit_seed: false
-builderd_defer_cache_export: false
+builderd_buildkit_seed: true
+builderd_defer_cache_export: true
+builderd_layer_zstd: true

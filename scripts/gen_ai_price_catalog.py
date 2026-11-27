@@ -171,7 +171,27 @@ def model_name(key, prefixes):
     return key
 
 
-def build(data):
+GENERATION_MODES = {"chat", "completion", "responses"}
+MAX_OUTPUT_TOKENS = 1_000_000
+
+
+def output_limit(entry):
+    """The model's longest response in tokens, or None when LiteLLM does not say."""
+    for field in ("max_output_tokens", "max_tokens"):
+        value = entry.get(field)
+        if isinstance(value, (int, Decimal)) and not isinstance(value, bool) and 0 < value <= MAX_OUTPUT_TOKENS:
+            return int(value)
+    return None
+
+
+def render_max_outputs(meta, max_outputs):
+    out = dict(meta)
+    out["unit"] = "tokens: the longest response a generation model returns"
+    out["providers"] = {gateway: dict(sorted(models.items())) for gateway, models in sorted(max_outputs.items())}
+    return json.dumps(out, indent=1, sort_keys=False) + "\n"
+
+
+def build(data, max_outputs=None):
     container = data.get(CONTAINER_ENTRY, {}).get("code_interpreter_cost_per_session")
     container_usd = None if container is None else Decimal(container)
     providers = {}
@@ -212,6 +232,13 @@ def build(data):
             # entry: a spend cap must not under-count.
             if name not in models or price_weight(row) > price_weight(models[name]):
                 models[name] = row
+            # A generation model's longest response: the gateway reserves it
+            # when a call names no output ceiling (cost-control review
+            # 2026-11-19, N17). The larger of two entries never under-counts.
+            if max_outputs is not None and entry.get("mode") in GENERATION_MODES:
+                limit = output_limit(entry)
+                if limit is not None and limit > max_outputs.setdefault(gateway, {}).get(name, 0):
+                    max_outputs[gateway][name] = limit
             if video:
                 for resolution, price in video_tiers(entry).items():
                     tier_name = name + "@" + resolution
@@ -251,6 +278,7 @@ def main():
     parser.add_argument("--commit", required=True)
     parser.add_argument("--generated", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--max-output", help="also write each generation model's longest response here (max_output.json)")
     args = parser.parse_args()
     with open(args.input, encoding="utf-8") as handle:
         data = json.load(handle, parse_float=Decimal)
@@ -265,7 +293,12 @@ def main():
                    "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"],
     }
     with open(args.output, "w", encoding="utf-8") as handle:
-        handle.write(render(meta, build(data)))
+        max_outputs = {} if args.max_output else None
+        handle.write(render(meta, build(data, max_outputs)))
+    if args.max_output:
+        limits_meta = {key: meta[key] for key in ("source", "license", "generated")}
+        with open(args.max_output, "w", encoding="utf-8") as handle:
+            handle.write(render_max_outputs(limits_meta, max_outputs))
 
 
 if __name__ == "__main__":

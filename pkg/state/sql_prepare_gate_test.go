@@ -173,11 +173,19 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		if strings.HasPrefix(pos, "../../pkg/e2etest/functionsql/") {
 			continue
 		}
+		// The native Commit consumer fixture runs in the customer's database,
+		// where the metal test (cmd/e2e/commit_consumer_native_metal_test.go)
+		// creates its processed_events, business_effects and deliveries tables.
+		if strings.HasPrefix(pos, "../../pkg/e2etest/testdata/commitconsumer/") {
+			continue
+		}
 		if strings.HasPrefix(pos, "../../pkg/commit/") || strings.HasPrefix(pos, "../../pkg/commitmanaged/") {
 			target = customerConn
 			query = s.sql
 			customerStatements++
-		} else if strings.HasPrefix(pos, "../../cmd/gregale/templates/mcp-go/") {
+		} else if strings.HasPrefix(pos, "../../cmd/gregale/templates/mcp-go-tasks/") || strings.HasPrefix(pos, "../../cmd/gregale/commands_mcp_native_gate.go:") {
+			// The built-in Task release gate (ADR-20261123160000) reads the
+			// same worker registry in the customer's Task database.
 			target = mcpConn
 			query = s.sql
 			mcpStatements++
@@ -220,7 +228,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 
 func mcpStarterSchemaStatements(t *testing.T) []string {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "../../cmd/gregale/templates/mcp-go/tasks.go", nil, 0)
+	f, err := parser.ParseFile(token.NewFileSet(), "../../cmd/gregale/templates/mcp-go-tasks/tasks.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

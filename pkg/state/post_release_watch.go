@@ -114,9 +114,10 @@ func (m *MemStore) ListPostReleaseWatchCandidatesPage(_ context.Context, window 
 				(deploymentServing(other) || m.deploymentServedLocked(other.ID)) {
 				newest = false
 			}
-			// The release a plain rollback returns to: the most recently
-			// serving, never a canary aborted before it completed.
-			if other.Status == DeploySuperseded && other.CreatedAt.Before(d.CreatedAt) && !implicitRollbackExcluded(other) &&
+			// Scheduled cutovers can leave the preceding release live at zero traffic.
+			retained := other.Status == DeployLive && other.TrafficPercent == 0 && m.deploymentServedLocked(other.ID)
+			if (other.Status == DeploySuperseded || retained) && other.DeletedAt == nil &&
+				other.CreatedAt.Before(d.CreatedAt) && !implicitRollbackExcluded(other) &&
 				(predecessor == nil || m.rollbackMoreRecentLocked(other, *predecessor)) {
 				p := other
 				predecessor = &p

@@ -17,11 +17,10 @@ var hostDriveParsers = regexp.MustCompile(`exec\.Command(?:Context)?\([^"]*"(deb
 // hostDriveParseAllowed lists the existing calls, each with why it is safe
 // or how it is fenced. A new call fails this test until it is reviewed here.
 var hostDriveParseAllowed = map[string]string{
-	// prepareCacheExportDrive's journal replay and file rewrites run only on
-	// the deferred cache export path, which ParseDeferCacheExport refuses to
-	// enable (H104) until the inputs reach the guest without a host edit.
-	"vm_metal.go:e2fsck":  "deferred cache export only; switch refused (H104)",
-	"vm_metal.go:debugfs": "deferred cache export and warm builders only; both off (H104, DisableWarmBuilders)",
+	// The warm builder refresh still rewrites a retained drive with debugfs;
+	// warm builders are off (H104, DisableWarmBuilders). The deferred cache
+	// export's inputs are staged by vmmd (ADR-20261029171525 amendment 2).
+	"vm_metal.go:debugfs": "warm builders only; off (H104, DisableWarmBuilders)",
 	// Test-only wrappers that re-mount a drive CreateBuildDrive1 produced
 	// from a host directory, before any guest has written to it.
 	"mount_helpers.go:mount":  "tests only, builderd's own fresh drive",

@@ -23,8 +23,11 @@ export type WebhookVerificationErrorCode =
 
 /** A safe-to-log verification failure. Messages never include the secret, signature, or body. */
 export class WebhookVerificationError extends Error {
-  constructor(readonly code: WebhookVerificationErrorCode) {
+  readonly code: WebhookVerificationErrorCode;
+
+  constructor(code: WebhookVerificationErrorCode) {
     super(`webhook verification: ${code}`);
+    this.code = code;
     this.name = 'WebhookVerificationError';
   }
 }

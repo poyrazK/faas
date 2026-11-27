@@ -13,20 +13,23 @@ import (
 
 const claimDueReleaseDatabaseSwitches = `-- name: ClaimDueReleaseDatabaseSwitches :many
 UPDATE release_database_switches sw
-   SET lease_token = $1::text,
-       lease_until = $2::timestamptz,
+   SET lease_token = CASE WHEN sw.migration_operation_id IS NULL THEN $1::text ELSE sw.lease_token END,
+       lease_until = CASE WHEN sw.migration_operation_id IS NULL THEN $2::timestamptz ELSE sw.lease_until END,
+       migration_lease_token = CASE WHEN sw.migration_operation_id IS NOT NULL THEN $1::text END,
+       migration_lease_until = CASE WHEN sw.migration_operation_id IS NOT NULL THEN $2::timestamptz END,
        updated_at = $3::timestamptz
   FROM (
     SELECT id FROM release_database_switches
      WHERE phase NOT IN ('completed', 'failed', 'cancelled')
        AND retry_at <= $3::timestamptz
-       AND (lease_until IS NULL OR lease_until <= $3::timestamptz)
+       AND coalesce(CASE WHEN migration_operation_id IS NULL THEN lease_until ELSE migration_lease_until END
+                    <= $3::timestamptz, true)
      ORDER BY retry_at, id
      LIMIT $4::integer
      FOR UPDATE SKIP LOCKED
   ) due
  WHERE sw.id = due.id
-RETURNING sw.id, sw.account_id, sw.app_id, sw.scope, sw.from_deployment_id, sw.target_deployment_id, sw.undone_deployment_ids, sw.source_database_id, sw.target_database_id, sw.target_name, sw.restore_point, sw.cutover_id, sw.phase, sw.failure_code, sw.failure_detail, sw.requested_by, sw.cancel_requested_at, sw.fenced_at, sw.drain_requested_at, sw.release_switched_at, sw.activated_at, sw.finished_at, sw.phase_started_at, sw.drain_retired, sw.drain_parked, sw.drain_pending, sw.drain_blocked, sw.attempt_count, sw.last_error_code, sw.lease_token, sw.lease_until, sw.retry_at, sw.created_at, sw.updated_at
+RETURNING sw.id, sw.account_id, sw.app_id, sw.scope, sw.from_deployment_id, sw.target_deployment_id, sw.undone_deployment_ids, sw.source_database_id, sw.target_database_id, sw.target_name, sw.restore_point, sw.cutover_id, sw.phase, sw.failure_code, sw.failure_detail, sw.requested_by, sw.cancel_requested_at, sw.fenced_at, sw.drain_requested_at, sw.release_switched_at, sw.activated_at, sw.finished_at, sw.phase_started_at, sw.drain_retired, sw.drain_parked, sw.drain_pending, sw.drain_blocked, sw.attempt_count, sw.last_error_code, sw.lease_token, sw.lease_until, sw.retry_at, sw.created_at, sw.updated_at, sw.migration_operation_id, sw.migration_lease_token, sw.migration_lease_until
 `
 
 type ClaimDueReleaseDatabaseSwitchesParams struct {
@@ -87,6 +90,9 @@ func (q *Queries) ClaimDueReleaseDatabaseSwitches(ctx context.Context, db DBTX, 
 			&i.RetryAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MigrationOperationID,
+			&i.MigrationLeaseToken,
+			&i.MigrationLeaseUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -99,7 +105,7 @@ func (q *Queries) ClaimDueReleaseDatabaseSwitches(ctx context.Context, db DBTX, 
 }
 
 const getReleaseDatabaseSwitch = `-- name: GetReleaseDatabaseSwitch :one
-SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at FROM release_database_switches
+SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until FROM release_database_switches
  WHERE id = $1::uuid AND account_id = $2::uuid
 `
 
@@ -146,12 +152,15 @@ func (q *Queries) GetReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg Get
 		&i.RetryAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationOperationID,
+		&i.MigrationLeaseToken,
+		&i.MigrationLeaseUntil,
 	)
 	return i, err
 }
 
 const getReleaseDatabaseSwitchForApp = `-- name: GetReleaseDatabaseSwitchForApp :one
-SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at FROM release_database_switches
+SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until FROM release_database_switches
  WHERE id = $1::uuid AND account_id = $2::uuid AND app_id = $3::uuid
 `
 
@@ -199,6 +208,9 @@ func (q *Queries) GetReleaseDatabaseSwitchForApp(ctx context.Context, db DBTX, a
 		&i.RetryAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationOperationID,
+		&i.MigrationLeaseToken,
+		&i.MigrationLeaseUntil,
 	)
 	return i, err
 }
@@ -207,35 +219,40 @@ const insertReleaseDatabaseSwitch = `-- name: InsertReleaseDatabaseSwitch :one
 
 INSERT INTO release_database_switches (
   id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids,
-  source_database_id, target_name, restore_point, phase, requested_by,
-  phase_started_at, retry_at, created_at, updated_at
+  source_database_id, target_database_id, target_name, restore_point, migration_operation_id, phase, requested_by,
+  phase_started_at, retry_at, created_at, updated_at, lease_token, lease_until
 )
 SELECT
   $1::uuid, $2::uuid, $3::uuid, $4::text,
   $5::uuid, $6::uuid, $7::uuid[],
-  $8::uuid, $9::text, $10::timestamptz,
-  'restoring', $11::text,
-  $12::timestamptz, $12::timestamptz, $12::timestamptz, $12::timestamptz
+  $8::uuid, $9::uuid, $10::text, $11::timestamptz,
+  $12::uuid,
+  CASE WHEN $12::uuid IS NULL THEN 'restoring' ELSE 'staging' END, $13::text,
+  $14::timestamptz, $14::timestamptz, $14::timestamptz, $14::timestamptz,
+  CASE WHEN $12::uuid IS NOT NULL THEN 'migration-worker' END,
+  CASE WHEN $12::uuid IS NOT NULL THEN 'infinity'::timestamptz END
  WHERE (SELECT count(*) FROM release_database_switches active
          WHERE active.account_id = $2::uuid
-           AND active.phase NOT IN ('completed', 'failed', 'cancelled')) < $13::integer
-RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at
+           AND active.phase NOT IN ('completed', 'failed', 'cancelled')) < $15::integer
+RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until
 `
 
 type InsertReleaseDatabaseSwitchParams struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	Scope               string
-	FromDeploymentID    pgtype.UUID
-	TargetDeploymentID  pgtype.UUID
-	UndoneDeploymentIds []pgtype.UUID
-	SourceDatabaseID    pgtype.UUID
-	TargetName          string
-	RestorePoint        pgtype.Timestamptz
-	RequestedBy         string
-	Now                 pgtype.Timestamptz
-	MaxActive           int32
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Scope                string
+	FromDeploymentID     pgtype.UUID
+	TargetDeploymentID   pgtype.UUID
+	UndoneDeploymentIds  []pgtype.UUID
+	SourceDatabaseID     pgtype.UUID
+	TargetDatabaseID     pgtype.UUID
+	TargetName           string
+	RestorePoint         pgtype.Timestamptz
+	MigrationOperationID pgtype.UUID
+	RequestedBy          string
+	Now                  pgtype.Timestamptz
+	MaxActive            int32
 }
 
 // ADR-20261023181931: rollbacks that restore the database.
@@ -251,8 +268,10 @@ func (q *Queries) InsertReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg 
 		arg.TargetDeploymentID,
 		arg.UndoneDeploymentIds,
 		arg.SourceDatabaseID,
+		arg.TargetDatabaseID,
 		arg.TargetName,
 		arg.RestorePoint,
+		arg.MigrationOperationID,
 		arg.RequestedBy,
 		arg.Now,
 		arg.MaxActive,
@@ -293,12 +312,15 @@ func (q *Queries) InsertReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg 
 		&i.RetryAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationOperationID,
+		&i.MigrationLeaseToken,
+		&i.MigrationLeaseUntil,
 	)
 	return i, err
 }
 
 const listDrainingReleaseDatabaseSwitches = `-- name: ListDrainingReleaseDatabaseSwitches :many
-SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at FROM release_database_switches
+SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until FROM release_database_switches
  WHERE phase = 'draining' AND drain_requested_at IS NOT NULL AND cutover_id IS NOT NULL
  ORDER BY drain_requested_at, id
  LIMIT $1::integer
@@ -348,6 +370,9 @@ func (q *Queries) ListDrainingReleaseDatabaseSwitches(ctx context.Context, db DB
 			&i.RetryAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MigrationOperationID,
+			&i.MigrationLeaseToken,
+			&i.MigrationLeaseUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -360,20 +385,27 @@ func (q *Queries) ListDrainingReleaseDatabaseSwitches(ctx context.Context, db DB
 }
 
 const listReleaseDatabaseSwitches = `-- name: ListReleaseDatabaseSwitches :many
-SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at FROM release_database_switches
+SELECT id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until FROM release_database_switches
  WHERE account_id = $1::uuid AND app_id = $2::uuid
+   AND (migration_operation_id IS NOT NULL) = $3::boolean
  ORDER BY created_at DESC, id DESC
- LIMIT $3::integer
+ LIMIT $4::integer
 `
 
 type ListReleaseDatabaseSwitchesParams struct {
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
+	Migration bool
 	MaxRows   int32
 }
 
 func (q *Queries) ListReleaseDatabaseSwitches(ctx context.Context, db DBTX, arg ListReleaseDatabaseSwitchesParams) ([]ReleaseDatabaseSwitch, error) {
-	rows, err := db.Query(ctx, listReleaseDatabaseSwitches, arg.AccountID, arg.AppID, arg.MaxRows)
+	rows, err := db.Query(ctx, listReleaseDatabaseSwitches,
+		arg.AccountID,
+		arg.AppID,
+		arg.Migration,
+		arg.MaxRows,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -416,6 +448,9 @@ func (q *Queries) ListReleaseDatabaseSwitches(ctx context.Context, db DBTX, arg 
 			&i.RetryAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MigrationOperationID,
+			&i.MigrationLeaseToken,
+			&i.MigrationLeaseUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -466,7 +501,7 @@ UPDATE release_database_switches
        updated_at = $1::timestamptz
  WHERE id = $2::uuid AND account_id = $3::uuid AND app_id = $4::uuid
    AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining')
-RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at
+RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until
 `
 
 type RequestReleaseDatabaseSwitchCancelParams struct {
@@ -519,6 +554,9 @@ func (q *Queries) RequestReleaseDatabaseSwitchCancel(ctx context.Context, db DBT
 		&i.RetryAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationOperationID,
+		&i.MigrationLeaseToken,
+		&i.MigrationLeaseUntil,
 	)
 	return i, err
 }
@@ -546,13 +584,15 @@ UPDATE release_database_switches
        attempt_count = $17::integer,
        retry_at = CASE WHEN cancel_requested_at IS NOT NULL AND phase IN ('restoring', 'staging', 'verifying', 'fencing', 'settling', 'draining') AND $3::text = 'switching'
                        THEN $18::timestamptz ELSE $19::timestamptz END,
-       lease_token = NULL,
-       lease_until = NULL,
+       lease_token = CASE WHEN migration_operation_id IS NOT NULL THEN lease_token END,
+       lease_until = CASE WHEN migration_operation_id IS NOT NULL THEN lease_until END,
+       migration_lease_token = NULL,
+       migration_lease_until = NULL,
        updated_at = $18::timestamptz
  WHERE id = $20::uuid
-   AND lease_token = $21::text
-   AND lease_until > $18::timestamptz
-RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at
+   AND CASE WHEN migration_operation_id IS NULL THEN lease_token ELSE migration_lease_token END = $21::text
+   AND CASE WHEN migration_operation_id IS NULL THEN lease_until ELSE migration_lease_until END > $18::timestamptz
+RETURNING id, account_id, app_id, scope, from_deployment_id, target_deployment_id, undone_deployment_ids, source_database_id, target_database_id, target_name, restore_point, cutover_id, phase, failure_code, failure_detail, requested_by, cancel_requested_at, fenced_at, drain_requested_at, release_switched_at, activated_at, finished_at, phase_started_at, drain_retired, drain_parked, drain_pending, drain_blocked, attempt_count, last_error_code, lease_token, lease_until, retry_at, created_at, updated_at, migration_operation_id, migration_lease_token, migration_lease_until
 `
 
 type SaveReleaseDatabaseSwitchParams struct {
@@ -642,6 +682,9 @@ func (q *Queries) SaveReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg Sa
 		&i.RetryAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MigrationOperationID,
+		&i.MigrationLeaseToken,
+		&i.MigrationLeaseUntil,
 	)
 	return i, err
 }

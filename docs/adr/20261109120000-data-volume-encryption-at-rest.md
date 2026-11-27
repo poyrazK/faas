@@ -183,3 +183,69 @@ The two remaining holders of database data get the same encrypted `/srv/fc`.
 Both apply only when the manifest has `disk_encryption`, and only to new
 hosts: an existing standby or database node with data on the plain disk is
 refused by the same checks as the control plane (rebuild it on blank disks).
+
+## Amendment 4 (2026-11-19): fleets addressed by host name
+
+The first OVH run refused to start Tang: the OVH manifest addresses its hosts
+by name (`fsn-1.gregale.dev:9091`, `bhs-2.gregale.dev:50051`), and decision 3
+bound Tang to the manifest address, which the role requires to be a private
+IP. The peer URLs had the same flaw: publicly those names resolve to
+Cloudflare, and `/etc/hosts` maps them to the vRack only once the overlay role
+runs, later in the same bootstrap. Clevis keeps the bound URLs in the LUKS
+header, so a URL must not depend on name resolution.
+
+For a host whose manifest address is a name:
+
+- the renderer emits no `faas_tang_listen_address`, so Tang binds the
+  role default, the private address the discovery play resolved
+  (`tasks/resolve_private_address.yml`: the named private card's address on
+  bare metal);
+- the renderer lists it as a peer in `faas_tang_peer_hosts` (inventory
+  names), and the storage role binds `http://<that host's resolved private
+  address>:<port>`. A peer without a resolved address stops the run before
+  anything is written.
+
+IP-addressed fleets render exactly as before.
+
+## Amendment 5 (2026-11-19): an encrypted host must boot unattended
+
+The first reboot of an encrypted OVH host (bhs-3) ended in emergency mode,
+with no network and a locked root account. The journal showed three faults,
+each enough to stop an unattended boot or to weaken it:
+
+1. Nothing asked for the unlock. crypttab marks the volume `_netdev`, so
+   systemd-cryptsetup-generator hangs it on `remote-cryptsetup.target` alone,
+   and OVH's Ubuntu 24.04 image leaves that target disabled.
+2. The compute cache and Grype binds beneath `/srv/fc` had no `nofail`.
+   `local-fs.target` required them, and they required the encrypted volume,
+   which unlocks only after early boot (`clevis-luks-askpass.path` runs after
+   `sysinit.target`). systemd found ordering cycles, the device timed out
+   after 90 s, and `local-fs.target` failed. The `/srv/fc/jail` tmpfs of the
+   xfs role has the same shape.
+3. `br-tenants-up.service` (nftables role) took default dependencies. Its
+   implicit `After=basic.target`, with `Before=nftables.service`, closes a
+   cycle through cloud-init and `network-pre.target`; systemd broke it by
+   dropping the nftables start job, so the host would boot without its
+   firewall.
+
+So, on a host whose `/srv/fc` is the encrypted volume:
+
+- the storage role enables `remote-cryptsetup.target`;
+- every fstab mount beneath `/srv/fc` is `nofail`, so boot never waits for
+  Tang, and the faas units require those mounts instead
+  (`faas-.service.d/12-faas-storage-binds.conf` for the cache and Grype
+  binds, `13-faas-jail-tmpfs.conf` for the jail tmpfs), as they already do
+  for the volume and the encrypted paths;
+- `br-tenants-up.service` sets `DefaultDependencies=no` on every host.
+
+Plain volumes keep their mount options. With these changes bhs-3 rebooted to
+`running`: Tang unlocked the volume 11.5 s into boot, every mount came up, and
+nftables loaded. `TestMountsBeneathTheDataVolumeAreNofailWhenEncrypted` keeps
+every future mount beneath `/srv/fc` honest.
+
+The first reconverge after this amendment stacked the cache bind on bhs-2:
+`ansible.posix.mount` with `state: mounted` tests "already mounted" with
+`os.path.ismount`, which is false for a bind whose parent is a bind of the
+same filesystem, and on an encrypted host `/var/lib/faas` is one. The cache
+and Grype binds are therefore written to fstab as `present` and mounted only
+when `findmnt` finds nothing at the path, on every host.

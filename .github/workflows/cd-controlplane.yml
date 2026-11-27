@@ -72,6 +72,16 @@ on:
         required: false
         default: control-plane
         type: string
+      host_config_rollback_to:
+        description: "Converge the control plane's host roles back to this known-good commit and deploy nothing else (post-deploy watch breach, ADR-20261122170000); with units_run_id and the control-plane lane"
+        required: false
+        default: ""
+        type: string
+      host_config_changed:
+        description: "release-units' verdict: 'false' when the unit release changed no control-plane host role since its base full release, which skips the host-config job (ADR-20261122170000); empty runs it"
+        required: false
+        default: ""
+        type: string
       slo_gate:
         description: "SLO gate for this host: canary (full) or follower (short); durations in scripts/ci/release_units.json"
         required: false
@@ -125,6 +135,16 @@ on:
         description: "Lane of the unit release to deploy on the control plane: control-plane, or edge (its own gatewayd-public)"
         required: false
         default: control-plane
+        type: string
+      host_config_rollback_to:
+        description: "Converge the control plane's host roles back to this known-good commit and deploy nothing else (post-deploy watch breach, ADR-20261122170000); with units_run_id and the control-plane lane"
+        required: false
+        default: ""
+        type: string
+      host_config_changed:
+        description: "release-units' verdict: 'false' when the unit release changed no control-plane host role since its base full release, which skips the host-config job (ADR-20261122170000); empty runs it"
+        required: false
+        default: ""
         type: string
       slo_gate:
         description: "SLO gate for this host: canary (full) or follower (short); durations in scripts/ci/release_units.json"
@@ -940,6 +960,11 @@ jobs:
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
+          ALERTMANAGER_EMAIL_TO: ${{ vars.ALERTMANAGER_EMAIL_TO }}
+          ALERTMANAGER_EMAIL_FROM: ${{ vars.ALERTMANAGER_EMAIL_FROM }}
+          ALERTMANAGER_SMTP_SMARTHOST: ${{ vars.ALERTMANAGER_SMTP_SMARTHOST }}
+          ALERTMANAGER_SMTP_USERNAME: ${{ vars.ALERTMANAGER_SMTP_USERNAME }}
+          ALERTMANAGER_CHAT_WEBHOOK: ${{ vars.ALERTMANAGER_CHAT_WEBHOOK }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
           POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
@@ -994,6 +1019,12 @@ jobs:
           # production environment. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
+          fi
+          # Alert email through an SMTP relay when the environment sets
+          # ALERTMANAGER_EMAIL_TO; the relay password is a host file. A release
+          # cut before the script stages none.
+          if [[ -f scripts/ci/alertmanager_email_vars.sh ]]; then
+            bash scripts/ci/alertmanager_email_vars.sh "$work/vars.yml"
           fi
           # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
           # the bundle installs. A release cut before the script stages none.
@@ -1806,7 +1837,14 @@ jobs:
     name: Converge changed control-plane host roles
     environment: ${{ inputs.deploy_environment }}
     runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
-    if: github.repository == 'poyrazK/faas' && inputs.units_run_id != '' && inputs.units_lane == 'control-plane'
+    # Skipped when release-units found no control-plane host role changed
+    # since the base full release (host_config_changed: 'false'): the host
+    # then runs the roles that release converged, and the job could only
+    # plan "none" after downloading and verifying the release (about two
+    # minutes on the critical path, 2026-10-21). A rollback always runs.
+    if: >-
+      github.repository == 'poyrazK/faas' && inputs.units_run_id != '' && inputs.units_lane == 'control-plane'
+      && (inputs.host_config_changed != 'false' || inputs.host_config_rollback_to != '')
     permissions:
       contents: read
       actions: read
@@ -1820,6 +1858,7 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       SLO_GATE: ${{ inputs.slo_gate }}
+      HOST_CONFIG_ROLLBACK_TO: ${{ inputs.host_config_rollback_to }}
       # The canary app the activation observer gates on. Unset, it defaults
       # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
       ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
@@ -1875,7 +1914,13 @@ jobs:
           echo "git_sha=$git_sha" >> "$GITHUB_OUTPUT"
           echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
           echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
-          if jq -e '.host_config.version' "$RUNNER_TEMP/gregale-units/unpacked/units-manifest.json" >/dev/null; then
+          # Converging back after a watch breach (ADR-20261122170000) goes
+          # through the same steps, whatever this release carried.
+          if [[ -n "${HOST_CONFIG_ROLLBACK_TO:-}" ]]; then
+            [[ "$HOST_CONFIG_ROLLBACK_TO" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::host_config_rollback_to must be a 40-hex commit" >&2; exit 1; }
+            echo "carries=true" >> "$GITHUB_OUTPUT"
+            echo "Converging the control plane's host roles back to \`${HOST_CONFIG_ROLLBACK_TO:0:12}\` after a post-deploy watch breach." >> "$GITHUB_STEP_SUMMARY"
+          elif jq -e '.host_config.version' "$RUNNER_TEMP/gregale-units/unpacked/units-manifest.json" >/dev/null; then
             echo "carries=true" >> "$GITHUB_OUTPUT"
           else
             echo "carries=false" >> "$GITHUB_OUTPUT"
@@ -1951,13 +1996,22 @@ jobs:
           scripts/ci/unit_deploy.sh host-state > "$work/host-state.json"
           jq 'del(.record.roles)' "$work/host-state.json"
           # N±1, as for the units: the release CI checked these roles with.
-          previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$UNITS_SHA")"
-          previous="$(git rev-parse "${previous_tag}^{commit}")"
-          python3 scripts/ci/plan_host_config.py \
-            --units-manifest "$UNITS_DIR/units-manifest.json" \
-            --host-state "$work/host-state.json" \
-            --previous-release "$previous" \
-            --out "$work"
+          if [[ -n "$HOST_CONFIG_ROLLBACK_TO" ]]; then
+            # Back to the known-good configuration: only roles whose content
+            # differs, never a stateful one (ADR-20261122170000).
+            python3 scripts/ci/plan_host_config.py \
+              --rollback-to "$HOST_CONFIG_ROLLBACK_TO" \
+              --host-state "$work/host-state.json" \
+              --out "$work"
+          else
+            previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$UNITS_SHA")"
+            previous="$(git rev-parse "${previous_tag}^{commit}")"
+            python3 scripts/ci/plan_host_config.py \
+              --units-manifest "$UNITS_DIR/units-manifest.json" \
+              --host-state "$work/host-state.json" \
+              --previous-release "$previous" \
+              --out "$work"
+          fi
           plan="$work/plan.json"
           {
             echo "action=$(jq -r .action "$plan")"
@@ -1972,6 +2026,16 @@ jobs:
             guarded="$(jq -r '.guarded | join(", ")' "$plan")"
             [[ -z "$guarded" ]] || echo "Converged under the stateful-restart guard (a change that needs a PostgreSQL or pgbouncer restart fails the run): ${guarded}."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Before anything changes, the post-deploy watch record learns which
+      # configuration the control plane had (the plan's previous), so a
+      # breach converges the roles back (ADR-20261122170000, "Config
+      # rollback"). Not when this run is that rollback.
+      - name: Note the host configuration in the watch record
+        if: steps.plan.outputs.action == 'converge' && env.HOST_CONFIG_ROLLBACK_TO == ''
+        env:
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+        run: scripts/ci/unit_deploy.sh watch-host-config "$PREVIOUS" "$UNITS_SHA" > /dev/null
 
       - name: Converge the changed roles
         id: converge
@@ -2005,6 +2069,11 @@ jobs:
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
+          ALERTMANAGER_EMAIL_TO: ${{ vars.ALERTMANAGER_EMAIL_TO }}
+          ALERTMANAGER_EMAIL_FROM: ${{ vars.ALERTMANAGER_EMAIL_FROM }}
+          ALERTMANAGER_SMTP_SMARTHOST: ${{ vars.ALERTMANAGER_SMTP_SMARTHOST }}
+          ALERTMANAGER_SMTP_USERNAME: ${{ vars.ALERTMANAGER_SMTP_USERNAME }}
+          ALERTMANAGER_CHAT_WEBHOOK: ${{ vars.ALERTMANAGER_CHAT_WEBHOOK }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
           POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
@@ -2062,6 +2131,12 @@ jobs:
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
           fi
+          # Alert email through an SMTP relay when the environment sets
+          # ALERTMANAGER_EMAIL_TO; the relay password is a host file. A release
+          # cut before the script stages none.
+          if [[ -f scripts/ci/alertmanager_email_vars.sh ]]; then
+            bash scripts/ci/alertmanager_email_vars.sh "$work/vars.yml"
+          fi
           # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
           # the bundle installs. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_billing_mode.sh ]]; then
@@ -2098,13 +2173,20 @@ jobs:
             echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)"
             echo "HOST_CONFIG_STARTED=true"
           } >> "$GITHUB_ENV"
+          # The roles' content: the release commit, or the known-good commit
+          # when converging back (as the failure path below does).
+          repo_root="$GITHUB_WORKSPACE"
+          if [[ -n "$HOST_CONFIG_ROLLBACK_TO" ]]; then
+            git worktree add --detach "$work/known-good" "$HOST_CONFIG_ROLLBACK_TO"
+            repo_root="$work/known-good"
+          fi
           # The signed release's gregalectl, built at the release commit.
           "$UNITS_DIR/tools/gregalectl" deploy converge-control-plane \
             --manifest-file "$work/production-manifest.yaml" \
             --ssh-known-hosts-file "$work/known_hosts" \
             --ssh-key "$work/ssh-key" \
             --ansible-vars-file "$work/vars.yml" \
-            --repo-root "$GITHUB_WORKSPACE" \
+            --repo-root "$repo_root" \
             --roles "$ROLES" \
             --json > "$work/converge.json"
           jq . "$work/converge.json"
@@ -2136,12 +2218,14 @@ jobs:
           jq --arg env "$(jq -r .environment_sha256 "$work/converge.json")" '.environment = $env' \
             "$work/record.json" > "$work/record-final.json"
           scripts/ci/unit_deploy.sh host-record "$work/record-final.json" "$(jq -r .contract_sha256 "$work/converge.json")"
-          echo "Recorded host configuration \`${UNITS_SHA:0:12}\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Recorded host configuration \`$(jq -r ".commit[0:12]" "$work/record-final.json")\`." >> "$GITHUB_STEP_SUMMARY"
 
       # The record still names the content the host had before this run, so
       # converging the same roles at that commit puts them back.
       - name: Converge the roles back after a failure
-        if: failure() && env.HOST_CONFIG_STARTED == 'true'
+        # Not when this run converges back: its `previous` is the configuration
+        # the watch rolled back from.
+        if: failure() && env.HOST_CONFIG_STARTED == 'true' && env.HOST_CONFIG_ROLLBACK_TO == ''
         env:
           PREVIOUS: ${{ steps.plan.outputs.previous }}
           ROLES: ${{ steps.plan.outputs.roles }}
@@ -2212,6 +2296,7 @@ jobs:
     if: >-
       !cancelled() && github.repository == 'poyrazK/faas' && inputs.units_run_id != ''
       && (needs.converge-host-config.result == 'success' || needs.converge-host-config.result == 'skipped')
+      && inputs.host_config_rollback_to == ''
     permissions:
       contents: read
       # Download the unit release artifact from its release-units.yml run.
@@ -2394,9 +2479,51 @@ jobs:
           cat "$activation_script"
           # The SLO gate ignores alerts that were already firing before this.
           echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)" >> "$GITHUB_ENV"
+          status=0
           ROLLOUT_BASELINE_SAMPLE_COUNT=3 \
             scripts/ci/observe_remote_rollout.sh \
-            "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
+            "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script" || status=$?
+          if (( status != 0 )); then
+            # A failed public-path gate after the release went live rolls it
+            # back here, as the smoke checks and the SLO gate do: 2026-11-23's
+            # first unit run failed this gate and left apid on the new
+            # release (ADR-20261122170000 §3a). A refused baseline or a
+            # failed activation script leaves the old release active, and
+            # then there is nothing to roll back.
+            release_id="$(jq -r .release_id "$UNIT_PLAN")"
+            if [[ "$(scripts/ci/unit_deploy.sh state | jq -r .current)" == "$release_id" ]]; then
+              scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"
+              echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the activation gate failed" >&2
+            fi
+            exit "$status"
+          fi
+
+      # Critical smoke checks (ADR-20261122170000): the business paths through
+      # the public API with the smoke account (account and plan, the smoke
+      # app, a configuration change served by a fresh boot, usage). The SLO
+      # gate sees errors and latency, not a wrong answer served with a 200. A
+      # failure rolls the units back at once, as the gate does.
+      - name: Run the critical smoke checks
+        if: steps.plan.outputs.action == 'deploy'
+        env:
+          UNIT_SMOKE_API_KEY: ${{ secrets.UNIT_SMOKE_API_KEY }}
+          UNIT_SMOKE_APP: ${{ vars.UNIT_SMOKE_APP }}
+          UNIT_SMOKE_API: ${{ vars.UNIT_SMOKE_API }}
+          UNIT_SMOKE_APPS_DOMAIN: ${{ vars.UNIT_SMOKE_APPS_DOMAIN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UNIT_SMOKE_API_KEY" || -z "$UNIT_SMOKE_APP" ]]; then
+            echo "::warning::critical smoke checks are not configured (UNIT_SMOKE_API_KEY, UNIT_SMOKE_APP; tests/unit-smoke-app/README.md)" >&2
+            echo "**Critical smoke checks not configured**: turn on automatic deploys only after setting them up." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          status=0
+          python3 scripts/ci/unit_smoke.py --token "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || status=$?
+          if (( status != 0 )); then
+            scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"
+            echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the critical smoke checks failed" >&2
+            exit 1
+          fi
 
       - name: Hold the units on the SLO gate
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'

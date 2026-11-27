@@ -166,12 +166,12 @@ func (r *remoteServer) keyOptions(c *keyConnection) Options {
 	if r.opts.AgentKeyToolsetSelection && toolsets == nil {
 		toolsets = []string{ToolsetAll}
 	}
-	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead} {
+	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead, api.ScopeDataRead} {
 		if slices.Contains(c.scopes, scope) {
 			capabilities = append(capabilities, scope)
 		}
 	}
-	return Options{AllowTaskInspection: r.opts.AllowTaskInspection && !c.publishingLimited && c.allowedApps == nil && slices.Contains(c.scopes, api.ScopeDeployWrite), AllowPrivateToolInvocation: r.opts.AllowPrivateToolInvocation && r.opts.AllowToolInvocation && c.allowedApps == nil, AllowToolPublishing: r.opts.AllowToolPublishing && !c.publishingLimited, AllowToolInvocation: r.opts.AllowToolInvocation && c.allowedApps == nil, Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, docs: r.docs, agentKey: true, agentKeyToolsetSelection: r.opts.AgentKeyToolsetSelection, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
+	return Options{AllowTaskInspection: r.opts.AllowTaskInspection && !c.publishingLimited && c.allowedApps == nil && slices.Contains(c.scopes, api.ScopeDeployWrite), AllowPrivateToolInvocation: r.opts.AllowPrivateToolInvocation && r.opts.AllowToolInvocation && c.allowedApps == nil, AllowToolPublishing: r.opts.AllowToolPublishing && !c.publishingLimited, AllowToolInvocation: r.opts.AllowToolInvocation && c.allowedApps == nil, Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, LogsAPIBase: r.opts.LogsAPIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: toolsets, HideUnavailableCapabilities: r.opts.HideUnavailableCapabilities, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, docs: r.docs, agentKey: true, agentKeyToolsetSelection: r.opts.AgentKeyToolsetSelection, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
 }
 
 // dropIdleKeyConnectionsLocked forgets key connections (of accountID, or

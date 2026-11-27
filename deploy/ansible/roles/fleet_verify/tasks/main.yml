@@ -3,6 +3,14 @@
   ansible.builtin.include_vars:
     file: "{{ playbook_dir }}/vars/daemons.yml"
 
+# verify.yml runs without bootstrap's discovery play; a compute node probes
+# its private readiness listeners on its private address.
+- name: fleet_verify — resolve the private transport address
+  ansible.builtin.include_tasks: "{{ role_path }}/../../tasks/resolve_private_address.yml"
+  when:
+    - faas_box_role == 'compute-only'
+    - faas_private_dns_address is not defined
+
 - name: fleet_verify — select the allowed daemon set for this host role
   ansible.builtin.set_fact:
     faas_verify_units: >-

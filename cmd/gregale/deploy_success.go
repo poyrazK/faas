@@ -354,16 +354,16 @@ func waitForDeploymentRollout(ctx context.Context, c *Client, dep api.Deployment
 
 func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryResponse, appSlug string) {
 	_, _ = fmt.Fprintln(w, "Release summary:")
+	changes := releaseChangeLines(summary.Changes)
 	switch {
 	case summary.Previous == nil:
 		_, _ = fmt.Fprintln(w, "  Changes: initial release")
-	case len(summary.Changes) == 0:
+	case len(changes) == 0:
 		_, _ = fmt.Fprintf(w, "  Changes since %s: none\n", deploymentLabel(*summary.Previous))
 	default:
 		_, _ = fmt.Fprintf(w, "  Changes since %s:\n", deploymentLabel(*summary.Previous))
-		for _, change := range summary.Changes {
-			_, _ = fmt.Fprintf(w, "    %-18s %s -> %s\n", change.Field,
-				formatSummaryValue(change.Before), formatSummaryValue(change.After))
+		for _, line := range changes {
+			_, _ = fmt.Fprintf(w, "    %s\n", line)
 		}
 	}
 	// production-us hunt #8: during a canary the previous release still
@@ -431,7 +431,7 @@ func deploymentWaitResumeCommandWithRollout(deploymentID string, deadline time.D
 	if rollout {
 		rolloutFlag = " --rollout"
 	}
-	return fmt.Sprintf("%s release wait %s%s --timeout %d", recoveryCLI(), recoveryArgument(deploymentID), rolloutFlag, seconds)
+	return fmt.Sprintf("%s release wait %s%s --timeout %d", deployRecoveryCLI(), recoveryArgument(deploymentID), rolloutFlag, seconds)
 }
 
 func warnDeploymentWaitTimeout(appSlug, deploymentID string, deadline time.Duration) {
@@ -478,7 +478,6 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		final, ok = waitForDeploymentRollout(waitCtx, c, final)
 	}
 	if !ok {
-		resumeCommand := deploymentWaitResumeCommandWithRollout(dep.ID, deadline, waitForRollout)
 		receiptDep := dep
 		if final.ID != "" {
 			receiptDep = final
@@ -488,8 +487,11 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.Interrupted = errors.Is(ctx.Err(), context.Canceled)
 		receipt.TimedOut = !receipt.Interrupted
 		receipt.WaitStage = stage
-		receipt.ResumeCommand = resumeCommand
 		receipt.Recovery = newDeployRecovery(stage, appSlug, receiptDep.ID, "", deadline, waitForRollout)
+		if session := sessionFromContext(ctx); session != nil {
+			receipt.Recovery.setResumeCommand(session.resumeCommandWithTimeout(deadline))
+		}
+		receipt.ResumeCommand = receipt.Recovery.ResumeCommand
 		if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 			return code
 		}
@@ -519,20 +521,19 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.WaitStage = "rollout"
 	}
 	if receipt.WaitStage != "" {
-		receipt.Recovery = newDeployRecovery(receipt.WaitStage, appSlug, final.ID, "", deadline, waitForRollout)
-		receipt.Recovery.ResumeCommand = ""
-		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
+		receipt.Recovery = failedDeploymentRecovery(appSlug, final)
+		receipt.Recovery.Stage = receipt.WaitStage
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
 	if configurationErr != nil {
 		receipt.WaitStage = "configuration"
-		receipt.Recovery = sessionFromContext(ctx).recoveryWithTimeout("configuration", deadline)
+		receipt.Recovery = sessionFromContext(ctx).recoveryForError("configuration", deadline, configurationErr)
 	}
 	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code
 	}
 	if configurationErr != nil {
-		return sessionFromContext(ctx).failure("Saved deploy settings remain pending", "configuration", configurationErr)
+		return printErr("Saved deploy settings remain pending", &deployRecoveryError{err: configurationErr, recovery: receipt.Recovery})
 	}
 	if waitForRollout && final.RolloutState == rolloutStateAborted {
 		return 1

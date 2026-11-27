@@ -41,6 +41,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -50,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
@@ -95,7 +97,7 @@ type Store interface {
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 	CountFailedCertIssuancesSince(ctx context.Context, accountID, appID string, since time.Time) (int, error)
 	ListCustomMetrics(ctx context.Context, appID string) ([]state.CustomMetric, error)
-	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
+	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, recipients state.AlertFireRecipients, err error)
 	SetAlertRuleState(ctx context.Context, ruleID string, to state.AlertState, at time.Time) (changed bool, err error)
 	SetAlertRuleLastEvaluated(ctx context.Context, ruleID string, at time.Time) error
 	RecordAlertDelivery(ctx context.Context, d state.AlertDelivery) (state.AlertDelivery, error)
@@ -220,7 +222,7 @@ type Evaluator struct {
 	// (ADR-20261029203000); RunOnce runs on one goroutine.
 	lastPurge time.Time
 
-	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
+	// anomaly shares ADR-744 baselines across rules in the current tick.
 	anomaly anomalyState
 }
 
@@ -447,8 +449,18 @@ func (s *Stats) add(o Stats) {
 // wires one Evaluator per daemon. Within a tick, accounts are evaluated
 // in parallel and each account's rules in order (accounts.go).
 func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
-	var stats Stats
 	now := e.now()
+	return e.runOnce(ctx, now, now)
+}
+
+// RunOnceAt uses the scheduled tick time for anomaly queries. Other alert
+// timing, including cooldowns and notification timestamps, uses the clock.
+func (e *Evaluator) RunOnceAt(ctx context.Context, scheduled time.Time) (Stats, error) {
+	return e.runOnce(ctx, scheduled, e.now())
+}
+
+func (e *Evaluator) runOnce(ctx context.Context, scheduled, now time.Time) (Stats, error) {
+	var stats Stats
 
 	rules, err := e.store.ListEnabledAlertRules(ctx)
 	if err != nil {
@@ -459,10 +471,13 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		return stats, fmt.Errorf("alerts: list enabled: %w", err)
 	}
 	stats.Evaluated = len(rules)
+	e.anomaly.begin(scheduled)
+	webhookStandDowns := e.startWebhookStandDowns(ctx, now)
 
 	for _, account := range e.evalAccounts(ctx, groupByAccount(rules), now) {
 		stats.add(account)
 	}
+	e.warmAnomalyBaselines(ctx)
 	e.recordRuleOutcomes(stats)
 	if err := ctx.Err(); err != nil {
 		return stats, err
@@ -479,9 +494,11 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	}
 	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
 	e.standDownStranded(ctx, e.now(), &stats)
-	stats.ChannelFiresRetried = e.retryChannelFires(ctx, e.now())
 	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
 	stats.ChannelStandDownsDelivered, stats.ChannelStandDownsAbandoned = e.deliverChannelStandDowns(ctx, e.now())
+	stats.add(<-webhookStandDowns)
+	e.deliverDeferredAlertFires(ctx, e.now(), &stats)
+	stats.ChannelFiresRetried += e.retryChannelFires(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
 	return stats, nil
 }
@@ -540,6 +557,10 @@ func (e *Evaluator) purgeDeletedRuleEpisodes(ctx context.Context, cutoff time.Ti
 // cancellation — every other failure is observation, not load-
 // bearing for the next tick.
 func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time.Time, stats *Stats) {
+	if rule.ObserveOnly {
+		e.evalObserveOnly(ctx, rule, now, stats)
+		return
+	}
 	var readiness []api.MCPReadinessMonitorStatus
 	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
 		ctx, readiness = e.withMCPReadiness(ctx, rule)
@@ -559,8 +580,77 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// Reading the value gets AlertObserveBudget (ADR-20261028101615); a
 	// read cut short is degraded like any other failed read.
 	octx, cancel := context.WithTimeout(ctx, api.AlertObserveBudget)
-	observed, comparisonResult, skipReason := e.observe(octx, rule)
+	var observed float64
+	var comparisonResult bool
+	var skipReason string
+	var baseline anomalyBaseline
+	isAnomaly := api.IsAnomalyAlertComparison(string(rule.Comparison))
+	var anomalyEvidence api.AlertAnomalyEvaluation
+	if isAnomaly {
+		result := e.observeAnomaly(octx, rule)
+		observed, comparisonResult, skipReason, baseline = result.value, result.fires, result.skip, result.baseline
+		anomalyEvidence = result.evidence
+	} else {
+		observed, comparisonResult, skipReason = e.observe(octx, rule)
+	}
 	cancel()
+	var recoveryStore state.AlertAnomalyRecoveryStore
+	if isAnomaly && rule.RecoveryConfirmationChecks == api.AnomalyReplayRecoveryChecks {
+		var ok bool
+		recoveryStore, ok = e.store.(state.AlertAnomalyRecoveryStore)
+		if !ok {
+			e.log.Warn("alerts: recovery confirmation storage unavailable", "rule", rule.ID)
+			return
+		}
+		if !comparisonResult && skipReason == "" && rule.State != state.AlertStateOk {
+			open := rule.State == state.AlertStateFiring
+			if !open {
+				var err error
+				open, err = recoveryStore.AlertRuleEpisodeOpen(ctx, rule.ID)
+				if err != nil {
+					e.log.Warn("alerts: read episode for recovery confirmation", "rule", rule.ID, "err", err)
+					return
+				}
+			}
+			if open {
+				anomalyEvidence = state.ConfirmAlertAnomalyRecovery(rule, anomalyEvidence)
+			}
+		}
+	}
+	var cooldownUntil time.Time
+	if isAnomaly && comparisonResult {
+		cooldownUntil = e.repeatNotificationCooldownUntil(ctx, rule, now)
+		if cooldownUntil.IsZero() {
+			anomalyEvidence = api.AlertAnomalyEvaluation{}
+		} else {
+			anomalyEvidence.Reason = api.AlertAnomalyNotificationCooldown
+			anomalyEvidence.NextNotificationEligibleAt = &cooldownUntil
+		}
+	}
+	anomalyRecorded := false
+	if store, ok := e.store.(state.AlertAnomalyEvaluationStore); isAnomaly && ok {
+		accepted, err := store.RecordAlertAnomalyEvaluation(ctx, rule, now, anomalyEvidence)
+		if err != nil {
+			e.log.Warn("alerts: record anomaly evaluation", "rule", rule.ID, "err", err)
+			if recoveryStore != nil {
+				return
+			}
+		} else if !accepted {
+			return // Superseded by a rule edit or a newer evaluation.
+		} else {
+			anomalyRecorded = true
+		}
+	}
+	if anomalyEvidence.Reason == api.AlertAnomalyRecoveryPending {
+		return
+	}
+	stampEvaluated := func() {
+		if !anomalyRecorded {
+			if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
+				e.log.Warn("alerts: stamp last_evaluated_at", "rule", rule.ID, "err", err)
+			}
+		}
+	}
 	if skipReason != "" {
 		switch skipReason {
 		case skipDegraded:
@@ -570,13 +660,17 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			}
 			e.log.Warn("alerts: eval skipped degraded source",
 				"rule", rule.ID, "metric", string(rule.Metric))
-			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
-				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
+			if !anomalyRecorded {
+				if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
+					e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
+				}
 			}
 		case skipInsufficient, skipPaused:
 			stats.SkippedInsufficient++
-			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
-				e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
+			if !anomalyRecorded {
+				if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
+					e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
+				}
 			}
 		case skipNoIdentity:
 			stats.SkippedNoIdentity++
@@ -586,10 +680,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		// Stamp last_evaluated_at so the dashboard's "evaluated N
 		// seconds ago" reads true even on a degraded tick. Failures
 		// are warn-logged; we never block the next rule.
-		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-			e.log.Warn("alerts: stamp last_evaluated_at",
-				"rule", rule.ID, "err", err)
-		}
+		stampEvaluated()
 		return
 	}
 
@@ -608,8 +699,19 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		// one of those before recovering is announced too
 		// (ADR-20261104142830).
 		if rule.State != state.AlertStateOk {
-			wasFiring := e.episodeWasFiring(ctx, rule)
-			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
+			held, ok := e.deferredFireRecipients(ctx, rule.ID, rule.LastFiredAt)
+			if !ok {
+				return
+			}
+			var changed, wasFiring bool
+			var err error
+			if anomalyEvidence.Reason == api.AlertAnomalyRecoveryConfirmed {
+				wasFiring = true
+				changed, err = recoveryStore.ResolveConfirmedAlertAnomaly(ctx, rule.ID, now)
+			} else {
+				wasFiring = e.episodeWasFiring(ctx, rule)
+				changed, err = e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
+			}
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
 			} else if changed && wasFiring {
@@ -621,16 +723,13 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				}
 				// ADR-749: channels hear the recovery so PagerDuty can
 				// close the incident the fire opened.
-				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
-				if rule.NotifyResolved && rule.WebhookURL != "" {
+				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now, held.ChannelIDs, nil)
+				if rule.NotifyResolved && rule.WebhookURL != "" && held.WebhookURL != rule.WebhookURL {
 					e.deliverResolve(ctx, rule, &observed, "", now, stats)
 				}
 			}
 		}
-		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-			e.log.Warn("alerts: stamp last_evaluated_at",
-				"rule", rule.ID, "err", err)
-		}
+		stampEvaluated()
 		return
 	}
 
@@ -653,17 +752,10 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// the first fire every later tick produced that same key and lost:
 	// each rule fired exactly once and then stayed silent — through a
 	// sustained breach past its cool-down and for every new incident.
-	cooldown := time.Duration(rule.CooldownMinutes) * time.Minute
-	if cooldown <= 0 {
-		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
+	if !isAnomaly {
+		cooldownUntil = e.repeatNotificationCooldownUntil(ctx, rule, now)
 	}
-	// The cool-down limits repeat notices for one incident. A breach after
-	// the previous incident closed (the rule recovered to ok and its
-	// resolve went out) is a new incident and fires at once: gating it on
-	// the old fire's time hid a whole incident that started and ended inside
-	// the window, and the receiver then heard a second resolve for a fire it
-	// never got (ADR-20261110090000).
-	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown && e.episodeWasFiring(ctx, rule) {
+	if !cooldownUntil.IsZero() {
 		// Still breaching inside the cool-down of the open incident: record
 		// the breach even though the cool-down withholds a delivery. That
 		// covers a degraded read that recovered, which otherwise read "ok"
@@ -673,10 +765,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
 			}
 		}
-		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-			e.log.Warn("alerts: stamp last_evaluated_at (cool-down)",
-				"rule", rule.ID, "err", err)
-		}
+		stampEvaluated()
 		return
 	}
 	var previousFire int64
@@ -688,10 +777,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// Stamp last_evaluated_at up-front so a successful claim still
 	// records "evaluated N seconds ago" if the dispatch path then
 	// fails inside RecordAlertDelivery.
-	if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-		e.log.Warn("alerts: stamp last_evaluated_at (fire)",
-			"rule", rule.ID, "err", err)
-	}
+	stampEvaluated()
 
 	// Marshal the webhook envelope ONCE so the dedupe row carries
 	// the same payload we'll hand to the dispatcher. ClaimAlertFire
@@ -705,7 +791,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if convergence != nil {
 		paths.mcpConvergence = convergence
 	}
-	extra := e.anomalyPayload(rule, observed)
+	extra := baseline.payload(observed)
 	if lc, ok := e.readLogContext(ctx, rule, e.appSlug(ctx, rule.AppID), e.now()); ok {
 		if extra == nil {
 			extra = map[string]any{}
@@ -718,7 +804,10 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		return
 	}
 
-	deliveryID, won, err := e.store.ClaimAlertFire(ctx, rule.ID, idempotencyKey, payloadBytes, observed, now)
+	deliveryID, won, recipients, err := e.store.ClaimAlertFire(ctx, rule.ID, idempotencyKey, payloadBytes, observed, now)
+	if errors.Is(err, state.ErrConflict) {
+		return // The rule's environment changed during this evaluation.
+	}
 	if err != nil {
 		// ErrNotFound is a TOCTOU race (rule deleted between
 		// ListEnabledAlertRules and the claim) — log + skip.
@@ -742,64 +831,54 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		e.ops.AlertEvalFiredTotal()()
 	}
 
-	// The alert_deliveries row is now created AND stamped with the
-	// full envelope (payloadBytes + observed + fired_at) by
-	// ClaimAlertFire itself — both PgStore and MemStore insert the
-	// row inside their claim path (parity contract from PR #409
-	// review). ClaimAlertFire returns the new row's UUID so we can
-	// transition it to delivered/failed via
-	// UpdateAlertDeliveryStatus. Previously the evaluator called
-	// RecordAlertDelivery here too, which collided with the row
-	// ClaimAlertFire had just inserted and short-circuited the
-	// dispatch (CI run 30436032609: 'alerts: record delivery' state:
-	// conflict + 'receiver never received a delivery within 11 s').
-	_ = payloadBytes // envelope is already stamped on the row
-
-	// Flip state to firing on a successful claim. ok→firing audit
-	// is emitted AFTER the delivery succeeds (mirrors the resolved
-	// emission pattern — we only audit terminal transitions).
-	if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
-		e.log.Warn("alerts: set state firing", "rule", rule.ID, "err", err)
-	}
-
-	// ADR-749: notification channels receive the fire independently of
-	// the webhook. A channel-only rule (no webhook URL) records its
-	// delivery from the channel outcome and skips the webhook path.
-	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now)
+	// Use the bindings and handoff decisions from the committed claim.
+	held := recipients.Held
+	attempted, delivered := e.notifyChannels(ctx, rule, alertchannels.EventFire, observed, now, held.ChannelIDs, recipients.Channels)
 	if rule.WebhookURL == "" {
+		if delivered == 0 && len(held.ChannelIDs) != 0 {
+			e.runAction(ctx, rule, deliveryID, observed, now, stats)
+			return // The deferred recipients determine the delivery outcome.
+		}
 		result := webhookout.Result{Attempts: 1, StatusCode: http.StatusOK}
 		if delivered == 0 {
 			result.StatusCode = 0
 			result.Err = fmt.Errorf("no notification channel accepted the alert (%d attempted)", attempted)
 		}
-		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+		_ = e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
+		e.runAction(ctx, rule, deliveryID, observed, now, stats)
+		return
+	}
+	if held.WebhookURL == rule.WebhookURL {
 		e.runAction(ctx, rule, deliveryID, observed, now, stats)
 		return
 	}
 	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
 }
-func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
-	// SAFE-RELEASES-B fan-out: when the rule's action column is
-	// anything other than the 'webhook' default (or empty), route
-	// the same fire to the in-process ActionExecutor. Both paths
-	// are independent — a webhook 5xx never blocks the rollback,
-	// and a rollback failure never blocks the webhook.
-	//
-	// The action runs before the webhook (bug hunt H78): after it, a
-	// receiver that never answered held the rollback for the whole
-	// webhook budget, retries included, and a webhook secret that
-	// failed to open skipped the rollback entirely.
-	//
-	// The action is gated by the cool-down bucket that
-	// ClaimAlertFire enforces: a duplicate inside the cool-down
-	// window already returned at the `if !won` branch.
-	//
-	// Not serialised across accounts (ADR-20261109153000): one account's
-	// rules run in one goroutine, so actions on an app never overlap, and
-	// a slow action costs only its own account's tick budget. A global
-	// lock here used to hold every account's fires behind one rollback.
-	e.runAction(ctx, rule, deliveryID, observed, now, stats)
 
+// repeatNotificationCooldownUntil applies only while the same incident is open.
+// A breach after recovery can fire immediately (ADR-20261110090000).
+func (e *Evaluator) repeatNotificationCooldownUntil(ctx context.Context, rule state.AlertRule, now time.Time) time.Time {
+	cooldown := time.Duration(rule.CooldownMinutes) * time.Minute
+	if cooldown <= 0 {
+		cooldown = time.Minute // the schema defaults to at least one minute
+	}
+	until := rule.LastFiredAt.Add(cooldown).UTC()
+	if rule.LastFiredAt.IsZero() || !now.Before(until) || !e.episodeWasFiring(ctx, rule) {
+		return time.Time{}
+	}
+	return until
+}
+
+func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payload map[string]any, now time.Time, stats *Stats) {
+	// The action is once per fire. It runs before the independent webhook
+	// transport so an unresponsive receiver cannot hold it up.
+	e.runAction(ctx, rule, deliveryID, observed, now, stats)
+	e.send(ctx, stats, func(stats *Stats) {
+		e.sendAlertWebhook(ctx, ctx, rule, deliveryID, observed, payload, now, stats)
+	})
+}
+
+func (e *Evaluator) sendAlertWebhook(ctx, sendCtx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) bool {
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -813,20 +892,20 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 		e.log.Warn("alerts: no host age identity; skipping dispatch",
 			"rule", rule.ID, "name", rule.Name)
 		stats.SkippedNoIdentity++
-		return
+		return false
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(openIdents, rule.WebhookSecretSealed)
 	if err != nil {
 		e.log.Warn("alerts: open webhook secret; skipping dispatch",
 			"rule", rule.ID, "err", err)
 		e.recordFailure(ctx, rule, deliveryID, 0, "secret open failed: "+err.Error())
-		return
+		return false
 	}
 	if ns != AlertSecretNamespace && ns != legacyAlertSecretNamespace {
 		e.log.Warn("alerts: webhook secret namespace mismatch; skipping dispatch",
 			"rule", rule.ID, "got_namespace", ns, "want", AlertSecretNamespace)
 		e.recordFailure(ctx, rule, deliveryID, 0, "namespace mismatch: "+ns)
-		return
+		return false
 	}
 
 	// Build the webhook Event. The Dispatcher's header set pins
@@ -849,21 +928,13 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 		}
 	}
 
-	// The delivery, retries included, gets AlertWebhookBudget
-	// (ADR-20261028101615) and runs on the account's webhook pool, so an
-	// unresponsive receiver delays neither every account nor this account's
-	// next rules (ADR-20261110090000). webhookout.Dispatcher only reads its
-	// options while dispatching. Recording the result uses the tick's
-	// context, so a delivery cut short is still recorded as failed.
-	e.send(ctx, stats, func(stats *Stats) {
-		dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
-		result := e.dispatch.Dispatch(dctx, webhookout.Target{
-			URL:    rule.WebhookURL,
-			Signer: e.newSigner(plaintext),
-		}, evt)
-		cancel()
-		e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
-	})
+	dctx, cancel := context.WithTimeout(sendCtx, api.AlertWebhookBudget)
+	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
+	cancel()
+	// A timed-out transport still leaves a delivery outcome to persist.
+	writeCtx, cancelWrite := context.WithTimeout(ctx, alertDeliveryWriteBudget)
+	defer cancelWrite()
+	return e.recordResult(writeCtx, rule, deliveryID, observed, result, now, stats) == nil
 }
 
 // openIdentities returns the host identities that open webhook secrets,
@@ -883,52 +954,56 @@ func (e *Evaluator) openIdentities() []*age.X25519Identity {
 	return idents
 }
 
-// deliverResolve sends a recovered rule's webhook a signed resolve event, for
-// rules that asked for one (ADR-20261029203000). A resolve is not a fire: it
-// takes no delivery-ledger row and runs no action, and a failure is logged and
-// counted, never retried on a later tick.
-// deliverResolve sends the webhook's alert.resolved. A rule stood down
-// (ADR-20261104142830) has no observed value; its payload carries the
-// reason instead.
+// deliverResolve sends an opted-in webhook its signed recovery or stand-down.
+// A recovery has no delivery-ledger row and runs no rule action.
 func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, observed *float64, reason string, now time.Time, stats *Stats) {
+	e.send(ctx, stats, func(stats *Stats) {
+		e.sendResolve(ctx, rule, observed, reason, uuid.NewString(), now, now, stats)
+	})
+}
+
+func (e *Evaluator) sendResolve(ctx context.Context, rule state.AlertRule, observed *float64, reason, eventID string, resolvedAt, sentAt time.Time, stats *Stats) bool {
 	idents := e.openIdentities()
 	if len(idents) == 0 {
 		stats.SkippedNoIdentity++
-		return
+		return false
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(idents, rule.WebhookSecretSealed)
 	if err != nil || ns != AlertSecretNamespace && ns != legacyAlertSecretNamespace {
 		e.log.Warn("alerts: open webhook secret for a resolve; skipping it", "rule", rule.ID, "namespace", ns, "err", err)
 		stats.ResolvesFailed++
-		return
+		return false
 	}
 	payload := map[string]any{
 		"event": eventResolve, "rule_id": rule.ID, "rule_name": rule.Name,
 		"metric": string(rule.Metric), "comparison": string(rule.Comparison), "threshold": rule.Threshold,
-		"observed": observed, "window": string(rule.WindowSpec), "resolved_at": now.UTC().Format(time.RFC3339Nano),
+		"observed": observed, "window": string(rule.WindowSpec), "resolved_at": resolvedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if reason != "" {
 		payload["reason"] = reason
 	}
+	if rule.EnvironmentScope != "" {
+		payload["environment_scope"] = rule.EnvironmentScope
+	}
+	addEnvironment(payload, rule)
 	evt := webhookout.Event{
-		ID:         uuid.NewString(),
-		OccurredAt: now,
+		ID:         eventID,
+		OccurredAt: sentAt,
 		Rule:       rule.Name,
 		RuleName:   rule.Name,
 		AppID:      rule.AppID,
 		Payload:    payload,
 	}
-	e.send(ctx, stats, func(stats *Stats) {
-		dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
-		result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
-		cancel()
-		if result.Err != nil {
-			e.log.Warn("alerts: resolve webhook not delivered", "rule", rule.ID, "status", result.StatusCode, "attempts", result.Attempts, "err", result.Err)
-			stats.ResolvesFailed++
-			return
-		}
-		stats.ResolvesDelivered++
-	})
+	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	defer cancel()
+	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
+	if result.Err != nil {
+		e.log.Warn("alerts: resolve webhook not delivered", "rule", rule.ID, "status", result.StatusCode, "attempts", result.Attempts, "err", result.Err)
+		stats.ResolvesFailed++
+		return false
+	}
+	stats.ResolvesDelivered++
+	return true
 }
 
 // runAction is the SAFE-RELEASES-B fan-out (issue #976 / ADR-122).
@@ -944,7 +1019,7 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, fireID 
 	action := rule.Action
 	// Empty string and the explicit 'webhook' default are the
 	// legacy path — ActionExecutor is not consulted.
-	if action == "" || action == state.AlertActionWebhook {
+	if action == "" || action == state.AlertActionWebhook || rule.EnvironmentScope != "" {
 		return
 	}
 	if api.IsEdgeSecurityAlertMetric(string(rule.Metric)) {
@@ -1040,14 +1115,14 @@ const (
 // threshold verdict, skipReason is a fail-closed "we can't even
 // fetch" signal.
 func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if rule.EnvironmentID != "" {
+		return e.observeEnvironment(ctx, rule)
+	}
 	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
 		return e.observeMCPReadiness(ctx, rule)
 	}
 	if api.IsMCPProtocolMetric(string(rule.Metric)) {
 		return e.observeMCPProtocol(ctx, rule)
-	}
-	if api.IsAnomalyAlertComparison(string(rule.Comparison)) {
-		return e.observeAnomaly(ctx, rule)
 	}
 	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 		return e.observeMCPConnectionHealth(ctx, rule)
@@ -1114,13 +1189,15 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			// stays bounded.
 			return e.summariseFailed(ctx, rule, since)
 		}
-		n, err := e.store.CountFailedInvocationsSince(ctx, rule.AccountID, rule.AppID, state.InvocationSource(source), since)
+		n, err := e.countProductionFailures(ctx, rule, state.InvocationSource(source), since)
 		if err != nil {
 			e.log.Warn("alerts: count failed invocations",
 				"rule", rule.ID, "err", err)
 			return 0, false, skipDegraded
 		}
 		return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricOOMKills:
+		return e.observeOOMKills(ctx, rule)
 	case state.AlertMetricFailedDeployments:
 		// Postgres-backed. Issue #1233 / ADR-123.
 		// Walks the deployments table per migration 00349.
@@ -1365,6 +1442,33 @@ func ratioMetric(m state.AlertMetric) bool {
 	return false
 }
 
+// observeOOMKills counts the app's OOM kills within the rule window from the
+// workload events vmmd records (ADR-121 amendment). The store reads them only
+// when it implements state.WorkloadOOMKillLister; one without it degrades the
+// rule instead of reporting zero kills.
+func (e *Evaluator) observeOOMKills(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	lister, ok := e.store.(state.WorkloadOOMKillLister)
+	if !ok || rule.AppID == "" {
+		return 0, false, skipDegraded
+	}
+	now := e.now()
+	rows, err := lister.ListAppWorkloadOOMKills(ctx, sqlc.ListAppWorkloadOOMKillsParams{
+		Since:    pgtype.Timestamptz{Time: e.windowStart(rule.WindowSpec, now), Valid: true},
+		Until:    pgtype.Timestamptz{Time: now, Valid: true},
+		AppID:    rule.AppID,
+		RowLimit: 1,
+	})
+	if err != nil {
+		e.log.Warn("alerts: count OOM kills", "rule", rule.ID, "err", err)
+		return 0, false, skipDegraded
+	}
+	n := 0.0
+	if len(rows) > 0 {
+		n = float64(rows[0].Total)
+	}
+	return n, compareFloat(n, rule.Comparison, rule.Threshold), ""
+}
+
 // summariseFailed walks every alertable InvocationSource value and sums
 // the per-source counts so a rule with source="any" sees the total
 // of terminal-failed invocations on (account, app) inside the
@@ -1379,7 +1483,7 @@ func (e *Evaluator) summariseFailed(ctx context.Context, rule state.AlertRule, s
 		state.InvocationCron,
 		state.InvocationInboundWebhook,
 	} {
-		n, err := e.store.CountFailedInvocationsSince(ctx, rule.AccountID, rule.AppID, src, since)
+		n, err := e.countProductionFailures(ctx, rule, src, since)
 		if err != nil {
 			e.log.Warn("alerts: count failed invocations (any)",
 				"rule", rule.ID, "source", src, "err", err)
@@ -1545,10 +1649,14 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		"window":     string(rule.WindowSpec),
 		"fired_at":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	if rule.EnvironmentScope != "" {
+		m["environment_scope"] = rule.EnvironmentScope
+	}
 	if api.IsMCPProtocolMetric(string(rule.Metric)) {
 		m["app_id"] = rule.AppID
 		m["mcp_protocol"] = map[string]any{"min_calls": rule.MCPMinCalls, "for_minutes": rule.MCPForMinutes, "source": "starter_reported", "sample_interval_seconds": 30}
 	}
+	addEnvironment(m, rule)
 	if rule.EventSubscriptionID != "" {
 		m["event_subscription_id"] = rule.EventSubscriptionID
 	}
@@ -1647,7 +1755,7 @@ func deliveryFailureText(result webhookout.Result) string {
 
 // successful delivery the alert.delivered audit is emitted; on a
 // failure, alert.failed.
-func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, result webhookout.Result, now time.Time, stats *Stats) {
+func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, result webhookout.Result, now time.Time, stats *Stats) error {
 	status := state.AlertDeliveryFailed
 	lastErr := ""
 	deliveredAt := (*time.Time)(nil)
@@ -1672,7 +1780,7 @@ func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deli
 	if err := e.store.UpdateAlertDeliveryStatus(ctx, deliveryID, status, result.Attempts, result.StatusCode, lastErr, deliveredAt); err != nil {
 		e.log.Warn("alerts: update delivery status",
 			"rule", rule.ID, "delivery_id", deliveryID, "err", err)
-		return
+		return err
 	}
 
 	if e.audit != nil {
@@ -1689,6 +1797,7 @@ func (e *Evaluator) recordResult(ctx context.Context, rule state.AlertRule, deli
 			"observed":    observed,
 		})
 	}
+	return nil
 }
 
 // recordFailure records a non-dispatch failure (secret open, namespace

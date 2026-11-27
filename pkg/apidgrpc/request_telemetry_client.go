@@ -166,6 +166,16 @@ func (c *RequestTelemetryClientImpl) AddRequestAnalyticsRollups(ctx context.Cont
 	return receipt, nil
 }
 
+// AddInstanceRouteMinutes ships one gateway batch of per-instance route
+// minutes (ADR-20261121170000). The wrapped error keeps the gRPC status.
+func (c *RequestTelemetryClientImpl) AddInstanceRouteMinutes(ctx context.Context, req *apidpb.AddInstanceRouteMinutesRequest) (*apidpb.AddInstanceRouteMinutesResponse, error) {
+	receipt, err := c.cli.AddInstanceRouteMinutes(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("apidgrpc: AddInstanceRouteMinutes: %w", err)
+	}
+	return receipt, nil
+}
+
 // Close shuts down the underlying gRPC connection. Safe to call
 // multiple times; subsequent calls are no-ops.
 func (c *RequestTelemetryClientImpl) Close() error {

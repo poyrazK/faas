@@ -20,7 +20,7 @@ import (
 //     answers 429, not 503; a cache hit sends each X-RateLimit-* header once;
 //     metrics --services explains a hidden service map;
 //   - #6001: a standalone app created without a size starts at the plan's
-//     RAM capped at 1024 MB; an alias whose revision a rollback superseded
+//     RAM capped at 512 MB (ADR-20261122180000); an alias whose revision a rollback superseded
 //     answers 409; a job that exits in milliseconds keeps its output;
 //   - #6060: a job's command can follow --, commas included.
 func TestBazaarRegressions(t *testing.T) {
@@ -124,7 +124,7 @@ func bazaarEdge(t *testing.T, tg *target) {
 
 	s.check("standalone_default_ram", func(t *testing.T) {
 		plan := str(object(t, tg.ok(t, time.Minute, "whoami").stdout), "plan")
-		want, known := map[string]int{"free": 256, "hobby": 512, "pro": 1024, "scale": 1024}[plan]
+		want, known := map[string]int{"free": 256, "hobby": 512, "pro": 512, "scale": 512}[plan]
 		if !known {
 			t.Skipf("no default RAM expectation for plan %q", plan)
 		}

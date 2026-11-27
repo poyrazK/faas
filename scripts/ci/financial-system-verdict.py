@@ -50,8 +50,31 @@ def remote_http_contract(root, output):
     return {"sources": {name: digest(root / name) for name in REMOTE_SUPPORT}, "variants": measurements, "exhaustion": list(map(int, exhaustion[0])), "restart": list(map(int, restart[0]))}
 
 
+LIMITS_SOURCE = "pkg/api/limits.go"
+
+
+def published_rates(root):
+    """Read the published overage rates from pkg/api/limits.go.
+
+    The provider fixture bills at these constants; a copy here went stale
+    (1000/2000 against the published 5000/3000) and rejected correct evidence.
+    """
+    text = (root / LIMITS_SOURCE).read_text()
+    rates = {}
+    for name, pattern in (("ram", r"\bOverageMillicentsPerGBHour\s*(?:int64\s*)?=\s*([0-9_]+)"),
+                          ("egress", r"\bEgressOverageMillicentsPerGiB\s*(?:int64\s*)?=\s*([0-9_]+)")):
+        match = re.search(pattern, text)
+        if match is None:
+            raise ValueError(f"{LIMITS_SOURCE}: {name} overage rate missing")
+        rates[name] = int(match[1].replace("_", ""))
+        if rates[name] <= 0:
+            raise ValueError(f"{LIMITS_SOURCE}: {name} overage rate must be positive")
+    return rates
+
+
 def reconciliation_contract(root, records):
     """Independently check canonical integer provider events and receipts."""
+    rates = published_rates(root)
     source = (root / SOURCES["provider"]).read_text()
     selected = re.search(r'for _, scenario := range \[\]string\{([^}]+)\}', source)
     if selected is None:
@@ -75,9 +98,9 @@ def reconciliation_contract(root, records):
             if type(quantity) is not int or type(proof["receipts"][key]) is not int or quantity <= 0 or event["external_id"] != key:
                 raise ValueError(f"{scenario}: invalid canonical event identity/quantity")
             if event["name"] == "faas_ram_usage":
-                field, unit, rate = "mb_seconds", 1024 * 3600, 1000
+                field, unit, rate = "mb_seconds", 1024 * 3600, rates["ram"]
             elif event["name"] == "faas_egress_usage":
-                field, unit, rate = "egress_bytes", 1 << 30, 2000
+                field, unit, rate = "egress_bytes", 1 << 30, rates["egress"]
             else:
                 raise ValueError(f"{scenario}: unexpected billed meter")
             if type(event["metadata"].get(field)) is not int or event["metadata"][field] != quantity:
@@ -89,7 +112,8 @@ def reconciliation_contract(root, records):
             measured, funded = proof["measured_" + meter], proof["funded_" + meter]
             if type(measured) is not int or type(funded) is not int or not 0 < measured <= funded:
                 raise ValueError(f"{scenario}: measured usage exceeds funded quantity")
-        proofs[scenario] = {"path": str(path), "sha256": digest(path), "events": len(events), "invoice_millicents": invoice}
+        proofs[scenario] = {"path": str(path), "sha256": digest(path), "events": len(events), "invoice_millicents": invoice,
+                            "ram_millicents_per_gb_hour": rates["ram"], "egress_millicents_per_gib": rates["egress"]}
     return proofs
 
 

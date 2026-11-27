@@ -94,6 +94,11 @@ class InventoryAndAlertTest(unittest.TestCase):
         self.assertEqual([row["labels"] for row in fired], [row["labels"] for row in resolved])
         self.assertEqual([row["startsAt"] for row in fired], [row["startsAt"] for row in resolved])
         self.assertNotEqual(fired[0]["labels"]["family"], fired[1]["labels"]["family"])
+        page, warn = [row["annotations"] for row in fired]
+        self.assertIn("confirm the dashboard loads", page["first_action"])
+        self.assertIn("qualification test", page["customer_impact"])
+        self.assertIn("viewPanel=452", page["dashboard_path"])
+        self.assertNotIn("first_action", warn)
         for row in fired:
             self.assertIn(plan["qualification_id"].replace("-", "_"), row["labels"]["alertname"])
             self.assertNotEqual(row["labels"]["alertname"], "FaasWatchdog")
@@ -123,6 +128,27 @@ class InventoryAndAlertTest(unittest.TestCase):
             with self.assertRaises(remote.QualificationError):
                 remote.operate({**payload, field: value}, now=NOW + timedelta(seconds=2), read_release=lambda: RELEASE, request=request)
             self.assertNotIn("alerts", [row[0] for row in calls])
+
+    def test_delivery_page_adds_a_separate_test_and_receipts(self):
+        body = inventory_body()
+        delivery = {"receiver": remote.DELIVERY_RECEIVER, "integration": "pagerduty"}
+        body["receiver_health"]["groups"].append({**delivery, "expected": True})
+        body["receiver_health"]["inventory"]["value"] += 1
+        groups = remote.receiver_inventory(body, NOW)
+        self.assertEqual(qualification.reviewed_groups(groups), [delivery, *GROUPS])
+        plan = {**source_report(), "expected_groups": groups}
+        fired = remote.test_alerts(plan, NOW + timedelta(seconds=2))
+        resolved = remote.test_alerts(plan, NOW + timedelta(seconds=91), resolving=True)
+        self.assertEqual(len(fired), 3)
+        self.assertEqual([row["labels"] for row in fired], [row["labels"] for row in resolved])
+        self.assertEqual(fired[-1]["labels"]["alertname"], "FaasDeliveryQualification_mq_100_1_delivery_page")
+        self.assertEqual(fired[-1]["labels"]["severity"], "page")
+        receipts = qualification.receipt_template(plan)["observations"]
+        self.assertEqual([row["event"] for row in receipts if row["receiver"] == remote.DELIVERY_RECEIVER],
+                         ["firing", "resolved"])
+        body["receiver_health"]["groups"][-1]["integration"] = "email"
+        with self.assertRaisesRegex(remote.QualificationError, "invalid_receiver_inventory"):
+            remote.receiver_inventory(body, NOW)
 
     def test_resolve_does_not_depend_on_current_inventory_or_release(self):
         def unavailable():
@@ -353,6 +379,7 @@ print('private-provider-error', file=sys.stderr)
 """)
             stub.chmod(0o700)
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "CP_HOST": "cp.example.test", "MONITORING_OPERATOR_TOKEN": "fixture-private-token",
+                   "QUALIFICATION_SSH_KEY": str(root / "deploy_key"), "QUALIFICATION_SSH_KNOWN_HOSTS": str(root / "known_hosts"),
                    "GITHUB_TOKEN": "fixture-github-token", "CAPTURE": str(root / "capture"), "RESPONSE": json.dumps(accepted("prepare", datetime.now(timezone.utc)))}
             with mock.patch.dict(os.environ, env):
                 result = qualification.SSHRemote(env)("prepare", qualification.new_report(CONFIG, "prepare", NOW))
@@ -363,6 +390,11 @@ print('private-provider-error', file=sys.stderr)
             self.assertFalse(capture["env_has_github_token"])
             self.assertNotIn("fixture-private-token", " ".join(capture["args"]))
             self.assertIn("-T", capture["args"])
+            self.assertEqual(capture["args"][1:3], ["-F", "/dev/null"])
+            self.assertEqual(capture["args"][capture["args"].index("-i") + 1], str(root / "deploy_key"))
+            self.assertIn(f"UserKnownHostsFile={root / 'known_hosts'}", capture["args"])
+            self.assertIn("GlobalKnownHostsFile=/dev/null", capture["args"])
+            self.assertIn("IdentitiesOnly=yes", capture["args"])
             self.assertIn("StrictHostKeyChecking=yes", capture["args"])
             path = root / "report.json"
             qualification.atomic_report(path, result)
@@ -380,6 +412,10 @@ print('private-provider-error', file=sys.stderr)
         self.assertIn("retention-days: 30", workflow)
         self.assertNotIn("continue-on-error:", workflow)
         self.assertLess(workflow.index("Initialize unknown qualification evidence"), workflow.index("Set up pinned control-plane SSH"))
+        self.assertIn("""inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]'""", workflow)
+        self.assertIn('RUNNER_TEMP="$ssh_temp" bash scripts/ops/canary_ssh.sh setup', workflow)
+        self.assertIn("""trap 'rm -rf -- "$ssh_temp"' EXIT""", workflow)
+        self.assertNotIn("~/.ssh/", workflow)
         for action in ("checkout", "upload-artifact", "download-artifact"):
             self.assertRegex(workflow, "actions/" + action + r"@[0-9a-f]{40}")
 

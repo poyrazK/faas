@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -153,6 +154,36 @@ func TestRunDoctorChecks_PortFallbackAndNonRuntimeFilesDoNotWarn(t *testing.T) {
 	t.Fatal("port-bind check missing")
 }
 
+// TestRunDoctorChecks_PythonTestFilesDoNotRequireEnv: test_*.py and
+// conftest.py are tests, like *_test.go and *.test.js, so a variable only
+// they read is not a production requirement (mcp-python-tasks reads
+// MCP_TASKS_TEST_GREGALE in test_task_receipt.py).
+func TestRunDoctorChecks_PythonTestFilesDoNotRequireEnv(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"server.py":          "import os\nprint('ok')\n",
+		"test_server.py":     "import os\nbinary = os.environ[\"ONLY_IN_TESTS\"]\n",
+		"conftest.py":        "import os\nurl = os.environ[\"ONLY_IN_CONFTEST\"]\n",
+		"latest_settings.py": "import os\nkey = os.environ[\"REAL_REQUIREMENT\"]\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	rep := main.RunDoctorChecks(dir)
+	for _, check := range rep.Checks {
+		if check.Name != "env-required" {
+			continue
+		}
+		if !slices.Equal(check.Sources, []string{"REAL_REQUIREMENT"}) {
+			t.Fatalf("env-required sources = %v, want only REAL_REQUIREMENT (test files excluded): %+v", check.Sources, check)
+		}
+		return
+	}
+	t.Fatal("env-required check missing")
+}
+
 // TestRunDoctorChecks_EnvVarMissing pins the env-required check.
 // Fixture writes source that references $DATABASE_URL but no
 // .gregale/env.json declares it. Without the app's env and secret names
@@ -240,13 +271,15 @@ func TestRunDoctorChecks_EnvVarReferenceForms(t *testing.T) {
 				t.Fatalf("sources = %v, want %v", envCheck.Sources, tt.wantSources)
 			}
 			if tt.name == "node dot property" {
-				for _, want := range []string{"gregale env push --app <app-slug> -f .env", "gregale secrets set --app <app-slug> API_TOKEN=<value>"} {
+				for _, want := range []string{"gregale env push --app <app-slug> -f .env", "gregale env set --app <app-slug> API_TOKEN=<value>"} {
 					if !strings.Contains(envCheck.Fix, want) {
 						t.Errorf("fix missing %q: %s", want, envCheck.Fix)
 					}
 				}
-				if strings.Contains(envCheck.Fix, "gregale env set") {
-					t.Errorf("fix contains removed command: %s", envCheck.Fix)
+				// The tree made `env set` the name again (ADR-20261026145832);
+				// the earlier `secrets set` must not come back.
+				if strings.Contains(envCheck.Fix, "gregale secrets set") {
+					t.Errorf("fix names the earlier command: %s", envCheck.Fix)
 				}
 			}
 		})

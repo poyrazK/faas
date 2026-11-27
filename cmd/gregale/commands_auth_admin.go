@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,12 @@ import (
 )
 
 const authAdminKeyPrefix = "AUTH_ADMIN_KEY_"
+
+// authAdminKeyScopes are the scopes an Auth admin key may hold (the
+// template's adminScopes), besides "all".
+var authAdminKeyScopes = []string{"users:read", "users:write", "impersonate", "sso", "oauth-clients", "service-accounts", "emails"}
+
+const authAdminKeyUsage = "usage: gregale auth admin-key <create|list|revoke> NAME [ID] [--scopes all|SCOPES] [--expires-in DAYS | --no-expiry]"
 
 var (
 	authAdminKeyID     = regexp.MustCompile(`^[0-9A-F]{8}$`)
@@ -44,18 +51,30 @@ var (
 
 func cmdAuthAdminKey(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale auth admin-key <create|list|revoke> NAME [ID]", "auth")
+		PrintUsage(os.Stderr, authAdminKeyUsage, "auth")
 		return 1
 	}
 	fs := newFlagSet("auth admin-key "+args[0], flag.ContinueOnError)
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
+	scopes := fs.String("scopes", "all", "what the key may do: all, or a comma-separated list of "+strings.Join(authAdminKeyScopes, ", "))
+	expiresIn := fs.Int("expires-in", api.AuthAdminKeyDefaultDays, fmt.Sprintf("days until the key expires (1-%d)", api.AuthAdminKeyMaxDays))
+	noExpiry := fs.Bool("no-expiry", false, "the key lasts until revoked")
 	if err := parseInterspersed(fs, args[1:]); err != nil {
 		return 1
 	}
 	want := map[string]int{"create": 1, "list": 1, "revoke": 2}[args[0]]
 	if want == 0 || fs.NArg() != want || !api.ValidAppSlug(fs.Arg(0)) || (args[0] == "revoke" && !authAdminKeyID.MatchString(fs.Arg(1))) {
-		PrintUsage(os.Stderr, "usage: gregale auth admin-key <create|list|revoke> NAME [ID]", "auth")
+		PrintUsage(os.Stderr, authAdminKeyUsage, "auth")
 		return 1
+	}
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if args[0] != "create" && (given["scopes"] || given["expires-in"] || given["no-expiry"]) {
+		return printErr("Invalid flags", errors.New("--scopes, --expires-in and --no-expiry apply to create only"))
+	}
+	grant, err := authAdminKeyGrant(*scopes, *expiresIn, given["expires-in"], *noExpiry, time.Now())
+	if err != nil {
+		return printErr("Invalid admin key settings", err)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -65,7 +84,7 @@ func cmdAuthAdminKey(args []string) int {
 	defer cancel()
 	switch args[0] {
 	case "create":
-		return authAdminKeyCreate(ctx, client, fs.Arg(0), *scope)
+		return authAdminKeyCreate(ctx, client, fs.Arg(0), *scope, grant)
 	case "list":
 		return authAdminKeyList(ctx, client, fs.Arg(0), *scope)
 	default:
@@ -73,8 +92,58 @@ func cmdAuthAdminKey(args []string) int {
 	}
 }
 
-// authAdminKeyCreate prints the key once; the app stores only its SHA-256.
-func authAdminKeyCreate(ctx context.Context, client *api.Client, app, scope string) int {
+// authAdminKeyGrantSpec is what a new admin key may do and until when.
+// suffix is what the app stores after the key's digest.
+type authAdminKeyGrantSpec struct {
+	Scopes    []string
+	ExpiresAt *time.Time
+}
+
+func (g authAdminKeyGrantSpec) suffix() string {
+	out := ""
+	if len(g.Scopes) > 0 && g.Scopes[0] != "all" {
+		out += ";scopes=" + strings.Join(g.Scopes, ",")
+	}
+	if g.ExpiresAt != nil {
+		out += ";expires=" + strconv.FormatInt(g.ExpiresAt.Unix(), 10)
+	}
+	return out
+}
+
+func authAdminKeyGrant(scopes string, days int, daysGiven, noExpiry bool, now time.Time) (authAdminKeyGrantSpec, error) {
+	var g authAdminKeyGrantSpec
+	if scopes == "" || scopes == "all" {
+		g.Scopes = []string{"all"}
+	} else {
+		seen := map[string]bool{}
+		for _, s := range strings.Split(scopes, ",") {
+			s = strings.TrimSpace(s)
+			if !slices.Contains(authAdminKeyScopes, s) {
+				return g, fmt.Errorf("unknown scope %q; use all or %s", s, strings.Join(authAdminKeyScopes, ", "))
+			}
+			if !seen[s] {
+				seen[s] = true
+				g.Scopes = append(g.Scopes, s)
+			}
+		}
+		sort.Strings(g.Scopes)
+	}
+	if noExpiry && daysGiven {
+		return g, errors.New("use --expires-in or --no-expiry, not both")
+	}
+	if !noExpiry {
+		if days < 1 || days > api.AuthAdminKeyMaxDays {
+			return g, fmt.Errorf("--expires-in must be 1 to %d days; got %d", api.AuthAdminKeyMaxDays, days)
+		}
+		at := now.Add(time.Duration(days) * 24 * time.Hour).UTC().Truncate(time.Second)
+		g.ExpiresAt = &at
+	}
+	return g, nil
+}
+
+// authAdminKeyCreate prints the key once; the app stores only its SHA-256,
+// followed by the key's scopes and expiry.
+func authAdminKeyCreate(ctx context.Context, client *api.Client, app, scope string, grant authAdminKeyGrantSpec) int {
 	if _, err := client.GetApp(ctx, app); err != nil {
 		return printErr("Could not find the Auth app", err)
 	}
@@ -89,16 +158,22 @@ func authAdminKeyCreate(ctx context.Context, client *api.Client, app, scope stri
 	key := "gaak_" + base64.RawURLEncoding.EncodeToString(raw[:])
 	sum := sha256.Sum256([]byte(key))
 	keyID := strings.ToUpper(hex.EncodeToString(id[:]))
-	if err := client.SetSecretWithScope(ctx, app, authAdminKeyPrefix+keyID, hex.EncodeToString(sum[:]), scope); err != nil {
+	if err := client.SetSecretWithScope(ctx, app, authAdminKeyPrefix+keyID, hex.EncodeToString(sum[:])+grant.suffix(), scope); err != nil {
 		return printErr("Could not store the admin key", err)
 	}
 	restartAuthApp(ctx, client, app)
 	dashboard := dashboardBaseURL(client.BaseURL()) + "/dashboard/apps/" + app + "/auth"
+	expires := "never"
+	var expiresAt *string
+	if grant.ExpiresAt != nil {
+		expires = grant.ExpiresAt.Format(time.RFC3339)
+		expiresAt = &expires
+	}
 	if jsonOutput {
-		return jsonOut(writeJSON(map[string]string{"id": keyID, "key": key, "app": app, "dashboard_url": dashboard}))
+		return jsonOut(writeJSON(map[string]any{"id": keyID, "key": key, "app": app, "dashboard_url": dashboard, "scopes": grant.Scopes, "expires_at": expiresAt}))
 	}
 	PrintOK(osStdout, "Created admin key %s for %s", keyID, app)
-	_, _ = fmt.Fprintf(osStdout, "  key:       %s\n  dashboard: %s\n", key, dashboard)
+	_, _ = fmt.Fprintf(osStdout, "  key:       %s\n  scopes:    %s\n  expires:   %s\n  dashboard: %s\n", key, strings.Join(grant.Scopes, ", "), expires, dashboard)
 	PrintWarn(osStderr, "the key is shown once and only its hash is stored; keep it in a password manager")
 	return 0
 }
@@ -109,13 +184,27 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		return printErr("Could not list admin keys", err)
 	}
 	type keyRow struct {
-		ID        string `json:"id"`
-		CreatedAt string `json:"created_at"`
+		ID        string   `json:"id"`
+		CreatedAt string   `json:"created_at"`
+		Scopes    []string `json:"scopes,omitempty"`
+		ExpiresAt *string  `json:"expires_at"`
+	}
+	// The running app reports each key's scopes and expiry (secrets are
+	// write-only); a key it does not report is not loaded yet.
+	running := map[string]authAdminKeySetting{}
+	if found, err := client.GetApp(ctx, app); err == nil {
+		if settings, err := fetchAuthSettings(ctx, found); err == nil {
+			for _, k := range settings.AdminKeys {
+				running[k.ID] = k
+			}
+		}
 	}
 	rows := []keyRow{}
 	for _, secret := range list.Secrets {
 		if authAdminKeyName.MatchString(secret.Key) {
-			rows = append(rows, keyRow{ID: strings.TrimPrefix(secret.Key, authAdminKeyPrefix), CreatedAt: secret.CreatedAt})
+			id := strings.TrimPrefix(secret.Key, authAdminKeyPrefix)
+			k := running[id]
+			rows = append(rows, keyRow{ID: id, CreatedAt: secret.CreatedAt, Scopes: k.Scopes, ExpiresAt: k.ExpiresAt})
 		}
 	}
 	if jsonOutput {
@@ -126,7 +215,14 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		return 0
 	}
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(osStdout, "%s  created %s\n", row.ID, row.CreatedAt)
+		scopes, expires := "unknown (restart the app to load it)", "unknown"
+		if row.Scopes != nil {
+			scopes, expires = strings.Join(row.Scopes, ", "), "never"
+			if row.ExpiresAt != nil {
+				expires = *row.ExpiresAt
+			}
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s  created %s  scopes %s  expires %s\n", row.ID, row.CreatedAt, scopes, expires)
 	}
 	return 0
 }

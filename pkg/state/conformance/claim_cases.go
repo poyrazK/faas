@@ -271,7 +271,7 @@ func testAlertFireClaimIsIdempotentByKey(t *testing.T, fx *Fixture) {
 		firstIDs = map[string]struct{}{}
 	)
 	claimRace(t, 6, func() (string, bool, error) {
-		id, won, err := fx.Store.ClaimAlertFire(fx.Ctx, rule.ID, key, []byte(`{"v":1}`), 9.5, at)
+		id, won, _, err := fx.Store.ClaimAlertFire(fx.Ctx, rule.ID, key, []byte(`{"v":1}`), 9.5, at)
 		if err != nil {
 			return "", false, err
 		}
@@ -295,7 +295,7 @@ func testAlertFireClaimIsIdempotentByKey(t *testing.T, fx *Fixture) {
 	}
 
 	// A different key on the same rule is a different fire and must win.
-	if _, won, err := fx.Store.ClaimAlertFire(fx.Ctx, rule.ID, "fire-"+uuid.NewString(),
+	if _, won, _, err := fx.Store.ClaimAlertFire(fx.Ctx, rule.ID, "fire-"+uuid.NewString(),
 		[]byte(`{"v":2}`), 9.9, at.Add(time.Minute)); err != nil || !won {
 		t.Fatalf("second distinct fire: won=%v err=%v, want won=true", won, err)
 	}
@@ -466,8 +466,8 @@ func testCliAuthCodeClaimBindsOneAccount(t *testing.T, fx *Fixture) {
 	if boundAccount != claimed[0] {
 		t.Fatalf("code bound to %s, but %s won the claim", boundAccount, claimed[0])
 	}
-	if status == "" {
-		t.Fatal("claimed code has an empty status; the polling CLI cannot tell it was claimed")
+	if status != api.CliAuthStatusConsumed {
+		t.Fatalf("claimed code peeks as %q, want %q; the approval page would offer it again", status, api.CliAuthStatusConsumed)
 	}
 
 	// An unknown code is not claimable — a login code must not be forgeable.

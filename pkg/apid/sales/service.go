@@ -23,6 +23,8 @@ type Service struct {
 	Key     func() []byte
 	Account func(context.Context, string) (state.Account, error)
 	Audit   func(context.Context, string, *string, map[string]any)
+	// Last holds the most recent roster read; nil disables the cache.
+	Last *LastRoster
 }
 
 func (s *Service) Enabled() bool { return s.Config.Enabled && s.Store != nil }
@@ -37,12 +39,23 @@ func (s *Service) scope(w http.ResponseWriter, r *http.Request, acct state.Accou
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Verify your email", "verify your email before using referrals"))
 		return referrals.Scope{}, false
 	}
-	manager, member := s.Config.Member(acct.Email)
-	if staff && (!member || !acct.MFAEnrolled()) {
-		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Sales access required", "a sales team account with an enrolled authenticator is required"))
-		return referrals.Scope{}, false
+	role := ""
+	if staff {
+		denied := !acct.MFAEnrolled()
+		if !denied {
+			team, err := s.roster(r.Context())
+			if err != nil {
+				unavailable(w)
+				return referrals.Scope{}, false
+			}
+			role = team.role(acct.Email)
+		}
+		if denied || role == "" {
+			api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Sales access required", "a sales team account with an enrolled authenticator is required"))
+			return referrals.Scope{}, false
+		}
 	}
-	scope := referrals.Scope{OwnerID: acct.ID, All: staff && manager}
+	scope := referrals.Scope{OwnerID: acct.ID, All: referrals.RoleRank(role) >= referrals.RoleRank(referrals.RoleManager), Role: role}
 	if !staff {
 		scope.Kind = "customer"
 	}
@@ -98,6 +111,15 @@ func (s *Service) data(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		return
 	}
 	policy := s.Config.Policy
+	if staff {
+		if team, ok := s.Store.(referrals.TeamStore); ok {
+			// Staff see their own agreement, not the program default.
+			if policy.CommissionBPS, err = team.CurrentCommission(ctx, acct.ID, policy.CommissionBPS); err != nil {
+				unavailable(w)
+				return
+			}
+		}
+	}
 	if !staff {
 		policy.CommissionBPS = 0
 		redact(rows)
@@ -107,7 +129,7 @@ func (s *Service) data(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 
 	s.emit(ctx, "sales.referrals_read", acct.ID, map[string]any{"staff": staff, "team_scope": scope.All})
-	writeJSON(w, map[string]any{"staff": staff, "manager": scope.All, "email": acct.Email, "policy": policy, "payouts_enabled": false, "referral_code": link, "referrals": rows, "summary": summary, "next_cursor": next, "observed_at": time.Now().UTC()})
+	writeJSON(w, map[string]any{"staff": staff, "manager": scope.All, "role": scope.Role, "email": acct.Email, "policy": policy, "payouts_enabled": false, "referral_code": link, "referrals": rows, "summary": summary, "next_cursor": next, "observed_at": time.Now().UTC()})
 }
 
 func redact(rows []referrals.Record) {
@@ -123,6 +145,10 @@ func redact(rows []referrals.Record) {
 		r.FollowUp = ""
 		r.Apps = 0
 		r.PaidCents = 0
+		r.OrgName = ""
+		r.CommissionBPS = 0
+		r.PayoutCents = 0
+		r.PayoutPaidOn = ""
 	}
 }
 

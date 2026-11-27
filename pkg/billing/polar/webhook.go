@@ -165,7 +165,20 @@ func parsePolarEvent(payload []byte, eventID string, p *Provider) (billing.Event
 			event.ProviderRefundID = firstString(data, "refund_id")
 			event.ChargeID = firstString(data, "order_id", "id")
 		}
-		event.AmountCents = firstNumber(data, "amount", "refunded_amount", "amount_refunded")
+		// Polar's refund amount excludes tax: a full refund of a $10.00
+		// order (8.33 + 1.67 tax) arrives as amount=833, tax_amount=167.
+		// Invoices are projected tax-inclusive (total_amount), so the
+		// refund is recorded tax-inclusive too; otherwise a fully refunded
+		// invoice reads "$8.33 refunded" of $10.00.
+		// A payload with no base amount records nothing (AmountCents 0),
+		// never a tax-only figure.
+		if strings.HasPrefix(raw.Type, "refund.") {
+			if base := firstNumber(data, "amount", "refunded_amount", "amount_refunded"); base > 0 {
+				event.AmountCents = base + firstNumber(data, "tax_amount")
+			}
+		} else if base := firstNumber(data, "refunded_amount", "amount_refunded", "amount"); base > 0 {
+			event.AmountCents = base + firstNumber(data, "refunded_tax_amount")
+		}
 		event.RefundStatus = strings.ToLower(firstString(data, "status"))
 	} else if strings.HasPrefix(raw.Type, "order.") {
 		event.ChargeID = stringValue(data["id"])

@@ -87,7 +87,7 @@ func (s *Service) PublishAppProducerEvent(ctx context.Context, acct state.Accoun
 		return batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
 	}
 	if errors.Is(err, state.ErrNotFound) {
-		if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, api.PublishEventRequest{Source: source, Type: event.Type, Data: event.Data, SchemaVersion: event.SchemaVersion}); problem != nil {
+		if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, api.PublishEventRequest{Source: source, Type: event.Type, Data: event.Data, SchemaVersion: event.SchemaVersion}, newBatchPrepareCache()); problem != nil {
 			return batchPublishFailure("rejected", retryable, problem)
 		}
 		accepted, err = store.AcceptPublishedEvent(ctx, "apid", acct.ID, payload)

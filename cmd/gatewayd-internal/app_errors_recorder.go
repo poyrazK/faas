@@ -275,6 +275,13 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	// the schema CHECK enforces; an unknown value falls
 	// through to "unhandled".
 	errClass := deriveErrorClass(status, req)
+	if status >= 500 && gateway.ObservedRouteCarrierFrom(req.Context()).Unanswered5xx() {
+		// The app never began to answer: a failed wake or a platform
+		// refusal. Filing it as the app's "unhandled" exception made a
+		// Gregale outage read as the customer's bug, opened HTTP issues and
+		// fired new-error alerts (Observe audit 2026-11-21, finding 11).
+		errClass = appErrorClassUnanswered
+	}
 
 	// Compute the fingerprint (sha256 hex of route|status|class).
 	fp := deriveFingerprint(route, status, errClass)
@@ -541,6 +548,11 @@ func deriveFingerprint(route string, status int, class string) string {
 // deriveErrorClass is the closed-vocabulary classifier. The
 // schema CHECK constraint enforces the same set on the server
 // side; an unknown class falls through to "unhandled".
+// appErrorClassUnanswered is the error_class of a 5xx the app never began to
+// answer. It keeps its own error group, is not an HTTP issue (issues group
+// application exceptions) and does not count as a new error fingerprint.
+const appErrorClassUnanswered = "wake_failed"
+
 func deriveErrorClass(status int, req *http.Request) string {
 	if status >= 400 && status < 500 {
 		// 4xx — could be invalid_json if the request body

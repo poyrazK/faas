@@ -59,7 +59,8 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		if !state.SameAppResourceOwner(caller, target) {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
-		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
+		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted ||
+			state.IsAPISandbox(caller) || state.IsAPISandbox(target) {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
 		rehearsalRun, err := AuthorizeRehearsalService(ctx, store, caller, target)
@@ -171,6 +172,13 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 			declared := false
 			if projectAliases || caller.ProjectID == "" || callerIsTest {
 				declared = caller.BindsService(bindingTarget) || caller.BindsService(legacyBindingTarget)
+			}
+			if !declared && !callerIsTest {
+				granted, err := managedCacheGranted(ctx, store, target.ID, caller.ID)
+				if err != nil {
+					return gateway.ServiceCaller{}, err
+				}
+				declared = granted
 			}
 			if !declared {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
@@ -322,4 +330,20 @@ func isAppID(id string) bool {
 	}
 	_, err := uuid.Parse(id)
 	return err == nil
+}
+
+// managedCacheGranted reports whether binding the target cache to the caller
+// granted the call (ADR-20261124174500). Caches are never project members, so
+// a project workload under the declared or project policy reaches its cache
+// only this way. A store without grants grants nothing.
+func managedCacheGranted(ctx context.Context, store AuthorizationStore, cacheAppID, callerAppID string) (bool, error) {
+	grants, ok := store.(state.ManagedValkeyCacheGrantReader)
+	if !ok {
+		return false, nil
+	}
+	granted, err := grants.ManagedValkeyCacheGranted(ctx, cacheAppID, callerAppID)
+	if err != nil {
+		return false, fmt.Errorf("load managed cache grant: %w", err)
+	}
+	return granted, nil
 }

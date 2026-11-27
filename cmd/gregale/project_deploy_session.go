@@ -38,8 +38,11 @@ type savedProjectWorkload struct {
 }
 type projectDeployReceipt struct {
 	api.ApplyResponse
-	SessionID         string                  `json:"session_id,omitempty"`
-	ResumeCommand     string                  `json:"resume_command,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	ResumeCommand string `json:"resume_command,omitempty"`
+	// RetryCommand rebuilds the workloads that failed; it is set only when
+	// some did. Resume only reconnects to the accepted attempt.
+	RetryCommand      string                  `json:"retry_command,omitempty"`
 	RecoverySaved     bool                    `json:"recovery_saved"`
 	SubmissionOutcome deploySubmissionOutcome `json:"submission_outcome,omitempty"`
 	SubmissionStatus  string                  `json:"submission_status,omitempty"`
@@ -180,25 +183,31 @@ func (s *savedDeploySession) projectApplyReceipt() api.ApplyResponse {
 }
 
 func renderProjectDeployReceipt(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, saveErr error) int {
-	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, timedOut, nil, saveErr)
+	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, timedOut, nil, 0, saveErr)
 }
 
 // renderProjectDeployReceiptAfterWait renders a receipt after
 // waitForProjectApplyTimeouts; any timed-out workload makes it exit 3.
-func renderProjectDeployReceiptAfterWait(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timeouts []projectWaitTimeout) int {
-	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, len(timeouts) > 0, timeouts, nil)
+func renderProjectDeployReceiptAfterWait(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timeouts []projectWaitTimeout, deadline time.Duration) int {
+	return renderProjectDeployReceiptWithTimeouts(plan, apply, session, len(timeouts) > 0, timeouts, deadline, nil)
 }
 
-func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, timeouts []projectWaitTimeout, saveErr error) int {
+func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.ApplyResponse, session *savedDeploySession, timedOut bool, timeouts []projectWaitTimeout, deadline time.Duration, saveErr error) int {
 	receipt := projectDeployReceipt{ApplyResponse: apply, RecoverySaved: session != nil, TimedOut: timedOut, WaitTimedOut: timeouts}
 	if session != nil {
 		receipt.SessionID, receipt.ResumeCommand = session.record.ID, session.resumeCommand()
+		if timedOut {
+			receipt.ResumeCommand = session.resumeCommandWithTimeout(deadline)
+		}
 		receipt.SubmissionOutcome = session.record.Outcome
 		receipt.SubmissionStatus = session.record.Project.SubmissionStatus
 		receipt.Warnings = append([]string(nil), session.warnings...)
 	}
 	status := summarizeProjectApply(apply)
 	status.waitTimedOut = len(timeouts)
+	if session != nil && status.buildsFailed > 0 {
+		receipt.RetryCommand = projectRetryCommand(session.record.ID)
+	}
 	code := 0
 	if jsonOutput {
 		if code = jsonOut(writeJSON(receipt)); code != 0 {
@@ -206,14 +215,27 @@ func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.App
 		}
 		if status.buildsFailed > 0 {
 			reportProjectApplyFailure(osStderr, status)
+			if receipt.RetryCommand != "" {
+				_, _ = fmt.Fprintf(osStderr, "rebuild the failed workloads with: %s\n", receipt.RetryCommand)
+			}
 			code = 1
 		} else if status.waitTimedOut > 0 {
 			reportProjectApplyWaitTimeout(osStderr, status, receipt.ResumeCommand)
 		}
 	} else {
 		code = renderProjectApplyResultWithTimeouts(osStdout, plan, apply, timeouts)
-		if session != nil {
-			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, session.resumeCommand())
+		// Resume reconnects to a deploy still in flight; after every app went
+		// live there is nothing to resume, and the line read as a next step.
+		// --no-wait and a timed-out wait leave deploys in flight: resume is
+		// the next step there.
+		if session != nil && (code != 0 || timedOut || status.waitTimedOut > 0 || !projectBuildsAllLive(apply)) {
+			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, receipt.ResumeCommand)
+		}
+		if receipt.RetryCommand != "" {
+			// Resume only reconnects; it never rebuilds what failed, so a
+			// 6-of-8 deploy left the user to find retry in --help --all
+			// (boa multi-service deploy, 2026-11-21).
+			PrintProgress(osStdout, "Rebuild the failed workloads: %s (add --source=worktree to include uncommitted changes)", receipt.RetryCommand)
 		}
 	}
 	if apply.SafeRelease != nil {
@@ -257,7 +279,7 @@ func resumeSavedProjectDeploy(ctx context.Context, c *Client, s *savedDeploySess
 		return waitForSafeProjectRelease(waitCtx, c, s, deadline)
 	}
 	apply, timeouts := waitForProjectApplyTimeouts(withProjectWaitProgress(waitCtx, osStderr, jsonOutput), c, s.projectApplyReceipt(), deadline)
-	return renderProjectDeployReceiptAfterWait(api.PlanResponse{}, apply, s, timeouts)
+	return renderProjectDeployReceiptAfterWait(api.PlanResponse{}, apply, s, timeouts, deadline)
 }
 
 func (s *savedDeploySession) rememberProjectApply(apply api.ApplyResponse) error {
@@ -363,4 +385,21 @@ func projectSubmissionFailure(s *savedDeploySession, err error) int {
 		renderProjectApplyResult(osStdout, api.PlanResponse{}, receipt.ApplyResponse)
 	}
 	return printErr("Project submission could not be confirmed; resume with: "+s.resumeCommand(), err)
+}
+
+// projectRetryCommand is the copy-paste command that rebuilds a saved project
+// deploy's failed workloads from the current checkout.
+func projectRetryCommand(sessionID string) string {
+	return deployRecoveryCLI() + " release attempt retry " + sessionID + " --yes"
+}
+
+// projectBuildsAllLive reports every workload's deployment live, as a wait
+// recorded it; a deploy not waited on has no status and is still in flight.
+func projectBuildsAllLive(apply api.ApplyResponse) bool {
+	for _, build := range apply.Builds {
+		if build.DeploymentStatus != statusLive {
+			return false
+		}
+	}
+	return true
 }

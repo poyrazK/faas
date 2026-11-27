@@ -263,6 +263,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []string{
+		"analytics_cohorts.environment_id", // Product analytics events, property keys and cohorts cascade with the environment row.
+		"analytics_events.environment_id",
+		"analytics_property_keys.environment_id",
+		"api_consumers.environment_id", // API consumers and their keys cascade with the environment row.
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
 		"app_config_guards.scope",      // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
@@ -288,7 +292,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_webhooks.scope",
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
-		"crons.deployment_scope",                 // Environment crons have their own clone lifecycle (#7134).
+		"consumer_keys.environment_id",
+		"crons.deployment_scope", // Environment crons have their own clone lifecycle (#7134).
 		"crons.environment_id",
 		"custom_domains.environment_id",
 		"customer_operation_approval_forms.scope",
@@ -323,12 +328,18 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"event_subscriptions.deployment_scope",            // Removed by environment deletion (deleteProjectEnvironmentRowsTx).
 		"event_subscriptions.environment_id",
 		"exclusive_work_keys.environment_id",
+		"execution_environment_diagnostics.environment_id", // Gregale Run execution environments (execution_environments), not a project environment.
+		"execution_task_versions.environment_id",
+		"executions.environment_id",
 		"feature_flag_versions.environment_id",
 		"financial_budget_stop_targets.environment_id",      // In-flight (requested/draining) budget stops block scope cleanup; enforced and failed ones are retained history.
 		"financial_preview_command_runtimes.environment_id", // Preparing/active preview runtimes block scope cleanup; retired rows are retained history.
 		"flag_conversion_daily.environment_id",              // Flag experiment telemetry and definitions cascade with the environment row.
 		"flag_event_names.environment_id",
 		"flag_experiments.environment_id",
+		"flag_notification_keys.environment_id", // Flag notification settings, outbox and key history cascade with the environment row.
+		"flag_notification_settings.environment_id",
+		"flag_notifications.environment_id",
 		"github_deploy_branches.scope",
 		"hosting_oidc_trusts.environment", // GitHub Actions OIDC environment claim, not a Gregale environment; its site FK is classified.
 		"hosting_sites.environment",       // Sites reference the environment through a composite foreign key.
@@ -400,6 +411,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"runtime_environment_scaling_states.scope",
 		"runtime_instance_config_proofs.environment_id",
 		"runtime_instance_config_proofs.scope",
+		"saved_insights.environment_id", // Saved insights cascade with the environment row, like analytics cohorts.
 		"snapshot_runtime_config_receipts.scope",
 		"triggers.queue_binding_environment_id",
 		"triggers.queue_binding_scope",

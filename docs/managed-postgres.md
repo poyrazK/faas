@@ -107,6 +107,51 @@ Provisioning opens while all of the following hold:
 `managed-postgres-qualify --check-production` prints the readiness codes and
 the configured backend's fingerprint without contacting the provider.
 
+#### Changing the policy without a restart
+
+The operator policy is hot runtime configuration, key
+`managed_postgres_policy`
+([ADR-20261121120000](adr/20261121120000-managed-postgres-live-policy.md)).
+apid applies a change within seconds and reports a receipt; nothing restarts.
+A field left out keeps the provider registry file's value, or for the
+approval, the `FAAS_MANAGED_POSTGRES_PRODUCTION_*` environment:
+
+```sh
+gregalectl config set -key managed_postgres_policy -yes -reason "launch limits" -value '{
+  "provisioning_enabled": true,
+  "max_databases_per_account": 10,
+  "fleet": {"max_databases": 80, "max_monthly_cost_millicents": 50000000},
+  "usage": {"max_monthly_cost_millicents": 50000000, "compute_unit_hour_millicents": 10600},
+  "production_approval": {"backend_id": "neon-production-canary",
+    "backend_fingerprint": "<64 hex>", "approved_at": "2026-11-21T10:23:57Z",
+    "until": "2027-02-19T10:23:57Z"}
+}'
+```
+
+- `usage` holds the ceilings and provider rates only. Whether usage metering
+  runs, and its collection interval, window and staleness, stay in the file:
+  the collector, metrics and cap enforcer are built from them at start.
+- Backends stay in the file too: a backend's settings are each database's
+  placement fingerprint.
+- apid refuses to store a value its registry would reject (an approval naming
+  an unknown backend, an invalid merged usage policy). A stored value that
+  stops fitting after a file change is logged at start and the file's values
+  serve until it is fixed.
+- `suspend_timeout_seconds` (60..604800, default 120) is how long a
+  scale-to-zero database's compute stays up after its last activity; every
+  wake bills at least this much compute. New databases and compute-policy
+  changes use it at once. A customer may give a database its own value
+  (`gregale postgres suspend-timeout`, 1 min to 1 h); the default covers the
+  rest. A sweep every 5 minutes on each apid, independent of usage metering,
+  moves existing Neon databases onto their value, writing only an endpoint
+  that is suspended and not held, so a running compute is never touched and
+  a busy database converges the next time it is idle. It reads Neon only for
+  databases whose row or value changed since it last confirmed them, or that
+  it had to defer.
+- `gregalectl config set -key managed_postgres_policy -value '{}'` goes back
+  to the file's values; `gregalectl config rollback` restores an earlier
+  version.
+
 The `managed-postgres` capability flag decides which accounts may create
 databases. The staging canary list is not read in production. Until
 `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` and
@@ -441,10 +486,14 @@ peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 
-Copy `deploy/managed-postgres.example.json` to an operator-owned path, set
-`FAAS_MANAGED_POSTGRES_CONFIG` to that path, and expose the API key through the
-environment variable named by `secret_env.api-key`. The API key itself must
-never appear in the JSON file.
+Set `faas_managed_postgres_config` (the shape of
+`deploy/managed-postgres.example.json`, as YAML) in the control plane's Ansible
+vars and converge: the `managed_postgres_config` role renders
+`/etc/faas/managed-postgres.json`, sets `FAAS_MANAGED_POSTGRES_CONFIG` in an
+apid drop-in, and refuses a config under which existing databases would no
+longer resolve (`deploy/ansible/roles/managed_postgres_config/README.md`).
+Expose the API key through the `sealed.env` variable named by
+`secret_env.api-key`. The API key itself must never appear in the config.
 
 `namespace` is the immutable Neon organization ID. `region` is Gregale's
 portable region name; `settings.region_id` is the current Neon placement for
@@ -474,19 +523,51 @@ The adapter requires explicit `max_storage_bytes` and
 Neon organization plan. A value of `0` disables the point-in-time-restore
 promise. The storage ceiling must be positive.
 
-The initial service-class mapping is:
+The service-class mapping is:
 
 | Gregale class | Neon autoscaling range |
 | --- | ---: |
 | `development` | 0.25–1 CU |
 | `burstable` | 0.25–2 CU |
-| `production` | 1–4 CU |
+| `production` | 0.5–4 CU (1–4 CU accepted) |
+
+Production moved from 1–4 to 0.5–4 CU over two releases
+([ADR-20261124221402](adr/20261124221402-neon-production-class-half-cu-floor.md)).
+New production databases start at 0.5 CU; one created at 1–4 CU before stays
+there and still reads as `production` until its class changes.
 
 Only `single_zone` is advertised. Gregale does not claim a portable
 high-availability promise merely because Neon storage has internal redundancy.
-`scale_to_zero=true` uses a 300-second suspend timeout; false disables compute
-suspension. Customer requests cannot currently select `false`; the adapter
+`scale_to_zero=true` suspends after the database's own suspend timeout
+(`gregale postgres suspend-timeout set`, 1 minute to 1 hour), or the
+`managed_postgres_policy.suspend_timeout_seconds` default (120 s) when it has
+none; false disables compute suspension. Customer requests cannot currently select `false`; the adapter
 retains the provider-neutral field for a future always-on entitlement.
+
+A customer can opt a scale-to-zero database into starting when an app bound
+to it wakes (`gregale postgres app-wake set DB on`,
+[ADR-20261125105038](adr/20261125105038-managed-postgres-wake-with-app.md)).
+Every apid listens to schedd's `instance_changed`; on an instance entering
+`waking` or `cold_booting` it claims the app's opted-in databases (one
+replica per start, at most once a minute each; 10 seconds when the claim
+found the compute running or the start failed) and calls Neon's endpoint
+start through neond, unpaced. Closing managed PostgreSQL operations stops
+these starts too. Roll out neond, which allows the `start endpoint` route,
+before apid; an older neond refuses the call and the database starts on the
+app's first query as before.
+`apid_managed_postgres_wake_starts_total{outcome}` counts claims (`started`,
+`running`, `failed`, `unsupported`).
+
+The usage sweep's idle-tail read also records each `start_compute` and
+`suspend_compute` it sees in `managed_postgres_compute_starts`, with a cause
+picked in SQL from `managed_postgres_wake_with_app`, `cron.fired` and
+`wake.admitted` events and live instances of the apps bound at the start
+([ADR-20261125231222](adr/20261125231222-managed-postgres-activity.md)). It
+sends no extra Neon requests, so a window the idle-tail budget skips leaves a
+gap. Rows are pruned after 30 days, at most hourly. `gregale postgres
+activity` and `GET /v1/postgres/databases/{id}/activity` read them; roll out
+the migration before apid.
+
 PostgreSQL majors 15 through 18 are enabled. PostgreSQL 14 reached upstream
 end of life in November 2026 and is not supported (owner, 2026-11-12); Neon
 has no in-place major upgrade, and no upgrade path from 14 is offered.
@@ -553,6 +634,19 @@ mirror when the primary returns an empty catalog or lacks a backup consistent
 at the requested time. See
 [ADR-20261105120854](adr/20261105120854-managed-postgres-mirror-retention-safety.md).
 
+### Check extension compatibility before an in-place upgrade
+
+For an account in the in-place major-upgrade preview, check the installed
+extensions against the target PostgreSQL image.
+
+```sh
+gregale postgres upgrade orders --major 18 --check
+```
+
+The check lists incompatible extension names and installed versions.
+Gregale checks again before stopping a running database for an upgrade.
+PostgreSQL runs its full `pg_upgrade --check` before modifying the cluster.
+
 ## Safety boundary
 
 Schema-generated application APIs use the separately qualified `data_api`
@@ -609,10 +703,14 @@ credential may pick them up.
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing
 public tables/sequences and future objects created by the schema owner.
-Custom schemas and function execution require explicit migration-owner grants.
+`read_write` and `session` logins, and custom roles, can also run the
+functions and procedures the schema owner has in `public`, now and later
+(ADR-20261123112326), so an app can call the functions its migrations made.
+Read-only, Data API and Auth logins cannot: new owner functions do not receive
+PUBLIC execution privileges. Custom schemas, and functions for those other
+logins, require explicit migration-owner grants.
 Existing PUBLIC-executable SECURITY DEFINER functions block credential issuance;
-review their execution grants before adoption. New owner functions do not
-receive PUBLIC execution privileges by default.
+review their execution grants before adoption.
 
 Reader issuance and cutover verification reject observed write grants through
 columns, PUBLIC, other customer schemas, sequences, SECURITY DEFINER functions,
@@ -1156,9 +1254,23 @@ each paid product carries a metered price of $0.00001 per unit on it.
 Receipts live in `managed_postgres_overage_deliveries`. Charges need cap
 enforcement on, because the cap sweep records the `allowance` event.
 
-The setting is the `postgres-overage` capability, at maturity `internal`.
-Every account reads as off, and the route answers as unknown, until an operator
-releases it with `gregalectl flags`.
+Restore history and snapshot storage past the plan's included history (its
+storage pool) are charged on the same step from
+`FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM` (a UTC month;
+ADR-20261123062111). Until then, or while it is empty, nothing is charged
+(at debug level apid logs `managed postgres restore history not billed yet`
+with what each subject would have been charged). Before setting it, compare
+a whole month of the ledger's `history_byte_seconds` and
+`snapshot_byte_seconds` with Neon's invoice. Set it to a month that starts
+after the release reached production: windows recorded before the release
+hold snapshot storage in `history_byte_seconds`, which would bill it at the
+restore-history price. The event metadata carries the history and snapshot usage,
+the included history, the billed byte-seconds and both prices.
+
+The setting is the `postgres-overage` capability, at maturity `ga` since
+2026-11-22 (ADR-20261031110037 amendment 2026-11-22). Access still follows its
+`postgres_overage` platform flag: an account the flag does not enable reads as
+off, and the route answers as unknown.
 
 The choice is stored per usage subject in `managed_postgres_account_overage`:
 the organization when it owns resources, else the namespace. The usage
@@ -1293,6 +1405,45 @@ The run creates a disposable database, probes it, and deletes it. The probe:
 The command exits non-zero, and `on` refuses the file, if any observation
 fails. If the compute is suspended at the limit, the pool would stop
 databases rather than block writes, and must not be turned on as specified.
+
+### Restore history limit
+
+Restore history is billed only with overage on
+([ADR-20261123062111](adr/20261123062111-managed-postgres-restore-history-billing.md)).
+For a subject with overage off, the cap sweep bounds it instead (D2):
+
+- The limit is twice the subject's included history (its plan's storage
+  pool) held for Neon's 744-hour month. Restore history and snapshots count
+  together, from the usage ledger.
+- Past it, every ready database of the subject keeps a 24-hour restore window
+  (`history_retention_seconds` on its Neon project). Neon drops older
+  history, so the cost stops growing. Writes, reads and data are untouched.
+- The next month's usage starts under the limit, and overage on never
+  limits, so the next sweep after either writes the spec's window back.
+  History dropped while limited stays dropped.
+- A restore to a point older than the limited window is refused before a
+  target is reserved, with the reason. `gregale postgres usage` and the usage
+  API report `history_state: limited` (or `normal`) only while the limit is
+  `on`.
+- The 24-hour window reads as the database's spec wherever apid compares the
+  two, so it is not `spec_mismatch`. A window that is neither the spec's nor
+  the limited one is drift: the pass logs
+  `managed postgres restore window differs from its spec; history limit leaves it`
+  and does not touch it.
+
+`FAAS_MANAGED_POSTGRES_HISTORY_LIMIT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres history limit (shadow)` with
+  the window it would set, and writes nothing.
+- `on` writes the windows that changed and logs
+  `managed postgres restore window limited` or `... restored`.
+- `off` does nothing. Windows written earlier stay; set `on` again, or write
+  the spec's window back by hand, to lift them.
+
+Before `on`: release the `postgres-overage` capability, because turning
+overage on is a limited customer's way back, and read a month of shadow
+logs. The once-a-month email to a limited account is not built yet: it
+needs internal mail on the control plane.
 
 ### Databases past a lowered plan
 

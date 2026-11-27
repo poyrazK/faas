@@ -239,6 +239,7 @@ func (h *Handler) forwardMultipartPart(w http.ResponseWriter, r *http.Request, r
 		upstream.Body = io.NopCloser(partBody)
 	}
 	response, err := h.client.Do(upstream)
+	objectstorage.NormalizeProviderResponse(req.provider, response)
 	if err != nil {
 		if integrity.err != nil && h.writeAWSChunkedError(w, r, req.requestID, integrity.err) {
 			return

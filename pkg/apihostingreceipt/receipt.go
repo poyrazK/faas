@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
+	"github.com/onebox-faas/faas/pkg/verifycontract"
 )
 
 const SchemaVersion = 1
@@ -63,6 +64,10 @@ type SmokeResult struct {
 	ErrorCode      string         `json:"error_code,omitempty"`
 	Error          string         `json:"error,omitempty"`
 	RouteChecks    *RouteCheckSet `json:"route_checks,omitempty"`
+	// VerificationContract is the app's gregale.verify.yaml report for this
+	// candidate (ADR-20261122220000); absent when the app has no contract or
+	// the capability is not released to it.
+	VerificationContract *verifycontract.Report `json:"verification_contract,omitempty"`
 }
 
 // APIRouteProbe is a bounded, read-only request selected from an app's

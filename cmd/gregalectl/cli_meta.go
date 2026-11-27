@@ -69,6 +69,7 @@ type cliFlag struct {
 //   - artifact        (publish | verify)
 //   - compute-nodes   (add | list | show | drain | drain-status | activate | force-drain | retire)
 //   - release-acceptance (mint-token | revoke-token)
+//   - journey-fixture (mint-token | revoke-token)
 //   - deploy          (join-node | add-node)
 //   - obs             (health | incidents | overview | capacity)
 //   - debug           (otel-smoke; ADR-127 PR-D)
@@ -216,6 +217,23 @@ var cliCommands = []cliCommand{
 			{Name: "revoke-token", Short: "Revoke one production ingress gate token", Flags: []cliFlag{{Name: "key-id", Short: "acceptance API key id", Req: true}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed production_release_acceptance audit reason", Req: true}}},
 			{Name: "verify-placement", Short: "Require every active node plus both app and function shapes", Flags: []cliFlag{{Name: "slugs", Short: "comma-separated acceptance app slugs", Req: true}}},
 			{Name: "verify-node", Short: "Require one node to serve and to have built an acceptance app", Flags: []cliFlag{{Name: "node", Short: "compute node name", Req: true}, {Name: "slugs", Short: "comma-separated acceptance app slugs", Req: true}}},
+		},
+	},
+	{
+		Name:    dispatchJourneyFixture,
+		DocSlug: "journey-fixture",
+		Short:   "Create the Free/Hobby journey fixture accounts and mint their short-lived keys",
+		Subcommands: []cliSub{
+			{Name: "mint-token", Short: "Create the plan's fixture account once and mint a short-lived admin key", Flags: []cliFlag{{Name: "plan", Short: "free or hobby", Req: true}, {Name: "ttl", Short: "key lifetime (15m..6h)"}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed journey_fixture audit reason", Req: true}}},
+			{Name: "revoke-token", Short: "Revoke one fixture key", Flags: []cliFlag{{Name: "plan", Short: "free or hobby", Req: true}, {Name: "key-id", Short: "fixture API key id", Req: true}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed journey_fixture audit reason", Req: true}}},
+		},
+	},
+	{
+		Name:    dispatchUnitSmoke,
+		DocSlug: "unit-smoke",
+		Short:   "Create the unit lane's smoke account and mint its scoped key",
+		Subcommands: []cliSub{
+			{Name: "mint-key", Short: "Create the internal smoke account once and mint a key with the smoke scopes", Flags: []cliFlag{{Name: "ttl", Short: "key lifetime (1h..8760h)"}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed unit_lane_smoke audit reason", Req: true}}},
 		},
 	},
 	{
@@ -896,6 +914,13 @@ var cliCommands = []cliCommand{
 				Flags: []cliFlag{
 					{Name: "since", Short: "window, a duration up to 720h (default 24h)"},
 					{Name: "limit", Short: "maximum rows (1..1000)"},
+				},
+			},
+			{
+				Name:  "app-name-report",
+				Short: "List existing apps the app name blocklist matches, for review",
+				Flags: []cliFlag{
+					{Name: "blocklist", Short: "report against these entries instead of the live app_name_blocklist"},
 				},
 			},
 			{

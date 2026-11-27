@@ -83,7 +83,7 @@ func (p *mutableDeleteFixture) serve(t *testing.T, w http.ResponseWriter, r *htt
 		}
 		next := end < len(ids)
 		_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>%t</IsTruncated>`, next)
-		key := url.PathEscape(mutableDeleteKey)
+		key := url.QueryEscape(mutableDeleteKey) // S3 listings form-encode keys
 		if next {
 			_, _ = fmt.Fprintf(w, `<NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>%s</NextVersionIdMarker>`, key, ids[end-1])
 		}

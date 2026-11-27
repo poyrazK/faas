@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/secretscan"
@@ -35,23 +36,16 @@ func TestMCPCLIJourney(t *testing.T) {
 	if err != nil || cfg.Auth.Mode != "open" {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
-	if len(cfg.Auth.ToolScopes) != 4 {
-		t.Fatalf("starter must explicitly allow its four harmless tools: %+v", cfg.Auth.ToolScopes)
+	if len(cfg.Auth.ToolScopes) != 3 {
+		t.Fatalf("starter must explicitly allow its three harmless tools: %+v", cfg.Auth.ToolScopes)
 	}
-	if cfg.Tasks == nil || cfg.Tasks.Enabled == nil || *cfg.Tasks.Enabled {
-		t.Fatalf("starter tasks must be explicitly disabled by default: %+v", cfg.Tasks)
+	// The plain Node starter has no durable Tasks; mcp-node-tasks does
+	// (TestNodeTasksStarterKeepsItsTaskRuntime).
+	if cfg.Tasks != nil {
+		t.Fatalf("plain starter declares tasks: %+v", cfg.Tasks)
 	}
-	workerEntrypoint, err := os.ReadFile(filepath.Join(dir, "tasks-worker.js"))
-	if err != nil || !strings.Contains(string(workerEntrypoint), "role: 'worker'") {
-		t.Fatalf("starter must include a dedicated task worker entrypoint: err=%v", err)
-	}
-	workerRuntime, err := os.ReadFile(filepath.Join(dir, "task-runtime.js"))
-	if err != nil || !strings.Contains(string(workerRuntime), "MCP_TASK_NAMESPACE") {
-		t.Fatalf("starter must include shared task runtime configuration: err=%v", err)
-	}
-	packageJSON, err := os.ReadFile(filepath.Join(dir, "package.json"))
-	if err != nil || !strings.Contains(string(packageJSON), `"start:tasks-worker": "node tasks-worker.js"`) {
-		t.Fatalf("starter must expose the task worker npm script: err=%v", err)
+	if _, err := os.Stat(filepath.Join(dir, "tasks-worker.js")); !os.IsNotExist(err) {
+		t.Fatalf("plain starter ships a task worker: %v", err)
 	}
 	lock, err := os.ReadFile(filepath.Join(dir, "package-lock.json"))
 	if err != nil {
@@ -88,6 +82,9 @@ func TestMCPCLIJourney(t *testing.T) {
 	defer s.Close()
 	for _, command := range [][]string{
 		{"tools", "--url", s.URL + "/mcp"},
+		// A leading URL is the endpoint, not an app slug (MCP Tasks prod
+		// probe 2026-11-22).
+		{"tools", s.URL + "/mcp"},
 		{"doctor", "--url", s.URL + "/mcp"},
 		{"call", "--url", s.URL + "/mcp", "--tool", "add", "--arguments", `{"a":7,"b":5}`},
 		{"config", "--url", s.URL + "/mcp", "--name", "my-mcp"},
@@ -473,5 +470,35 @@ func TestMCPDeploymentVerificationFailureEnablesMaintenance(t *testing.T) {
 	}
 	if !maintenance.Load() || !strings.Contains(output.String(), "maintenance_enabled") {
 		t.Fatalf("failed deployment remains open: %s", output.String())
+	}
+}
+
+func TestNodeTasksStarterKeepsItsTaskRuntime(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "my-mcp-tasks")
+	if err := templates.Materialize("mcp-node-tasks", dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := mcphosting.Load(dir)
+	if err != nil || len(cfg.Auth.ToolScopes) != 4 {
+		t.Fatalf("Tasks starter must explicitly allow its four harmless tools: %+v err=%v", cfg.Auth.ToolScopes, err)
+	}
+	if cfg.Tasks == nil || cfg.Tasks.Enabled == nil || *cfg.Tasks.Enabled {
+		t.Fatalf("starter tasks must be explicitly disabled by default: %+v", cfg.Tasks)
+	}
+	workerEntrypoint, err := os.ReadFile(filepath.Join(dir, "tasks-worker.js"))
+	if err != nil || !strings.Contains(string(workerEntrypoint), "role: 'worker'") {
+		t.Fatalf("starter must include a dedicated task worker entrypoint: err=%v", err)
+	}
+	workerRuntime, err := os.ReadFile(filepath.Join(dir, "task-runtime.js"))
+	if err != nil || !strings.Contains(string(workerRuntime), "MCP_TASK_NAMESPACE") {
+		t.Fatalf("starter must include shared task runtime configuration: err=%v", err)
+	}
+	packageJSON, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil || !strings.Contains(string(packageJSON), `"start:tasks-worker": "node tasks-worker.js"`) {
+		t.Fatalf("starter must expose the task worker npm script: err=%v", err)
+	}
+	app, err := os.ReadFile(filepath.Join(dir, "app.js"))
+	if err != nil || !strings.Contains(string(app), "import * as tasks from './tasks.js'") {
+		t.Fatalf("Tasks starter app.js must bind the Tasks module: err=%v", err)
 	}
 }

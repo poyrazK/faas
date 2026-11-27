@@ -52,3 +52,21 @@ func TestExecutionArtifactEncodedBudgetAndIntegrity(t *testing.T) {
 		t.Fatal("legacy runs charged for empty artifacts")
 	}
 }
+
+func TestStoredArtifactsAreMetadataOnlyAndCloneNormalizesContent(t *testing.T) {
+	a := ExecutionArtifact{FileID: "12345678-1234-4234-8234-123456789abc", Name: "large.bin", SizeBytes: 32 << 20, SHA256: "sha256:" + strings.Repeat("a", 64), Content: []byte{}}
+	if err := ValidateExecutionArtifacts([]ExecutionArtifact{a}); err != nil {
+		t.Fatal(err)
+	}
+	cloned := CloneExecutionArtifacts([]ExecutionArtifact{a})
+	if cloned[0].Content != nil {
+		t.Fatal("stored metadata retained inline content")
+	}
+	if ExecutionArtifactsOutputBytes(cloned) > 1024 {
+		t.Fatal("stored bytes charged to the JSON output budget")
+	}
+	a.Content = []byte("inline")
+	if err := ValidateExecutionArtifacts([]ExecutionArtifact{a}); err == nil {
+		t.Fatal("stored artifact accepted inline bytes")
+	}
+}

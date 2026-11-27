@@ -89,8 +89,9 @@
     "checks": [
       {"kind": "apps_created", "min": 3},
       {"kind": "apps_serving"},
-      {"kind": "app_http", "match": "vote", "path": "/", "status": 200},
-      {"kind": "app_http", "match": "result", "path": "/", "status": 200},
+      {"kind": "app_http", "match": "(^|-)vote(-[a-z0-9]{5})?$", "path": "/", "status": 200},
+      {"kind": "app_http", "match": "(^|-)result(-[a-z0-9]{5})?$", "path": "/", "status": 200},
+      {"kind": "vote_counted"},
       {"kind": "no_traps"}
     ],
     "features": [
@@ -121,7 +122,8 @@
       {
         "id": "exact-release-verification",
         "kind": "command",
-        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b"
+        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b",
+        "tools": ["gregale_verify_application_response"]
       }
     ],
     "budget_usd": 3.0,
@@ -157,7 +159,8 @@
       {
         "id": "exact-release-verification",
         "kind": "command",
-        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b"
+        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b",
+        "tools": ["gregale_verify_application_response"]
       }
     ],
     "budget_usd": 4.0,
@@ -197,7 +200,7 @@
     "features": [
       {"id": "preflight", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*(--dry-run|--diff|--plan|\\bdoctor\\b|\\bdeploy\\s+check\\b)"},
       {"id": "diagnose-with-gregale", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\b(logs|inspect|health|status|release\\s+(get|logs|timeline|attempt))\\b"},
-      {"id": "start-command-pinned", "kind": "file", "glob": "*", "pattern": "(?m)^(web:|\\s+start:)\\s*uvicorn\\b[^\\n]*\\bPORT\\b"}
+      {"id": "start-command-pinned", "kind": "file", "glob": "*", "pattern": "(?m)^(web:|\\s+start:)\\s*uvicorn\\b[^\\n]*\\bPORT\\b", "unless": "first_deploy_live"}
     ],
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 4.0,
@@ -262,5 +265,52 @@
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 4.0,
     "timeout_s": 1200
+  },
+  {
+    "id": "day2-config-change",
+    "title": "Change live configuration without editing code",
+    "template": "hello-node",
+    "setup": [
+      {"kind": "replace", "file": "handler.js", "old": "    message: \"hello from gregale\",", "new": "    message: process.env.GREETING || \"hello from gregale\","},
+      {"kind": "deploy"}
+    ],
+    "prompt": "The app {app} on Gregale reads its greeting from the GREETING environment variable. Change the live greeting to day2-config without editing any files, and confirm the app serves it.",
+    "checks": [
+      {"kind": "http", "path": "/", "status": 200, "contains": "day2-config"},
+      {"kind": "file_contains", "file": "handler.js", "text": "process.env.GREETING"}
+    ],
+    "budget_usd": 3.0,
+    "timeout_s": 900
+  },
+  {
+    "id": "day2-schedule",
+    "title": "Schedule a recurring request to an app",
+    "template": "hello-node",
+    "setup": [{"kind": "deploy"}],
+    "prompt": "Have Gregale call POST /tick on the app {app} every 15 minutes, starting now. The endpoint does not exist yet: add it so it answers 200, deploy, and show me the schedule.",
+    "checks": [
+      {"kind": "http", "path": "/healthz", "status": 200},
+      {"kind": "cli_output", "args": ["cron", "list", "--app", "{app}"], "patterns": ["/tick", "(\\*/15|15m|15 ?min)"]},
+      {"kind": "file_contains", "file": "handler.js", "text": "/tick"}
+    ],
+    "features": [
+      {"id": "cron-create", "kind": "command", "pattern": "\\bgregale\\b[^\\n]*\\bcron\\s+create\\b"}
+    ],
+    "budget_usd": 3.0,
+    "timeout_s": 1200
+  },
+  {
+    "id": "day2-no-cold-start",
+    "title": "Remove cold starts and state the cost",
+    "template": "hello-node",
+    "setup": [{"kind": "deploy"}],
+    "prompt": "Users say the first request to {app} after it has been idle is slow. Make it respond quickly at all times, and tell me what that will cost per month.",
+    "checks": [
+      {"kind": "app_field", "field": "min_instances", "min": 1},
+      {"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"},
+      {"kind": "answer", "pattern": "(\\$|usd|gb-?h)"}
+    ],
+    "budget_usd": 3.0,
+    "timeout_s": 900
   }
 ]

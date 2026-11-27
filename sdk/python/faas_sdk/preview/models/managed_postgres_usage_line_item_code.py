@@ -4,6 +4,7 @@ ManagedPostgresUsageLineItemCode = Literal[
     "managed_postgres.compute",
     "managed_postgres.egress",
     "managed_postgres.restore_history",
+    "managed_postgres.snapshots",
     "managed_postgres.storage",
 ]
 
@@ -11,6 +12,7 @@ MANAGED_POSTGRES_USAGE_LINE_ITEM_CODE_VALUES: set[ManagedPostgresUsageLineItemCo
     "managed_postgres.compute",
     "managed_postgres.egress",
     "managed_postgres.restore_history",
+    "managed_postgres.snapshots",
     "managed_postgres.storage",
 }
 

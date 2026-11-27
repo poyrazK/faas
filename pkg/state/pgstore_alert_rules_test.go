@@ -351,19 +351,19 @@ func TestPgStore_AlertRule_ClaimDedupe(t *testing.T) {
 	}
 
 	t0 := time.Now()
-	id1, won1, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{"metric":"error_rate_pct"}`), 10.5, t0)
+	id1, won1, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{"metric":"error_rate_pct"}`), 10.5, t0)
 	if err != nil || !won1 || id1 == "" {
 		t.Fatalf("first claim = (%q, %v, %v); want (nonempty, true, nil)", id1, won1, err)
 	}
-	id2, won2, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{"metric":"error_rate_pct"}`), 10.5, t0.Add(time.Second))
+	id2, won2, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-1", []byte(`{"metric":"error_rate_pct"}`), 10.5, t0.Add(time.Second))
 	if err != nil || won2 || id2 != "" {
 		t.Fatalf("duplicate claim = (%q, %v, %v); want (\"\", false, nil)", id2, won2, err)
 	}
-	id3, won3, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-2", []byte(`{"metric":"error_rate_pct"}`), 10.5, t0.Add(time.Hour))
+	id3, won3, _, err := s.ClaimAlertFire(ctx, rule.ID, rule.ID+":bucket-2", []byte(`{"metric":"error_rate_pct"}`), 10.5, t0.Add(time.Hour))
 	if err != nil || !won3 || id3 == "" || id3 == id1 {
 		t.Fatalf("next-bucket claim = (%q, %v, %v); want (nonempty, true, nil) and a new id", id3, won3, err)
 	}
-	idMissing, wonMissing, err := s.ClaimAlertFire(ctx, "00000000-0000-0000-0000-000000000000", "x:bucket", nil, 0, t0)
+	idMissing, wonMissing, _, err := s.ClaimAlertFire(ctx, "00000000-0000-0000-0000-000000000000", "x:bucket", nil, 0, t0)
 	if err == nil || wonMissing || idMissing != "" {
 		t.Errorf("unknown rule should error; got (%q, %v, %v)", idMissing, wonMissing, err)
 	}

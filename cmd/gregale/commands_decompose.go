@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"gopkg.in/yaml.v3"
 )
 
@@ -675,11 +676,16 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printManagedServices(w io.Writer, managed []api.PlanManaged) {
-	var provided, buckets, listed []api.PlanManaged
+	var provided, caches, buckets, listed []api.PlanManaged
 	for _, m := range managed {
 		switch {
 		case m.Provision != nil && m.Kind == "bucket":
 			buckets = append(buckets, m)
+		case m.Provision != nil && m.Kind == "redis":
+			// A Compose redis service becomes a managed Redis cache
+			// (ADR-20261116192126); it was listed under "Managed PostgreSQL"
+			// (prod hunt r52).
+			caches = append(caches, m)
 		case m.Provision != nil:
 			provided = append(provided, m)
 		default:
@@ -716,6 +722,20 @@ func printManagedServices(w io.Writer, managed []api.PlanManaged) {
 				version = fmt.Sprintf(" (PostgreSQL %d)", m.Provision.PostgresMajor)
 			}
 			fmt.Fprintf(w, "  - %-20s %s %s%s, bound to %s\n", m.Name, verb, m.Provision.Database, version, strings.Join(bindings, ", "))
+		}
+	}
+	if len(caches) > 0 {
+		fmt.Fprintln(w, "\nManaged Redis (provided by this deploy):")
+		for _, m := range caches {
+			verb := "creates cache"
+			if m.Provision.Existing {
+				verb = "reuses cache"
+			}
+			bindings := make([]string, 0, len(m.Provision.Bindings))
+			for _, b := range m.Provision.Bindings {
+				bindings = append(bindings, b.Workload+"."+b.EnvKey)
+			}
+			fmt.Fprintf(w, "  - %-20s %s %s, bound to %s\n", m.Name, verb, m.Provision.Database, strings.Join(bindings, ", "))
 		}
 	}
 	if len(listed) > 0 {
@@ -872,28 +892,32 @@ var envImportReasonText = map[string]string{
 	"invalid":         "not importable",
 }
 
-// withProvidedEnvKeys drops keys a --secrets-file supplies from every
-// workload's unset and imported lists: the file's values go to every
-// selected workload, before any Compose value is imported.
-func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanResponse {
+// withProvidedEnvKeys drops keys a --secrets-file supplies from each
+// workload's unset and imported lists: the file's values go to the selected
+// workloads that name them (owners), before any Compose value is imported.
+func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair, owners projectSecretOwners) api.PlanResponse {
 	if len(pairs) == 0 {
 		return plan
 	}
-	provided := make(map[string]bool, len(pairs))
-	for _, pair := range pairs {
-		provided[pair.Key] = true
-	}
-	notProvided := func(keys []string) []string {
-		var out []string
-		for _, key := range keys {
-			if !provided[key] {
-				out = append(out, key)
-			}
-		}
-		return out
-	}
 	workloads := append([]api.PlanWorkload(nil), plan.Workloads...)
 	for i := range workloads {
+		name := workloads[i].Name
+		notProvided := func(keys []string) []string {
+			var out []string
+			for _, key := range keys {
+				provided := false
+				for _, pair := range pairs {
+					if pair.Key == key && owners.targets(name, key) {
+						provided = true
+						break
+					}
+				}
+				if !provided {
+					out = append(out, key)
+				}
+			}
+			return out
+		}
 		workloads[i].UnsetEnvKeys = notProvided(workloads[i].UnsetEnvKeys)
 		workloads[i].ImportedEnvKeys = notProvided(workloads[i].ImportedEnvKeys)
 	}
@@ -907,10 +931,12 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 // confirmation prompt and existing callers.
 // write is indistinguishable from a malformed terminal and is intentionally
 // handled like the legacy renderer.
-//
-//nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
-	plan = withFeatureHints(plan)
+	return printPreparedPlanText(w, withFeatureHints(plan), excludeSet, showAffected, explain)
+}
+
+//nolint:errcheck // terminal output is best effort.
+func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	if plan.Environment != "" {
 		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
@@ -1027,6 +1053,20 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
 			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, planWorkloadProtocolSuffix(wl), imageSuffix)
+			if wl.ReleaseCommand != "" {
+				// Runs once before each release of this service goes live.
+				source := ""
+				if wl.ReleaseCommandSource != "" {
+					source = "   (" + wl.ReleaseCommandSource + ")"
+				}
+				// A multi-line shell command (command: |) stays on one line.
+				lines := strings.FieldsFunc(wl.ReleaseCommand, func(r rune) bool { return r == '\n' || r == '\r' })
+				fmt.Fprintf(w, "      release: %s%s\n", strings.Join(lines, "; "), source)
+			}
+			if grants := planUsesSummary(wl.Uses); grants != "" {
+				// Cross-app grants the service's workload token carries.
+				fmt.Fprintf(w, "      uses: %s\n", grants)
+			}
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
@@ -1206,6 +1246,9 @@ func printPlanDetectionWarnings(w io.Writer, warnings []api.PlanDetectionWarning
 	}
 }
 
+// maxUnaffectedPlanRows is how many untouched apps a text plan lists by name.
+const maxUnaffectedPlanRows = 10
+
 // printAffectedText renders the ADR-124 blast-radius view: WillDeploy
 // + Skipped (operator-excluded) + Unaffected + Removed. Mirrors the
 // dashboard's two-table render so a CLI operator sees the same
@@ -1251,16 +1294,22 @@ func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[str
 		}
 	}
 	fmt.Fprintln(w, "\nUnaffected (apps in your account not touched by this commit):")
-	if len(una) == 0 {
+	switch {
+	case len(una) == 0:
 		fmt.Fprintln(w, "  (none)")
-	} else {
+	case len(una) > maxUnaffectedPlanRows:
+		// A 3-service project in an account of 69 apps printed 66 noop rows
+		// above the plan's own advice (prod hunt r26). The JSON plan keeps
+		// every row.
+		fmt.Fprintf(w, "  %d apps; none change. The JSON plan lists them: gregale --json deploy --dry-run\n", len(una))
+	default:
 		fmt.Fprintln(w, "  ACTION    SLUG                  APP ID")
 		for _, r := range una {
 			fmt.Fprintf(w, "  %-9s %-20s %s\n", r.Action, r.Slug, r.ID)
 		}
 	}
 	if len(plan.Removed) > 0 {
-		fmt.Fprintln(w, "\nRemoved (apps the apply path will SoftDeleteAppCascade):")
+		fmt.Fprintln(w, "\nRemoved (apps this deploy deletes):")
 		rmv := append([]string(nil), plan.Removed...)
 		sort.Strings(rmv)
 		for _, s := range rmv {
@@ -1394,4 +1443,31 @@ func planWorkloadProtocolSuffix(wl api.PlanWorkload) string {
 		out += fmt.Sprintf("  wake_ahead=%t", *wl.WakeAhead)
 	}
 	return out
+}
+
+// planUsesSummary renders a service's uses: grants on one plan line, or ""
+// when it declares none.
+func planUsesSummary(u *capgrant.Uses) string {
+	if u == nil || u.IsZero() {
+		return ""
+	}
+	n := u.Normalized()
+	var parts []string
+	for _, g := range n.Queues {
+		parts = append(parts, "queue "+g.App+"/"+g.Queue)
+	}
+	for _, g := range n.Realtime {
+		parts = append(parts, "realtime "+g.App+" "+g.Channels)
+	}
+	for _, app := range n.DelayedTasks {
+		parts = append(parts, "delayed_tasks "+app)
+	}
+	for _, g := range n.Buckets {
+		part := "bucket " + g.Bucket + " of " + g.App
+		if g.Prefix != "" {
+			part += " " + g.Prefix
+		}
+		parts = append(parts, part+" ("+g.Access+")")
+	}
+	return strings.Join(parts, "; ")
 }

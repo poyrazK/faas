@@ -156,6 +156,9 @@ func (m *MemStore) rollbackWindowRetainsDeploymentLocked(d Deployment) bool {
 }
 
 func (m *MemStore) layerArtifactReferencedLocked(key string) bool {
+	if m.projectRollbackProtectsArtifactLocked(key) || m.projectRollbackUndoHoldsArtifactLocked(key) {
+		return true
+	}
 	for id, root := range m.sourceBuildRootfs {
 		if root.Input.StorageKey == key && m.buildArtifactPinnedLocked(id) {
 			return true

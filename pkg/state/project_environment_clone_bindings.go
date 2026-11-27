@@ -78,6 +78,10 @@ type ProjectEnvironmentCloneObjectBucket struct {
 	VersioningEnabled bool                                       `json:"versioning_enabled"`
 	Credentials       []ProjectEnvironmentCloneObjectCredential  `json:"credentials"`
 	AccessGrants      []ProjectEnvironmentCloneObjectAccessGrant `json:"access_grants"`
+	// Notifications is the bucket's notification configuration, copied into
+	// the target paused (ADR-20261104120000 amendment 2026-11-16); nil when
+	// the bucket has none.
+	Notifications *ProjectEnvironmentCloneObjectNotifications `json:"notifications,omitempty"`
 }
 
 type ProjectEnvironmentCloneObjectCredential struct {

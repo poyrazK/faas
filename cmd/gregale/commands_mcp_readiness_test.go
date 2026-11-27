@@ -84,9 +84,9 @@ func TestMCPReadinessDeploymentIdentityAndCredentialIsolation(t *testing.T) {
 				}
 				return
 			}
-			// server/discover, ping, tools/list: revision 2026-07-28 opens
-			// with server/discover and has no initialize handshake.
-			if code != 0 || probes != 3 || previews != 1 {
+			// server/discover, tools/list: revision 2026-07-28 opens with
+			// server/discover and has neither initialize nor ping.
+			if code != 0 || probes != 2 || previews != 1 {
 				t.Fatalf("exit=%d probes=%d previews=%d output=%s", code, probes, previews, output.String())
 			}
 			var report main.McpDeploymentReadiness

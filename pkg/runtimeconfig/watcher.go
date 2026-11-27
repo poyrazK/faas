@@ -58,6 +58,10 @@ const (
 	// refuses work.
 	KeyCPUAdmission = "cpu_admission"
 
+	// KeyDevPrimeServes lets schedd promote a `gregale dev` deployment's
+	// healthy prime instead of capturing and parking it first
+	// (ADR-20261122200000).
+	KeyDevPrimeServes = "dev_prime_serves_enabled"
 	// KeySnapshotRefresh is schedd's snapshot refresh after a release:
 	// off, shadow or on (ADR-20261106214916). KeySnapshotRefreshWindowHours
 	// is how recently an app must have parked on a node to be refreshed
@@ -67,6 +71,13 @@ const (
 	// KeySnapshotCleanRecapture is schedd's clean init snapshot recapture:
 	// on or off (ADR-20261115113000). The default is in pkg/api/limits.go.
 	KeySnapshotCleanRecapture = "snapshot_clean_recapture"
+	// KeyBuilderElasticSlots (off or on) and KeyBuilderSlots (each node's
+	// reserved and total builder slots) are elastic builder slots
+	// (ADR-20261118154632). builderd and vmmd read them; the default and
+	// bounds are in pkg/api/limits.go and the value's shape in
+	// pkg/builderslots.
+	KeyBuilderElasticSlots = "builder_elastic_slots"
+	KeyBuilderSlots        = "builder_slots"
 	// KeyObjectInventoryQuiet is object_inventory_quiet: off, shadow or on
 	// (ADR-20261110151628 §2). apid validates and applies it; Postgres reads
 	// the applied value (object_inventory_quiet_mode()), so every daemon that

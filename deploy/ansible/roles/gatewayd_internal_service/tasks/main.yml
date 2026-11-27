@@ -8,6 +8,9 @@
 # lose the bind-mount). The unit also permits IPv4/IPv6 for outbound customer
 # log-drain delivery while keeping inbound traffic loopback-only.
 
+- name: gatewayd_internal_service — install the reload-or-restart helper
+  ansible.builtin.include_tasks: ../../_shared/tasks/reload_or_restart_helper.yml
+
 - name: gatewayd_internal_service — install systemd unit
   notify: restart faas-gatewayd-internal
   ansible.builtin.copy:
@@ -159,10 +162,15 @@
     group: root
     mode: "0755"
 
+# The release install writes 99-faas-role.conf for every daemon
+# (pkg/roleTemplating), after this role on a fresh join. A shared file name let
+# it replace this drop-in and drop the compute-only health listener and apid
+# history target (OVH cutover, 2026-11-20). This drop-in has its own name and
+# sorts after the installer's, so both apply and these settings win.
 - name: gatewayd_internal_service — install FAAS_REALTIME_ROLE drop-in
   ansible.builtin.template:
     src: 99-faas-realtimed-role.conf.j2
-    dest: /etc/systemd/system/faas-realtimed.service.d/99-faas-role.conf
+    dest: /etc/systemd/system/faas-realtimed.service.d/zz-faas-realtimed-role.conf
     owner: root
     group: root
     mode: "0644"
@@ -587,17 +595,23 @@
 # reads FAAS_GATEWAYD_ROLE, NOT FAAS_GATEWAYD_INTERNAL_ROLE.
 # See roles/gatewayd_internal_service/templates/99-faas-role.conf.j2
 # for the full rationale.
+# The release installer (pkg/roleTemplating) writes 99-faas-role.conf for
+# every daemon with only the role lines, after this role on a fresh join and
+# at every release install. Sharing that name dropped the manifest hot_path
+# switches on OVH from the 2026-11-20 cutover. This drop-in has its own name
+# and sorts after the installer's, so both apply and these settings win
+# (as zz-faas-realtimed-role.conf did for realtimed).
 - name: gatewayd_internal_service — install FAAS_GATEWAYD_ROLE drop-in (Mega-PR-C)
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
-    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-role.conf
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/zz-faas-gatewayd-internal-role.conf
     owner: root
     group: root
     mode: "0644"
   notify: restart faas-gatewayd-internal
 
 # Manifest hot_path: these switches were first turned on by hand on
-# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# production (2026-11-06). The role drop-in now carries them, so the hand-made
 # drop-ins go; left behind they would keep a switch on after the manifest
 # turned it off.
 - name: gatewayd_internal_service — remove the hand-made hot-path drop-ins
@@ -608,7 +622,7 @@
   loop:
     - 60-faas-edge-local-first.conf
     # 2026-11-14 hand override that turned local first off before the
-    # manifest did; 99-faas-role.conf now carries local_first: false.
+    # manifest did; the role drop-in now carries local_first: false.
     - 99-zz-local-first-off.conf
     - 60-faas-request-journal-local.conf
     - 61-faas-request-telemetry-minute-collapse.conf

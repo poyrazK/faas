@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -10,9 +11,10 @@ import (
 )
 
 type productMemoryChange struct {
-	account, app string
-	fingerprint  string
-	receipt      api.ProductCustomerChangeReceipt
+	account, app   string
+	fingerprint    string
+	receipt        api.ProductCustomerChangeReceipt
+	scheduleStatus string
 }
 
 func (m *MemStore) GetProductOwnerDocument(_ context.Context, scope ProductBillingScope, id string) (api.ProductBillingDocument, error) {
@@ -31,8 +33,9 @@ func (m *MemStore) GetProductOwnerDocument(_ context.Context, scope ProductBilli
 	return cloneProductBilling(row.document), nil
 }
 
-func (m *MemStore) previewProductChangeLocked(account, app string, target api.ProductCustomer) (api.ProductCustomerChangePreview, error) {
-	head, err := m.productBillingScopeLocked(ProductBillingScope{AccountID: account, AppID: app, TenantID: target.TenantID, Period: productcontrol.Period(time.Now())})
+func (m *MemStore) previewProductChangeLocked(account, app string, target api.ProductCustomer, now time.Time, scheduled bool) (api.ProductCustomerChangePreview, error) {
+	scope := ProductBillingScope{AccountID: account, AppID: app, TenantID: target.TenantID, Period: productcontrol.Period(now)}
+	head, err := m.productBillingScopeLocked(scope)
 	if err != nil {
 		return api.ProductCustomerChangePreview{}, err
 	}
@@ -44,6 +47,7 @@ func (m *MemStore) previewProductChangeLocked(account, app string, target api.Pr
 	if !ok {
 		return api.ProductCustomerChangePreview{}, ErrNotFound
 	}
+	m.applyDueProductPlanLocked(account, app, target.TenantID, now)
 	var before *api.ProductCustomer
 	var beforeCatalog *api.ProductCatalog
 	if current, ok := d.customers[app+"/"+target.TenantID]; ok {
@@ -51,13 +55,31 @@ func (m *MemStore) previewProductChangeLocked(account, app string, target api.Pr
 		c := d.revisions[app+"/"+current.Revision]
 		beforeCatalog = &c
 	}
-	return productChangePreview(account, app, before, beforeCatalog, target, catalog, head, time.Now())
+	p, err := productChangePreview(before, beforeCatalog, target, catalog, head, now)
+	if err != nil {
+		return p, err
+	}
+	if scheduled {
+		if err := scheduleProductPreview(&p); err != nil {
+			return p, err
+		}
+	}
+	current := d.customers[app+"/"+target.TenantID]
+	return priceProductChange(p, scope, m.productPlanHistoryLocked(scope), m.productPlanStartsLocked(scope, current), now), nil
 }
 
 func (m *MemStore) PreviewProductCustomerChange(_ context.Context, account, app string, target api.ProductCustomer) (api.ProductCustomerChangePreview, error) {
+	return m.previewProductCustomerChange(account, app, target, false)
+}
+
+func (m *MemStore) PreviewScheduledProductCustomerChange(_ context.Context, account, app string, target api.ProductCustomer) (api.ProductCustomerChangePreview, error) {
+	return m.previewProductCustomerChange(account, app, target, true)
+}
+
+func (m *MemStore) previewProductCustomerChange(account, app string, target api.ProductCustomer, scheduled bool) (api.ProductCustomerChangePreview, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p, err := m.previewProductChangeLocked(account, app, target)
+	p, err := m.previewProductChangeLocked(account, app, target, time.Now().UTC().Truncate(time.Microsecond), scheduled)
 	return cloneProductBilling(p), err
 }
 
@@ -80,7 +102,8 @@ func (m *MemStore) ApplyProductCustomerChange(_ context.Context, account, app st
 		}
 		return cloneProductBilling(old.receipt), nil
 	}
-	p, err := m.previewProductChangeLocked(account, app, req.Customer)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	p, err := m.previewProductChangeLocked(account, app, req.Customer, now, req.NextMonth)
 	if err != nil {
 		return api.ProductCustomerChangeReceipt{}, err
 	}
@@ -92,12 +115,27 @@ func (m *MemStore) ApplyProductCustomerChange(_ context.Context, account, app st
 			return api.ProductCustomerChangeReceipt{}, ErrConflict
 		}
 	}
-	r := api.ProductCustomerChangeReceipt{ID: req.ID, PreviewHash: p.Hash, Before: p.Before, After: p.After, EffectiveAt: time.Now().UTC().Truncate(time.Microsecond)}
+	r := api.ProductCustomerChangeReceipt{ID: req.ID, PreviewHash: p.Hash, Before: p.Before, After: p.After, EffectiveAt: now}
+	change := productMemoryChange{account: account, app: app, fingerprint: fingerprint}
+	if p.StartsNextMonthAt != nil {
+		key := app + "/" + p.After.TenantID
+		if d.changes[d.schedules[key]].scheduleStatus == productPlanPending {
+			return api.ProductCustomerChangeReceipt{}, ErrConflict
+		}
+		if d.schedules == nil {
+			d.schedules = map[string]string{}
+		}
+		d.schedules[key] = req.ID
+		r.EffectiveAt = *p.StartsNextMonthAt
+		change.scheduleStatus = productPlanPending
+	} else {
+		m.assignProductCustomerAtLocked(account, app, p.After, now)
+	}
 	if d.changes == nil {
 		d.changes = map[string]productMemoryChange{}
 	}
-	m.assignProductCustomerLocked(account, app, p.After)
-	d.changes[req.ID] = productMemoryChange{account: account, app: app, fingerprint: fingerprint, receipt: r}
+	change.receipt = r
+	d.changes[req.ID] = change
 	return cloneProductBilling(r), nil
 }
 
@@ -111,7 +149,15 @@ func (m *MemStore) InspectProductBinding(_ context.Context, account, app string,
 }
 
 func (m *MemStore) ListProductOwnerRuns(_ context.Context, scope ProductBillingScope, raw string) (api.ProductOwnerRuns, error) {
-	c, err := decodeProductOwnerCursor(raw, productOwnerCursorScope("runs", scope.AccountID, scope.AppID, scope.TenantID, scope.Period), true)
+	return m.listProductOwnerRuns(scope, raw, false)
+}
+
+func (m *MemStore) ListProductOwnerReviewRuns(_ context.Context, scope ProductBillingScope, raw string) (api.ProductOwnerRuns, error) {
+	return m.listProductOwnerRuns(scope, raw, true)
+}
+
+func (m *MemStore) listProductOwnerRuns(scope ProductBillingScope, raw string, reviewOnly bool) (api.ProductOwnerRuns, error) {
+	c, err := productOwnerRunCursor(scope, raw, reviewOnly)
 	if err != nil {
 		return api.ProductOwnerRuns{}, err
 	}
@@ -122,12 +168,19 @@ func (m *MemStore) ListProductOwnerRuns(_ context.Context, scope ProductBillingS
 	}
 	out := api.ProductOwnerRuns{Runs: []api.ProductOwnerRun{}}
 	d := m.productLocked()
+	now := time.Now()
+	closed := scope.Period < productcontrol.Period(now)
 	for id, row := range d.receipts {
 		if !productMemoryReceiptInScope(row, scope) || (raw != "" && (row.receipt.AdmittedAt.After(c.At) || row.receipt.AdmittedAt.Equal(c.At) && id >= c.ID)) {
 			continue
 		}
+		op, found := m.operationMemoryLocked().operations[id]
+		inScope := found && op.AccountID == scope.AccountID && op.AppID == scope.AppID && op.PlatformTenantID == scope.TenantID
+		if reviewOnly && (row.resolvedState != "" || row.waivedAt != nil || !closed && inScope && operationIsActive(op)) {
+			continue
+		}
 		run := api.ProductOwnerRun{Evidence: productMemoryEvidence(id, row)}
-		if op, ok := m.operationMemoryLocked().operations[id]; ok && op.AccountID == scope.AccountID && op.AppID == scope.AppID && op.PlatformTenantID == scope.TenantID && operationRetained(op, time.Now()) {
+		if inScope && operationRetained(op, now) {
 			run.State = op.State
 		}
 		for _, doc := range d.documents {
@@ -204,4 +257,59 @@ func (m *MemStore) ListProductOwnerAttention(_ context.Context, account, app, ra
 		out.NextCursor = encodeProductOwnerCursor(c)
 	}
 	return out, nil
+}
+
+func (m *MemStore) ListProductOwnerBillingQueue(_ context.Context, account, app, period, raw string) (ProductOwnerBillingQueue, error) {
+	cursor, err := productOwnerBillingQueueCursor(account, app, period, raw, time.Now())
+	if err != nil {
+		return ProductOwnerBillingQueue{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.productLocked()
+	if a, ok := m.apps[app]; !ok || a.AccountID != account || a.Status == AppDeleted || d.heads[app] == "" {
+		return ProductOwnerBillingQueue{}, ErrNotFound
+	}
+
+	tenants := map[string]bool{}
+	for _, receipt := range d.receipts {
+		if receipt.account == account && receipt.app == app && receipt.receipt.Period == period {
+			tenants[receipt.tenant] = true
+		}
+	}
+	for key := range d.planHistory {
+		appID, tenant, _ := strings.Cut(key, "/")
+		if appID != app || tenant <= cursor.ID || tenants[tenant] {
+			continue
+		}
+		scope := ProductBillingScope{AccountID: account, AppID: app, TenantID: tenant, Period: period}
+		for _, held := range m.productMonthPlansLocked(scope) {
+			if d.revisions[app+"/"+held.Revision].Spec.Plans[held.Plan].MonthlyFeeMillicents > 0 {
+				tenants[tenant] = true
+				break
+			}
+		}
+	}
+	_, end := productMonthBounds(period)
+	for _, id := range d.schedules {
+		schedule := d.changes[id]
+		target := schedule.receipt.After
+		if schedule.account == account && schedule.app == app && schedule.scheduleStatus == productPlanPending &&
+			schedule.receipt.EffectiveAt.Before(end) && d.revisions[app+"/"+target.Revision].Spec.Plans[target.Plan].MonthlyFeeMillicents > 0 {
+			tenants[target.TenantID] = true
+		}
+	}
+	candidates := make([]productOwnerBillingCandidate, 0, len(tenants))
+	for tenantID := range tenants {
+		tenant, ok := m.platformTenants[tenantID]
+		if !ok || tenant.AccountID != account || tenantID <= cursor.ID {
+			continue
+		}
+		scope := ProductBillingScope{AccountID: account, AppID: app, TenantID: tenantID, Period: period}
+		if _, finalized := m.productStatementLocked(scope); !finalized {
+			candidates = append(candidates, productOwnerBillingCandidate{tenantID: tenantID, name: tenant.Name})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].tenantID < candidates[j].tenantID })
+	return productOwnerBillingQueue(account, app, cursor, candidates, m.reviewProductBillingLocked)
 }

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,4 +92,44 @@ func readComputeRoleRecord(path string) (string, error) {
 		return "", errors.New("--role-record-file is not a compute_nodes role-hash record (scripts/ci/host_roles.py hashes --group compute_nodes)")
 	}
 	return string(body), nil
+}
+
+// joinContractWithEnvironment is the compute bootstrap contract: the
+// repository contract (joinBootstrapContractHash) and the environment hash
+// (controlPlaneEnvironmentHash over the manifest-rendered inventory and the
+// operator vars). Without the environment a manifest-only change, such as
+// rc.364 moving the apps domain to gregale.app, left the contract current:
+// the compute roles never re-rendered the gatewayd domain layout, the
+// serving probe URL or the edge control-plane target.
+func joinContractWithEnvironment(repoContract, environment string) string {
+	hash := sha256.New()
+	for _, field := range []string{"gregale-compute-contract/2", repoContract, environment} {
+		_, _ = io.WriteString(hash, field)
+		_, _ = hash.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+// withJoinRecordEnvironment adds the environment hash to the role record
+// node_join persists, so the next per-role convergence can tell that the
+// environment moved since the record and converge every role instead of
+// only the roles whose repository content changed.
+func withJoinRecordEnvironment(record, environment string) (string, error) {
+	if record == "" {
+		return "", nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(record), &fields); err != nil {
+		return "", fmt.Errorf("--role-record-file is not JSON: %w", err)
+	}
+	value, err := json.Marshal(environment)
+	if err != nil {
+		return "", fmt.Errorf("encode role record environment: %w", err)
+	}
+	fields["environment"] = value
+	body, err := json.MarshalIndent(fields, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode role record: %w", err)
+	}
+	return string(body) + "\n", nil
 }

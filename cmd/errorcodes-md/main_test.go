@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
 // fixture writes a small module whose problems exercise each way a code
@@ -138,19 +141,19 @@ func TestGeneratedEntries(t *testing.T) {
 	}{
 		// Status from net/http, case-folded titles, hint capitalized, one
 		// link per page preferring the anchored one.
-		{"plan_limit_apps", "HTTP 403 · App limit reached\n\nDelete an app or upgrade the plan\n\nSee [Plans and pricing](plans.md#apps)."},
+		{"plan_limit_apps", "HTTP 403 Forbidden · App limit reached\n\nDelete an app or upgrade the plan\n\nSee [Plans and pricing](plans.md#apps)."},
 		// The edge sends Gregale's own 502 as 503.
-		{"gamma_upstream", "HTTP 503 · Upstream failed"},
+		{"gamma_upstream", "HTTP 503 Service Unavailable · Upstream failed"},
 		// Problems built under cmd/ count too.
-		{"theta_cli", "HTTP 503 · Could not reach Gregale"},
+		{"theta_cli", "HTTP 503 Service Unavailable · Could not reach Gregale"},
 		// A helper's call site supplies the code and title.
-		{"delta_helper", "HTTP 409 · Delta title"},
+		{"delta_helper", "HTTP 409 Conflict · Delta title"},
 		// Engineering material is dropped; the status stays.
-		{"epsilon_internal", "HTTP 400"},
+		{"epsilon_internal", "HTTP 400 Bad Request"},
 		// Placeholders are escaped outside code spans only.
-		{"eta_placeholder", "HTTP 400 · Eta\n\nRun `gregale logs <app>` for &lt;app>"},
+		{"eta_placeholder", "HTTP 400 Bad Request · Eta\n\nRun `gregale logs <app>` for &lt;app>"},
 		// Excluded, but a published page already names it.
-		{"alpha_hidden", "HTTP 409 · Hidden thing\n\nSee [Errors](errors.md)."},
+		{"alpha_hidden", "HTTP 409 Conflict · Hidden thing\n\nSee [Errors](errors.md)."},
 		// Declared but never built: no status the API's table knows.
 		{"omega_declared", "The response's `title` and `detail` describe the failure."},
 		{"beta_excluded", ""},
@@ -175,6 +178,18 @@ func TestGeneratedEntries(t *testing.T) {
 	}
 	if !strings.Contains(page, "\n## P\n") || strings.Index(page, "## A") > strings.Index(page, "## P") {
 		t.Errorf("sections are not alphabetical letters:\n%s", page)
+	}
+	// The jump bar names each letter section once, in order, and no others.
+	jump := regexp.MustCompile(`(?m)^Jump to: (.*)$`).FindStringSubmatch(page)
+	if jump == nil {
+		t.Fatalf("no jump bar:\n%s", page)
+	}
+	var want []string
+	for _, m := range regexp.MustCompile(`(?m)^## ([A-Z])$`).FindAllStringSubmatch(page, -1) {
+		want = append(want, fmt.Sprintf("[%s](#%s)", m[1], strings.ToLower(m[1])))
+	}
+	if got := jump[1]; got != strings.Join(want, " · ") {
+		t.Errorf("jump bar %q, want %q", got, strings.Join(want, " · "))
 	}
 }
 
@@ -229,7 +244,7 @@ func TestStatusText(t *testing.T) {
 		want     string
 	}{
 		{map[int]int{}, ""},
-		{map[int]int{429: 1, 403: 2}, "HTTP 403 or 429"},
+		{map[int]int{429: 1, 403: 2}, "HTTP 403 Forbidden or 429 Too Many Requests"},
 		{map[int]int{400: 1, 403: 1, 404: 1, 409: 1}, "HTTP status varies by operation"},
 	}
 	for _, tt := range tests {
@@ -243,6 +258,31 @@ func TestCustomerStatus(t *testing.T) {
 	for in, want := range map[int]int{502: 503, 504: 503, 409: 409, 0: 0, 200: 0} {
 		if got := customerStatus(in); got != want {
 			t.Errorf("customerStatus(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// A code no call site titles or hints takes its whycopy row's title and hint,
+// which is what Decorate puts on the problem; a call site's own text wins.
+func TestWhycopyFallback(t *testing.T) {
+	prev := whycopyRow
+	t.Cleanup(func() { whycopyRow = prev })
+	whycopyRow = func(code string) (whycopy.Render, bool) {
+		switch code {
+		case "omega_declared":
+			return whycopy.Render{Title: "Omega failed", Hint: "retry the omega step"}, true
+		case "plan_limit_apps":
+			return whycopy.Render{Title: "Catalog title", Hint: "catalog hint"}, true
+		}
+		return whycopy.Render{}, false
+	}
+	page := generate(t, fixture(t, ""))
+	for code, want := range map[string]string{
+		"omega_declared":  "Omega failed\n\nRetry the omega step",
+		"plan_limit_apps": "HTTP 403 Forbidden · App limit reached\n\nDelete an app or upgrade the plan\n\nSee [Plans and pricing](plans.md#apps).",
+	} {
+		if got, ok := entryOf(page, code); !ok || got != want {
+			t.Errorf("%s:\n got %q\nwant %q", code, got, want)
 		}
 	}
 }

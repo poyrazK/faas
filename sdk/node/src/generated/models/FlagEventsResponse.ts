@@ -7,6 +7,10 @@
  */
 export type FlagEventsResponse = {
   accepted: number;
+  /**
+   * Exposures that matched a running subject experiment of an active customer.
+   */
+  exposures?: number;
   dropped: {
     /**
      * Over the monthly event quota.

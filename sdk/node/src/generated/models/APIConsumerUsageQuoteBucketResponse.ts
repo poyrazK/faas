@@ -6,8 +6,16 @@
  * One durable usage minute priced by the rate card effective at that minute.
  */
 export type APIConsumerUsageQuoteBucketResponse = {
+  /**
+   * Configured model for this app-meter bucket.
+   */
+  model?: string;
   window_start: string;
   billable_units: number;
+  /**
+   * Model units with an approved waiver in the quoted minute.
+   */
+  waived_units?: number;
   rate_card_id?: string;
   currency?: string;
   price_millicents_per_unit?: number;

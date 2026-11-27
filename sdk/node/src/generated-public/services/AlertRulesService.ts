@@ -174,24 +174,33 @@ export class AlertRulesService {
    * List alert rules visible at this app.
    * Returns both app-scoped rules (app_id == <slug>) and
    * account-wide rules (app_id == ""). Account-wide rules
-   * apply to every app on the account.
+   * apply to every app on the account. With `environment` set to a
+   * stage, returns that stage's rules instead.
    *
    * @returns AlertRuleResponse Alert rules on the account, filtered to those visible at this app.
    * @throws ApiError
    */
   public static listAlertRules({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Project environment slug. Omitted or production lists production's rules; a stage's rules are its own.
+     */
+    environment?: string,
   }): CancelablePromise<Array<AlertRuleResponse>> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         401: `code: unauthorized`,
@@ -212,6 +221,11 @@ export class AlertRulesService {
    * response. webhook_url is SSRF-guarded at write time
    * (loopback + metadata ranges denied).
    *
+   * With `environment` set to a stage, the rule watches that stage's own
+   * requests, errors, latency, cold starts or failed invocations, with
+   * gt, gte, lt or lte and a webhook action. Other rules stay in
+   * production. Stage rules answer 501 until the platform enables them.
+   *
    * @returns AlertRuleResponse The new alert rule (carries the masked secret).
    * @throws ApiError
    */
@@ -219,6 +233,7 @@ export class AlertRulesService {
     slug,
     requestBody,
     idempotencyKey,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -234,6 +249,10 @@ export class AlertRulesService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Project environment slug the rule belongs to. Omitted or production creates a production rule.
+     */
+    environment?: string,
   }): CancelablePromise<AlertRuleResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
@@ -243,6 +262,9 @@ export class AlertRulesService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -258,6 +280,7 @@ export class AlertRulesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }
@@ -340,6 +363,7 @@ export class AlertRulesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
     });
   }

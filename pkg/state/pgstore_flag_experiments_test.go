@@ -26,8 +26,15 @@ type flagExperimentPgFixture struct {
 	acct     string
 	project  string
 	env      string
+	dep      string
 	tenant   func(name string) string
 	exposure func(customer, variant string, at time.Time, status, latencyMS int32)
+	// decision records a request whose checkout decision matched rule (or
+	// the default, with rule "").
+	decision func(customer, rule string, at time.Time)
+	// held records a request whose checkout decision the environment
+	// holdout served control on the weighted rule (ADR 20261119173702 §2).
+	held func(customer string, at time.Time)
 }
 
 func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixture {
@@ -45,7 +52,7 @@ func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixtu
 	if err != nil {
 		t.Fatalf("environment: %v", err)
 	}
-	f := flagExperimentPgFixture{s: s, ctx: ctx, acct: acct, project: project.ID, env: env.ID}
+	f := flagExperimentPgFixture{s: s, ctx: ctx, acct: acct, project: project.ID, env: env.ID, dep: depID}
 	f.tenant = func(name string) string {
 		tn, _, err := s.CreatePlatformTenant(ctx, acct, name, name, 100)
 		if err != nil {
@@ -53,9 +60,8 @@ func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixtu
 		}
 		return tn.ID
 	}
-	f.exposure = func(customer, variant string, at time.Time, status, latencyMS int32) {
+	insert := func(customer, evidence string, at time.Time, status, latencyMS int32) {
 		t.Helper()
-		evidence := fmt.Sprintf(`[{"flag":"checkout","type":"variant","value":%q,"rule_id":"weighted","config_version":1,"reason":"rule_match","source":"configuration","used":false}]`, variant)
 		var tid, acctID, appPg, depPg pgtype.UUID
 		_ = tid.Scan(customer)
 		_ = acctID.Scan(acct)
@@ -68,6 +74,22 @@ func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixtu
 		}); err != nil {
 			t.Fatalf("InsertRequestTelemetry: %v", err)
 		}
+	}
+	f.exposure = func(customer, variant string, at time.Time, status, latencyMS int32) {
+		t.Helper()
+		insert(customer, fmt.Sprintf(`[{"flag":"checkout","type":"variant","value":%q,"rule_id":"weighted","config_version":1,"reason":"rule_match","source":"configuration","used":false}]`, variant), at, status, latencyMS)
+	}
+	f.decision = func(customer, rule string, at time.Time) {
+		t.Helper()
+		if rule == "" {
+			insert(customer, `[{"flag":"checkout","value":false,"config_version":1,"reason":"default","source":"configuration","used":false}]`, at, 200, 10)
+			return
+		}
+		insert(customer, fmt.Sprintf(`[{"flag":"checkout","value":true,"rule_id":%q,"config_version":1,"reason":"rule_match","source":"configuration","used":false}]`, rule), at, 200, 10)
+	}
+	f.held = func(customer string, at time.Time) {
+		t.Helper()
+		insert(customer, `[{"flag":"checkout","type":"variant","value":"legacy","rule_id":"weighted","config_version":1,"reason":"holdout","source":"configuration","used":false}]`, at, 200, 10)
 	}
 	return f
 }
@@ -95,7 +117,7 @@ func TestPg_FlagExperimentUnitsFromTelemetry(t *testing.T) {
 	if _, err := s.StopFlagExperiment(ctx, f.env, "checkout-v2", start, flags.StopManual, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("stopping a draft = %v; want ErrNotFound", err)
 	}
-	x, err = s.StartFlagExperiment(ctx, f.env, "checkout-v2", map[string]int{"legacy": 50, "new": 50}, start, 1)
+	x, err = s.StartFlagExperiment(ctx, f.env, "checkout-v2", map[string]int{"legacy": 50, "new": 50}, [2]int{}, start, 1)
 	if err != nil || x.Status != flags.ExperimentRunning || x.StartedAt == nil {
 		t.Fatalf("StartFlagExperiment = %+v, %v", x, err)
 	}
@@ -134,7 +156,7 @@ func TestPg_FlagExperimentUnitsFromTelemetry(t *testing.T) {
 		t.Fatalf("arms = %+v crossed %d; want %+v and 1 crossed", arms, crossed, want)
 	}
 
-	if err := s.SaveFlagExperimentProgress(ctx, x.ID, start.Add(time.Hour), map[string]float64{"new": 0.4}); err != nil {
+	if err := s.SaveFlagExperimentProgress(ctx, x.ID, start.Add(time.Hour), map[string]float64{"new": 0.4}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetFlagExperiment(ctx, f.env, "checkout-v2")
@@ -148,6 +170,37 @@ func TestPg_FlagExperimentUnitsFromTelemetry(t *testing.T) {
 	}
 	if ok, err := s.DeleteFlagExperiment(ctx, f.env, "checkout-v2"); err != nil || !ok {
 		t.Fatalf("DeleteFlagExperiment = %v, %v", ok, err)
+	}
+}
+
+// A started experiment reads the exposures of its start minute: gateways
+// stamp minute-collapsed telemetry at the minute's start, before the start
+// instant (prod 2026-11-21: a journey's experiment counted no exposures).
+func TestPg_FlagExperimentCountsStartMinuteExposures(t *testing.T) {
+	f := newFlagExperimentPgFixture(t, "flags-exp-minute")
+	s, ctx, acct := f.s, f.ctx, f.acct
+	a := f.tenant("a")
+	minute := time.Now().UTC().Add(-time.Hour).Truncate(time.Minute)
+	start := minute.Add(13 * time.Second)
+	if _, err := s.CreateFlagExperiment(ctx, state.FlagExperiment{AccountID: acct, ProjectID: f.project, EnvironmentID: f.env,
+		Key: "checkout-minute", FlagKey: "checkout", RuleID: "weighted", Control: "legacy", MetricEvent: "order_completed",
+		MixingLift: 0.02, Weights: map[string]int{"legacy": 50, "new": 50}, CreatedBy: acct}, 2); err != nil {
+		t.Fatalf("CreateFlagExperiment: %v", err)
+	}
+	x, err := s.StartFlagExperiment(ctx, f.env, "checkout-minute", map[string]int{"legacy": 50, "new": 50}, [2]int{}, start, 1)
+	if err != nil {
+		t.Fatalf("StartFlagExperiment: %v", err)
+	}
+	if want := state.FlagExperimentStartCursor(start); !x.TelemetryCursor.Equal(want) || !x.StartedAt.Equal(start) {
+		t.Fatalf("started at %v cursor %v; want %v and %v", x.StartedAt, x.TelemetryCursor, start, want)
+	}
+	f.exposure(a, "new", minute, 200, 10) // a request at start+2s, collapsed into its minute
+	running, err := s.ListRunningFlagExperiments(ctx, "", 10)
+	if err != nil || len(running) != 1 {
+		t.Fatalf("running = %+v, %v", running, err)
+	}
+	if read, err := s.AdvanceFlagExperimentUnits(ctx, running[0], running[0].TelemetryCursor, minute.Add(5*time.Minute), 1000); err != nil || read != 1 {
+		t.Fatalf("AdvanceFlagExperimentUnits from the start cursor read %d, %v; want the start minute's exposure", read, err)
 	}
 }
 
@@ -168,7 +221,7 @@ func TestPg_FlagExperimentGuardrailCountsAndMeanValues(t *testing.T) {
 	if err != nil || x.MetricKind != flags.ExperimentMetricMean || !x.Guardrails.P95Latency.Disabled || x.Guardrails.ServerErrorRate.MaxIncrease != 0.005 {
 		t.Fatalf("CreateFlagExperiment = %+v, %v", x, err)
 	}
-	if _, err := s.StartFlagExperiment(ctx, f.env, "revenue", x.Weights, start, 1); err != nil {
+	if _, err := s.StartFlagExperiment(ctx, f.env, "revenue", x.Weights, [2]int{}, start, 1); err != nil {
 		t.Fatal(err)
 	}
 

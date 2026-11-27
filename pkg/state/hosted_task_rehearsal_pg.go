@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -77,7 +79,7 @@ func (s *PgStore) ChangeHostedTaskRehearsal(ctx context.Context, account, id str
 		}
 		return zero, err
 	}
-	return saveHostedTaskRehearsalPG(ctx, tx, account, id, record, binding, in.OwnerKeyID, acquired)
+	return saveHostedTaskRehearsalPG(ctx, tx, account, id, record, binding, in.OwnerKeyID, action, acquired)
 }
 
 func hostedTaskRehearsalApprovalFreshPG(ctx context.Context, tx pgx.Tx, account, keyID string) (bool, error) {
@@ -91,7 +93,7 @@ func hostedTaskRehearsalApprovalFreshPG(ctx context.Context, tx pgx.Tx, account,
 	return err == nil, err
 }
 
-func saveHostedTaskRehearsalPG(ctx context.Context, tx pgx.Tx, account, id string, r hostedTaskRehearsalRecord, binding HostedTaskBindingRecord, owner string, acquired bool) (HostedTaskRehearsalResult, error) {
+func saveHostedTaskRehearsalPG(ctx context.Context, tx pgx.Tx, account, id string, r hostedTaskRehearsalRecord, binding HostedTaskBindingRecord, owner string, action HostedTaskRehearsalAction, acquired bool) (HostedTaskRehearsalResult, error) {
 	var zero HostedTaskRehearsalResult
 	if tasktoolrehearsal.ValidateRecord(r, account, id) != nil {
 		return zero, ErrConflict
@@ -109,7 +111,8 @@ func saveHostedTaskRehearsalPG(ctx context.Context, tx pgx.Tx, account, id strin
 			}
 		}
 	}
-	n, err := toolpublicationdb.New().SaveHostedTaskRehearsalPlan(ctx, tx, toolpublicationdb.SaveHostedTaskRehearsalPlanParams{
+	q := toolpublicationdb.New()
+	n, err := q.SaveHostedTaskRehearsalPlan(ctx, tx, toolpublicationdb.SaveHostedTaskRehearsalPlanParams{
 		AccountID: mustPgUUID(account), ID: id, Payload: body, ExpiresAt: pgtype.Timestamptz{Time: r.Plan.ExpiresAt, Valid: true},
 		RequireFresh: requireFresh, AuthorityKeys: keys,
 	})
@@ -119,8 +122,63 @@ func saveHostedTaskRehearsalPG(ctx context.Context, tx pgx.Tx, account, id strin
 	if n != 1 {
 		return zero, ErrConflict
 	}
+	var run *HostedTaskRehearsalRun
+	if action == ClaimHostedTaskRehearsal && r.Plan.Status == tasktoolrehearsal.Claimed {
+		run, err = saveHostedTaskRehearsalRun(ctx, tx, r.Plan, keys, acquired)
+		if err != nil {
+			return zero, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return zero, err
 	}
-	return HostedTaskRehearsalResult{Plan: r.Plan, ClaimAcquired: acquired}, nil
+	return HostedTaskRehearsalResult{
+		Plan: r.Plan, ClaimAcquired: acquired, Run: run,
+		ReadyToClaim: r.Plan.Status == tasktoolrehearsal.Approved && r.ApprovalKeyID == owner,
+	}, nil
+}
+
+func saveHostedTaskRehearsalRun(ctx context.Context, tx pgx.Tx, plan api.HostedTaskRehearsalPlan, keys []pgtype.UUID, acquired bool) (*HostedTaskRehearsalRun, error) {
+	q := toolpublicationdb.New()
+	acct := mustPgUUID(plan.AccountID)
+	expected := rehearsalRunForClaim(plan)
+	if acquired {
+		n, err := q.InsertHostedTaskRehearsalRun(ctx, tx, toolpublicationdb.InsertHostedTaskRehearsalRunParams{
+			AccountID: acct, ID: plan.IntentID, RunID: mustPgUUID(expected.ID), PlanSha256: expected.PlanSHA256,
+			ReservedAt:        pgtype.Timestamptz{Time: expected.ReservedAt, Valid: true},
+			ApprovalExpiresAt: pgtype.Timestamptz{Time: expected.ApprovalExpiresAt, Valid: true}, AuthorityKeys: keys,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if n != 1 {
+			return nil, ErrConflict
+		}
+		return &expected, nil
+	}
+	row, err := q.ReadHostedTaskRehearsalRun(ctx, tx, toolpublicationdb.ReadHostedTaskRehearsalRunParams{AccountID: acct, ID: plan.IntentID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Older private claims consumed approval without reserving a run.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	persisted := HostedTaskRehearsalRun{
+		ID: uuid.UUID(row.RunID.Bytes).String(), PlanSHA256: row.PlanSha256,
+		ReservedAt: row.ReservedAt.Time.UTC(), ApprovalExpiresAt: row.ApprovalExpiresAt.Time.UTC(),
+	}
+	if persisted != expected {
+		return nil, ErrConflict
+	}
+	return &persisted, nil
+}
+
+// MatchHostedTaskRehearsalReservation checks the private durable claim behind
+// the scheduler's exact-run worker interruption.
+func (s *PgStore) MatchHostedTaskRehearsalReservation(ctx context.Context, account, run, plan string, reservedAt time.Time) (bool, error) {
+	return toolpublicationdb.New().MatchHostedTaskRehearsalReservation(ctx, s.pool, toolpublicationdb.MatchHostedTaskRehearsalReservationParams{
+		AccountID: mustPgUUID(account), RunID: mustPgUUID(run), PlanSha256: plan,
+		ReservedAt: pgtype.Timestamptz{Time: reservedAt, Valid: true},
+	})
 }

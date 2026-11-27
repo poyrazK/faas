@@ -229,6 +229,58 @@ func TestMemInstanceApplicationStandardArtifactChangeDuringBoot(t *testing.T) {
 	standardRuntimeArtifactChangeDuringBoot(t, NewMemStore())
 }
 
+func TestMemInstanceApplicationStandardScanLandsDuringBoot(t *testing.T) {
+	standardRuntimeScanLandsDuringBoot(t, NewMemStore())
+}
+
+// standardRuntimeScanLandsDuringBoot: a deploy scan that finishes while an
+// organization's instance boots renews the deployment's scan mirrors and
+// changes nothing the instance runs (ADR 20261031190030, ADR-075 amendment
+// 2026-11-19), so neither the scheduler's caller-input check nor the
+// publication guard rejects the boot, whichever side read the scan first. A
+// changed park reason still does.
+func standardRuntimeScanLandsDuringBoot(t *testing.T, s standardRuntimeCaptureTestStore) {
+	t.Helper()
+	ctx := t.Context()
+	f := newRuntimeCaptureFixture(t, s, false)
+	before, err := s.CreateInstance(ctx, f.app.ID, f.dep.ID, string(StateColdBooting), 128, f.nodeID, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertDeploymentScanResult(ctx, f.dep.ID, []byte(`{"matches":[]}`), "complete"); err != nil {
+		t.Fatal(err)
+	}
+	scanned, err := s.DeploymentByID(ctx, f.dep.ID)
+	if err != nil || scanned.ScanStatus != "complete" {
+		t.Fatalf("scan not recorded: %+v %v", scanned, err)
+	}
+	after, err := s.CreateInstance(ctx, f.app.ID, f.dep.ID, string(StateColdBooting), 128, f.nodeID, uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		ins  Instance
+		dep  Deployment
+	}{
+		{"captured before the scan, scheduler read after", before, scanned},
+		{"captured before the scan, scheduler read before", before, f.dep},
+		{"captured after the scan, scheduler read before", after, f.dep},
+	} {
+		if err := CheckInstanceApplicationStandardAdmission(ctx, s, tc.ins.ID, f.app, f.owner.Account, tc.dep); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+	}
+	parked := scanned
+	parked.ParkedReason = "scan regressed"
+	if err := CheckInstanceApplicationStandardAdmission(ctx, s, before.ID, f.app, f.owner.Account, parked); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+		t.Fatalf("a changed park reason was accepted: %v", err)
+	}
+	if _, err := s.PublishInstanceRuntime(ctx, before.ID, string(StateColdBooting), "scan-boot", "10.100.0.8", 20008); err != nil {
+		t.Fatalf("a scan during boot blocked publication: %v", err)
+	}
+}
+
 func TestMemInstanceApplicationStandardLoggingChangeDuringBoot(t *testing.T) {
 	standardRuntimeLoggingChangeDuringBoot(t, NewMemStore())
 }

@@ -3,15 +3,19 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * An explicitly exported file. Its compact JSON metadata and base64 contents share the execution output budget.
+ * An explicitly exported file. Inline base64 content shares the JSON output budget. Stored artifacts contain a file_id, null content, and independently budgeted bytes accessible through authenticated file endpoints.
  */
 export type ExecutionArtifact = {
+  /**
+   * Authenticated retained file locator for stored artifacts.
+   */
+  file_id?: string;
   name: string;
   size_bytes: number;
   sha256: string;
   /**
    * File bytes encoded as base64.
    */
-  content: string;
+  content: string | null;
 };
 

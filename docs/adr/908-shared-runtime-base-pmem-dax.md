@@ -237,3 +237,29 @@ below what the test node can resolve.
 Follow-ups:
 
 - **Metrics:** none yet for pmem boots or for fallbacks to virtio-blk.
+
+## Hosts with fewer than 40 physical address bits (amended 2026-11-20)
+
+Firecracker places a virtio-pmem device past its 64-bit MMIO window, which
+ends at 512 GiB (2^39), and KVM refuses a guest memory region above the
+host CPU's MAXPHYADDR. On a host with 39 or fewer physical address bits,
+every boot with a pmem base fails with `Cannot create pmem device: Cannot
+set the memory regions: Invalid argument (os error 22)`. The OVH compute
+nodes (Intel Xeon E-2388G, `address sizes: 39 bits physical`) hit this on
+every cold boot of an app with a pmem base, and those apps stayed down.
+
+- vmmd now keeps pmem on only when `/proc/cpuinfo` reports at least 40
+  physical address bits (the smallest value across CPUs). Otherwise it
+  logs `vmmd: pmem base disabled; app bases boot from virtio-blk` with the
+  reason and boots every base from virtio-blk, as with `pmem_base_dir =
+  "off"`. A host whose width cannot be read keeps pmem, as before.
+- The other gates (Firecracker 1.16+, no native process recovery) log their
+  reason the same way.
+- pmem is the only device vmmd configures that Firecracker places past the
+  64-bit MMIO window: drives, the network interface, vsock, entropy and the
+  balloon sit in the 32-bit MMIO range. The virtio-mem hotplug of ADR-909 is
+  not implemented in vmmd today; when it is, check where Firecracker places
+  its hotplug region, and apply this gate if that is past the window too.
+- The bhs-2 and bhs-3 nodes ran with `FAAS_PMEM_BASE_DIR=off` in
+  `/etc/systemd/system/faas-vmmd.service.d/zz-faas-pmem-off.conf`. That
+  drop-in can be removed once a release with this gate is rolled out there.

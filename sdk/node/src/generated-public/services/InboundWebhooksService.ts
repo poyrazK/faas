@@ -5,7 +5,9 @@
 import type { CreateInboundWebhookEndpointRequest } from '../models/CreateInboundWebhookEndpointRequest.js';
 import type { InboundWebhookEndpointResponse } from '../models/InboundWebhookEndpointResponse.js';
 import type { InboundWebhookReceiptResponse } from '../models/InboundWebhookReceiptResponse.js';
+import type { PutWebhookWorkflowBindingRequest } from '../models/PutWebhookWorkflowBindingRequest.js';
 import type { UpdateInboundWebhookEndpointRequest } from '../models/UpdateInboundWebhookEndpointRequest.js';
+import type { WebhookWorkflowBindingResponse } from '../models/WebhookWorkflowBindingResponse.js';
 import type { WebhookWorkflowReceiptResponse } from '../models/WebhookWorkflowReceiptResponse.js';
 import type { WorkflowCallbackWebhookReceiptResponse } from '../models/WorkflowCallbackWebhookReceiptResponse.js';
 import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
@@ -205,6 +207,212 @@ export class InboundWebhooksService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Route a verified Stripe endpoint to a published stored workflow.
+   * One binding per endpoint, owned by the same app. expected_version is zero
+   * for creation and the returned version for updates. take_over_delivery
+   * must be true: bound endpoints start stored workflows instead of app delivery.
+   * Callback and managed-operation bindings must be removed first.
+   * Event types accept edge wildcards; filters use the existing event language.
+   *
+   * @returns WebhookWorkflowBindingResponse Saved binding with its new revision.
+   * @throws ApiError
+   */
+  public static putWebhookWorkflowBinding({
+    slug,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Endpoint whose future verified events use this stored workflow binding.
+     */
+    id: string,
+    /**
+     * Explicit delivery takeover and published stored workflow selection.
+     */
+    requestBody: PutWebhookWorkflowBindingRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<WebhookWorkflowBindingResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-binding',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `Plan does not allow workflows.`,
+        404: `code: not_found`,
+        409: `Binding revision or routing mode conflict (webhook_workflow_conflict).`,
+        413: `Request body exceeds 64 KiB.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect an endpoint stored workflow binding.
+   * Returns the current event selection and revision for this endpoint.
+   * @returns WebhookWorkflowBindingResponse Current binding.
+   * @throws ApiError
+   */
+  public static getWebhookWorkflowBinding({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Endpoint whose future verified events use this stored workflow binding.
+     */
+    id: string,
+  }): CancelablePromise<WebhookWorkflowBindingResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-binding',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Restore ordinary delivery for future webhook events.
+   * Already accepted receipts retain their captured routing decision.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteWebhookWorkflowBinding({
+    slug,
+    id,
+    expectedVersion,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Endpoint whose future verified events use this stored workflow binding.
+     */
+    id: string,
+    /**
+     * Current binding revision returned by a previous read or update.
+     */
+    expectedVersion: number,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-binding',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'expected_version': expectedVersion,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Binding revision conflict (webhook_workflow_conflict).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a verified provider event and its stored workflow admission.
+   * Returns the captured decision and scheduler progress for a retained provider event.
+   * @returns WebhookWorkflowReceiptResponse Receipt, routing status and admitted run ID when retained.
+   * @throws ApiError
+   */
+  public static getWebhookWorkflowReceipt({
+    slug,
+    id,
+    eventId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Endpoint that accepted the provider event being inspected.
+     */
+    id: string,
+    /**
+     * Stripe event ID returned in the verified provider receipt.
+     */
+    eventId: string,
+  }): CancelablePromise<WebhookWorkflowReceiptResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/inbound-webhooks/{id}/workflow-receipts/{event_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'event_id': eventId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

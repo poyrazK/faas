@@ -51,6 +51,21 @@ func TestRenderProjectEndpointsListsURLsAndAuth(t *testing.T) {
 	}
 }
 
+// R6-3 (deploy-path probe 2026-11-21): a project whose apps are all internal
+// printed "Endpoints:" with no URL and no way to make one public.
+func TestRenderProjectEndpointsSaysHowToPublishWhenAllInternal(t *testing.T) {
+	apps := fakeProjectAppReader{
+		"r6-web": {Slug: "r6-web", Visibility: string(api.AppVisibilityInternal)},
+		"r6-api": {Slug: "r6-api", Visibility: string(api.AppVisibilityInternal)},
+	}
+	apply := api.ApplyResponse{Apps: []api.ApplyResponseApp{{Slug: "r6-web"}, {Slug: "r6-api"}}}
+	var out bytes.Buffer
+	renderProjectEndpoints(context.Background(), &out, apps, apply)
+	if got := out.String(); !strings.Contains(got, "no app has a public URL; to give one a public URL: gregale app r6-web --visibility public") {
+		t.Fatalf("output:\n%s", got)
+	}
+}
+
 type fakePlainVariables struct{ resp api.AppEnvListResponse }
 
 func (f fakePlainVariables) GetAppsSlugEnvValues(context.Context, string, string) (api.AppEnvListResponse, error) {
@@ -101,5 +116,37 @@ func TestLinkCheckoutAfterProjectDeploy(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "link other-project") {
 		t.Fatalf("missing relink hint: %q", out.String())
+	}
+}
+
+type fakeEnvironmentEndpoints struct {
+	fakeProjectAppReader
+	state api.ProjectEnvironmentStateResponse
+}
+
+func (f fakeEnvironmentEndpoints) GetProjectEnvironmentState(context.Context, string, string) (api.ProjectEnvironmentStateResponse, error) {
+	return f.state, nil
+}
+
+// prod 2026-11-19: `deploy --project --env staging` listed bh3-web's
+// production URL under Endpoints; staging answers on its own URL.
+func TestRenderProjectEndpointsForNamesTheEnvironmentURLs(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "")
+	client := fakeEnvironmentEndpoints{
+		fakeProjectAppReader: fakeProjectAppReader{"bh3-web": {Slug: "bh3-web"}},
+		state: api.ProjectEnvironmentStateResponse{Workloads: []api.ProjectEnvironmentStateWorkloadResponse{
+			{WorkloadSlug: "bh3-web", Release: api.ProjectEnvironmentReleaseWorkloadResponse{URL: "https://env-abc-web.gregale.dev"}},
+		}},
+	}
+	apply := api.ApplyResponse{Apps: []api.ApplyResponseApp{{Slug: "bh3-web"}}}
+	var out bytes.Buffer
+	renderProjectEndpointsFor(context.Background(), &out, client, apply, "proj", "staging")
+	if got := out.String(); !strings.Contains(got, "Endpoints (environment staging):") || !strings.Contains(got, "https://env-abc-web.gregale.dev") || strings.Contains(got, "https://bh3-web.gregale.dev") {
+		t.Fatalf("staging endpoints = %q; want the environment URL, not production's", got)
+	}
+	out.Reset()
+	renderProjectEndpointsFor(context.Background(), &out, client, apply, "proj", "")
+	if got := out.String(); !strings.Contains(got, "https://bh3-web.gregale.dev") {
+		t.Fatalf("production endpoints = %q; want the app URL", got)
 	}
 }

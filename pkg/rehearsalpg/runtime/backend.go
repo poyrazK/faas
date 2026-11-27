@@ -172,7 +172,7 @@ func (p *Postgres) Provision(ctx context.Context, r rehearsalpg.Resource, fixtur
 }
 
 func capture(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec) ([]rehearsalpg.Snapshot, error) {
-	out, _, err := captureInventory(ctx, c, spec, false)
+	out, _, err := captureInventory(ctx, c, rehearsalpg.Resource{Spec: spec}, false)
 	return out, err
 }
 
@@ -180,7 +180,7 @@ func capture(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec) ([]rehears
 // withSchema, the database's schema inventory, in one read-only snapshot.
 // Undeclared relations and columns no longer make capture fail: the
 // inventory and undeclared-table row counts carry them (ADR-20261020180000).
-func captureInventory(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec, withSchema bool) ([]rehearsalpg.Snapshot, []rehearsalpg.SchemaObject, error) {
+func captureInventory(ctx context.Context, c *pgx.Conn, r rehearsalpg.Resource, withSchema bool) ([]rehearsalpg.Snapshot, []rehearsalpg.SchemaObject, error) {
 	tx, e := c.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if e != nil {
 		return nil, nil, ErrFixture
@@ -190,6 +190,10 @@ func captureInventory(ctx context.Context, c *pgx.Conn, spec rehearsalpg.Spec, w
 	if q.ConfigureCapture(ctx, tx) != nil {
 		return nil, nil, ErrFixture
 	}
+	if err := verifyTaskParticipants(ctx, tx, q, r); err != nil {
+		return nil, nil, err
+	}
+	spec := r.Spec
 	extensions, e := q.SupportedExtensions(ctx, tx)
 	if e != nil || !extensions.Valid || !extensions.Bool {
 		return nil, nil, ErrFixture
@@ -392,7 +396,7 @@ func (p *Postgres) fenceAndCapture(ctx context.Context, r rehearsalpg.Resource, 
 	if pending > 0 {
 		return nil, nil, ErrPending
 	}
-	return captureInventory(ctx, data, r.Spec, withSchema)
+	return captureInventory(ctx, data, r, withSchema)
 }
 
 func (p *Postgres) LockWait(ctx context.Context, r rehearsalpg.Resource) (int64, error) {

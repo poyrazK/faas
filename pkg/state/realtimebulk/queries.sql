@@ -278,13 +278,22 @@ DELETE FROM managed_realtime_replay_jobs WHERE group_id=sqlc.arg(group_id)::uuid
 
 -- name: RecordRealtimeUsage :execrows
 -- Cumulative per-process values only grow, so taking the larger value makes
--- repeated and out-of-order reports harmless. Unknown endpoints record nothing.
+-- repeated and out-of-order reports harmless. An endpoint deleted after its
+-- node last reported keeps the owner its earlier usage rows recorded, so the
+-- bytes it delivered before deletion are still metered (ADR-20261121231500).
+-- Endpoints never seen record nothing.
 INSERT INTO realtime_usage_hours AS t (endpoint_id,hour,node_name,incarnation,account_id,app_id,minute_peak_connections,
  connection_seconds,delivered_messages,delivered_bytes,received_messages,received_bytes,reported_at)
 SELECT e.id,sqlc.arg(hour)::timestamptz,sqlc.arg(node_name)::text,sqlc.arg(incarnation)::uuid,e.account_id,e.app_id,
  sqlc.arg(minute_peak_connections)::integer[],sqlc.arg(connection_seconds)::bigint,sqlc.arg(delivered_messages)::bigint,
  sqlc.arg(delivered_bytes)::bigint,sqlc.arg(received_messages)::bigint,sqlc.arg(received_bytes)::bigint,clock_timestamp()
-FROM managed_realtime_endpoints e WHERE e.id=sqlc.arg(endpoint_id)::uuid
+FROM (
+ (SELECT me.id,me.account_id,me.app_id FROM managed_realtime_endpoints me WHERE me.id=sqlc.arg(endpoint_id)::uuid)
+ UNION ALL
+ (SELECT h.endpoint_id,h.account_id,h.app_id FROM realtime_usage_hours h WHERE h.endpoint_id=sqlc.arg(endpoint_id)::uuid
+   AND NOT EXISTS (SELECT 1 FROM managed_realtime_endpoints live WHERE live.id=sqlc.arg(endpoint_id)::uuid)
+   ORDER BY h.hour DESC LIMIT 1)
+) e
 ON CONFLICT (endpoint_id,hour,node_name,incarnation) DO UPDATE SET
  minute_peak_connections=ARRAY(SELECT greatest(t.minute_peak_connections[g.i],excluded.minute_peak_connections[g.i]) FROM generate_series(1,60) AS g(i) ORDER BY g.i),
  connection_seconds=greatest(t.connection_seconds,excluded.connection_seconds),

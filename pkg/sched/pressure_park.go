@@ -218,7 +218,16 @@ func (e *Engine) parkForCapacity(ctx context.Context, appID, trigger string, err
 // requested is the deployment the refused admission was for; it and every
 // deployment with traffic, its own floor, or a non-live status (a rollout
 // candidate) keep their instances. It reports whether it parked something.
-func (e *Engine) parkZeroTrafficSibling(ctx context.Context, appID, requested string) bool {
+//
+// smoke marks the candidate's deployment smoke. It may park a zero-traffic
+// instance that is still busy: a manual or MCP promotion leaves the old
+// release live at 0% (an instant traffic flip back stays possible), and its
+// instance kept answering long-lived sessions and exact-revision probes, so
+// it never went idle and every smoke wake of the next release was refused
+// until verification gave up (prod 2026-11-21, 3 of ~10 MCP redeploys failed
+// "deployment_verification_unavailable"). That instance takes no weighted
+// traffic, and a refused smoke fails the whole deploy.
+func (e *Engine) parkZeroTrafficSibling(ctx context.Context, appID, requested string, smoke bool) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -249,7 +258,7 @@ func (e *Engine) parkZeroTrafficSibling(ctx context.Context, appID, requested st
 		if mode := state.InstanceMode(ins.Mode); mode != "" && mode != state.InstanceModeNormal {
 			continue
 		}
-		if now.Sub(ins.StartedAt) < MinInstanceAge || now.Sub(ins.LastRequestAt) < PressureParkIdle {
+		if now.Sub(ins.StartedAt) < MinInstanceAge || (!smoke && now.Sub(ins.LastRequestAt) < PressureParkIdle) {
 			continue
 		}
 		if routesTraffic(ins.DeploymentID) {

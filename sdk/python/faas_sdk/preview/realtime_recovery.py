@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from .realtime_backpressure import RealtimeProcessingStatus
 from .realtime_catch_up import RealtimeCatchUpTracker, _sequence
-from .realtime_connection_status import RealtimeConnectionStatusTracker
+from .realtime_connection_status import RealtimeConnectionStatus, RealtimeConnectionStatusTracker
 from .realtime_drain import RealtimeDrainResult, _RecoveryDrained
 from .realtime_filters import _filter_fingerprint
 from .realtime_subscriptions import RealtimeSubscriptionTracker, _identity
@@ -33,6 +33,11 @@ class RealtimeRecoveryError(Exception):
     def __init__(self, reason: str):
         super().__init__(f"Realtime recovery stopped: {reason}")
         self.reason = reason
+
+
+class _RealtimeSubscriptionDenied(RealtimeRecoveryError):
+    def __init__(self) -> None:
+        super().__init__("subscription_rejected")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -92,6 +97,7 @@ class RealtimeRecoveryCoordinator:
         cursor_filter_fingerprint: str | None = None,
         timeline: RealtimeIncidentTimeline | None = None,
         on_ready: Callable[[int], None] | None = None,
+        on_connection_change: Callable[[RealtimeConnectionStatus], None] | None = None,
         initial_delay_seconds: float = 0.5,
         max_delay_seconds: float = 30,
         max_retries: int = 20,
@@ -104,7 +110,7 @@ class RealtimeRecoveryCoordinator:
         for callback in (connect, process):
             if not callable(callback):
                 raise ValueError("Recovery callbacks must be callable")
-        if any(value is not None and not callable(value) for value in (load_snapshot, on_ready)):
+        if any(value is not None and not callable(value) for value in (load_snapshot, on_ready, on_connection_change)):
             raise ValueError("Optional recovery callbacks must be callable")
         for value in (initial_delay_seconds, max_delay_seconds, operation_timeout_seconds):
             if type(value) not in (int, float) or not math.isfinite(value) or not 0.1 <= value <= 86400:
@@ -132,9 +138,14 @@ class RealtimeRecoveryCoordinator:
         self._run_cancelled = False
         self._cleanup_failed = False
         self._drain_task: asyncio.Task[RealtimeDrainResult] | None = None
-        self.connection = RealtimeConnectionStatusTracker(
-            on_change=timeline.record_connection if timeline else lambda _: None
-        )
+
+        def connection_changed(status: RealtimeConnectionStatus) -> None:
+            if timeline is not None:
+                timeline.record_connection(status)
+            if on_connection_change is not None:
+                on_connection_change(status)
+
+        self.connection = RealtimeConnectionStatusTracker(on_change=connection_changed)
         self.subscriptions = RealtimeSubscriptionTracker(
             on_change=timeline.record_subscriptions if timeline else lambda _: None
         )

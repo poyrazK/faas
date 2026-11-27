@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -94,4 +95,16 @@ func truncatePlatformAlertError(s string) string {
 		return s[:512]
 	}
 	return s
+}
+
+// PlatformFailedBeforeApp reports an invocation error the scheduler wrote
+// before the app ran: the wake, the version pin or binding the instance
+// failed. PauseCronIfFailing does not count such runs as the app failing.
+func PlatformFailedBeforeApp(lastError string) bool {
+	for _, prefix := range []string{"wake: ", "version pin: ", "bind operation instance: "} {
+		if strings.HasPrefix(lastError, prefix) {
+			return true
+		}
+	}
+	return false
 }

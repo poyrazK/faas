@@ -75,7 +75,7 @@ capabilities import `preview` and use a `preview.Client`.
 
 ## Quick start
 
-Set `FAAS_TOKEN` to your existing credential. This request only reads your
+Set `GREGALE_TOKEN` to your existing credential. This request only reads your
 account; no application needs to exist yet.
 
 <!-- sdk-install-quickstart:start -->
@@ -92,11 +92,11 @@ import (
 )
 
 func main() {
-    baseURL := os.Getenv("FAAS_API")
+    baseURL := os.Getenv("GREGALE_API_URL")
     if baseURL == "" {
         baseURL = "https://api.gregale.dev"
     }
-    c, err := faas.NewClient(baseURL, os.Getenv("FAAS_TOKEN"))
+    c, err := faas.NewClient(baseURL, os.Getenv("GREGALE_TOKEN"))
     if err != nil {
         log.Fatal(err)
     }
@@ -1719,3 +1719,10 @@ current recovery forwards `Environment` and rejects unknown retained fields.
 Existing outbox installations must explicitly apply `EventOutboxPayloadSchema`
 in an application migration transaction to permit payload erasure on confirmed
 publication. See [cross-language outbox usage](../../docs/sdk-event-outbox.md).
+
+## Starters, Deploy button & Community
+
+- [Gregale Templates & Starters](https://gregale.dev/templates) — browse all 11 official starters, including the Go remote MCP server ([mcp-server-go](https://github.com/gregale-dev/mcp-server-go)).
+- [One-click Deploy on Gregale](https://gregale.dev/deploy) — launch any public GitHub repository (`https://gregale.dev/deploy?repo=https://github.com/OWNER/REPO`) or grab a README badge.
+- [Gregale SDK docs](https://gregale.dev/docs/sdks#go) — installation, authentication, and typed API client guides.
+- [Community Discussions](https://github.com/gregale-dev/community/discussions) — ask questions, share workflows, and troubleshoot with other developers.

@@ -26,6 +26,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -142,6 +143,106 @@ func TestFetchAlertMetricQueriesOnlyRequestedSeries(t *testing.T) {
 			value, source := appmetrics.FetchAlertMetric(context.Background(), stub, slog.Default(), "app-1", "5m", tc.metric)
 			if calls != 1 || value != 7 || source != appmetrics.SourcePrometheus {
 				t.Fatalf("calls=%d value=%v source=%q, want one query, 7, prometheus", calls, value, source)
+			}
+		})
+	}
+}
+
+type stubAnomalyPromQL struct {
+	stubPromQL
+	instant func(string, time.Time) ([]pkgpromql.VectorSample, error)
+	history func(string, string, string, string) ([]pkgpromql.QueryRangeSeries, error)
+}
+
+func (s *stubAnomalyPromQL) QueryVectorStrictAt(_ context.Context, query string, at time.Time) ([]pkgpromql.VectorSample, error) {
+	return s.instant(query, at)
+}
+
+func (s *stubAnomalyPromQL) QueryRangeStrict(_ context.Context, query, start, end, step string) ([]pkgpromql.QueryRangeSeries, error) {
+	return s.history(query, start, end, step)
+}
+
+func TestFetchAnomalyAlertMetricUsesEligibleSamples(t *testing.T) {
+	at := time.Date(2026, 11, 20, 9, 15, 17, 0, time.UTC)
+	for _, tc := range []struct {
+		metric string
+		want   []string
+	}{
+		{"error_rate_pct", []string{`class=~"2xx|5xx"`, `increase(gateway_capacity_refusals_total`}},
+		{"latency_p95_ms", []string{`class="2xx"`}},
+		{"latency_p99_ms", []string{`class="2xx"`}},
+		{"cold_start_pct", []string{`increase(gateway_request_duration_seconds_count{app="app-1"}`}},
+	} {
+		t.Run(tc.metric, func(t *testing.T) {
+			calls := 0
+			stub := &stubAnomalyPromQL{instant: func(query string, gotAt time.Time) ([]pkgpromql.VectorSample, error) {
+				calls++
+				if !gotAt.Equal(at) {
+					t.Errorf("query at %v, want %v", gotAt, at)
+				}
+				want := append([]string{`count_over_time(`, `timestamp(`, `[5m]`, `time() - 60`}, tc.want...)
+				for _, fragment := range want {
+					if !strings.Contains(query, fragment) {
+						t.Errorf("query %q missing %q", query, fragment)
+					}
+				}
+				return []pkgpromql.VectorSample{{Value: 49}}, nil
+			}}
+			_, source, evidence := appmetrics.FetchAnomalyAlertMetric(t.Context(), stub, nil, "app-1", "", "5m", tc.metric, at)
+			if calls != 1 || !appmetrics.IsInsufficientSource(source) ||
+				evidence.Reason != api.AlertAnomalyInsufficientTraffic || evidence.Count != 49 || evidence.RequiredCount != 50 {
+				t.Fatalf("calls=%d source=%q evidence=%+v, want one sample query and 49 of 50 eligible requests", calls, source, evidence)
+			}
+		})
+	}
+}
+
+func TestFetchAnomalyAlertMetricPinsBothReads(t *testing.T) {
+	at := time.Date(2026, 11, 20, 9, 15, 17, 0, time.UTC)
+	calls := 0
+	stub := &stubAnomalyPromQL{instant: func(query string, gotAt time.Time) ([]pkgpromql.VectorSample, error) {
+		calls++
+		if !gotAt.Equal(at) || !strings.Contains(query, "[15m]") {
+			t.Errorf("query %q at %v, want a 15m window ending at %v", query, gotAt, at)
+		}
+		if strings.Contains(query, "count_over_time(") {
+			return []pkgpromql.VectorSample{{Value: 50}}, nil
+		}
+		return []pkgpromql.VectorSample{{Value: 3}}, nil
+	}}
+	value, source, _ := appmetrics.FetchAnomalyAlertMetric(t.Context(), stub, nil, "app-1", "", "15m", "error_rate_pct", at)
+	if calls != 2 || source != appmetrics.SourcePrometheus || value != 3 {
+		t.Fatalf("calls=%d source=%q value=%v, want two reads and 3%%", calls, source, value)
+	}
+}
+
+func TestFetchAnomalyAlertHistoryRequiresAlignedSamples(t *testing.T) {
+	at := time.Date(2026, 11, 20, 9, 15, 17, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		shift int64
+	}{
+		{"aligned", 0}, {"one-second drift", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubAnomalyPromQL{history: func(query, start, end, step string) ([]pkgpromql.QueryRangeSeries, error) {
+				if start != strconv.FormatInt(at.AddDate(0, 0, -7).Unix(), 10) || end != strconv.FormatInt(at.AddDate(0, 0, -1).Unix(), 10) || step != "1d" || !strings.Contains(query, "[15m]") {
+					t.Fatalf("query=%q start=%s end=%s step=%s, want seven aligned 15m windows", query, start, end, step)
+				}
+				var values []pkgpromql.QueryRangeSample
+				for days := 7; days > 0; days-- {
+					values = append(values, pkgpromql.QueryRangeSample{Timestamp: at.AddDate(0, 0, -days).Unix(), Value: 100})
+				}
+				values[2].Timestamp += tc.shift
+				values[5].Value = -1
+				return []pkgpromql.QueryRangeSeries{{Values: values}}, nil
+			}}
+			values, qualified, source := appmetrics.FetchAnomalyAlertHistory(t.Context(), stub, nil, "app-1", "", "15m", "request_count", at)
+			if tc.shift == 0 && (source != appmetrics.SourcePrometheus || len(values) != 6 || qualified != 6) {
+				t.Fatalf("values=%v source=%q, want only six windows with coverage", values, source)
+			}
+			if tc.shift != 0 && (!appmetrics.IsDegradedSource(source) || len(values) != 0 || qualified != 0) {
+				t.Fatalf("values=%v source=%q, want degraded for a misaligned history", values, source)
 			}
 		})
 	}
@@ -369,8 +470,12 @@ func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
 	if src != appmetrics.SourcePrometheus {
 		t.Fatalf("src = %q, want %q", src, appmetrics.SourcePrometheus)
 	}
-	if n := histogramQueries.Load(); n != 4 {
-		t.Fatalf("histogram queries = %d, want 4", n)
+	// p50, p95, p99, the fleet wake p95 and the app's own wake p95.
+	if n := histogramQueries.Load(); n != 5 {
+		t.Fatalf("histogram queries = %d, want 5", n)
+	}
+	if resp.AppWakeP95MS == nil || *resp.AppWakeP95MS != 0 {
+		t.Fatalf("idle app wake p95 = %v, want 0", resp.AppWakeP95MS)
 	}
 	if resp.LatencyP50MS != 0 || resp.LatencyP95MS != 0 || resp.LatencyP99MS != 0 || resp.WakeP95MS != 0 {
 		t.Fatalf("idle histogram values must be zero: %+v", resp)

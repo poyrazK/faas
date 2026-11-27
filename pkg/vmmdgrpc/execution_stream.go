@@ -15,6 +15,15 @@ import (
 // closes with one terminal response. The unary ExecuteExecution RPC remains
 // the compatibility path for older schedulers.
 func (s *Server) ExecuteExecutionStream(req *vmmdpb.ExecuteExecutionRequest, stream vmmdpb.Vmmd_ExecuteExecutionStreamServer) error {
+	return s.executeExecutionStream(req, stream, false)
+}
+
+type executionEventStream interface {
+	Context() context.Context
+	Send(*vmmdpb.ExecuteExecutionEvent) error
+}
+
+func (s *Server) executeExecutionStream(req *vmmdpb.ExecuteExecutionRequest, stream executionEventStream, files bool) error {
 	const op = "ExecuteExecutionStream"
 	start := time.Now()
 	var sendErr error
@@ -33,6 +42,12 @@ func (s *Server) ExecuteExecutionStream(req *vmmdpb.ExecuteExecutionRequest, str
 		return grpcerr.ToStatus(toProblem(err))
 	}
 
+	if wireReq.UsesFileTransport() && !files {
+		return status.Error(codes.InvalidArgument, "file execution requires ExecuteExecutionFiles")
+	}
+	if err := s.configureExecutionFiles(req.GetInstance(), &wireReq); err != nil {
+		return err
+	}
 	receive := func(ctx context.Context, outputStream string, chunk []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err

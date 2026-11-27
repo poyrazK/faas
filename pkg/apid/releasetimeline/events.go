@@ -115,6 +115,7 @@ func (b *builder) approval(s *api.ReleaseApprovalStatus) {
 // auditData is the subset of audit payloads the timeline reads.
 type auditData struct {
 	Action        string               `json:"action"`
+	Phase         string               `json:"phase"`
 	Reason        string               `json:"reason"`
 	FromPercent   *int                 `json:"from_percent"`
 	ToPercent     *int                 `json:"to_percent"`
@@ -213,6 +214,12 @@ func (b *builder) describe(kind string, data auditData) (string, string, *int) {
 	case "deploy.rollout_aborted":
 		return api.ReleaseEventAborted, "Rollout aborted: " + why(data, "the rollout was stopped"), nil
 	case "deploy.rolled_back":
+		if data.Phase == "readiness_requested" || data.Action == "abort_requested" {
+			return api.ReleaseEventRollbackRequested, "Rollback requested" + suffix(data.Reason), nil
+		}
+		if data.Phase == "failed" {
+			return api.ReleaseEventNote, "Rollback failed", nil
+		}
 		return api.ReleaseEventRolledBack, "Rolled back: " + why(data, "traffic returned to the previous release"), nil
 	case "deploy.rollback_requested":
 		return api.ReleaseEventRollbackRequested, "Rollback requested" + suffix(data.Reason), nil

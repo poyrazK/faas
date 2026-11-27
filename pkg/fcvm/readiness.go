@@ -15,11 +15,13 @@ import (
 // never destroys or restarts the instance.
 type ReadinessProbeConfig struct {
 	// Captured under the live-map lock; a retired loop cannot borrow a new VM identity.
-	WakeID, NodeID   string
-	Path             string
-	GRPC             bool
-	GRPCService      string
-	Port             int
+	WakeID, NodeID string
+	Path           string
+	GRPC           bool
+	GRPCService    string
+	Port           int
+	// Host (ADR-20261119140000): see LivenessProbeConfig.Host.
+	Host             string
 	PeriodSeconds    int
 	TimeoutSeconds   int
 	FailureThreshold int
@@ -109,6 +111,7 @@ func (m *Manager) startReadinessLoop(ctx context.Context, instance string, slot 
 	if inst.Port > 0 && inst.Port <= 65535 {
 		cfg.Port = inst.Port
 	}
+	cfg.Host = inst.ProbeHost
 	if m.readinessLoopCancels == nil {
 		m.readinessLoopCancels = make(map[string]context.CancelFunc)
 	}

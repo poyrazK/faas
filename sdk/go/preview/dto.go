@@ -435,3 +435,90 @@ func AcknowledgeEventDeliveryHealthAlerts(saved EventDeliveryHealthCheckpoint, a
 func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options EventDeliveryHealthSLOOptions) ([]EventDeliveryHealthSLOObservation, error) {
 	return api.EvaluateEventConsumerDeliverySLO(h, options)
 }
+
+// Stored file and standalone contract wire types.
+type ExecutionFileInput = api.ExecutionFileInput
+type ExecutionFileResponse = api.ExecutionFileResponse
+type CreateExecutionFileRequest = api.CreateExecutionFileRequest
+type ExecutionFileLimits = api.ExecutionFileLimits
+type ExecutionArtifactStorage = api.ExecutionArtifactStorage
+type ExecutionResultValidation = api.ExecutionResultValidation
+
+const (
+	ExecutionArtifactInline = api.ExecutionArtifactInline
+	ExecutionArtifactStored = api.ExecutionArtifactStored
+)
+
+type ExecutionClass = api.ExecutionClass
+
+const (
+	ExecutionClassStandard = api.ExecutionClassStandard
+	ExecutionClassExtended = api.ExecutionClassExtended
+)
+
+type CreateExecutionEnvironmentRequest = api.CreateExecutionEnvironmentRequest
+type ExecutionEnvironmentResponse = api.ExecutionEnvironmentResponse
+
+type ExecutionClassCapability = api.ExecutionClassCapability
+
+type ExecutionEnvironmentLimits = api.ExecutionEnvironmentLimits
+
+type ExecutionEnvironmentEvent = api.ExecutionEnvironmentEvent
+type ExecutionEnvironmentEventsResponse = api.ExecutionEnvironmentEventsResponse
+type ExecutionFinishedWebhookPayload = api.ExecutionFinishedWebhookPayload
+
+type PublishExecutionTaskRequest = api.PublishExecutionTaskRequest
+type ExecutionTaskRef = api.ExecutionTaskRef
+type ExecutionTaskVersionResponse = api.ExecutionTaskVersionResponse
+type ExecutionTaskListResponse = api.ExecutionTaskListResponse
+type InvokeExecutionTaskRequest = api.InvokeExecutionTaskRequest
+
+// Customer controls and payload-free invocation history.
+type RunAttribution = api.RunAttribution
+type RunControlCapabilities = api.RunControlCapabilities
+type RunBudgetLimits = api.RunBudgetLimits
+type SetRunBudgetRequest = api.SetRunBudgetRequest
+type RunBudgetUsage = api.RunBudgetUsage
+type RunBudgetAlert = api.RunBudgetAlert
+type RunBudgetPolicy = api.RunBudgetPolicy
+type SetRunAttributionBindingRequest = api.SetRunAttributionBindingRequest
+type RunAttributionBinding = api.RunAttributionBinding
+type RunHistoryFilter = api.RunHistoryFilter
+type RunHistoryEntry = api.RunHistoryEntry
+type RunHistoryResponse = api.RunHistoryResponse
+
+type RunBudgetRefusal = api.RunBudgetRefusal
+
+type CreateManagedExecutionWorkflowRequest = api.CreateManagedExecutionWorkflowRequest
+type CreateManagedExecutionWorkflowStep = api.CreateManagedExecutionWorkflowStep
+type ManagedExecutionWorkflowArtifactInput = api.ManagedExecutionWorkflowArtifactInput
+type ManagedExecutionWorkflowStatus = api.ManagedExecutionWorkflowStatus
+type ManagedExecutionWorkflowResponse = api.ManagedExecutionWorkflowResponse
+type ExecutionPipelineOptions = api.ExecutionPipelineOptions
+type ExecutionRetryPolicy = api.ExecutionRetryPolicy
+type ExecutionTaskBatch = api.ExecutionTaskBatch
+type ExecutionTaskBatchItem = api.ExecutionTaskBatchItem
+type ExecutionPipelineResponse = api.ExecutionPipelineResponse
+type ExecutionPipelineStepResponse = api.ExecutionPipelineStepResponse
+type ExecutionPipelineAttemptResponse = api.ExecutionPipelineAttemptResponse
+
+type ExecutionPipelineCompletion = api.ExecutionPipelineCompletion
+type ExecutionPipelineCompletedStep = api.ExecutionPipelineCompletedStep
+type ExecutionPipelineCompletedAttempt = api.ExecutionPipelineCompletedAttempt
+type ExecutionPipelineArtifactRef = api.ExecutionPipelineArtifactRef
+type ExecutionPipelineFinishedWebhookPayload = api.ExecutionPipelineFinishedWebhookPayload
+type ExecutionPipelineReceipt = api.ExecutionPipelineReceipt
+
+type ExecutionPipelineProgress = api.ExecutionPipelineProgress
+
+type ExecutionPipelineStepProgress = api.ExecutionPipelineStepProgress
+
+type ExecutionPipelineEvent = api.ExecutionPipelineEvent
+
+type ExecutionPipelineEventsResponse = api.ExecutionPipelineEventsResponse
+
+type RerunExecutionPipelineRequest = api.RerunExecutionPipelineRequest
+
+type ExecutionPipelineRerun = api.ExecutionPipelineRerun
+
+type ExecutionPipelineReusedStep = api.ExecutionPipelineReusedStep

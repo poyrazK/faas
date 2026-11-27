@@ -9,7 +9,8 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // provisioning commands and uploads run the active release's gregale CLI as
 // subprocesses with an empty private home, so the unit needs only a private
 // /tmp, and a CLI release does not restart it. The default OAuth callbacks
-// are the published Claude, ChatGPT and Google Antigravity ones plus loopback;
+// are the published Claude, ChatGPT, Google Antigravity and Glama ones plus
+// loopback;
 // an operator replaces ExecStart in a drop-in to change them.
 // Metrics are on 127.0.0.1:9110 (the flag's default). The connection admin
 // socket sits in a 0700 runtime directory the service user owns: operators
@@ -31,7 +32,23 @@ func UnitMcpBridge() daemonunit.Unit {
 			` --oauth-redirect-uri https://claude.ai/api/mcp/auth_callback --oauth-redirect-uri https://claude.com/api/mcp/auth_callback` +
 			` --oauth-redirect-uri https://chatgpt.com/connector_platform_oauth_redirect` +
 			` --oauth-redirect-uri https://antigravity.google/oauth-callback` +
+			// Glama's connector (its health checks, tool index and users'
+			// connections) and its MCP Inspector, as their published client
+			// metadata documents list them.
+			` --oauth-redirect-uri https://glama.ai/api/app/mcp/oauth/callback` +
+			` --oauth-redirect-uri https://glama.ai/mcp/inspector/oauth/callback` +
 			` --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback` +
+			// Cursor returns through its private-use scheme; VS Code through
+			// vscode.dev or a loopback root on an ephemeral port; Windsurf
+			// through a loopback /oauth/callback on an ephemeral port.
+			` --oauth-redirect-uri cursor://anysphere.cursor-mcp/oauth/callback` +
+			` --oauth-redirect-uri https://vscode.dev/redirect --oauth-redirect-uri http://127.0.0.1/ --oauth-redirect-uri http://127.0.0.1` +
+			` --oauth-redirect-uri http://127.0.0.1/oauth/callback` +
+			// Hosts match exactly, and clients built on the MCP TypeScript
+			// SDK (mcp-remote among them) return to localhost rather than
+			// 127.0.0.1, so each loopback callback is listed for both.
+			` --oauth-redirect-uri http://localhost/ --oauth-redirect-uri http://localhost` +
+			` --oauth-redirect-uri http://localhost/oauth/callback` +
 			// Uploads and plan directories live on the state disk, not in the
 			// private /tmp, which may be tmpfs inside the 1G memory limit; the
 			// bridge bounds the bytes it stages there (bug hunt H92).

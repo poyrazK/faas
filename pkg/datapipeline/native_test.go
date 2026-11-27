@@ -340,7 +340,16 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 		}
 		for until := time.Now().Add(10 * time.Second); ; {
 			p = tick()
-			if p.AppliedThroughAt != "" {
+			// PostgreSQL may confirm an applied checkpoint before the worker
+			// finishes verifying continuity after the receiver reconnects.
+			continuityPending := p.State == "blocked" && p.Reason == "replication_continuity_verification" && p.Verification == "pending"
+			if continuityPending {
+				var gated bool
+				if err := target.QueryRow(ctx, `SELECT NOT readable FROM gregale_pipeline.mirrors WHERE pipeline_id=$1`, p.ID).Scan(&gated); err != nil || !gated {
+					t.Fatal("continuity verification did not gate mirror reads", err)
+				}
+			}
+			if p.AppliedThroughAt != "" && !continuityPending {
 				// WAL is shared across this native fixture's databases. Retention
 				// pressure can take priority over a confirmed applied checkpoint.
 				wantHealth := "applied_progress_confirmed"
@@ -353,7 +362,7 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 				break
 			}
 			if time.Now().After(until) {
-				t.Fatal("applied checkpoint was never confirmed")
+				t.Fatalf("applied checkpoint was never qualified: state=%s reason=%s verification=%s", p.State, p.Reason, p.Verification)
 			}
 			time.Sleep(50 * time.Millisecond)
 		}

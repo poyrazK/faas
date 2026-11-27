@@ -29,7 +29,7 @@ func (e *Engine) releaseAllowsPrime(ctx context.Context, dep state.Deployment) (
 	if scope == "" {
 		scope = "default"
 	}
-	return task.Status == state.AppTaskSucceeded &&
+	return !state.HostedTaskRehearsalMigrationRelease(task) && task.Status == state.AppTaskSucceeded &&
 		task.ArtifactKey == dep.RootfsKey && task.ImageDigest == dep.ImageDigest &&
 		task.DeploymentScope == scope && state.ReleaseTaskRunsDeploymentRelease(task, dep), nil
 }

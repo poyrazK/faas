@@ -291,7 +291,11 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
+	if !ok {
+		return
+	}
+	res, err := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
 		OperationDefinitions:      sourceOperationSpecs(manifest),
 		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rollout.Scope, sourceOperationSpecs(manifest)),
 		Activity:                  s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{"source": "local_tarball", "scope": rollout.Scope}),
@@ -357,10 +361,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
 	}
-	if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
+	s.auditDeploymentSchedule(r, acct, app, d, scheduleResult)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 

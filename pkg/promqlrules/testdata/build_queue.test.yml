@@ -33,7 +33,7 @@ tests:
       exp_annotations:
         summary: builderd build queue > 50 queued builds for 10m
         description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
-          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          builderd limited to each node''s reserved builder slots (builder_reserved_slots), sustained depth > 50 means builds are arriving
           faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
           and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
         runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
@@ -107,7 +107,7 @@ tests:
       exp_annotations:
         summary: builderd build queue > 50 queued builds for 10m
         description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
-          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          builderd limited to each node''s reserved builder slots (builder_reserved_slots), sustained depth > 50 means builds are arriving
           faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
           and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
         runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
@@ -436,7 +436,7 @@ tests:
       exp_annotations:
         summary: builderd build queue > 50 queued builds for 10m
         description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
-          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          builderd limited to each node''s reserved builder slots (builder_reserved_slots), sustained depth > 50 means builds are arriving
           faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
           and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
         runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md
@@ -481,7 +481,7 @@ tests:
       exp_annotations:
         summary: builderd build queue > 50 queued builds for 10m
         description: 'The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With
-          builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving
+          builderd limited to each node''s reserved builder slots (builder_reserved_slots), sustained depth > 50 means builds are arriving
           faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds
           and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook.'
         runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md

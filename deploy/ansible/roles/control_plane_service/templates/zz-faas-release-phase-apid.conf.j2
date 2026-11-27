@@ -1,0 +1,4 @@
+[Service]
+# Release commands (faas_release_commands): apid admits deployments that
+# declare one; off, they fail with release_phase_unavailable.
+Environment=FAAS_RELEASE_PHASE_ENABLED={{ '1' if (faas_release_commands | bool) else '0' }}

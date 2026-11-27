@@ -26,6 +26,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math"
@@ -115,6 +116,10 @@ func cmdDelayedTaskAdd(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
+	// `cron create --in 1m --path /x` in the app's checkout lands here and
+	// printed this command's usage: the recurring form took the linked app,
+	// the one-off form did not (prod hunt r53).
+	fillLinkedApp(app)
 	// The help has always advertised `delayed-task add --app <slug> <duration>`;
 	// production-us hunt #4 found the parser rejecting that spelling. A lone
 	// positional is the relative delay, and it cannot be combined with
@@ -181,6 +186,10 @@ func cmdDelayedTaskAdd(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Delayed task %s scheduled for %s.", resp.ID, resp.ScheduledAt.Format(time.RFC3339))
+	// `cron create --in` lands here too; its id is not a cron, so `cron runs`
+	// answered "no such cron" and nothing said how to see the result (prod
+	// hunt 2026-11-21).
+	_, _ = fmt.Fprintf(osStdout, "Check its result: gregale cron get --one-off %s\n", resp.ID)
 	return 0
 }
 
@@ -473,6 +482,8 @@ func cmdDelayedTaskCancel(args []string) int {
 func validateDelayedTaskAddFlags(app, scheduledAt, delay *string) bool {
 	if *app == "" {
 		PrintUsage(os.Stderr, "usage: gregale delayed-task add --app <slug> (--scheduled-at <RFC3339>|--delay <duration>) [--payload <J|@file|->]", "delayed-task")
+		// `cron create --in|--at` reaches this usage too; say what is missing.
+		printErr("App required", errors.New("pass --app <slug>, or run in a checkout linked to the app"))
 		return false
 	}
 	if (*scheduledAt == "") == (*delay == "") {

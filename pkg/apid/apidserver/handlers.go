@@ -301,6 +301,9 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	app, prob := s.buildApp(acct, req, limits)
+	if prob == nil {
+		prob = s.blockedAppNameProblem(acct.ID, app.Slug)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -309,6 +312,24 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	// the org-scoped route stamps the workspace attribution that activity
 	// producers, app quota admission and timeline reads treat as canonical.
 	app.OrgID = orgID
+	if req.ProjectID != "" {
+		project, problem := s.projectForAppCreate(r.Context(), acct.ID, orgID, req.ProjectID)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		app.ProjectID = project.ID
+		app.AccountID = project.AccountID
+		app.OrgID = project.OrgID
+		app.AddToProject = true
+		app.WorkloadName = app.Slug
+		switch app.Manifest.ExecutionMode {
+		case "worker":
+			app.WorkloadClass = state.WorkloadClassWorker
+		case "job":
+			app.WorkloadClass = state.WorkloadClassJob
+		}
+	}
 	// Stamp the resolved UUID (or nil) onto the App before the
 	// store layer sees it. The store writes the column verbatim
 	// — see pkg/state/pgstore.go::CreateAppIfUnderQuota +
@@ -337,6 +358,11 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, state.ServiceCapacityProblem(err))
 		case errors.As(err, &qe):
 			api.WriteProblem(w, appaccess.QuotaProblem(qe, limits))
+		case errors.Is(err, state.ErrProjectAppManaged):
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Project manages its apps",
+				"Add the app through the project's repository or release workflow."))
+		case req.ProjectID != "" && errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Project not found", "Choose a project in this workspace."))
 		case errors.Is(err, state.ErrOrgAppAdmissionUnavailable):
 			api.WriteProblem(w, appaccess.AdmissionUnavailableProblem())
 		case errors.Is(err, state.ErrConflict):
@@ -427,6 +453,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			ram = limits.RAMMB
 		}
 	}
+	if ram < api.AppMinRAMMB {
+		return state.App{}, api.ErrInvalidAppRAM(ram)
+	}
 	if cpuMillicores == 0 {
 		cpuMillicores = api.DefaultAppCPUMillicores
 	}
@@ -479,7 +508,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 			return state.App{}, api.NewProblem(http.StatusForbidden,
 				api.CodePlanWarmPoolNotAllowed,
 				"Warm-pool capacity is not allowed on this plan",
-				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 		}
 		if v < 0 || v > mc {
 			return state.App{}, api.NewProblem(http.StatusUnprocessableEntity,
@@ -517,7 +546,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusForbidden,
 			api.CodePlanStreamingNotAllowed,
 			"Streaming responses are not allowed on this plan",
-			"Free tier does not support per-app streaming; upgrade to Hobby or higher.")
+			"Free tier does not support per-app streaming; upgrade to Hobby or higher.").WithDocs("https://gregale.dev/docs/plans")
 	}
 	streaming := acct.Plan.StreamingEnabled()
 	if req.StreamingEnabled != nil {
@@ -584,7 +613,7 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusForbidden,
 			api.CodePlanRequireAuthnNotAllowed,
 			"Per-app authentication is not allowed on this plan",
-			"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
+			"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.").WithDocs("https://gregale.dev/docs/plans")
 	}
 	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
 		return state.App{}, api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
@@ -945,6 +974,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	if !s.admitAccountDeploy(w, r, acct) {
 		return
 	}
+	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
+	if !ok {
+		return
+	}
 	activity := s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{
 		"source": "image", "scope": dep.Scope, "supersedes": prev.ID, "has_overrides": req.Overrides != nil,
 	})
@@ -953,12 +986,12 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	var err error
 	if activity != nil {
 		if activityStore, ok := s.store.(state.OrgActivityDeploymentMutationStore); ok {
-			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(r.Context(), dep, *activity)
+			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(deployCtx, dep, *activity)
 		} else {
-			d, err = s.store.CreateDeployment(r.Context(), dep)
+			d, err = s.store.CreateDeployment(deployCtx, dep)
 		}
 	} else {
-		d, err = s.store.CreateDeployment(r.Context(), dep)
+		d, err = s.store.CreateDeployment(deployCtx, dep)
 	}
 	if err != nil {
 		if writeReleaseReviewError(w, err) {
@@ -987,10 +1020,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	if activityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
-	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
+	s.auditDeploymentSchedule(r, acct, app, d, scheduleResult)
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
@@ -1254,6 +1284,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 		// round-trip. The token-scope enforcement (cross-account
 		// 403) lives in gatewayd-internal, not here.
 		RequireAuthn:           a.RequireAuthn,
+		DeclaredAccess:         a.Manifest.DeclaredAccess,
 		ConsumerAuthMode:       consumerAuthMode,
 		PlatformTenantRequired: a.PlatformTenantRequired,
 		// Issue #477 / ADR-079: per-app public-URL auth.

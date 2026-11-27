@@ -18,6 +18,9 @@ faas_notification_receiver_expected{receiver="faas-page",integration="slack"} 1
 {% if warn_chat %}
 faas_notification_receiver_expected{receiver="faas-warn",integration="slack"} 1
 {% endif %}
+{% if am_delivery_pagerduty_key_file | default('') | trim | length > 0 %}
+faas_notification_receiver_expected{receiver="faas-delivery-page",integration="pagerduty"} 1
+{% endif %}
 {% if am_heartbeat_url_file | default('') | trim | length > 0 %}
 faas_notification_receiver_expected{receiver="faas-heartbeat",integration="webhook"} 1
 {% endif %}

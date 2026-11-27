@@ -148,6 +148,47 @@ WHERE e.name = sqlc.arg(name)::text
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3;
 
+-- name: AnalyticsCustomerTotals :many
+-- Each listed customer's matching events in [from, until): how many and
+-- the sum of their values (CUPED pre-period, ADR 20261119102741 §2).
+SELECT customer_id::uuid AS customer_id, count(*)::bigint AS events, COALESCE(sum(value), 0)::float8 AS total
+FROM analytics_events
+WHERE environment_id = sqlc.arg(environment_id)::uuid
+  AND name = sqlc.arg(name)::text
+  AND properties @> sqlc.arg(filter)::jsonb
+  AND at >= sqlc.arg(from_at)::timestamptz AND at < sqlc.arg(until_at)::timestamptz
+  AND customer_id = ANY(sqlc.arg(customer_ids)::uuid[])
+GROUP BY customer_id;
+
+-- name: AnalyticsCohortDid :many
+-- Customers with at least min_count matching events since since_at, in
+-- customer order, at most max_rows (ADR 20261119102741 §3).
+SELECT customer_id::uuid AS customer_id
+FROM analytics_events
+WHERE environment_id = sqlc.arg(environment_id)::uuid
+  AND name = sqlc.arg(name)::text
+  AND properties @> sqlc.arg(filter)::jsonb
+  AND at >= sqlc.arg(since_at)::timestamptz
+GROUP BY customer_id
+HAVING count(*) >= sqlc.arg(min_count)::bigint
+ORDER BY customer_id
+LIMIT sqlc.arg(max_rows)::int;
+
+-- name: AnalyticsCohortDidNot :many
+-- Customers with any event since active_since that sent no matching event
+-- since since_at, in customer order, at most max_rows.
+SELECT DISTINCT e.customer_id::uuid AS customer_id
+FROM analytics_events e
+WHERE e.environment_id = sqlc.arg(environment_id)::uuid
+  AND e.at >= sqlc.arg(active_since)::timestamptz
+  AND NOT EXISTS (
+    SELECT 1 FROM analytics_events x
+    WHERE x.environment_id = sqlc.arg(environment_id)::uuid AND x.customer_id = e.customer_id
+      AND x.name = sqlc.arg(name)::text AND x.properties @> sqlc.arg(filter)::jsonb
+      AND x.at >= sqlc.arg(since_at)::timestamptz)
+ORDER BY 1
+LIMIT sqlc.arg(max_rows)::int;
+
 -- name: AnalyticsRequestsByFlag :many
 -- Requests, server errors and latency histogram buckets (5% log buckets,
 -- flags.LatencyBucket) per value of one flag, from request telemetry

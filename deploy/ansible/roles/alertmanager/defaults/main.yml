@@ -45,6 +45,10 @@ am_smtp_smarthost: ""                          # e.g. "smtp.resend.com:587"; emp
 am_pushover_token_file: ""
 am_pushover_user_key_file: ""
 
+# Optional Events API v2 key file. Use a dedicated PagerDuty service per fleet
+# and set am_fleet_name to the fleet identifier shown to responders.
+am_delivery_pagerduty_key_file: ""
+
 # Chat webhooks. Each points at an operator-provisioned file holding the
 # webhook URL (the URL is the credential, so it never appears in vars or
 # the rendered config). Either one is a complete notification channel:
@@ -94,6 +98,10 @@ am_email_customer_alert_presets: false
 # Prometheus alerts UI on the management bridge (10.0.0.1) or loopback;
 # operator overrides via -e am_alerts_url=... for a public dashboard.
 am_alerts_url: "http://127.0.0.1:9095/alerts"
+
+# Grafana URL as seen by alert recipients. The default is the SSH/IAP tunnel.
+# Include the mount path if operators reach Grafana through a subpath.
+am_grafana_base_url: "http://127.0.0.1:3000"
 
 # When true, the role skips the receiver-secret permission asserts and
 # leaves Alertmanager stopped and disabled. Only single-box dev/CI hosts

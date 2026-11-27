@@ -353,6 +353,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.recoverMCPTaskPromotions(ctx)
 	l.reconcileStaleDeployments(ctx)
 	if l.handler != nil {
+		if err := l.handler.MaterializeExecutionEnvironments(ctx); err != nil {
+			l.log.Warn("imaged: Run environment reconciliation failed")
+		}
 		if err := l.handler.MaterializePendingJobs(ctx); err != nil {
 			l.log.Warn("imaged: reconcile pending job images", "err", err)
 		}
@@ -388,6 +391,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.recoverMCPTaskPromotions(ctx)
 		case <-jobMaterializationTicker.C:
 			if l.handler != nil {
+				if err := l.handler.MaterializeExecutionEnvironments(ctx); err != nil {
+					l.log.Warn("imaged: Run environment reconciliation failed")
+				}
 				if err := l.handler.MaterializePendingJobs(ctx); err != nil {
 					l.log.Warn("imaged: reconcile pending job images", "err", err)
 				}
@@ -918,6 +924,12 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 	for _, deploymentID := range append(knownIDs, captureIDs...) {
 		known[deploymentID] = struct{}{}
 	}
+	// Platform Run templates have no application deployment. Their own
+	// catalog-aware collector owns the reserved namespace.
+	known[uuid.Nil.String()] = struct{}{}
+	if err := l.CollectExecutionTemplateOrphans(ctx, now); err != nil {
+		l.log.Warn("imaged: execution template orphan collection", "err", err)
+	}
 	cutoff := now.Add(-localSnapshotOrphanGrace)
 	l.retireNativeRuntimeSnapshotOrphans(ctx, known, cutoff)
 	if strings.TrimSpace(l.storageRoot) == "" {
@@ -1344,6 +1356,11 @@ func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
 
 func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork, source string) {
 	for _, item := range work {
+		if !l.handler.runtimeBaseRetries.due(item.DeploymentID) {
+			// Its runtime-base staging lost to another node's base; wait
+			// out the backoff instead of re-staging on every tick.
+			continue
+		}
 		prepare := func(ctx context.Context) {
 			err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
 			l.handler.handoffMetrics.observeWork(ctx, source, err)

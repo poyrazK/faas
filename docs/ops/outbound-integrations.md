@@ -1993,3 +1993,125 @@ broker helper. Runs therefore stream and use routes like apps.
   `outboundd` checks the Run grant and lease on every request.
 - Older vmmd or guest images keep the broker helper, so a mixed rollout keeps
   working.
+
+## Agent capability gateway
+
+ADR-20261027090016, amendment 1. On an agent run's relay, outboundd serves MCP
+(Streamable HTTP) at `/mcp`. agentd gives the harness the full URL as
+`GREGALE_CAPABILITY_MCP_URL` when the run's version allows, or puts in
+`approve` mode, at least one tool.
+The path exists only for agent runs. Apps, Runs and plain callers get 404.
+
+A run that uses its preset's own command is also wired up
+(`pkg/agentd/capability_harness.go`). The server is named `gregale`, and each
+harness gets a tool-call timeout of the approval timeout plus two minutes:
+
+- `codex` gets `-c mcp_servers.gregale.url=...` and `tool_timeout_sec`.
+- `claude-code` gets `--mcp-config` (inline JSON) and
+  `--allowedTools mcp__gregale`, with `MCP_TOOL_TIMEOUT` in milliseconds.
+- `opencode` gets `OPENCODE_CONFIG_CONTENT` with a remote server. Its per-call
+  timeout is the release default, so a long approval wait may be abandoned
+  there.
+
+A seller's own command gets only the URL variable and must register the
+server itself. Nothing is written to the read-only agent-base drive.
+
+- **What a run sees.** Each request re-checks the run's lease, then reads the
+  version's `capability_policy`. `tools/list` returns only tools that the
+  policy allows and that are switched on in this region. A version without a
+  policy lists nothing.
+- **Budget.** Before a tool runs, the call is counted against the run's
+  budget: the policy's `budgets.tool_calls`, capped at the plan's
+  `AgentToolCallsPerRunMax`. The count is a conditional update on
+  `agent_run_capability_summaries`, so concurrent calls cannot pass the
+  budget together.
+- **Refusals.** A refused call is answered with an MCP error result and
+  written to `agent_run_capability_decisions`. The reasons are `denied` (the
+  policy does not allow it), `budget` (the budget is used up) and `disabled`
+  (the tool is switched off here). A tool name the gateway does not know
+  writes no row.
+- **Metrics:**
+  - `outbound_capability_calls_total{source,decision}`, where decision is
+    `allowed`, `denied`, `budget`, `disabled` or `failed`;
+  - `outbound_capability_call_seconds{source}`;
+  - `agent_budget_exhausted_total{kind}`.
+
+  A rising `failed` count means the ledger or a tool's upstream is failing.
+  The agent sees "unavailable", never the internal error.
+
+Read a run's refusals:
+
+```sql
+SELECT tool, decision, created_at FROM agent_run_capability_decisions WHERE run_id = '<run>' ORDER BY created_at;
+```
+
+### Approvals
+
+ADR-20261027090016 amendment 2. A tool in `approve` mode is listed, and its
+description says each call waits for the seller. A call is held in outboundd:
+
+1. outboundd writes `agent_run_approvals` (tool, SHA-256 of the arguments, the
+   first 2 KiB of them) and queues `agent_run.approval_requested` to the
+   account's agent webhooks, in one transaction.
+2. The call waits. The relay connection is silent, so a run whose version has
+   the model-wait pause on is paused and unbilled meanwhile; elsewhere the wait
+   is billed. The run's own deadline keeps running, unless deadline credit is
+   on (below).
+3. The seller decides with `POST /v1/agent-runs/{id}/approvals/{approval_id}`
+   (`{"decision":"approve"|"deny","note":"..."}`); apid writes
+   `agent_run_approval_decisions` once, only before expiry. outboundd polls it
+   every `AgentRunApprovalPollMillis`.
+4. Approved: the call is counted against the budget and runs. Denied or
+   expired: the agent gets an error result and nothing is counted.
+
+Bounds (`pkg/api/limits.go`): a request expires after
+`AgentRunApprovalTimeoutSec` or `AgentRunApprovalDeadlineMarginSec` before the
+run's deadline, whichever is sooner; a run has at most
+`AgentRunApprovalsPendingMax` waiting. A request past either bound is refused
+at once. For a held call the relay's write deadline is lifted to the approval
+timeout plus the tool timeout. The harness's MCP client must allow a tool call
+that long (Codex: `tool_timeout_sec`).
+
+Metric: `agent_approvals_total{outcome}`, outcome `approved`, `denied`,
+`expired`, `abandoned` (the run went away while waiting) or `refused`.
+
+Deadline credit (amendment 3, agentd `FAAS_AGENTD_APPROVAL_DEADLINE_CREDIT`,
+ansible `faas_agentd_approval_deadline_credit`, off): a run whose version has
+an `approve` tool earns credit for the wall time any of its approvals waited,
+up to `AgentRunApprovalCreditMaxSec`. A wait ends at the decision, the expiry
+or `released_at`, which outboundd writes when it stops holding the call.
+agentd sends the guest `timeout_sec + cap` (at most 7,200 s) as its ceiling,
+records the cap in `agent_runs.deadline_credit_max_sec`, reads the credit
+every `AgentRunApprovalCreditPollSec` and sends it through schedd to vmmd,
+which stops the run at `timeout_sec + credit` and reports `timed_out`.
+outboundd's expiry then uses `running_at + timeout_sec + cap`. Turn it on only
+after every agent node runs a guest, vmmd and schedd from this release.
+Metric: `agent_run_deadline_credit_seconds_total`.
+
+```sql
+SELECT p.id, p.tool, p.created_at, p.expires_at, p.released_at, d.decision, d.decided_by, d.decided_at
+  FROM agent_run_approvals p LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = '<run>' ORDER BY p.created_at;
+```
+
+### `web_fetch`
+
+The first built-in tool (ADR-20261027090018 tier 1). It sends a GET for one
+URL and returns the page's text; HTML is reduced to its visible text.
+
+- **Destinations.** It reaches only public IPv4 addresses on ports 80 and
+  443. The name is re-resolved at every connection, redirects included, and
+  the whole answer is refused if any address is not public (`pkg/publicdest`).
+- **Bounds.** At most `AgentWebFetchRedirectsMax` redirects,
+  `AgentWebFetchMaxBytes` of body (the result says when it truncated), and
+  `AgentWebFetchTimeoutSec` in all. Only text, JSON and XML types are
+  returned.
+- **Switch.** `FAAS_OUTBOUND_AGENT_WEB_FETCH=1` on outboundd. Off, the tool is
+  not listed, and a call to it is recorded as `disabled`.
+
+**Keep it off in production for now.** The fetches leave from the
+control-plane host, not from an agent egress address. ADR-20261027090016 §1
+requires tool traffic to leave through the agent egress gateway; routing
+outboundd's fetches there is its own change, after the gateway host exists
+(`docs/runbooks/agent-egress-production-rollout.md`). It is safe to switch on
+in a development fleet.

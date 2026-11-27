@@ -1,0 +1,97 @@
+package main
+
+// This starter answers every tool call in its response and ships without
+// durable MCP Tasks. The server code is shared with the mcp-go-tasks
+// starter, so this file supplies the Task runtime it expects, always
+// disabled. To add durable Tasks, start from `gregale init --template
+// mcp-go-tasks`.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"regexp"
+	"sync"
+	"time"
+)
+
+var taskIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+
+var (
+	errMCPTaskNotFound     = errors.New("MCP task not found")
+	errInvalidMCPTaskInput = errors.New("invalid MCP task input")
+	errNoMCPTasks          = errors.New("this server has no durable MCP Tasks; start from the mcp-go-tasks starter")
+)
+
+// mcpTaskRuntime is never constructed here: startMCPTaskRuntime returns nil,
+// and the shared server skips every Task path for a nil runtime.
+type mcpTaskRuntime struct {
+	pollInterval   time.Duration
+	taskHandlers   map[string]struct{}
+	subscriptionMu sync.Mutex
+	subscriptions  int
+	watchedTasks   int
+}
+
+type durableMCPTask struct {
+	ToolName string
+}
+
+func configuredMCPTaskRole() (string, error) { return "combined", nil }
+
+func runTaskMigrationCommand([]string) int {
+	fmt.Fprintln(os.Stderr, errNoMCPTasks)
+	return 2
+}
+
+func startMCPTaskRuntime(config mcpConfig, _ string) (*mcpTaskRuntime, error) {
+	if len(config.Tasks) != 0 && string(config.Tasks) != "null" {
+		return nil, errNoMCPTasks
+	}
+	return nil, nil
+}
+
+func taskInputMethodsFor(map[string]any) []string { return nil }
+
+func taskURIID(string) (string, bool) { return "", false }
+
+func taskResourceTemplate() map[string]any { return nil }
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (*mcpTaskRuntime) subscribeTaskChanges([]string) (<-chan string, func()) {
+	return nil, func() {}
+}
+func (*mcpTaskRuntime) beginDrain() {}
+func (*mcpTaskRuntime) close()      {}
+func (*mcpTaskRuntime) createWithSubmission(context.Context, string, map[string]any, *authContext, map[string]any, string, ...map[string]any) (map[string]any, error) {
+	return nil, errNoMCPTasks
+}
+func (*mcpTaskRuntime) supportsTaskSubmission(*authenticator) bool              { return false }
+func (*mcpTaskRuntime) addTaskInboxCapabilities(*authenticator, map[string]any) {}
+func serveTaskInboxRequest(w http.ResponseWriter, _ *http.Request, request rpcRequest, _ *authenticator, _ *authContext, _ *mcpTaskRuntime, _ string) {
+	writeRPCError(w, request.ID, -32601, "method not found", http.StatusNotFound)
+}
+
+func serveTaskSubmissionLookup(w http.ResponseWriter, _ *http.Request, request rpcRequest, _ *authenticator, _ *authContext, _ *mcpTaskRuntime, _ string) {
+	writeRPCError(w, request.ID, -32601, "method not found", http.StatusNotFound)
+}
+func (*mcpTaskRuntime) get(context.Context, string, *authContext) (map[string]any, *durableMCPTask, error) {
+	return nil, nil, errMCPTaskNotFound
+}
+func (*mcpTaskRuntime) wire(*durableMCPTask) map[string]any { return nil }
+func (*mcpTaskRuntime) updateInputs(context.Context, string, *authContext, map[string]any) error {
+	return errMCPTaskNotFound
+}
+func (*mcpTaskRuntime) cancelTask(context.Context, string, *authContext) error {
+	return errMCPTaskNotFound
+}

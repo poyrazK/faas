@@ -28,6 +28,9 @@ class FinancialBudgetEvaluation:
     fresh: bool
     reasons: list[str]
     known_millicents: int | Unset = UNSET
+    projectable: bool | Unset = UNSET
+    """Every selected meter was sampled enough to project the month: complete coverage, or at least 99% of the
+    elapsed minutes with the last hour complete. Projected-overrun alerts need it."""
     projected_millicents: int | Unset = UNSET
     """Month-end amount at the current run rate: an estimate, not an invoice. Absent, with projection_reason, when
     a selected meter has no forecast or the evidence is incomplete or stale."""
@@ -55,6 +58,8 @@ class FinancialBudgetEvaluation:
 
         known_millicents = self.known_millicents
 
+        projectable = self.projectable
+
         projected_millicents = self.projected_millicents
 
         projection_reason = self.projection_reason
@@ -75,6 +80,8 @@ class FinancialBudgetEvaluation:
         )
         if known_millicents is not UNSET:
             field_dict["known_millicents"] = known_millicents
+        if projectable is not UNSET:
+            field_dict["projectable"] = projectable
         if projected_millicents is not UNSET:
             field_dict["projected_millicents"] = projected_millicents
         if projection_reason is not UNSET:
@@ -103,6 +110,8 @@ class FinancialBudgetEvaluation:
 
         known_millicents = d.pop("known_millicents", UNSET)
 
+        projectable = d.pop("projectable", UNSET)
+
         projected_millicents = d.pop("projected_millicents", UNSET)
 
         projection_reason = d.pop("projection_reason", UNSET)
@@ -117,6 +126,7 @@ class FinancialBudgetEvaluation:
             fresh=fresh,
             reasons=reasons,
             known_millicents=known_millicents,
+            projectable=projectable,
             projected_millicents=projected_millicents,
             projection_reason=projection_reason,
         )

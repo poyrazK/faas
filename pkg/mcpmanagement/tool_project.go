@@ -40,7 +40,7 @@ func loadToolProject(a toolProjectArgs) (toolProject, error) {
 	if !platform && !tokenEnvAllowed(a.AccessMode, a.TokenEnv) {
 		return p, invalid("invalid_argument", "declare open access without a token, or external-oauth with a named MCP_* client-token variable")
 	}
-	dir, err := localProjectDir(a.Path)
+	dir, err := localProjectDir(a.Path, "")
 	if err != nil {
 		return p, err
 	}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,10 +43,13 @@ type commandResolver func(executionproto.Request) (string, []string, string, err
 
 // Executor is the guest-side execution protocol handler.
 type Executor struct {
-	profile api.ExecutionProfile
-	build   commandBuilder
-	resolve commandResolver
-	now     func() time.Time
+	environmentID string
+	scratchRoot   string
+	profile       api.ExecutionProfile
+	build         commandBuilder
+	resolve       commandResolver
+	now           func() time.Time
+	readOOM       func() (uint64, bool)
 	// outboundRelayURL is guest-init's loopback relay (ADR-989), set only
 	// when guest-init started it for this execution VM.
 	outboundRelayURL string
@@ -66,7 +70,7 @@ func New() *Executor {
 		build: func(ctx context.Context, path string, args ...string) *exec.Cmd {
 			return exec.CommandContext(ctx, path, args...)
 		},
-		now: time.Now,
+		now: time.Now, readOOM: readGuestOOMKills,
 	}
 	e.resolve = e.command
 	return e
@@ -98,7 +102,7 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 	if err := req.Validate(); err != nil {
 		return executionproto.Result{}, err
 	}
-	if req.Profile.Normalized() != e.profile.Normalized() {
+	if req.EnvironmentID != e.environmentID || req.Profile.Normalized() != e.profile.Normalized() {
 		return executionproto.Result{}, errors.New("execution profile does not match guest image")
 	}
 	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
@@ -112,26 +116,42 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 	}
 	interpreter, args, sourceName, err := resolve(req)
 	if err != nil {
+		logExecutionSetupFailure(req.Runtime, "resolve_interpreter", err)
 		return executionproto.Result{}, err
 	}
 
 	started := e.now()
-	workdir, err := newWorkdir()
+	workdir, err := newWorkdirUnder(e.scratchRoot)
 	if err != nil {
+		logExecutionSetupFailure(req.Runtime, "scratch_directory", err)
 		return executionproto.Result{}, errors.New("execution scratch space unavailable")
 	}
 	defer func() { _ = os.RemoveAll(workdir) }()
 
+	if req.EnvironmentID != "" && (req.Runtime == api.ExecutionRuntimeNode22 || req.Runtime == api.ExecutionRuntimeNode24) {
+		if err := os.Symlink("/opt/gregale/environment/node_modules", filepath.Join(workdir, "node_modules")); err != nil {
+			return executionproto.Result{}, errors.New("execution dependencies unavailable")
+		}
+	}
 	sourcePath := filepath.Join(workdir, sourceName)
 	inputPath := filepath.Join(workdir, "input.json")
 	resultPath := filepath.Join(workdir, "result.json")
 	// A separate scratch directory prevents source bundle paths from staging
 	// files into the selected output namespace before the interpreter runs.
-	outputDir, err := newWorkdir()
+	outputDir, err := newWorkdirUnder(e.scratchRoot)
 	if err != nil {
+		logExecutionSetupFailure(req.Runtime, "output_directory", err)
 		return executionproto.Result{}, errors.New("execution output directory unavailable")
 	}
 	defer func() { _ = os.RemoveAll(outputDir) }()
+	inputDir, err := newWorkdirUnder(e.scratchRoot)
+	if err != nil {
+		return executionproto.Result{}, errors.New("execution file input directory unavailable")
+	}
+	defer func() { _ = os.RemoveAll(inputDir) }()
+	if err := stageStoredInputs(requestCtx, req, inputDir); err != nil {
+		return executionproto.Result{}, errors.New("execution file input staging failed")
+	}
 	if len(req.Files) != 0 {
 		if err := stageBundle(workdir, req.Entrypoint, req.Files); err != nil {
 			return executionproto.Result{}, errors.New("execution bundle staging failed")
@@ -158,7 +178,7 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 	if err != nil {
 		return executionproto.Result{}, err
 	}
-	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult), outputDir, string(req.Profile.Normalized()), string(packages))
+	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult), outputDir, string(req.Profile.Normalized()), string(packages), inputDir, req.EnvironmentID)
 	commandCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
 	var helper *executionOutboundHelper
@@ -195,7 +215,13 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 	budget := &streamBudget{limit: maxResult}
 	cmd.Stdout = &budgetWriter{dst: stdout, budget: budget, cancel: cancel}
 	cmd.Stderr = &budgetWriter{dst: stderr, budget: budget, cancel: cancel}
+	var oomBefore uint64
+	var oomBeforeOK bool
+	if e.readOOM != nil {
+		oomBefore, oomBeforeOK = e.readOOM()
+	}
 	if err := cmd.Start(); err != nil {
+		logExecutionSetupFailure(req.Runtime, "start_interpreter", err)
 		return failedResult(started, e.now(), "guest_error"), nil
 	}
 
@@ -229,6 +255,18 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 		return executionproto.Result{}, context.Canceled
 	}
 	if runErr != nil {
+		if e.readOOM != nil && oomBeforeOK && processKilled(cmd.ProcessState) {
+			if after, ok := e.readOOM(); ok && after > oomBefore {
+				slog.Warn("execution interpreter killed by guest OOM", "runtime", req.Runtime, "oom_kills_before", oomBefore, "oom_kills_after", after)
+				result := failedResultWithUsage(started, e.now(), "out_of_memory", false, budget.Used())
+				result.Status = api.ExecutionStatusOutOfMemory
+				return result, nil
+			}
+		}
+		// ProcessState is produced by the OS, not the caller's stderr/stack.
+		if cmd.ProcessState != nil {
+			slog.Warn("execution interpreter exited unsuccessfully", "runtime", req.Runtime, "process_state", cmd.ProcessState.String())
+		}
 		// Interpreter syntax/runtime failures are caller-visible only as the
 		// fixed guest_error code. Their diagnostic text remains on stderr.
 		return failedResultWithUsage(started, e.now(), "guest_error", false, budget.Used()), nil
@@ -241,7 +279,12 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 	if len(result)+budget.Used() > req.MaxOutput {
 		return failedResultWithUsage(started, e.now(), "output_limit", true, budget.Used()), nil
 	}
-	artifacts, err := collectArtifacts(requestCtx, outputDir, req.OutputFiles, req.MaxOutput-len(result)-budget.Used())
+	var artifacts []api.ExecutionArtifact
+	if len(req.StoredOutputs) > 0 {
+		artifacts, err = collectStoredArtifacts(requestCtx, outputDir, req)
+	} else {
+		artifacts, err = collectArtifacts(requestCtx, outputDir, req.OutputFiles, req.MaxOutput-len(result)-budget.Used())
+	}
 	if err != nil {
 		if requestCtx.Err() != nil {
 			return executionproto.Result{}, requestCtx.Err()
@@ -257,6 +300,19 @@ func (e *Executor) handle(ctx context.Context, req executionproto.Request, stdou
 		Result:    result,
 		Usage:     api.ExecutionUsage{WallTimeMS: elapsedMS(started, e.now())},
 	}, nil
+}
+
+// Setup errors can contain source paths or private environment data. Keep
+// operator diagnostics restricted to fixed stages and a closed classification.
+func logExecutionSetupFailure(runtime api.ExecutionRuntime, stage string, err error) {
+	class := "internal"
+	switch {
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, exec.ErrNotFound):
+		class = "not_found"
+	case errors.Is(err, os.ErrPermission):
+		class = "permission_denied"
+	}
+	slog.Warn("execution setup failed", "runtime", runtime, "stage", stage, "error_class", class)
 }
 
 func (e *Executor) command(req executionproto.Request) (string, []string, string, error) {
@@ -285,8 +341,16 @@ func lookupInterpreter(name, fallback string) (string, error) {
 	return "", fmt.Errorf("execution interpreter %s is unavailable", name)
 }
 
-func newWorkdir() (string, error) {
-	dir, err := os.MkdirTemp("", "faas-execution-")
+// WithScratchRoot selects a platform-owned directory on the guest's bounded
+// writable drive. Tests retain the ordinary temporary-directory default.
+func (e *Executor) WithScratchRoot(root string) *Executor { e.scratchRoot = root; return e }
+func newWorkdirUnder(root string) (string, error) {
+	if root != "" {
+		if err := os.MkdirAll(root, 0o711); err != nil {
+			return "", err
+		}
+	}
+	dir, err := os.MkdirTemp(root, "faas-execution-")
 	if err != nil {
 		return "", err
 	}
@@ -326,7 +390,7 @@ func stageBundle(workdir, entrypoint string, files []api.ExecutionFile) error {
 	}
 	for _, file := range files {
 		filePath := filepath.Join(workdir, filepath.FromSlash(file.Path))
-		if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 			return err
 		}
 		if err := writeGuestFile(filePath, file.Content); err != nil {
@@ -457,7 +521,7 @@ func (w *budgetWriter) Write(p []byte) (int, error) {
 const nodeWrapper = `
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
-const [sourcePath, inputPath, resultPath, executionID, runtime, maxBytes, outputDir] = process.argv.slice(1);
+const [sourcePath, inputPath, resultPath, executionID, runtime, maxBytes, outputDir, profile, packages, inputDir] = process.argv.slice(1);
 const moduleURL = pathToFileURL(sourcePath).href + "?execution=" + encodeURIComponent(executionID);
 const loaded = await import(moduleURL);
 if (typeof loaded.default !== "function") throw new Error("default export must be a function");
@@ -480,7 +544,7 @@ const outbound = outboundBase ? Object.freeze({
     return { status: response.status, headers, body: await response.text() };
   },
 }) : undefined;
-const context = Object.freeze({ execution_id: executionID, runtime, output_dir: outputDir, outbound });
+const context = Object.freeze({ execution_id: executionID, runtime, input_dir: inputDir, output_dir: outputDir, outbound });
 let value = await loaded.default(input, context);
 if (value === undefined) value = null;
 const encoded = JSON.stringify(value);
@@ -491,7 +555,7 @@ fs.writeFileSync(resultPath, encoded, { encoding: "utf8", mode: 0o600 });
 
 const pythonWrapper = `
 import asyncio, importlib.util, inspect, json, os, sys, urllib.error, urllib.parse, urllib.request
-source_path, input_path, result_path, execution_id, runtime, max_bytes, output_dir, profile, packages = sys.argv[1:]
+source_path, input_path, result_path, execution_id, runtime, max_bytes, output_dir, profile, packages, input_dir, environment_id = sys.argv[1:]
 if profile == "python-data-v1":
     import importlib.metadata
     if sys.version_info[:2] != (3, 13): raise RuntimeError("profile interpreter mismatch")
@@ -499,6 +563,8 @@ if profile == "python-data-v1":
         if importlib.metadata.version(package) != expected: raise RuntimeError("profile package mismatch")
     import numpy, pandas
 sys.path.insert(0, os.path.dirname(source_path))
+if len(sys.argv) > 11 and sys.argv[11]:
+    sys.path.insert(1, "/opt/gregale/environment/python")
 spec = importlib.util.spec_from_file_location("faas_execution", source_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -524,10 +590,13 @@ def _outbound_request(integration_id, method="GET", path="/", body=None):
         return {"status": response.status, "headers": safe_headers, "body": response.read().decode("utf-8", errors="replace")}
 outbound = {"request": _outbound_request} if os.environ.get("GREGALE_OUTBOUND_URL") else None
 with open(input_path, encoding="utf-8") as input_file:
-    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime, "profile": profile, "output_dir": output_dir, "outbound": outbound})
+    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime, "profile": profile, "input_dir": input_dir, "output_dir": output_dir, "outbound": outbound})
 if inspect.isawaitable(value): value = asyncio.run(value)
 encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 encoded_bytes = encoded.encode("utf-8")
 if len(encoded_bytes) > int(max_bytes): raise RuntimeError("result exceeds output budget")
 with open(result_path, "wb") as result_file: result_file.write(encoded_bytes)
 `
+
+// WithEnvironment binds dispatch to the immutable image marker.
+func (e *Executor) WithEnvironment(id string) *Executor { e.environmentID = id; return e }

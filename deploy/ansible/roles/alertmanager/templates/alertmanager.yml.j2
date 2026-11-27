@@ -34,6 +34,7 @@
 {% set am_discord_path = am_discord_webhook_url_file | default('') | trim %}
 {% set am_slack_path = am_slack_webhook_url_file | default('') | trim %}
 {% set am_heartbeat_path = am_heartbeat_url_file | default('') | trim %}
+{% set am_delivery_pagerduty_path = am_delivery_pagerduty_key_file | default('') | trim %}
 {% set am_email_enabled = am_smtp_host | length > 0 and am_smtp_password_path | length > 0 %}
 {% set am_pushover_enabled = am_pushover_token_path | length > 0 and am_pushover_user_key_path | length > 0 %}
 {% set am_discord_enabled = am_discord_path | length > 0 %}
@@ -45,6 +46,70 @@
 {% set am_heartbeat_enabled = am_heartbeat_path | length > 0 %}
 {% set am_notifications_enabled = am_email_enabled or am_pushover_enabled or am_chat_enabled %}
 {% set am_warn_enabled = am_email_enabled or am_warn_chat_enabled %}
+{% set am_grafana_base = am_grafana_base_url | default('http://127.0.0.1:3000') | trim | trim('/') %}
+{% set am_page_fleet = am_fleet_name | default('unknown', true) | trim or 'unknown' %}
+{# time.Time.Add takes nanoseconds. Start the resolved window two hours before EndsAt. #}
+{% macro grafana_dashboard_url(assign='') -%}
+{% raw %}{{ $path := . -}}
+{{ if and (eq $alert.Status "resolved") (not $alert.EndsAt.IsZero) -}}
+{{ $window := printf "&from=%d&to=%d" ($alert.EndsAt.Add -7200000000000).UnixMilli $alert.EndsAt.UnixMilli -}}
+{{ $path = reReplaceAll "&from=now-2h&to=now$" $window $path -}}
+{{ end -}}
+{{ {% endraw %}{{ assign }}printf "%s%s" {{ am_grafana_base | to_json }}{% raw %} $path -}}{% endraw %}
+{%- endmacro %}
+
+{% macro page_link(channel, title, url) -%}
+{% if channel == 'html' -%}
+<a href="{{ url }}">{{ title }}</a>
+{%- elif channel == 'slack' -%}
+<{{ url }}|{{ title }}>
+{%- else -%}
+{{ title }} {{ url }}
+{%- endif %}
+{%- endmacro %}
+
+{% macro page_details(channel, default_template) -%}
+{% raw %}{{ $hasTriage := false -}}
+{{ range .Alerts -}}
+{{ if .Annotations.first_action }}{{ $hasTriage = true }}{{ end -}}
+{{ end -}}
+{{ if $hasTriage -}}
+{% endraw %}
+{% if channel == 'html' %}<pre style="white-space: pre-wrap;">{% endif %}
+{% raw %}{{ range .Alerts -}}
+{{ $alert := . -}}
+{{ $annotations := .Annotations -}}
+{{ .Status | toUpper }} {{ or $annotations.summary .Labels.alertname }}
+{{ if $annotations.first_action -}}
+{{ if eq .Status "firing" }}First check: {{ $annotations.first_action }}
+{{ end -}}
+Fleet: {{ or $annotations.fleet {% endraw %}{{ am_page_fleet | to_json }}{% raw %} }}
+Customer impact: {{ or $annotations.customer_impact "unknown" }}
+Stage: {{ or $annotations.failure_stage "unknown" }}
+Last successful check: {{ or $annotations.last_successful_check "unknown" }}
+Active release: {{ or $annotations.active_release "unknown" }}
+{{ with $annotations.run_url -}}
+{% endraw %}{{ page_link(channel, 'Failed run', '{{ . }}') }}{% raw %}
+{{ else -}}
+{{ with $annotations.dashboard_path -}}
+{% endraw %}{{ grafana_dashboard_url('$dashboard := ') }}
+{{ page_link(channel, 'Dashboard', '{{ $dashboard }}') }}{% raw %}
+{{ end -}}
+{{ end -}}
+{{ else -}}
+{{ with $annotations.description }}{{ . }}
+{{ end -}}
+{{ end -}}
+{{ with $annotations.runbook_url -}}
+{% endraw %}{{ page_link(channel, 'Runbook', '{{ . }}') }}{% raw %}
+{{ end }}
+{{ end -}}
+{% endraw %}
+{% if channel == 'html' %}</pre>{% endif %}
+{% raw %}{{ else -}}
+{{ template {% endraw %}{{ default_template | to_json }}{% raw %} . }}
+{{ end }}{% endraw %}
+{%- endmacro %}
 
 {% if am_email_enabled %}
 global:
@@ -90,6 +155,32 @@ route:
       receiver: faas-silent
       continue: false
 {% endif %}
+    # Qualification pages have a unique group per run and are confined to
+    # the pilot receiver. Consume them even when the pilot is disabled.
+    - matchers:
+        - severity = "page"
+        - alertname =~ "FaasDeliveryQualification_mq_[1-9][0-9]{0,19}_[1-9][0-9]{0,5}_delivery_page"
+        - qualification_id =~ "mq-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}"
+{% if am_delivery_pagerduty_path %}
+      receiver: faas-delivery-page
+{% else %}
+      receiver: faas-silent
+{% endif %}
+      group_by: [qualification_id]
+      group_wait: 10s
+      group_interval: 1m
+{% if am_delivery_pagerduty_path %}
+    # Both delivery faults share one group on this fleet's PagerDuty service.
+    # Also deliver them through the regular page route below.
+    - matchers:
+        - severity = "page"
+        - alertname =~ "FaasPrometheusNotificationsDropped|FaasAlertmanagerNotificationsFailed"
+      receiver: faas-delivery-page
+      group_by: [severity]
+      group_wait: 10s
+      group_interval: 1m
+      continue: true
+{% endif %}
     # page-severity: full notify (email + Pushover + chat).
     - matchers:
         - severity = "page"
@@ -131,6 +222,8 @@ receivers:
         send_resolved: true
         headers:
           X-Faas-Alert: "page"
+        html: |-
+          {{ page_details('html', 'email.default.html') | indent(10) }}
 {% endif %}
 {% if am_pushover_enabled %}
     pushover_configs:
@@ -143,7 +236,24 @@ receivers:
         retry: 1m            # Alertmanager <duration> field — unit required
         expire: 1h           # ditto; integer would fail amtool check-config
         title: "faas page"
-        url: "{{ am_alerts_url | default('http://127.0.0.1:9095/alerts') }}"
+        message: |-
+          {{ page_details('plain', 'pushover.default.message') | indent(10) }}
+        url: |-
+          {% raw %}{{ $url := {% endraw %}{{ am_alerts_url | default('http://127.0.0.1:9095/alerts') | to_json }}{% raw %} -}}
+          {{ if eq (len .Alerts) 1 -}}
+          {{ $alert := index .Alerts 0 -}}
+          {{ if $alert.Annotations.first_action -}}
+          {{ with $alert.Annotations.run_url -}}
+          {{ $url = . -}}
+          {{ else -}}
+          {{ with $alert.Annotations.dashboard_path -}}
+          {% endraw %}{{ grafana_dashboard_url('$url = ') | indent(10) }}{% raw %}
+          {{ end -}}
+          {{ end -}}
+          {{ end -}}
+          {{ end -}}
+          {{ $url }}
+{% endraw %}
 {% endif %}
 {% if am_chat_enabled %}
     # Discord uses its Slack-compatible endpoint (webhook URL + /slack):
@@ -153,6 +263,9 @@ receivers:
 {% for path in [am_discord_path, am_slack_path] if path | length > 0 %}
       - api_url_file: "{{ path }}"
         send_resolved: true
+        mrkdwn_in: [text]
+        text: |-
+          {{ page_details('slack', 'slack.default.text') | indent(10) }}
 {% endfor %}
 {% endif %}
 
@@ -166,6 +279,29 @@ receivers:
         send_resolved: true
         headers:
           X-Faas-Alert: "warn"
+        html: |-
+          {% raw %}{{ $hasDashboard := false -}}
+          {{ range .Alerts -}}
+          {{ if .Annotations.runtime_dashboard_path }}{{ $hasDashboard = true }}{{ end -}}
+          {{ end -}}
+          {{ if $hasDashboard -}}
+          <!doctype html>
+          <html><body>
+          <h2>{{ template "__subject" . }}</h2>
+          {{ range .Alerts -}}
+          {{ $alert := . -}}
+          {{ with .Annotations.runtime_dashboard_path -}}
+          <p>{{ $alert.Status | toUpper }} {{ $alert.Annotations.summary }}<br>
+          <a href="{% endraw %}{{ grafana_dashboard_url() | indent(10) }}{% raw %}">Runtime Diagnostics</a>
+          {{ with $alert.Annotations.runbook_url }}<a href="{{ . }}">Runbook</a>{{ end }}</p>
+          {{ end -}}
+          {{ end -}}
+          <pre>{{ template "__text_alert_list" .Alerts }}</pre>
+          </body></html>
+          {{ else -}}
+          {{ template "email.default.html" . }}
+          {{ end }}
+{% endraw %}
 {% endif %}
 {% if am_warn_chat_enabled %}
     # The warn-only webhooks when set, else the page webhooks.
@@ -173,7 +309,32 @@ receivers:
 {% for path in [am_discord_warn_path, am_slack_warn_path] if path | length > 0 %}
       - api_url_file: "{{ path }}"
         send_resolved: true
+        mrkdwn_in: [text]
+        text: |-
+          {% raw %}{{ range .Alerts -}}
+          {{ $alert := . -}}
+          {{ with .Annotations.runtime_dashboard_path -}}
+          {{ $alert.Status | toUpper }} {{ $alert.Annotations.summary }}
+          Runtime Diagnostics <{% endraw %}{{ grafana_dashboard_url() | indent(10) }}{% raw %}>{{ with $alert.Annotations.runbook_url }} · Runbook <{{ . }}>{{ end }}
+          {{ end -}}
+          {{ end }}
+{% endraw %}
 {% endfor %}
+{% endif %}
+
+{% if am_delivery_pagerduty_path %}
+  - name: faas-delivery-page
+    pagerduty_configs:
+      - routing_key_file: {{ am_delivery_pagerduty_path | to_json }}
+        send_resolved: true
+        severity: critical
+        source: {{ am_page_fleet | to_json }}
+        description: >-
+          {% raw %}{{ if .GroupLabels.qualification_id }}[TEST] Gregale delivery qualification {{ .GroupLabels.qualification_id }} —
+          {{ else }}Gregale alert delivery degraded — {{ end }}{% endraw %} {{ am_page_fleet }}
+        details:
+          first_checks: |-
+            {{ page_details('plain', 'pagerduty.default.description') | indent(12) }}
 {% endif %}
 
   - name: faas-heartbeat

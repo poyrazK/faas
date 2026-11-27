@@ -151,7 +151,7 @@ func (s *server) renderUpgrade(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := s.upgradePageData(r, acct)
-	if referral, referralErr := s.sales.CheckoutState(r.Context(), acct); referralErr == nil {
+	if referral, referralErr := s.sales.CheckoutState(r.Context(), acct, acct); referralErr == nil {
 		data.SalespersonCodeAvailable = referral.Eligible
 		data.ExistingReferralCode = referral.Code
 	}
@@ -259,7 +259,7 @@ func (s *server) dashboardUpgrade(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard/upgrade?upgrade=invalid_plan", http.StatusSeeOther)
 		return
 	}
-	if problem := s.sales.PrepareCheckout(r.Context(), acct, plan, r.FormValue("salesperson_code")); problem != nil {
+	if problem := s.sales.PrepareCheckout(r.Context(), acct, acct, plan, r.FormValue("salesperson_code")); problem != nil {
 		http.Redirect(w, r, "/dashboard/upgrade?plan="+string(plan)+"&upgrade=referral_unavailable", http.StatusSeeOther)
 		return
 	}

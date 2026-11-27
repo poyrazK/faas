@@ -19,7 +19,8 @@
 #      are printed.
 #
 # Environment: GREGALECTL (a linux gregalectl binary, required),
-# ANSIBLE_PLAYBOOK (default ansible-playbook), SMOKE_DIR.
+# ANSIBLE_PLAYBOOK (default ansible-playbook), SMOKE_DIR. The runtime
+# diagnostics check also uses the repository's Go toolchain and make.
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -214,6 +215,9 @@ want=$(sudo find /var/lib/grafana/dashboards -name '*.json' | wc -l)
 got=$(grafana 'search?type=dash-db&limit=500' | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')
 ((got == want && want > 0)) || fail "Grafana loaded $got of $want provisioned dashboards"
 echo "ok: Grafana loaded all $want provisioned dashboards"
+
+log "runtime diagnostics from apid through Prometheus to Grafana"
+OBS_STACK_GRAFANA_AUTH="$GRAFANA_AUTH" make -C "$ROOT" test-apid RUN=TestObsRuntimeDiagnosticsStackSmoke
 
 for u in loki alloy prometheus; do
 	restarts=$(systemctl show -p NRestarts --value "$u")

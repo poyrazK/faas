@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/api"
 	"io"
 	"net/http"
 	"os"
@@ -16,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Remote agents deploy code they wrote (ADR-20261026195952). A one-time
@@ -52,6 +53,7 @@ type uploadStore struct {
 	uploads map[string]*sourceUpload
 	tokens  map[string]string
 	dirs    map[string]planDir
+	state   *StateStore
 	// freeBytes reports the free space under root; tests replace it.
 	freeBytes func(string) (int64, error)
 }
@@ -61,6 +63,8 @@ type planDir struct {
 	accountID string
 	expires   time.Time
 	bytes     int64
+	inUse     int
+	approval  *storedUploadApproval
 }
 
 type sourceUpload struct {
@@ -71,20 +75,18 @@ type sourceUpload struct {
 	size                        int64
 }
 
-// newUploadStore empties root, which only the bridge uses, and serves upload
-// URLs under resourceURL + "/uploads/".
-func newUploadStore(root, resourceURL string) (*uploadStore, error) {
+// openUploadStore serves temporary intake URLs and restores only directories
+// bound to an unexpired native commit approval in the bridge journal.
+func openUploadStore(root, resourceURL string, state *StateStore) (*uploadStore, error) {
 	if root == "" || !filepath.IsAbs(root) {
 		return nil, errors.New("the upload directory must be an absolute path")
 	}
-	if err := os.RemoveAll(root); err != nil {
-		return nil, fmt.Errorf("reset upload directory: %w", err)
+	u := &uploadStore{root: filepath.Clean(root), base: resourceURL + "/uploads/", state: state,
+		uploads: map[string]*sourceUpload{}, tokens: map[string]string{}, dirs: map[string]planDir{}, freeBytes: defaultFreeBytes}
+	if err := u.openDirectories(); err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, "plans"), 0o700); err != nil {
-		return nil, fmt.Errorf("create upload directory: %w", err)
-	}
-	return &uploadStore{root: root, base: resourceURL + "/uploads/", uploads: map[string]*sourceUpload{}, tokens: map[string]string{},
-		dirs: map[string]planDir{}, freeBytes: defaultFreeBytes}, nil
+	return u, nil
 }
 
 func randomHex(n int) (string, error) {
@@ -98,7 +100,7 @@ func randomHex(n int) (string, error) {
 func (u *uploadStore) tarball(id string) string { return filepath.Join(u.root, id+".tar.gz") }
 
 // pruneLocked forgets expired uploads and removes directories past their use.
-func (u *uploadStore) pruneLocked() {
+func (u *uploadStore) pruneLocked() error {
 	now := time.Now()
 	for id, up := range u.uploads {
 		if now.After(up.expires) && !up.receiving {
@@ -111,19 +113,35 @@ func (u *uploadStore) pruneLocked() {
 			delete(u.tokens, token)
 		}
 	}
+	var dirs []string
+	records := map[string]any{}
 	for dir, d := range u.dirs {
-		if now.After(d.expires) {
-			removeUploadPlanFiles(dir)
-			delete(u.dirs, dir)
+		if d.inUse == 0 && !now.Before(d.expires) {
+			dirs = append(dirs, dir)
+			if d.approval != nil {
+				records[uploadApprovalNamespace+filepath.Base(dir)] = nil
+			}
 		}
 	}
+	if len(records) > 0 {
+		if err := u.state.updateMany(records); err != nil {
+			return err
+		}
+	}
+	for _, dir := range dirs {
+		removeUploadPlanFiles(dir)
+		delete(u.dirs, dir)
+	}
+	return nil
 }
 
 // create reserves a one-time upload for one grant and app.
 func (u *uploadStore) create(grantID, accountID, app string, maxBytes int64) (*sourceUpload, string, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.pruneLocked()
+	if err := u.pruneLocked(); err != nil {
+		return nil, "", err
+	}
 	pending := 0
 	for _, up := range u.uploads {
 		if up.accountID == accountID && !up.taken {
@@ -161,7 +179,11 @@ func (u *uploadStore) receive(w http.ResponseWriter, req *http.Request) {
 	}
 	token := strings.TrimPrefix(req.URL.Path, "/mcp/uploads/")
 	u.mu.Lock()
-	u.pruneLocked()
+	if err := u.pruneLocked(); err != nil {
+		u.mu.Unlock()
+		writeOAuthJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "temporarily_unavailable"})
+		return
+	}
 	up := u.uploads[u.tokens[tokenHash(token)]]
 	if up == nil || len(token) != 64 || up.received || up.receiving {
 		u.mu.Unlock()
@@ -214,7 +236,9 @@ func (u *uploadStore) store(up *sourceUpload, body io.Reader) (int64, error) {
 func (u *uploadStore) take(grantID, id string) (*sourceUpload, string, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.pruneLocked()
+	if err := u.pruneLocked(); err != nil {
+		return nil, "", err
+	}
 	up := u.uploads[id]
 	if up == nil || up.grantID != grantID || up.taken {
 		return nil, "", invalid("unknown_upload", "the upload is unknown, expired, already planned, or belongs to another connection")
@@ -280,7 +304,10 @@ func (u *uploadStore) admitLocked(accountID string, bytes int64) error {
 // reserves bytes for accountID until then.
 func (u *uploadStore) newDir(accountID string, bytes int64) (string, error) {
 	u.mu.Lock()
-	u.pruneLocked()
+	if err := u.pruneLocked(); err != nil {
+		u.mu.Unlock()
+		return "", err
+	}
 	if err := u.admitLocked(accountID, bytes); err != nil {
 		u.mu.Unlock()
 		return "", err
@@ -298,6 +325,27 @@ func (u *uploadStore) newDir(accountID string, bytes int64) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// pinDir holds staged files and the CLI checkpoint while apply is in flight.
+func (u *uploadStore) pinDir(dir string) (func(), error) {
+	u.mu.Lock()
+	d, ok := u.dirs[dir]
+	if !ok || !time.Now().Before(d.expires) {
+		u.mu.Unlock()
+		return nil, invalid("plan_expired", "the reviewed upload is no longer staged; create a new plan")
+	}
+	d.inUse++
+	u.dirs[dir] = d
+	u.mu.Unlock()
+	return func() {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		if d, ok := u.dirs[dir]; ok {
+			d.inUse--
+			u.dirs[dir] = d
+		}
+	}, nil
 }
 
 func (u *uploadStore) removeDir(dir string) {
@@ -335,6 +383,15 @@ func uploadPath(dir, name string) (string, error) {
 		return "", fmt.Errorf("linked project context %q is not allowed; deploy the project with the CLI", name)
 	}
 	return filepath.Join(append([]string{dir}, parts...)...), nil
+}
+
+// localContextPath reports an entry under .gregale/, the CLI's local context
+// (the project link `gregale deploy` writes into every directory it deploys,
+// and env declarations). It is never part of the source: an upload of a
+// directory deployed before used to fail on its link.
+func localContextPath(name string) bool {
+	first, _, _ := strings.Cut(strings.TrimPrefix(name, "./"), "/")
+	return strings.EqualFold(first, ".gregale")
 }
 
 // writeUploadFile creates one regular file; a repeated path is refused.
@@ -392,7 +449,7 @@ func extractUpload(archive, dir string, limit int64) error {
 		if entries++; entries > maxUploadEntries {
 			return fmt.Errorf("the upload has more than %d entries", maxUploadEntries)
 		}
-		if h.Name == "./" || h.Name == "." {
+		if h.Name == "./" || h.Name == "." || localContextPath(h.Name) {
 			continue
 		}
 		target, err := uploadPath(dir, h.Name)
@@ -439,6 +496,9 @@ func writeInlineFiles(dir string, files []inlineFile) error {
 		return fmt.Errorf("inline files total %d bytes; the limit is %d. Use gregale_create_source_upload", total, maxInlineBytes)
 	}
 	for _, file := range files {
+		if localContextPath(file.Path) {
+			continue
+		}
 		target, err := uploadPath(dir, file.Path)
 		if err != nil {
 			return err

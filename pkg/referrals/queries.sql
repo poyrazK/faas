@@ -18,7 +18,10 @@ WHERE share_code=$2 AND (owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owner
 INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days)
 SELECT sqlc.arg(account_id)::uuid,l.code,sqlc.arg(currency)::text,
  sqlc.arg(customer_reward_cents)::bigint,sqlc.arg(referred_reward_cents)::bigint,
- sqlc.arg(commission_bps)::integer,sqlc.arg(hold_days)::integer,sqlc.arg(conversion_days)::integer
+ CASE WHEN l.kind='sales' THEN COALESCE((SELECT g.commission_bps FROM sales_commission_agreements g
+  WHERE g.account_id=l.owner_id AND g.effective_from<=now() ORDER BY g.effective_from DESC,g.created_at DESC LIMIT 1),sqlc.arg(commission_bps)::integer)
+  ELSE sqlc.arg(commission_bps)::integer END,
+ sqlc.arg(hold_days)::integer,sqlc.arg(conversion_days)::integer
 FROM referral_links l JOIN accounts a ON a.id=l.owner_id
 WHERE l.share_code=sqlc.arg(code)::text AND l.active AND a.status='active' AND l.owner_id<>sqlc.arg(account_id)::uuid
 ON CONFLICT (account_id) DO NOTHING;
@@ -49,14 +52,18 @@ FROM accounts a LEFT JOIN referral_attributions r ON r.account_id=a.id
 WHERE a.id=sqlc.arg(account_id)::uuid;
 
 -- name: AttributeCheckout :execrows
-INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days,attribution_source)
+INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days,attribution_source,subject_kind,selected_by)
 SELECT sqlc.arg(account_id)::uuid,l.code,sqlc.arg(currency)::text,
  sqlc.arg(customer_reward_cents)::bigint,sqlc.arg(referred_reward_cents)::bigint,
- sqlc.arg(commission_bps)::integer,sqlc.arg(hold_days)::integer,sqlc.arg(conversion_days)::integer,'checkout'
+ COALESCE((SELECT g.commission_bps FROM sales_commission_agreements g
+  WHERE g.account_id=l.owner_id AND g.effective_from<=now() ORDER BY g.effective_from DESC,g.created_at DESC LIMIT 1),sqlc.arg(commission_bps)::integer),
+ sqlc.arg(hold_days)::integer,sqlc.arg(conversion_days)::integer,'checkout',
+ sqlc.arg(subject_kind)::text,sqlc.narg(selected_by)::uuid
 FROM referral_links l JOIN accounts owner ON owner.id=l.owner_id
 WHERE l.share_code=sqlc.arg(code)::text AND l.kind='sales' AND l.active
  AND owner.status='active' AND owner.email_verified_at IS NOT NULL AND owner.mfa_enrolled_at IS NOT NULL
  AND lower(owner.email)=ANY(sqlc.arg(member_emails)::text[]) AND l.owner_id<>sqlc.arg(account_id)::uuid
+ AND l.owner_id IS DISTINCT FROM sqlc.narg(selected_by)::uuid
 ON CONFLICT (account_id) DO NOTHING;
 
 -- name: ListReferrals :many
@@ -68,15 +75,23 @@ WHERE (v.owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
 ORDER BY v.account_id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReferralSummary :many
-SELECT kind,currency,count(*)::bigint AS signups,
- count(*) FILTER (WHERE paid)::bigint AS paid,
- count(*) FILTER (WHERE reward_status='eligible')::bigint AS eligible,
- COALESCE(sum(reward_cents) FILTER (WHERE reward_status='eligible'),0)::bigint AS reward_cents,
- COALESCE(sum(paid_cents) FILTER (WHERE paid AND reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents
-FROM sales_referral_overview
-WHERE (owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
- AND (sqlc.arg(kind)::text='' OR kind=sqlc.arg(kind)::text)
-GROUP BY kind,currency ORDER BY kind,currency;
+-- A sale is a paid first invoice that was not refunded or paid in another
+-- currency; "this month" is the calendar month in UTC of that first payment.
+SELECT v.kind,v.currency,count(*)::bigint AS signups,
+ count(*) FILTER (WHERE v.paid)::bigint AS paid,
+ count(*) FILTER (WHERE v.reward_status='eligible')::bigint AS eligible,
+ COALESCE(sum(v.reward_cents) FILTER (WHERE v.reward_status='eligible'),0)::bigint AS reward_cents,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch'))::bigint AS sales,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::bigint AS sales_this_month,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::bigint AS paid_this_month_cents
+FROM sales_referral_overview v
+JOIN referral_attributions r ON r.account_id=v.account_id
+WHERE (v.owner_id=sqlc.arg(owner_id)::uuid OR sqlc.arg(all_owners)::boolean)
+ AND (sqlc.arg(kind)::text='' OR v.kind=sqlc.arg(kind)::text)
+GROUP BY v.kind,v.currency ORDER BY v.kind,v.currency;
 
 -- name: UpdateLead :execrows
 UPDATE referral_attributions r SET stage=$1,note=$2,follow_up=$3,updated_by=$4,updated_at=now()
@@ -404,3 +419,99 @@ SELECT l.id,l.name,l.email,l.company,l.stage,l.version,a.email AS owner_email,
  AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL),'')::text AS referral_code
 FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
 WHERE l.id=sqlc.arg(lead_id)::uuid AND (l.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean);
+
+-- name: OrgCheckoutReferralState :one
+SELECT o.plan,o.status,COALESCE(o.stripe_subscription_item,'')::text AS subscription,
+ (o.personal_org OR o.deleted_pending)::boolean AS excluded,
+ (r.account_id IS NOT NULL)::boolean AS attributed,COALESCE(l.share_code,'')::text AS code,
+ COALESCE(l.kind,'')::text AS kind,
+ EXISTS (SELECT 1 FROM invoices i WHERE i.account_id=o.id
+  AND (i.amount_paid_cents>0 OR i.amount_refunded_cents>0 OR i.amount_refund_pending_cents>0))::boolean AS paid
+FROM orgs o LEFT JOIN referral_attributions r ON r.account_id=o.id
+ LEFT JOIN referral_links l ON l.code=r.code
+WHERE o.id=sqlc.arg(org_id)::uuid;
+
+-- name: SalesTeamRoster :many
+SELECT lower(a.email)::text AS email,m.role FROM sales_team_members m
+JOIN accounts a ON a.id=m.account_id WHERE m.active ORDER BY 1;
+
+-- name: ListSalesTeamMembers :many
+SELECT a.id,a.email,a.status,(a.email_verified_at IS NOT NULL)::boolean AS verified,
+ (a.mfa_enrolled_at IS NOT NULL)::boolean AS mfa_enrolled,
+ COALESCE(m.role,'')::text AS stored_role,COALESCE(m.active,false)::boolean AS stored_active,
+ COALESCE(m.version,0)::bigint AS version,
+ COALESCE(g.commission_bps,-1)::integer AS agreement_bps,g.effective_from AS agreement_from
+FROM accounts a
+LEFT JOIN sales_team_members m ON m.account_id=a.id
+LEFT JOIN LATERAL (SELECT ag.commission_bps,ag.effective_from FROM sales_commission_agreements ag
+ WHERE ag.account_id=a.id AND ag.effective_from<=now() ORDER BY ag.effective_from DESC,ag.created_at DESC LIMIT 1) g ON true
+WHERE m.account_id IS NOT NULL OR lower(a.email)=ANY(sqlc.arg(config_emails)::text[])
+ORDER BY lower(a.email),a.id;
+
+-- name: SalesAccountByEmail :one
+SELECT id,email FROM accounts WHERE lower(email)=lower(sqlc.arg(email)::text) ORDER BY id LIMIT 1;
+
+-- name: InsertSalesTeamMember :execrows
+INSERT INTO sales_team_members(account_id,role,active,updated_by) VALUES ($1,$2,true,$3)
+ON CONFLICT (account_id) DO NOTHING;
+
+-- name: UpdateSalesTeamMember :execrows
+UPDATE sales_team_members SET role=$1,active=$2,updated_by=$3,version=version+1,updated_at=now()
+WHERE account_id=$4 AND version=sqlc.arg(expected_version)::bigint;
+
+-- name: InsertCommissionAgreement :exec
+INSERT INTO sales_commission_agreements(id,account_id,commission_bps,effective_from,note,created_by)
+VALUES ($1,$2,$3,$4,$5,$6);
+
+-- name: ListCommissionAgreements :many
+SELECT g.id,g.commission_bps,g.effective_from,g.note,g.created_at,COALESCE(c.email,'')::text AS created_by_email
+FROM sales_commission_agreements g LEFT JOIN accounts c ON c.id=g.created_by
+WHERE g.account_id=$1 ORDER BY g.effective_from DESC,g.created_at DESC LIMIT 100;
+
+-- name: CurrentCommissionBps :one
+SELECT commission_bps FROM sales_commission_agreements
+WHERE account_id=$1 AND effective_from<=now() ORDER BY effective_from DESC,created_at DESC LIMIT 1;
+
+-- name: LockSalesCredit :one
+SELECT r.account_id,r.commission_bps,l.kind,l.owner_id,
+ EXISTS(SELECT 1 FROM sales_commission_payouts p WHERE p.account_id=r.account_id AND p.voided_at IS NULL)::boolean AS has_payout
+FROM referral_attributions r JOIN referral_links l ON l.code=r.code
+WHERE r.account_id=$1 FOR UPDATE OF r;
+
+-- name: MoveSalesCredit :execrows
+UPDATE referral_attributions SET code=$1,commission_bps=$2,updated_by=$3,updated_at=now() WHERE account_id=$4;
+
+-- name: InsertCreditChange :exec
+INSERT INTO referral_credit_changes(id,account_id,from_owner_id,to_owner_id,from_commission_bps,to_commission_bps,reason,changed_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8);
+
+-- name: ListCreditChanges :many
+SELECT c.id,c.from_owner_id,c.to_owner_id,c.from_commission_bps,c.to_commission_bps,c.reason,c.created_at,
+ COALESCE(f.email,'')::text AS from_email,COALESCE(t.email,'')::text AS to_email,COALESCE(b.email,'')::text AS changed_by_email
+FROM referral_credit_changes c
+LEFT JOIN accounts f ON f.id=c.from_owner_id LEFT JOIN accounts t ON t.id=c.to_owner_id LEFT JOIN accounts b ON b.id=c.changed_by
+WHERE c.account_id=$1 ORDER BY c.created_at DESC LIMIT 50;
+
+-- name: PayoutCandidate :one
+SELECT v.owner_id,v.kind,v.currency,v.reward_status,v.reward_cents FROM sales_referral_overview v WHERE v.account_id=$1;
+
+-- name: InsertPayout :exec
+INSERT INTO sales_commission_payouts(id,account_id,owner_id,amount_cents,currency,paid_on,reference,note,recorded_by)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9);
+
+-- name: VoidPayout :execrows
+UPDATE sales_commission_payouts SET voided_at=now(),voided_by=$1,void_reason=$2
+WHERE id=$3 AND voided_at IS NULL;
+
+-- name: ListPayouts :many
+SELECT p.id,p.account_id,p.owner_id,p.amount_cents,p.currency,p.paid_on,p.reference,p.note,p.created_at,
+ p.voided_at,p.void_reason,COALESCE(o.email,'')::text AS owner_email,COALESCE(v.email,'')::text AS customer_email,
+ COALESCE(v.org_name,'')::text AS customer_org,COALESCE(rb.email,'')::text AS recorded_by_email
+FROM sales_commission_payouts p
+LEFT JOIN accounts o ON o.id=p.owner_id
+LEFT JOIN sales_referral_overview v ON v.account_id=p.account_id
+LEFT JOIN accounts rb ON rb.id=p.recorded_by
+WHERE (p.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean)
+ AND (sqlc.arg(owner_filter)::text='' OR p.owner_id::text=sqlc.arg(owner_filter)::text)
+ AND (sqlc.arg(include_voided)::boolean OR p.voided_at IS NULL)
+ORDER BY p.paid_on DESC,p.created_at DESC,p.id LIMIT 200;

@@ -211,7 +211,12 @@ func buildPreviewBuildPlan(srcDir string, sh shape, runtime, handler, sourceSHA2
 				plan.Version = profile.FrameworkVer
 				plan.Entrypoint = profile.StartCommand
 				plan.Port = profile.Port
-				plan.HealthPath = profile.HealthPath
+				// A defaulted /healthz is TCP readiness (ADR-079 amendment 2):
+				// the deploy probes no path. Showing it sent agents looking
+				// for a health path to set (Codex eval 2026-11-19).
+				if !profile.HealthDefaulted {
+					plan.HealthPath = profile.HealthPath
+				}
 				plan.ConfigFile = profile.ConfigFile
 			}
 		}

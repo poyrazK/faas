@@ -301,3 +301,47 @@ func testActivePrewarmFloors(t *testing.T, s prewarmFloorsTestStore, apps []stat
 		}
 	}
 }
+
+// adr: 20261107122928 amendment 3 — retention deletes only the settled
+// intents cron pre-wake filed, once their window ended before the cutoff.
+func TestMemStorePruneCronPrewarmIntents(t *testing.T) {
+	ctx := context.Background()
+	m := state.NewMemStore()
+	app := state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}
+	(*m.Apps())[app.ID] = app
+	now := time.Now().UTC()
+	create := func(trigger string, settle bool) string {
+		t.Helper()
+		intent, err := m.CreatePrewarmIntent(ctx, app.ID, app.AccountID, 1, now.Add(time.Minute), now.Add(3*time.Minute), trigger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if settle {
+			if _, claimed, err := m.ClaimPrewarmIntent(ctx, intent.ID, now.Add(time.Minute)); err != nil || !claimed {
+				t.Fatalf("claim = %v, %v", claimed, err)
+			}
+			if err := m.CompletePrewarmIntent(ctx, intent.ID, now.Add(time.Minute), 1, "admitted:1"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return intent.ID
+	}
+	settledCron := create(state.PrewarmTriggerCron, true)
+	pendingCron := create(state.PrewarmTriggerCron, false)
+	settledCalendar := create(state.PrewarmTriggerCalendar, true)
+
+	if n, err := m.PruneCronPrewarmIntents(ctx, now.Add(2*time.Minute), 10); err != nil || n != 0 {
+		t.Fatalf("prune before the window ended = %d, %v; want 0", n, err)
+	}
+	if n, err := m.PruneCronPrewarmIntents(ctx, now.Add(time.Hour), 10); err != nil || n != 1 {
+		t.Fatalf("prune after the window ended = %d, %v; want 1", n, err)
+	}
+	if _, err := m.PrewarmIntentByID(ctx, settledCron); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("settled cron intent still present: %v", err)
+	}
+	for _, id := range []string{pendingCron, settledCalendar} {
+		if _, err := m.PrewarmIntentByID(ctx, id); err != nil {
+			t.Fatalf("intent %s pruned: %v", id, err)
+		}
+	}
+}

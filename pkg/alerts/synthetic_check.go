@@ -51,6 +51,15 @@ func (e *Evaluator) observeSyntheticCheck(ctx context.Context, rule state.AlertR
 			return 0, false, skipDegraded
 		}
 		if st.OKRuns == 0 {
+			// Every run in the window timed out: the check is at least as
+			// slow as its timeout, so the latency rule reads the timeout
+			// instead of going unknown exactly when latency is worst
+			// (Observe audit 2026-11-21, finding 16). Other failures (a fast
+			// 500, a refused connection) say nothing about latency.
+			if st.Runs > 0 && e.allRunsTimedOut(ctx, runs, rule, check) {
+				observed = float64(check.TimeoutMS)
+				break
+			}
 			return 0, false, skipInsufficient
 		}
 		observed = st.P95LatencyMS
@@ -76,4 +85,25 @@ func (e *Evaluator) liveSyntheticCheck(ctx context.Context, rule state.AlertRule
 		return state.SyntheticCheck{}, skipInsufficient
 	}
 	return check, ""
+}
+
+// allRunsTimedOut reports whether every recent run inside the rule's window
+// failed with a timeout.
+func (e *Evaluator) allRunsTimedOut(ctx context.Context, runs state.SyntheticRunStore, rule state.AlertRule, check state.SyntheticCheck) bool {
+	recent, err := runs.ListSyntheticCheckRuns(ctx, check.ID, api.SyntheticCheckRecentRuns)
+	if err != nil {
+		return false
+	}
+	since := e.windowStart(rule.WindowSpec, e.now())
+	seen := 0
+	for _, run := range recent {
+		if run.StartedAt.Before(since) {
+			continue
+		}
+		if run.OK || run.ErrorClass != "timeout" {
+			return false
+		}
+		seen++
+	}
+	return seen > 0
 }

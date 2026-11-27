@@ -30,6 +30,9 @@ func platformIdentityForTarget(ctx context.Context, request *http.Request, app A
 		// that deployment's environment's kills.
 		identity.FlagKills = attrs.kills.FlagKillsHeader(ctx, target.DeploymentID)
 	}
+	if attrs.cohorts != nil && identity.PlatformTenantID != "" {
+		identity.FlagCohorts = attrs.cohorts.FlagCohortsHeader(ctx, target.DeploymentID, identity.PlatformTenantID)
+	}
 	if identity.AppID == "" {
 		identity.AppID = app.ID
 	}

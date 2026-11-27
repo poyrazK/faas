@@ -84,9 +84,11 @@ func (s *server) chargeAgentBudget(w http.ResponseWriter, r *http.Request, plan 
 		}
 		return s.authMw.ChargeAgentBudget(w, r, plan, max(after-before, 0))
 	}
-	if s.authMw == nil || after <= before {
+	if s.authMw == nil || after == before {
 		return func() {}, false
 	}
+	// A change that lowers standing cost gives the agent's budget back
+	// (cost-control review 2026-11-19, N10).
 	return s.authMw.ChargeAgentBudget(w, r, plan, after-before)
 }
 
@@ -133,7 +135,11 @@ func (s *server) chargeDeploymentFloor(w http.ResponseWriter, r *http.Request, a
 func (s *server) chargePrewarm(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, req api.PrewarmRequest) (func(), bool) {
 	extra := req.Count - appFloor(app)
 	seconds := int64(req.ExpiresAt.Sub(req.WakeAt).Seconds())
-	return s.chargeAgentBudget(w, r, acct.Plan, 0, api.AgentPrewarmMillicents(extra, appRAM(app.RAMMB, acct.Plan), seconds))
+	_, answered := s.chargeAgentBudget(w, r, acct.Plan, 0, api.AgentPrewarmMillicents(extra, appRAM(app.RAMMB, acct.Plan), seconds))
+	// A prewarm ends on its own, so it must fit the budget but is not kept
+	// as standing cost: the reservation is released once the handler
+	// returns (cost-control review 2026-11-19, N10).
+	return func() {}, answered
 }
 
 // noCharge is a priced handler's path that commits nothing new (a replay, a

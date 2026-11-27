@@ -37,6 +37,10 @@ func TestExecutionPlanLimits(t *testing.T) {
 	}
 
 	for plan, expected := range want {
+		if plan.IsPaid() {
+			expected.ExtendedTimeoutMS = ExecutionExtendedTimeoutMaxMS
+			expected.MaxExtendedConcurrent = ExecutionExtendedConcurrentPerAccount[plan.PlanIndex()]
+		}
 		got, ok := plan.ExecutionLimits()
 		if !ok {
 			t.Fatalf("%s.ExecutionLimits() returned ok=false", plan)

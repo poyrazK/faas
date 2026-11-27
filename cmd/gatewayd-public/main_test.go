@@ -137,7 +137,7 @@ func TestInstallPublicStaticRoutes_SecurityTxt(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Fatalf("Content-Type = %q, want text/plain; charset=utf-8", got)
 	}
-	if got := rec.Body.String(); !strings.Contains(got, "Contact: mailto:security@gregale.dev") {
+	if got := rec.Body.String(); !strings.Contains(got, "Contact: mailto:gregale@gregale.dev") {
 		t.Fatalf("security.txt missing security contact: %q", got)
 	}
 }

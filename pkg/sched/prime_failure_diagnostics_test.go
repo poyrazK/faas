@@ -39,6 +39,39 @@ func TestMarkPrimeFailedClassifiesSchedulerDeadline(t *testing.T) {
 	}
 }
 
+// Deploy-path probe 2026-11-21 (R3-2): a prime that ran out its budget named
+// the plain cold-boot budget even for an app with a raised startup deadline,
+// and its fix text never mentioned startup_deadline_s.
+func TestMarkPrimeFailedNamesTheStartupDeadlineBudget(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "deadline@prime.test", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "slow-start", Type: state.AppTypeApp, Status: state.AppActive,
+		RAMMB: 512, MaxConcurrency: 1, IdleTimeoutS: 60, Manifest: state.AppManifest{StartupDeadlineS: 120}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:slow", Status: state.DeploySnapshotting})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	e.MarkPrimeFailed(ctx, dep.ID, errors.Join(errors.New("sched: prime: cold boot"), context.DeadlineExceeded))
+	got, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := e.PrimeColdBootBudget(120).String(); !strings.Contains(got.Error, "exceeded the "+want+" cold-boot RPC budget") {
+		t.Fatalf("error = %q, want the %s budget the prime had", got.Error, want)
+	}
+	if !strings.Contains(got.ErrorFix, "startup_deadline_s") {
+		t.Fatalf("fix = %q, want the startup_deadline_s advice", got.ErrorFix)
+	}
+}
+
 func TestMarkPrimeFailedExplainsBeforeCheckpointFailure(t *testing.T) {
 	store := state.NewMemStore()
 	_, _, dep := sched.SeedApp(t, store, api.PlanScale, 1024, 10)

@@ -40,16 +40,21 @@ Gregale's own tools come from its RAP toolset at
   it sleeps, Gregale holds the wake-up and the function parks.
 - `gregale_run`: starts one of your account's agents in its own microVM, and
   the thread wakes with the run's state, outcome and result when it ends.
+- `gregale_github_subscribe`: subscribes the thread to a repository's pull
+  request events for up to 30 days. Each event wakes the thread as a result of
+  that call. Events come only from repositories in your account's GitHub
+  installations.
 
 Gregale checks the callback URL each call carries, and each call also carries
 the app's workload token (`GregaleHttp` in `src/platform.rs`), which
-`gregale_run` needs to start a run in your account. So these tools need no
+`gregale_run` and `gregale_github_subscribe` need to act in your account. So these tools need no
 API key. Without the toolset, the agent runs with `lookup` alone.
 
 The model is scripted (`src/model.rs`), so the starter runs with no provider
 key: a user message calls `lookup`, and the tool's result is the answer.
 `sleep 30` calls `gregale_sleep` for 30 seconds instead, and `run triage look
-at PR 7` starts the agent `triage` with that prompt. To use a real model,
+at PR 7` starts the agent `triage` with that prompt, and `watch acme/api`
+subscribes the thread to `acme/api`'s pull requests. To use a real model,
 swap it for any Infinity provider, for example `infinity-provider-rig`.
 
 ## Deploy
@@ -84,6 +89,11 @@ thread answers `gregale_sleep answered: Slept for 30 seconds.` with no post
 from you. Publish `{"text":"run triage look at PR 7"}` and the thread answers
 when the run ends, with `gregale_run answered:` and the run's JSON; an agent
 the account does not have answers at once with `Agent not found`.
+Publish `{"text":"watch acme/api"}` and the thread answers
+`gregale_github_subscribe answered: Subscribed to ...`; it then answers again
+each time a pull request on `acme/api` is opened, reopened, pushed to,
+marked ready for review or closed. A thread with a live subscription keeps
+its callback URLs.
 
 ## Settings
 

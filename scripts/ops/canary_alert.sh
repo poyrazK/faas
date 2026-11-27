@@ -33,6 +33,8 @@ alertmanager_url="${ALERTMANAGER_URL:-http://127.0.0.1:9094}"
 alertname="${CANARY_ALERTNAME:-FaasSyntheticCanaryFailed}"
 ttl_minutes="${CANARY_TTL_MINUTES:-180}"
 run_url="${CANARY_RUN_URL:-}"
+triage="${CANARY_TRIAGE_JSON:-}"
+[[ -n "$triage" ]] || triage='{}'
 
 [[ "$ttl_minutes" =~ ^[0-9]+$ ]] || {
   echo "canary_alert: CANARY_TTL_MINUTES must be an integer" >&2
@@ -50,6 +52,7 @@ payload="$(jq -n \
   --arg summary "$summary" \
   --arg description "$description" \
   --arg runURL "$run_url" \
+  --argjson triage "$triage" \
   --arg startsAt "$starts_at" \
   --arg endsAt "$ends_at" \
   '[{
@@ -59,7 +62,7 @@ payload="$(jq -n \
         component: "platform",
         family: "synthetic_canary"
       },
-      annotations: ({
+      annotations: ($triage + {
         summary: $summary,
         description: $description,
         runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSyntheticCanaryFailed.md"

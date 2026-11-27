@@ -12,12 +12,14 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -300,6 +302,9 @@ type Config struct {
 	// for opt-in HTTPS calls to <service>.internal. Empty disables guest
 	// staging and the :443 netns admission rule.
 	ServiceProxyCAPath string `toml:"service_proxy_ca_path"`
+	// DataAPIInspectionCAPath names operator-owned public CA certificates for
+	// the native PostgreSQL inspection; empty leaves the probe unavailable.
+	DataAPIInspectionCAPath string `toml:"data_api_inspection_ca_path"`
 
 	// ScheddClientTLS is the client mTLS material vmmd uses to dial
 	// schedd for the capacity publisher (ADR-052 / issue #95 slice 2).
@@ -531,6 +536,11 @@ type ComputeNodeConfig struct {
 	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
 	// predates this field.
 	PublicEntryAddrs []string `toml:"public_entry_addrs"`
+	// PeerEntryAddrs are the other compute edges' IPv4 entry addresses, as
+	// the nftables role renders for faas_peer_entry_addrs
+	// (ADR-20261123100000): a guest's 443 call to one is DNATed to this
+	// node's own entry address, so app-to-app calls stay on the node.
+	PeerEntryAddrs []string `toml:"peer_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -567,6 +577,18 @@ type ComputeNodeConfig struct {
 	// nftables role's faas_database_route_enabled and gatewayd-internal's
 	// database_route_listen.
 	DatabaseRouteEnabled bool `toml:"database_route_enabled"`
+	// InternalEgressCIDRs and InternalEgressHosts are public destinations
+	// that are still Gregale's own, so a guest's traffic to them is internal
+	// egress, not billed (ADR-20261114100000 amendment 2026-11-23): the
+	// nodes' entry addresses (app-to-app calls, object storage and telemetry
+	// by public hostname) and the managed PostgreSQL provider's regional
+	// endpoints, whose traffic the database's own egress allowance covers.
+	// Hosts are re-resolved every few minutes; addresses seen in the last day
+	// stay internal so DNS rotation does not bill a long session. A namespace
+	// takes the set current when it is prepared. FAAS_VMMD_INTERNAL_EGRESS_CIDRS
+	// and FAAS_VMMD_INTERNAL_EGRESS_HOSTS (comma-separated) win.
+	InternalEgressCIDRs []string `toml:"internal_egress_cidrs"`
+	InternalEgressHosts []string `toml:"internal_egress_hosts"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -691,6 +713,12 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // defaults filled in. A missing file is not an error if defaults suffice;
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
+	return loadConfig(path, os.ReadFile)
+}
+
+// Release checks parse the exact config bytes whose digest they verified.
+// The daemon keeps its existing file reader and all normalization/overrides.
+func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, error) {
 	// Size the node from the machine it is on, not from the single-box
 	// constants. The old defaults advertised 56,000 MB / 47,600 MB on every
 	// host regardless of hardware, so a 16 GiB compute node told schedd it
@@ -785,7 +813,7 @@ func LoadConfig(path string) (*Config, error) {
 		},
 	}
 	preparedNetworksSet := false
-	b, err := os.ReadFile(path)
+	b, err := readConfig(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("vmmd: read %q: %w", path, err)
@@ -866,14 +894,18 @@ func LoadConfig(path string) (*Config, error) {
 	// reserve now that the role is known. Only fields still holding the
 	// single-box default are replaced: an explicit [compute_node] value in
 	// vmmd.toml, and the FAAS_COMPUTE_* overlay applied further down, both
-	// stay authoritative.
+	// stay authoritative. The reserve funds the node's provisioned reserved
+	// builder slots (FAAS_BUILDER_RESERVED_SLOTS, ADR-20261118154632
+	// amendment 1), as node_join's sizing does.
 	if c.Role == role.RoleComputeOnly {
-		computeSizing := api.DeriveNodeSizingForRole(hostMemTotalMB(), hostCPUs(), api.NodeShapeComputeOnly)
+		builderReserved := builderslots.ReservedFromEnv(os.Getenv)
+		computeSizing := api.DeriveNodeSizingForRoleWithBuilders(hostMemTotalMB(), hostCPUs(), api.NodeShapeComputeOnly, builderReserved)
 		if c.ComputeNode.AdmissionCeilingMB == sizing.AdmissionCeilingMB {
 			c.ComputeNode.AdmissionCeilingMB = computeSizing.AdmissionCeilingMB
 		}
 		slog.Default().Info("vmmd: compute node sizing re-derived for role",
 			"role", string(c.Role),
+			"builder_reserved_slots", builderReserved,
 			"non_tenant_reserve_mb", computeSizing.NonTenantReserveMB,
 			"tenant_slice_max_mb", computeSizing.TenantSliceMaxMB,
 			"tenant_budget_mb", computeSizing.TenantBudgetMB,
@@ -941,6 +973,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PEER_ENTRY_ADDRS"); v != "" {
+		c.ComputeNode.PeerEntryAddrs = splitNonEmpty(v)
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
 		if perr != nil {
@@ -982,6 +1017,15 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
 		}
 		c.ComputeNode.DatabaseRouteEnabled = parsed
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_INTERNAL_EGRESS_CIDRS"); ok {
+		c.ComputeNode.InternalEgressCIDRs = splitCommaList(v)
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_INTERNAL_EGRESS_HOSTS"); ok {
+		c.ComputeNode.InternalEgressHosts = splitCommaList(v)
+	}
+	if _, err := parseInternalEgressCIDRs(c.ComputeNode.InternalEgressCIDRs); err != nil {
+		return nil, err
 	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_MTU"); v != "" {
 		mtu, err := strconv.Atoi(v)
@@ -1392,6 +1436,18 @@ func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
 			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q must be a plain address in canonical form (%s)", i, raw, addr.Unmap().WithZone(""))
 		}
 	}
+	for i, raw := range cfg.PeerEntryAddrs {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q invalid: %w", i, raw, err)
+		}
+		if !addr.Is4() || addr.String() != raw {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q must be a plain IPv4 address in canonical form", i, raw)
+		}
+		if slices.Contains(cfg.PublicEntryAddrs, raw) {
+			return fmt.Errorf("vmmd: peer_entry_addrs[%d] %q is this node's own entry address", i, raw)
+		}
+	}
 	return nil
 }
 
@@ -1528,6 +1584,11 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	for _, raw := range cfg.PublicEntryAddrs {
 		if addr, err := netip.ParseAddr(raw); err == nil {
 			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
+		}
+	}
+	for _, raw := range cfg.PeerEntryAddrs {
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			policy.PeerEntryAddrs = append(policy.PeerEntryAddrs, addr)
 		}
 	}
 	if cfg.ServiceTCPEnabled {

@@ -303,11 +303,26 @@ export async function route(pool, claims, method, path, body, services = {}) {
     if (operation !== 'read' && operation !== 'write') throw new HTTPError(400, 'invalid_operation')
     const resource = objectResource(bucket, body.key)
     if (!resource) throw new HTTPError(400, 'invalid_key')
+    // An upload URL is signed for the size the caller declares (and its
+    // content type, if given), so it cannot carry more than the app allows.
+    const signedHeaders = {}
+    if (operation === 'write') {
+      if (!Number.isSafeInteger(body.size) || body.size < 1) throw new HTTPError(400, 'invalid_size')
+      if (body.size > (binding.maxUploadBytes ?? limits.storageUploadDefaultBytes)) throw new HTTPError(413, 'object_too_large')
+      signedHeaders['content-length'] = String(body.size)
+      if (body.content_type !== undefined) {
+        if (typeof body.content_type !== 'string' || !/^[\x21-\x7e][\x20-\x7e]{0,254}$/.test(body.content_type)) throw new HTTPError(400, 'invalid_content_type')
+        signedHeaders['content-type'] = body.content_type
+      }
+    } else if (body.size !== undefined || body.content_type !== undefined) {
+      throw new HTTPError(400, 'invalid_operation')
+    }
     const [{ allowed }] = await rows('SELECT gregale_auth.authorize($1, $2) AS allowed', [`storage:${operation}`, resource])
     if (!allowed) throw new HTTPError(403, 'forbidden')
     const httpMethod = operation === 'write' ? 'PUT' : 'GET'
-    const url = presign({ method: httpMethod, url: objectURL(binding, body.key), region: binding.region, accessKeyId: binding.accessKeyId, secretAccessKey: binding.secretAccessKey, expires: limits.storageURLSeconds })
-    return [200, { url, method: httpMethod, expires_in: limits.storageURLSeconds }]
+    const url = presign({ method: httpMethod, url: objectURL(binding, body.key), region: binding.region, accessKeyId: binding.accessKeyId, secretAccessKey: binding.secretAccessKey, expires: limits.storageURLSeconds, headers: signedHeaders })
+    const required = operation === 'write' ? { headers: { 'Content-Length': signedHeaders['content-length'], ...(signedHeaders['content-type'] ? { 'Content-Type': signedHeaders['content-type'] } : {}) } } : {}
+    return [200, { url, method: httpMethod, expires_in: limits.storageURLSeconds, ...required }]
   }
   const start = /^\/workflows\/([a-z0-9][a-z0-9_-]{0,62})\/start$/.exec(path)
   if (start && method === 'POST') {

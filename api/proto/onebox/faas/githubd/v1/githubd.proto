@@ -159,6 +159,22 @@ service Githubd {
   //     returns 5xx.
   rpc StreamSourceRef(StreamSourceRefRequest) returns (stream StreamSourceRefChunk);
 
+  // StreamPublicSourceRef streams the tar.gz archive of a repository
+  // GitHub reports as public, with no account or installation
+  // (ADR-20261126164847). githubd proves the repository is public on
+  // every call, resolves the ref to a commit SHA, and streams the same
+  // frames as StreamSourceRef under the same max_archive_bytes cap.
+  //
+  // Errors:
+  //   - PERMISSION_DENIED (github_repo_not_accessible) when the
+  //     repository is private, missing or renamed; the three are not
+  //     distinguished.
+  //   - INVALID_ARGUMENT when (repo, ref) fails validation or the ref
+  //     does not exist.
+  //   - UNAVAILABLE (source_ref_unavailable) when GitHub refuses or
+  //     rate-limits the read, or returns 5xx.
+  rpc StreamPublicSourceRef(StreamPublicSourceRefRequest) returns (stream StreamSourceRefChunk);
+
   // GetBranchHead returns a branch's current commit. NOT_FOUND means the
   // requested ref is not a branch (source-ref also accepts tags and SHAs).
   // imaged uses this immediately before promoting branch-backed deployments.
@@ -561,6 +577,8 @@ message EnqueueBuildRequest {
   // deployment in it, without the preview-app steps. An older apid never
   // receives one: githubd sends it only after EnsurePullRequestBranch.
   bool environment_branch = 20;
+  // Project-production fan-out ID; unset for independent apps and previews.
+  string project_deploy_group_id = 21;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for
@@ -631,6 +649,19 @@ message StreamSourceRefRequest {
   // io.LimitReader(max_archive_bytes + 1, …) so the chunk
   // carrying truncated=true surfaces when the cap is hit.
   int64  max_archive_bytes = 5;
+}
+
+// StreamPublicSourceRefRequest is the public-repository source-ref
+// stream input (ADR-20261126164847). It carries no account or
+// installation: the repository must be public.
+message StreamPublicSourceRefRequest {
+  // repo_full_name is "owner/name", validated like StreamSourceRef's.
+  string repo_full_name   = 1;
+  // ref is the requested commit SHA, branch, or tag.
+  string ref              = 2;
+  // max_archive_bytes is the caller's per-plan cap, applied exactly as
+  // StreamSourceRefRequest.max_archive_bytes.
+  int64  max_archive_bytes = 3;
 }
 
 // StreamSourceRefChunk is one frame of the source-ref archive

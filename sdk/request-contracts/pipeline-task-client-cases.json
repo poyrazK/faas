@@ -1,0 +1,209 @@
+{
+  "tool": "csv_import",
+  "request_id": "22222222-2222-4222-8222-222222222222",
+  "run_id": "11111111-1111-4111-8111-111111111111",
+  "task_id": "33333333-3333-4333-8333-333333333333",
+  "form_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccc",
+  "input": {
+    "id": "import-1"
+  },
+  "reply": {
+    "email_column": "contact"
+  },
+  "contract": {
+    "version": 1,
+    "name": "csv-import",
+    "input": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "reply_contract": {
+    "version": 1,
+    "name": "csv-column-choice",
+    "input": {
+      "type": "null"
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "email_column": {
+          "type": "string",
+          "enum": [
+            "contact",
+            "alternate_contact"
+          ]
+        }
+      },
+      "required": [
+        "email_column"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "working": {
+    "resultType": "complete",
+    "taskId": "33333333-3333-4333-8333-333333333333",
+    "status": "working",
+    "statusMessage": "Pipeline\u2028running",
+    "createdAt": "2026-11-18T09:00:00.000Z",
+    "lastUpdatedAt": "2026-11-18T09:00:00.000Z",
+    "ttlMs": 86400000,
+    "pollIntervalMs": 1,
+    "_meta": {
+      "io.gregale/pipeline": {
+        "request_id": "22222222-2222-4222-8222-222222222222",
+        "run_id": "11111111-1111-4111-8111-111111111111",
+        "state": "running",
+        "steps": []
+      }
+    }
+  },
+  "form": {
+    "resultType": "complete",
+    "taskId": "33333333-3333-4333-8333-333333333333",
+    "status": "input_required",
+    "statusMessage": "Pipeline awaiting input",
+    "createdAt": "2026-11-18T09:00:00.000Z",
+    "lastUpdatedAt": "2026-11-18T09:00:00.000Z",
+    "ttlMs": 86400000,
+    "pollIntervalMs": 1,
+    "_meta": {
+      "io.gregale/pipeline": {
+        "request_id": "22222222-2222-4222-8222-222222222222",
+        "run_id": "11111111-1111-4111-8111-111111111111",
+        "state": "awaiting_input",
+        "steps": [],
+        "review": {
+          "kind": "input",
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-02T12:00:00Z",
+          "review_url": "https://review.example.test/?run=11111111-1111-4111-8111-111111111111&gate=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    "inputRequests": {
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.cccccccccccccccccccccc": {
+        "method": "elicitation/create",
+        "params": {
+          "mode": "form",
+          "message": "Choose a column",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {
+              "email_column": {
+                "type": "string",
+                "enum": [
+                  "contact",
+                  "alternate_contact"
+                ]
+              }
+            },
+            "required": [
+              "email_column"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "completed": {
+    "resultType": "complete",
+    "taskId": "33333333-3333-4333-8333-333333333333",
+    "status": "completed",
+    "statusMessage": "Pipeline succeeded",
+    "createdAt": "2026-11-18T09:00:00.000Z",
+    "lastUpdatedAt": "2026-11-18T09:00:00.000Z",
+    "ttlMs": 86400000,
+    "pollIntervalMs": 1,
+    "_meta": {
+      "io.gregale/pipeline": {
+        "request_id": "22222222-2222-4222-8222-222222222222",
+        "run_id": "11111111-1111-4111-8111-111111111111",
+        "state": "succeeded",
+        "steps": []
+      }
+    },
+    "result": {
+      "resultType": "complete",
+      "isError": false,
+      "structuredContent": {
+        "state": "succeeded",
+        "receipt": {
+          "tool": "csv_import",
+          "request_id": "22222222-2222-4222-8222-222222222222",
+          "run_id": "11111111-1111-4111-8111-111111111111",
+          "identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "output": {
+          "rows": 2
+        }
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "summary"
+        },
+        {
+          "type": "resource_link",
+          "name": "report",
+          "description": "CSV report",
+          "mimeType": "text/csv",
+          "uri": "gregale-pipeline://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      ]
+    }
+  },
+  "resource": {
+    "uri": "gregale-pipeline://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/report/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "mimeType": "text/csv",
+    "text": "id,email\n1,test@example.test\n"
+  },
+  "reviewer_inbox": {
+    "first": {
+      "items": [
+        {
+          "handoff_id": "33333333-3333-4333-8333-333333333333",
+          "expires_at": "2026-11-19T12:00:00.000Z",
+          "question": "Which CSV column contains the email address?"
+        }
+      ],
+      "next_cursor": "11111111111111111111111111111111.2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "next": {
+      "items": [
+        {
+          "handoff_id": "22222222-2222-4222-8222-222222222222",
+          "expires_at": "2026-11-19T12:00:00.000Z",
+          "question": "Which CSV column contains the email address?"
+        }
+      ],
+      "next_cursor": null
+    },
+    "empty": {
+      "items": [],
+      "next_cursor": null
+    }
+  }
+}

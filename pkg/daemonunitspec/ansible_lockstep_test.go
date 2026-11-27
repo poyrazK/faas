@@ -167,7 +167,8 @@ func TestComputeBootstrapAcceptsEmptyPostgresAndRequiresFastOCICache(t *testing.
 	for _, want := range []string{
 		"stop compute cache writers before migration",
 		"rsync",
-		"bind,x-systemd.requires-mounts-for={{ faas_storage_mount }}/cache",
+		"path: \"{{ faas_storage_cache_mount }}\"",
+		"x-systemd.requires-mounts-for={{ faas_storage_mount }}/cache",
 		`stat -c %d "{{ faas_storage_cache_mount }}"`,
 	} {
 		if !strings.Contains(storageText, want) {

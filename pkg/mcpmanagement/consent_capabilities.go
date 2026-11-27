@@ -18,7 +18,11 @@ var consentCapabilities = []struct{ scope, description string }{
 	{api.ScopeSecretsRequest, "ask you to enter secrets on a Gregale page; it never sees their values"},
 	{api.ScopeStorageManage, "create object storage buckets and bind them to apps"},
 	{api.ScopeManagedPostgresManage, "create managed PostgreSQL databases and bind them to apps (billed)"},
+	{api.ScopeDataRead, "read your app data: rows of managed PostgreSQL databases (read-only SQL), queued and dead-lettered message bodies, workflow inputs and outputs, object contents, and client IPs and user agents in edge events"},
 }
+
+// readCapabilities may accompany a read-only connection.
+var readCapabilities = []string{api.ScopeUsageRead, api.ScopeDataRead}
 
 // chosenCapabilities validates the capability checkboxes: known scopes,
 // once each; usage reads may also accompany a read-only connection.
@@ -30,7 +34,7 @@ func chosenCapabilities(values []string, writes bool) ([]string, error) {
 			return nil, errors.New("unknown or repeated capability")
 		}
 		chosen = append(chosen, value)
-		if !writes && value != api.ScopeUsageRead {
+		if !writes && !slices.Contains(readCapabilities, value) {
 			return nil, errors.New("this capability needs write access")
 		}
 	}

@@ -116,6 +116,10 @@ type resourceAdoptionInstance struct {
 	DeploymentID    string `json:"deployment_id,omitempty"`
 	Port            int    `json:"port,omitempty"`
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
+	// ProbeHost (ADR-20261119140000) keeps an adopted instance's liveness
+	// and readiness loops naming the app's public host after a vmmd restart.
+	// Records written before it carry none and keep the legacy probe.
+	ProbeHost string `json:"probe_host,omitempty"`
 	// HealthcheckGRPC selects gRPC readiness (main's health.v1 checks); later
 	// readers, such as rehearsal suspend, branch on it.
 	HealthcheckGRPC bool `json:"healthcheck_grpc,omitempty"`
@@ -372,7 +376,7 @@ func (r resourceJournalRecord) validateAdoption() error {
 		return errors.New("invalid adoption memory.max")
 	}
 	in := a.Instance
-	for _, s := range []string{in.AppID, in.AccountID, in.DeploymentID, in.HealthcheckPath, in.ExecutionMode, in.Runtime, in.ObservedClass} {
+	for _, s := range []string{in.AppID, in.AccountID, in.DeploymentID, in.HealthcheckPath, in.ProbeHost, in.ExecutionMode, in.Runtime, in.ObservedClass} {
 		if !adoptionString(s) {
 			return errors.New("invalid adoption instance string")
 		}
@@ -517,6 +521,7 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			DeploymentID:             inst.DeploymentID,
 			Port:                     inst.Port,
 			HealthcheckPath:          inst.HealthcheckPath,
+			ProbeHost:                inst.ProbeHost,
 			HealthcheckGRPC:          inst.HealthcheckGRPC,
 			HealthcheckGRPCService:   inst.HealthcheckGRPCService,
 			RoutedPortRawTCP:         inst.RoutedPortRawTCP,

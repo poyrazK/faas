@@ -243,6 +243,12 @@ func cmdLogDrainsHealth(args []string) int {
 	if h.LastFailureAt != "" {
 		_, _ = fmt.Fprintf(osStdout, "Last error: %s (%s)\n", h.LastError, h.LastFailureAt)
 	}
+	if h.UpdatedAt == "" {
+		// A new drain read "unknown (active=false)" and "Delivered: 0" for its
+		// first minute while its endpoint was already receiving lines (prod
+		// hunt 2026-11-21).
+		_, _ = fmt.Fprintln(osStdout, "No delivery report yet: the forwarder reports about once a minute after it starts, so these counts can lag lines the endpoint already received.")
+	}
 	return 0
 }
 

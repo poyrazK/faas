@@ -278,6 +278,16 @@
       "multi_arch": true,
       "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
       "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools"
+    },
+    {
+      "dockerfile": "images/sandbox-code-interpreter.Dockerfile",
+      "instruction": "FROM",
+      "alias": "cgr.dev/chainguard/wolfi-base:latest",
+      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
+      "resolved_tag": "latest",
+      "platform": "linux/amd64",
+      "digest": "sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4"
     }
   ]
 }

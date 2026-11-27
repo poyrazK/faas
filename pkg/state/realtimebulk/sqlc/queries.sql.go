@@ -1591,7 +1591,13 @@ INSERT INTO realtime_usage_hours AS t (endpoint_id,hour,node_name,incarnation,ac
 SELECT e.id,$1::timestamptz,$2::text,$3::uuid,e.account_id,e.app_id,
  $4::integer[],$5::bigint,$6::bigint,
  $7::bigint,$8::bigint,$9::bigint,clock_timestamp()
-FROM managed_realtime_endpoints e WHERE e.id=$10::uuid
+FROM (
+ (SELECT me.id,me.account_id,me.app_id FROM managed_realtime_endpoints me WHERE me.id=$10::uuid)
+ UNION ALL
+ (SELECT h.endpoint_id,h.account_id,h.app_id FROM realtime_usage_hours h WHERE h.endpoint_id=$10::uuid
+   AND NOT EXISTS (SELECT 1 FROM managed_realtime_endpoints live WHERE live.id=$10::uuid)
+   ORDER BY h.hour DESC LIMIT 1)
+) e
 ON CONFLICT (endpoint_id,hour,node_name,incarnation) DO UPDATE SET
  minute_peak_connections=ARRAY(SELECT greatest(t.minute_peak_connections[g.i],excluded.minute_peak_connections[g.i]) FROM generate_series(1,60) AS g(i) ORDER BY g.i),
  connection_seconds=greatest(t.connection_seconds,excluded.connection_seconds),
@@ -1616,7 +1622,10 @@ type RecordRealtimeUsageParams struct {
 }
 
 // Cumulative per-process values only grow, so taking the larger value makes
-// repeated and out-of-order reports harmless. Unknown endpoints record nothing.
+// repeated and out-of-order reports harmless. An endpoint deleted after its
+// node last reported keeps the owner its earlier usage rows recorded, so the
+// bytes it delivered before deletion are still metered (ADR-20261121231500).
+// Endpoints never seen record nothing.
 func (q *Queries) RecordRealtimeUsage(ctx context.Context, db DBTX, arg RecordRealtimeUsageParams) (int64, error) {
 	result, err := db.Exec(ctx, recordRealtimeUsage,
 		arg.Hour,

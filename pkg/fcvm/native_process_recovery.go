@@ -249,7 +249,7 @@ func nativeProcessStartTime(stat string, pid int) (uint64, error) {
 
 func nativeParentPlan(parent string) (api.Plan, bool, bool) {
 	parent = strings.TrimPrefix(parent, "/")
-	if parent == BuilderCgroupParent {
+	if parent == BuilderCgroupParent || parent == BorrowedBuilderCgroupParent {
 		return "", true, true
 	}
 	if parent == defaultParentCgroup {

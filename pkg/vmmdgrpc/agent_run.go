@@ -24,6 +24,12 @@ type AgentRunVMMAPI interface {
 	Destroy(context.Context, string) error
 }
 
+// AgentRunDeadlineAPI moves a run's deadline by its approval-wait credit
+// (ADR-20261027090016 amendment 3). *fcvm.Manager implements it.
+type AgentRunDeadlineAPI interface {
+	ExtendAgentRun(instance string, credit time.Duration)
+}
+
 // WithAgentRuns turns the RunAgent RPC on. It is off unless vmmd's
 // agent_runs switch is set (ADR-20261027090010 §1).
 func (s *Server) WithAgentRuns(enabled bool) *Server {
@@ -67,7 +73,12 @@ func (s *Server) RunAgent(stream vmmdpb.Vmmd_RunAgentServer) error {
 		opErr = err
 		return err
 	}
-	result, usage, err := agentVMM.RunAgent(ctx, wake.Instance, run, agentRunOutputSender(stream), watchAgentRunCancel(stream))
+	var extend func(time.Duration)
+	if deadlines, ok := agentVMM.(AgentRunDeadlineAPI); ok {
+		instance := wake.Instance
+		extend = func(credit time.Duration) { deadlines.ExtendAgentRun(instance, credit) }
+	}
+	result, usage, err := agentVMM.RunAgent(ctx, wake.Instance, run, agentRunOutputSender(stream), watchAgentRunFrames(stream, extend))
 	if usage != nil {
 		// The usage goes first, so a failed run keeps its measurement too.
 		if serr := stream.Send(&vmmdpb.RunAgentEvent{Frame: &vmmdpb.RunAgentEvent_Usage{Usage: agentRunUsageToProto(usage)}}); serr != nil {
@@ -140,6 +151,12 @@ func agentRunStartFromProto(start *vmmdpb.RunAgentStart) (fcvm.AgentRunWakeReque
 		}
 		wake.ModelWaitPauseAfter = time.Duration(ms) * time.Millisecond
 	}
+	if sec := start.GetDeadlineSec(); sec != 0 {
+		if sec < 0 || int(sec) > run.TimeoutSec {
+			return fcvm.AgentRunWakeRequest{}, agentrunproto.Request{}, invalid("deadline_sec is out of range")
+		}
+		wake.Deadline = time.Duration(sec) * time.Second
+	}
 	if relay := start.GetRelay(); relay != nil {
 		wake.Relay = &fcvm.AgentRunRelay{RunID: relay.GetRunId(), LeaseToken: relay.GetLeaseToken(), TenantID: relay.GetTenantId(),
 			AgentID: relay.GetAgentId(), AgentVersion: int(relay.GetAgentVersion())}
@@ -163,10 +180,11 @@ func agentRunOutputSender(stream vmmdpb.Vmmd_RunAgentServer) agentrunproto.Outpu
 	}
 }
 
-// watchAgentRunCancel closes the returned channel on the client's cancel
-// frame. Any other later frame, or the client half-closing, is ignored; the
-// stream's context ends the run if the client goes away.
-func watchAgentRunCancel(stream vmmdpb.Vmmd_RunAgentServer) <-chan struct{} {
+// watchAgentRunFrames closes the returned channel on the client's cancel
+// frame and hands each extend frame's credit to extend, when it is set. Any
+// other later frame, or the client half-closing, is ignored; the stream's
+// context ends the run if the client goes away.
+func watchAgentRunFrames(stream vmmdpb.Vmmd_RunAgentServer, extend func(time.Duration)) <-chan struct{} {
 	cancel := make(chan struct{})
 	var once sync.Once
 	go func() {
@@ -178,8 +196,11 @@ func watchAgentRunCancel(stream vmmdpb.Vmmd_RunAgentServer) <-chan struct{} {
 				}
 				return
 			}
-			if frame.GetCancel() != nil {
+			switch {
+			case frame.GetCancel() != nil:
 				once.Do(func() { close(cancel) })
+			case frame.GetExtend() != nil && extend != nil:
+				extend(time.Duration(frame.GetExtend().GetCreditMs()) * time.Millisecond)
 			}
 		}
 	}()

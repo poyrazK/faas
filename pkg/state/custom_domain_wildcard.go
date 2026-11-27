@@ -68,6 +68,11 @@ func ValidateCustomDomainName(domain string) error {
 	if strings.Contains(domain, "*") && !strings.HasPrefix(domain, "*.") {
 		return errors.New("wildcard must be the left-most label")
 	}
+	// No top-level label is all digits (RFC 3696 §2), so this refuses IPv4
+	// addresses: prod hunt r55 bound 10.0.0.1 and printed DNS records for it.
+	if strings.Trim(labels[len(labels)-1], "0123456789") == "" {
+		return errors.New("an IP address is not a domain: attach a DNS name you own (its top-level label must not be all digits)")
+	}
 	return nil
 }
 
@@ -122,7 +127,26 @@ func ValidateCustomDomainClaim(domain string) error {
 	if len(CustomDomainChallengeName(domain)) > api.TrafficPolicyMaxHostnameBytes {
 		return errors.New("domain is too long for its DNS verification record")
 	}
+	if suffix := specialUseDomainSuffix(domain); suffix != "" {
+		return fmt.Errorf("%s is a special-use name that public DNS never resolves, so it can never verify: attach a domain you registered", suffix)
+	}
 	return nil
+}
+
+// specialUseDomainSuffixes never resolve in public DNS (RFC 6761, 6762,
+// 7686, 8375, 9476; ICANN's .internal), so a claim below one stays pending
+// forever: prod hunt r59 added bh62.example.invalid and was shown DNS
+// records to create. .test and .example stay claimable for test suites.
+var specialUseDomainSuffixes = []string{"invalid", "localhost", "local", "onion", "alt", "internal", "home.arpa"}
+
+func specialUseDomainSuffix(domain string) string {
+	domain = strings.ToLower(domain)
+	for _, suffix := range specialUseDomainSuffixes {
+		if domain == suffix || strings.HasSuffix(domain, "."+suffix) {
+			return "." + suffix
+		}
+	}
+	return ""
 }
 
 // WildcardProbeLabel is the label DNS/TLS probes of a wildcard row query. Only

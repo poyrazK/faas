@@ -1,8 +1,10 @@
 // A scripted model, so the starter runs with no provider key: a user message
 // calls `lookup` with the message as its query, and the tool's result is the
 // answer. When Gregale's toolset is loaded, "sleep N" calls gregale_sleep for
-// N seconds instead, and "run AGENT PROMPT" starts that agent with
-// gregale_run. Replace it with any Infinity provider, for example
+// N seconds instead, "run AGENT PROMPT" starts that agent with gregale_run,
+// and "watch OWNER/NAME" subscribes the thread to that repository's pull
+// request events with gregale_github_subscribe; each event then comes back
+// as a result of that call. Replace it with any Infinity provider, for example
 // infinity-provider-rig pointed at your Gregale AI integration.
 
 use std::sync::Arc;
@@ -22,6 +24,8 @@ pub const MODEL_ID: &str = "scripted";
 pub const SLEEP_TOOL: &str = "gregale_sleep";
 /// Gregale's agent-run tool (ADR-20261030125501 §4).
 pub const RUN_TOOL: &str = "gregale_run";
+/// Gregale's GitHub subscription tool (ADR-20261030125501 §4).
+pub const GITHUB_SUBSCRIBE_TOOL: &str = "gregale_github_subscribe";
 
 pub fn scripted() -> StaticModel {
     let entry = ModelEntry {
@@ -74,6 +78,15 @@ pub fn next_step(request: &CompletionRequest) -> StreamChunk {
                 }
                 return StreamChunk::ToolCall(ToolCall::new(id, RUN_TOOL, args));
             }
+            if let Some(repository) =
+                watch_repository(&t.text).filter(|_| offered(GITHUB_SUBSCRIBE_TOOL))
+            {
+                return StreamChunk::ToolCall(ToolCall::new(
+                    id,
+                    GITHUB_SUBSCRIBE_TOOL,
+                    serde_json::json!({ "repository": repository }),
+                ));
+            }
             StreamChunk::ToolCall(ToolCall::new(
                 id,
                 "lookup",
@@ -111,6 +124,14 @@ fn run_request(text: &str) -> Option<(&str, &str)> {
     let rest = text.trim().strip_prefix("run ")?.trim_start();
     let (agent, prompt) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
     (!agent.is_empty()).then_some((agent, prompt.trim()))
+}
+
+/// "watch acme/api" watches the repository acme/api.
+fn watch_repository(text: &str) -> Option<&str> {
+    let repository = text.trim().strip_prefix("watch ")?.trim();
+    let (owner, name) = repository.split_once('/')?;
+    (!owner.is_empty() && !name.is_empty() && !repository.contains(char::is_whitespace))
+        .then_some(repository)
 }
 
 #[async_trait]
@@ -210,6 +231,50 @@ mod tests {
         assert_eq!(
             next_step(&answered(call, "{\"state\":\"succeeded\"}")),
             StreamChunk::Text("gregale_run answered: {\"state\":\"succeeded\"}".to_owned())
+        );
+    }
+
+    #[test]
+    fn watch_calls_gregale_github_subscribe_when_it_is_offered() {
+        let StreamChunk::ToolCall(call) = next_step(&request(UserContent::text("watch acme/api")))
+        else {
+            panic!("want a tool call")
+        };
+        assert_eq!(call.function.name, "lookup", "no toolset, no watch");
+
+        let mut offered = request(UserContent::text(" watch acme/api "));
+        offered.tools = vec![ToolDefinition {
+            name: GITHUB_SUBSCRIBE_TOOL.to_owned(),
+            description: "Subscribe to a repository.".to_owned(),
+            parameters: serde_json::json!({ "type": "object" }),
+        }];
+        let StreamChunk::ToolCall(call) = next_step(&offered) else {
+            panic!("want a tool call")
+        };
+        assert_eq!(call.function.name, GITHUB_SUBSCRIBE_TOOL);
+        assert_eq!(
+            call.function.arguments,
+            serde_json::json!({ "repository": "acme/api" })
+        );
+        for text in ["watch acme", "watch acme/ api", "watch /api"] {
+            offered.chat_history = vec![Message::User {
+                content: vec![UserContent::text(text)],
+            }];
+            let StreamChunk::ToolCall(other) = next_step(&offered) else {
+                panic!("want a tool call")
+            };
+            assert_eq!(other.function.name, "lookup", "{text:?} is not owner/name");
+        }
+        // The subscription's first result, and later each event, answer it.
+        assert_eq!(
+            next_step(&answered(
+                call,
+                "Subscribed to pull_request.opened on acme/api"
+            )),
+            StreamChunk::Text(
+                "gregale_github_subscribe answered: Subscribed to pull_request.opened on acme/api"
+                    .to_owned()
+            )
         );
     }
 

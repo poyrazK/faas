@@ -2,7 +2,6 @@ package builderd
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -12,10 +11,13 @@ import (
 // The control plane fences builder RAM via cgroups (spec §13): a control-plane
 // leak OOMs the control plane, never tenants. Within that envelope:
 //
-//   - 1 guaranteed builder slot — always available, lives in faas-cp.slice.
+//   - N guaranteed builder slots — always available, in faas-cp-build.slice.
+//     N is the node's provisioned reserved slots (FAAS_BUILDER_RESERVED_SLOTS,
+//     default 1; ADR-20261118154632 amendment 1), and node_join sizes the
+//     build slice and the tenant fence for exactly that many.
 //   - 1 opportunistic slot — only when tenant residency is below 60% AND the
-//     builder slice has secondSlotNeedMB free. The default 5 GiB slice never
-//     does while a build runs, so two builder scopes cannot overrun the fence;
+//     builder slice has secondSlotNeedMB free. A slice sized for N builders
+//     never does while N builds run, so the scopes cannot overrun the fence;
 //     ops open the slot by raising faas_cp_build_slice_memory_max.
 //
 // Schedd's Ledger is the authoritative source for tenant residency. builderd
@@ -35,13 +37,14 @@ type SlotDecision struct {
 // opportunistic slot may open.
 const slotThresholdFraction = 0.60
 
-// maxBuilderSlots is one guaranteed build plus one opportunistic build (the
-// notification path runs two build workers). The second runs only when
-// tenant residency is below slotThresholdFraction AND the builder slice has
-// room for a whole second builder (secondSlotNeedMB), which the default
-// 5120M slice never has while a build runs: raising
-// faas_cp_build_slice_memory_max (and faas_cp_slice_memory_max) turns it on
-// (retail-store feedback A3, 2026-11-17).
+// maxBuilderSlots is a one-slot node's limit: one guaranteed build plus one
+// opportunistic build. The opportunistic one runs only when tenant residency
+// is below slotThresholdFraction AND the builder slice has room for a whole
+// extra builder (secondSlotNeedMB), which a slice sized for its guaranteed
+// builders never has while they run: raising faas_cp_build_slice_memory_max
+// (and faas_cp_slice_memory_max) turns it on (retail-store feedback A3,
+// 2026-11-17). A node provisioned with N reserved slots allows N+1
+// (fixedSlotLimit).
 const maxBuilderSlots = 2
 
 // secondSlotNeedMB is a second builder's worst case inside the slice: a full
@@ -49,14 +52,21 @@ const maxBuilderSlots = 2
 // keeps BuilderSecondSlotHeadroomMB beyond that.
 const secondSlotNeedMB = 2*api.BuildVMRAMMB + api.BuildVMOverheadMB + api.BuilderSecondSlotHeadroomMB
 
+// fixedSlotLimit is the fixed allocator's limit: the node's reserved slots
+// plus one opportunistic slot.
+func (b *Builderd) fixedSlotLimit() int {
+	return b.reservedSlots() + maxBuilderSlots - 1
+}
+
 // acquireSlot reserves one of the process-wide builder slots. The first
-// active build is the guaranteed slot. The returned release function is
-// idempotent so every caller can defer it safely.
+// reservedSlots() active builds hold guaranteed slots. The returned release
+// function is idempotent so every caller can defer it safely.
 func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 	b.slotMu.Lock()
 	defer b.slotMu.Unlock()
 
-	if b.activeSlots >= maxBuilderSlots {
+	reserved := b.reservedSlots()
+	if b.activeSlots >= b.fixedSlotLimit() {
 		b.pipeline.observeAdmission("limit")
 		return SlotDecision{
 			Allowed: false,
@@ -73,7 +83,7 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 		b.pipeline.observeAdmission("policy")
 		return decision, nil, false
 	}
-	if b.activeSlots > 0 && decision.Label != "opportunistic" {
+	if b.activeSlots >= reserved && decision.Label != "opportunistic" {
 		b.pipeline.observeAdmission("policy")
 		return SlotDecision{
 			Allowed: false,
@@ -81,7 +91,7 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 			Reason:  "opportunistic slot denied by tenant residency gate",
 		}, nil, false
 	}
-	if b.activeSlots > 0 {
+	if b.activeSlots >= reserved {
 		if freeMB, ok := b.builderSliceFreeMB(); !ok || freeMB < secondSlotNeedMB {
 			b.pipeline.observeAdmission("memory")
 			return SlotDecision{
@@ -91,24 +101,21 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 			}, nil, false
 		}
 	}
-	if b.activeSlots == 0 {
+	if b.activeSlots < reserved {
 		decision.Label = "guaranteed"
 		decision.Reason = "guaranteed slot available"
 	}
 	b.activeSlots++
+	// All of this allocator's slots run in faas-cp-build.slice; counting
+	// them as reserved keeps elastic slots right if builder_elastic_slots
+	// turns on while they run (ADR-20261118154632).
+	b.activeReserved++
 	b.pipeline.observeAdmission("granted")
-
-	var once sync.Once
-	release := func() {
-		once.Do(func() {
-			b.slotMu.Lock()
-			if b.activeSlots > 0 {
-				b.activeSlots--
-			}
-			b.slotMu.Unlock()
-		})
-	}
-	return decision, release, true
+	return decision, b.releaseOnce(func() {
+		if b.activeReserved > 0 {
+			b.activeReserved--
+		}
+	}), true
 }
 
 // acquireIdleSlot takes the builder slot only when no build holds it, for
@@ -122,16 +129,13 @@ func (b *Builderd) acquireIdleSlot() (func(), bool) {
 		return nil, false
 	}
 	b.activeSlots++
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			b.slotMu.Lock()
-			if b.activeSlots > 0 {
-				b.activeSlots--
-			}
-			b.slotMu.Unlock()
-		})
-	}, true
+	// The seed run holds the reserved slot (faas-cp-build.slice).
+	b.activeReserved++
+	return b.releaseOnce(func() {
+		if b.activeReserved > 0 {
+			b.activeReserved--
+		}
+	}), true
 }
 
 // DecideSlot computes whether a builder spawn is allowed, given the current

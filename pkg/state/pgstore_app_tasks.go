@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,6 +138,13 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	if resolved.RequireLiveDeployment {
 		return s.createServiceBindingSmokeTask(ctx, resolved)
 	}
+	if resolved.Kind == AppTaskKindRelease && resolved.ReleaseApprovalPolicyUpdatedAt != nil {
+		return s.createAppTaskWithSandboxSuite(ctx, resolved)
+	}
+	return createAppTaskOnDB(ctx, s.pool, resolved)
+}
+
+func createAppTaskOnDB(ctx context.Context, db sqlc.DBTX, resolved CreateAppTaskParams) (AppTask, error) {
 	// ADR-1037: an interactive task's attach record is inserted by the same
 	// statement, so no claim can observe the task without it.
 	var interactiveTTY bool
@@ -145,7 +153,7 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		interactiveTTY = resolved.Interactive.TTY
 		attachDigest = familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, resolved.Interactive.TokenSHA256)
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := db.QueryRow(ctx, `
 		with created as (
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,
@@ -1043,6 +1051,9 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 	if err := validateCompleteAppTask(params, current.MaxOutputBytes); err != nil {
 		return AppTask{}, err
 	}
+	if err := validateDataAPIInspectionExecution(current, params); err != nil {
+		return AppTask{}, err
+	}
 	if current.CancelRequested != nil && params.Status != AppTaskCancelled {
 		return AppTask{}, ErrAppTaskCancellationPending
 	}
@@ -1141,6 +1152,12 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 	}
 	if err := enqueueTerminalReleaseTask(ctx, tx, completed); err != nil {
 		return AppTask{}, err
+	}
+	if params.DataAPIInspectionProtocol != 0 {
+		digest := sha256.Sum256([]byte(params.StdoutTail))
+		if _, err := tx.Exec(ctx, `INSERT INTO data_api_inspection_executions (task_id,protocol_version,stdout_sha256,finished_at) VALUES ($1,$2,$3,$4)`, params.ID, int16(params.DataAPIInspectionProtocol), digest[:], params.FinishedAt); err != nil {
+			return AppTask{}, mapErr(err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppTask{}, fmt.Errorf("complete app task: commit: %w", err)

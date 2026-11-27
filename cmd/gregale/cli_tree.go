@@ -53,6 +53,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
 	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
+	{"redis", "Create and bind managed Redis-compatible (Valkey) caches", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"export", "Verify and compare saved JSON Lines exports offline", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
@@ -76,6 +77,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"audit", "Search your account's audit log", "Observe"},
 	{"alert", "Manage alert rules, channels, incidents, SLOs and checks", "Observe"},
 	{"mcp", "Connect agents, host MCP servers, or call MCP tools", "Agents"},
+	{"agent", "Approve or deny the tool calls hosted agent runs wait on", "Agents"},
 	{"account", "Manage your account, MFA and data exports", "Account"},
 	{"org", "Manage orgs, members and invitations", "Account"},
 	{"key", "Manage your account's API keys", "Account"},
@@ -126,6 +128,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release approve", "approvals approve"},
 	{"release reject", "approvals reject"},
 	{"release freeze", "freeze"},
+	{"release check", "verify"},
 	{"release gate", "release-gates"},
 	{"release schedule", "scheduled-releases"},
 	{"release mirror", "mirror"},
@@ -160,6 +163,14 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app binding", "bindings"},
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
+	// Gregale Run preview commands (#7747) under tree names.
+	{"sandbox customer budget", "run controls customer"},
+	{"sandbox task budget", "run controls task"},
+	{"sandbox binding controls", "run controls binding"},
+	{"sandbox delivery sign", "run deliveries download-url"},
+	{"sandbox environment publish", "run environments build"},
+	{"sandbox task call", "run tasks invoke"},
+	{"sandbox workflow retry", "runs workflow rerun"},
 	{"sandbox run", "run"},
 	{"sandbox template publish", "sandbox-templates build"},
 	{"sandbox template", "sandbox-templates"},
@@ -203,7 +214,15 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag rule delete", "flags rule-rm"},
 	{"flag kill set", "flags kill"},
 	{"flag kill unset", "flags unkill"},
+	// ADR-20261124212701: edge routing.
+	{"flag edge set", "flags edge-set"},
+	{"flag edge delete", "flags edge-rm"},
+	{"flag edge list", "flags edge-list"},
 	{"flag stale list", "flags stale"},
+	// ADR-20261125085913: flag notifications.
+	{"flag notify get", "flags notifications get"},
+	{"flag notify set", "flags notifications set"},
+	{"flag notify clear", "flags notifications clear"},
 	{"flag experiment list", "flags experiments list"},
 	{"flag experiment create", "flags experiments create"},
 	{"flag experiment get", "flags experiments get"},
@@ -212,16 +231,33 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag experiment promote", "flags experiments ship"},
 	{"flag experiment delete", "flags experiments delete"},
 	{"flag experiment result get", "flags experiments results"},
+	{"flag experiment layer list", "flags experiments layers list"},
+	{"flag experiment layer create", "flags experiments layers create"},
+	{"flag experiment layer delete", "flags experiments layers delete"},
+	{"flag experiment holdout get", "flags experiments holdout get"},
+	{"flag experiment holdout set", "flags experiments holdout set"},
+	{"flag experiment holdout report", "flags experiments holdout report"},
 	{"flag", "flags"},
 	// ADR 20261117084505: product analytics; `analytics` is request analytics.
 	{"insight event list", "insights events"},
 	{"insight funnel get", "insights funnel"},
 	{"insight retention get", "insights retention"},
 	{"insight request list", "insights requests"},
+	{"insight cohort list", "insights cohorts list"},
+	{"insight cohort create", "insights cohorts create"},
+	{"insight cohort get", "insights cohorts get"},
+	{"insight cohort delete", "insights cohorts delete"},
+	{"insight cohort refresh", "insights cohorts refresh"},
+	{"insight saved list", "insights saved list"},
+	{"insight saved create", "insights saved save"},
+	{"insight saved get", "insights saved get"},
+	{"insight saved run", "insights saved run"},
+	{"insight saved delete", "insights saved delete"},
 	{"insight", "insights"},
 
 	// Data.
 	{"postgres", "postgres"},
+	{"redis", "redis"},
 	{"bucket multipart get", "bucket uploads status"},
 	{"bucket multipart cancel", "bucket uploads abort"},
 	{"bucket multipart", "bucket uploads"},
@@ -321,6 +357,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Observe.
 	{"metric requests", "analytics"},
+	{"metric resources", "route-resources"},
 	{"metric", "metrics"},
 	{"debug trace", "trace"},
 	{"debug issue", "issues"},
@@ -360,17 +397,32 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client read", "mcp resource-read"},
 	{"mcp client watch", "mcp resource-watch"},
 	{"mcp client status", "mcp task-get"},
+	{"mcp client inbox", "mcp task-inbox"},
+	{"mcp client group status", "mcp task-group-status"},
+	{"mcp client group stop", "mcp task-group-stop"},
+	{"mcp client group watch", "mcp task-group-watch"},
+	{"mcp client group ack", "mcp task-group-ack"},
+	{"mcp client group submit", "mcp task-group-submit"},
+	{"mcp client group review", "mcp task-group-review"},
+	{"mcp client group respond", "mcp task-group-respond"},
 	{"mcp client wait", "mcp task-wait"},
+	{"mcp client respond", "mcp task-respond"},
 	{"mcp client cancel", "mcp task-cancel"},
+	// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+	{"agent run approval list", "agents runs approvals"},
+	{"agent run approve", "agents runs approve"},
+	{"agent run deny", "agents runs deny"},
 
 	// Account.
 	{"account mfa", "mfa"},
+	{"account claim create", "claim"}, // claimable deploys (ADR-20261124080000)
 	{"account", "account"},
 	{"org agent policy", "orgs agent-policy"},
 	{"org support", "orgs support-access"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
+	{"org key", "orgs keys"},
 	{"org", "orgs"},
 	{"key", "keys"},
 	{"billing plan", "plan"},
@@ -404,6 +456,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api consumer rate-card create", "consumers rate-card-create"},
 	{"api consumer rate-card list", "consumers rate-cards"},
 	{"api consumer plan set", "consumers set-plan"},
+	{"api consumer identity list", "consumers identities"},
+	{"api consumer identity delete", "consumers identity-delete"},
 	{"api consumer signup get", "consumers signup"},
 	{"api consumer signup delete", "consumers signup-delete"},
 	{"api consumer signup set", "consumers signup-set"},
@@ -516,6 +570,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Retained hosted Task source review takes its action as an argument too.
 	{"mcp server tasks audit", "mcp tasks source-review"},
 	{"mcp server tasks bind", "mcp tasks bindings"},
+	{"mcp server tasks rehearse", "mcp tasks rehearsal"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
@@ -527,6 +582,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"environment release-sets stage create", "projects environments release-sets stage"},
 	{"environment release-sets verification", "projects environments release-sets verification-runs"},
 	{"data-api rotation check", "data-api rotation preflight"},
+	{"data-api write readiness", "data-api write-readiness"},
+	{"data-api write check", "data-api write-check"},
 	{"data-api migration check", "data-api migration preview"},
 	{"data-api migration explain", "data-api migration guide"},
 	{"data-api serve", "data-api dev"},
@@ -662,6 +719,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres overage set", "postgres overage"},
 	{"postgres compute-policy set", "postgres compute-policy"},
 	{"postgres compute-policy status", "postgres compute-policy-status"},
+	{"postgres suspend-timeout set", "postgres suspend-timeout"},
+	{"postgres app-wake set", "postgres app-wake"},
 	{"postgres resize status", "postgres resize-status"},
 	// ADR-20261102123523: what a database gives PR previews is a setting.
 	{"postgres previews set", "postgres previews"},
@@ -689,6 +748,9 @@ var cliTreeShorts = map[string]string{
 	"mcp server":                  "Scaffold, deploy and check the MCP servers you host",
 	"event backfill":              "Deliver retained events to a subscription again, and track the jobs",
 	"event subscription-capacity": "Set, list and read a subscription's live-delivery limit commands",
+	// Both verbs printed the parent's "Show or change …" (prod hunt r28).
+	"postgres overage get": "Show whether databases keep running past the monthly compute allowance",
+	"postgres overage set": "Turn compute overage on or off (on: databases run up to twice the allowance)",
 }
 
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
@@ -862,6 +924,9 @@ func rewriteTreePath(args []string) ([]string, error) {
 		if hasHelpFlag(args) {
 			return args, nil
 		}
+		if folded, ok := foldValueAsFlag(args, path); ok {
+			return folded, nil
+		}
 		return nil, errFoldFlagRequired{fmt.Errorf("gregale %s needs %s; run 'gregale %s --help' for usage", path, strings.Join(flags, " or "), path)}
 	}
 	alias, used, ok := matchCliTreeAlias(args)
@@ -938,6 +1003,20 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	// `app show APP` is the spelling most nouns use for reading one thing;
+	// it answered "unexpected positional argument" (prod hunt r26). Only
+	// with an explicit target, so a bare `app show` still reads an app
+	// named "show".
+	if verb == "show" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		verb = "get"
+	}
+	// Apps are created by deploying. `app create NAME` answered "unexpected
+	// positional argument" (prod hunt r28); a bare `app create` still reads
+	// an app named "create".
+	if verb == "create" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		name := recoveryArgument(args[2])
+		return nil, fmt.Errorf("apps are created by deploying: run %s deploy --name %s from its source directory, or %s deploy --create-only --name %s to reserve the name without a build", recoveryCLI(), name, recoveryCLI(), name)
+	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}

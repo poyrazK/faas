@@ -335,3 +335,20 @@ func TestRunAgentForwardsUsage(t *testing.T) {
 		})
 	}
 }
+
+// ADR-20261027090016 amendment 3: only the newest, largest credit waits to
+// be forwarded.
+func TestLatestCreditKeepsTheLargest(t *testing.T) {
+	ch := make(chan time.Duration, 1)
+	scheddgrpc.LatestCredit(ch, 2*time.Second)
+	scheddgrpc.LatestCredit(ch, 5*time.Second)
+	scheddgrpc.LatestCredit(ch, 3*time.Second)
+	if got := <-ch; got != 5*time.Second {
+		t.Fatalf("forwarded %v, want 5s", got)
+	}
+	select {
+	case got := <-ch:
+		t.Fatalf("a second credit %v was queued", got)
+	default:
+	}
+}

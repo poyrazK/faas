@@ -11,6 +11,7 @@ from ..models.release_approval_policy_approvers import (
     ReleaseApprovalPolicyApprovers,
     check_release_approval_policy_approvers,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ReleaseApprovalPolicy")
 
@@ -35,6 +36,8 @@ class ReleaseApprovalPolicy:
     updated_by: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    require_passing_sandbox_suite: bool | Unset = UNSET
+    """Require current passing sandbox evidence before a production release command that waits for approval."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +61,8 @@ class ReleaseApprovalPolicy:
 
         updated_at = self.updated_at.isoformat()
 
+        require_passing_sandbox_suite = self.require_passing_sandbox_suite
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,6 +79,8 @@ class ReleaseApprovalPolicy:
                 "updated_at": updated_at,
             }
         )
+        if require_passing_sandbox_suite is not UNSET:
+            field_dict["require_passing_sandbox_suite"] = require_passing_sandbox_suite
 
         return field_dict
 
@@ -100,6 +107,8 @@ class ReleaseApprovalPolicy:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        require_passing_sandbox_suite = d.pop("require_passing_sandbox_suite", UNSET)
+
         release_approval_policy = cls(
             app=app,
             required_approvals=required_approvals,
@@ -111,6 +120,7 @@ class ReleaseApprovalPolicy:
             updated_by=updated_by,
             created_at=created_at,
             updated_at=updated_at,
+            require_passing_sandbox_suite=require_passing_sandbox_suite,
         )
 
         release_approval_policy.additional_properties = d

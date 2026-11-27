@@ -67,6 +67,9 @@ The `go` line in `go.mod` picks the Go release the build uses. See
 
 ## Deploy
 
+From the module's root, preview what Gregale detects, then deploy the Go
+HTTP API:
+
 ```bash
 gregale deploy --dry-run
 gregale deploy --name my-api
@@ -83,7 +86,7 @@ gregale logs my-api
 
 ```bash
 gregale env set --app my-api API_KEY="$API_KEY"
-gregale add postgres --app my-api --region <region>
+gregale add postgres --app my-api
 ```
 
 Values arrive as environment variables; the database URL as `DATABASE_URL`,

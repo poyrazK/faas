@@ -26,7 +26,7 @@ func TestColdBootWatchdogLeavesQualificationForAttemptRetirement(t *testing.T) {
 	if err != nil || !admission.Created {
 		t.Fatalf("qualification admission: %+v %v", admission, err)
 	}
-	backdateInstance(t, store, admission.Instance.ID, ColdBootSweepBudget+time.Second)
+	backdateInstance(t, store, admission.Instance.ID, ColdBootSweepBudget+coldBootRPCGrace+time.Second)
 	NewWatchdog(store, engine, nil).WithClock(time.Now).sweepRuns(t.Context())
 	if err := engine.KillStuck(t.Context(), admission.Instance.ID, claimed.AppID, StuckColdBootTimeout); err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestWatchdogSweepKillsStuck(t *testing.T) {
 	// from the concurrency counter but keeps RAM. Mirrors snapshotAndPark.
 	engine.Ledger().BeginSnapshot(snap.ID)
 
-	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+5*time.Second)
+	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+coldBootRPCGrace+time.Second)
 	backdateInstance(t, store, coldBoot.ID, 40*time.Second)
 	// For SNAPSHOTTING, age is anchored on ParkedAt. Set it directly.
 	// Must exceed SnapshotBudgetFor(512MB) = 30s, not just the flat
@@ -310,7 +310,7 @@ func TestLoopRunDrivesWatchdog(t *testing.T) {
 		Instance: waking.ID, AppID: app.ID, Plan: api.PlanPro,
 		RAMMB: 512, VCPU: 2, MaxConcurrency: 5,
 	})
-	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+5*time.Second)
+	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+coldBootRPCGrace+time.Second)
 
 	w := NewWatchdog(store, engine, slog.Default()).WithClock(func() time.Time { return time.Now() })
 	loop := NewLoop(nil, engine, slog.Default()).WithWatchdog(w)

@@ -111,7 +111,12 @@ type livenessReq struct {
 	GRPC        bool   `json:"grpc,omitempty"`
 	GRPCService string `json:"grpc_service,omitempty"`
 	Port        int    `json:"port,omitempty"`
-	TimeoutMs   int    `json:"timeout_ms"`
+	// Host (ADR-20261119140000) is the app's public host; the HTTP probe
+	// sends it with X-Forwarded-Proto: https so an app that allow-lists its
+	// host names answers the probe as it answers traffic. Empty keeps the
+	// loopback address.
+	Host      string `json:"host,omitempty"`
+	TimeoutMs int    `json:"timeout_ms"`
 }
 
 // livenessResp is the outbound JSON body the guest-init writes
@@ -299,7 +304,7 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 	if req.GRPC {
 		status, errStr = runGRPCLivenessProbe(req.GRPCService, timeoutMs, req.Port)
 	} else {
-		status, errStr, wwwAuth = runLivenessProbe(req.Path, timeoutMs, req.Port)
+		status, errStr, wwwAuth = runLivenessProbe(req.Path, timeoutMs, req.Port, req.Host)
 	}
 	writeLivenessResp(f, livenessResp{Status: status, Err: errStr, WWWAuthenticate: wwwAuth})
 }
@@ -351,7 +356,7 @@ func runGRPCLivenessProbe(service string, timeoutMs, port int) (int, string) {
 //     conventionally carry the header per RFC 7235). Empty
 //     otherwise. Cluster A forward-compat — the host reads the
 //     field defensively.
-func runLivenessProbe(path string, timeoutMs, port int) (int, string, string) {
+func runLivenessProbe(path string, timeoutMs, port int, host string) (int, string, string) {
 	// Build the URL. The runner is on loopback; the path is
 	// already validated to start with "/". We use the http
 	// package's Get with a per-call Client so the timeout is
@@ -363,7 +368,15 @@ func runLivenessProbe(path string, timeoutMs, port int) (int, string, string) {
 	}
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + path
 	client := &http.Client{Timeout: time.Duration(timeoutMs) * time.Millisecond, CheckRedirect: livenessCheckRedirect}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return 0, "conn_err", ""
+	}
+	if host != "" {
+		req.Host = host
+		req.Header.Set("X-Forwarded-Proto", "https")
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		// Classify the error. The http package returns
 		// *url.Error wrapping the concrete failure mode;

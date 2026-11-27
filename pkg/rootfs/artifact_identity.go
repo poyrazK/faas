@@ -63,7 +63,24 @@ func ReadArtifactIdentity(ctx context.Context, r io.Reader) (ArtifactIdentity, e
 	return tracked.identity()
 }
 
+// publishArtifactIdentity streams f to key and returns the identity of the
+// bytes it published. When the store refuses the write because another
+// writer published the same key at that moment (two compute nodes
+// pre-staging one release's shared bases), it publishes f once more: the
+// refused attempt left nothing behind, and the second write makes the key
+// hold the complete object whose identity this caller returns.
 func publishArtifactIdentity(ctx context.Context, be storage.StorageBackend, key string, f *os.File) (ArtifactIdentity, error) {
+	identity, err := publishArtifactIdentityOnce(ctx, be, key, f)
+	if !errors.Is(err, storage.ErrWriteConflict) {
+		return identity, err
+	}
+	if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+		return ArtifactIdentity{}, errors.Join(err, fmt.Errorf("rootfs: rewind artifact to publish again: %w", seekErr))
+	}
+	return publishArtifactIdentityOnce(ctx, be, key, f)
+}
+
+func publishArtifactIdentityOnce(ctx context.Context, be storage.StorageBackend, key string, f *os.File) (ArtifactIdentity, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return ArtifactIdentity{}, err

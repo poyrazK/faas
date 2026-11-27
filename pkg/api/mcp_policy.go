@@ -21,6 +21,95 @@ type MCPResourcePolicy struct {
 	ToolScopes     map[string][]string `json:"tool_scopes"`
 	ResourceScopes map[string][]string `json:"resource_scopes"`
 	PromptScopes   map[string][]string `json:"prompt_scopes"`
+	// Credential selects what callers present. Empty means a bearer JWT
+	// verified against the rule's issuer and JWKS. MCPCredentialConsumerKey
+	// means a consumer key (ADR-120) already verified by the consumer-auth
+	// gate; the rule's JWT fields are then a fail-closed shape for gateways
+	// that predate this field (ADR-20261122194324).
+	Credential string `json:"credential,omitempty"`
+	// ToolLimits caps tools/call per caller and tool name.
+	ToolLimits map[string]MCPToolLimit `json:"tool_limits,omitempty"`
+	// Audience is the token audience an external OAuth issuer uses for this
+	// server when it is not the resource, such as Entra's "api://…" IDs
+	// (ADR-20261123192254). The rule's JWT audience must then be exactly
+	// it. Bearer-token policies only.
+	Audience string `json:"audience,omitempty"`
+}
+
+// MCPCredentialConsumerKey is the MCPResourcePolicy.Credential for api-key
+// MCP servers.
+const MCPCredentialConsumerKey = "consumer_key"
+
+// An api-key MCP policy still carries a complete JWT shape so a gateway that
+// predates MCPResourcePolicy.Credential fails closed: it verifies bearer
+// tokens against MCPConsumerKeyJWKSPath, an empty key set apid serves, under
+// the issuer MCPConsumerKeyIssuerPath, which signs nothing
+// (ADR-20261122194324). Both are paths on the platform API origin.
+const (
+	MCPConsumerKeyIssuerPath = "/v1/mcp/consumer-key-issuer"
+	MCPConsumerKeyJWKSPath   = "/v1/mcp/consumer-key-jwks.json"
+)
+
+// MCPGatewayAuthorizedHeader is set by the gateway, to the policy's rule ID,
+// on a request an MCP resource policy admitted; the gateway removes any
+// client-supplied value first. Servers in gateway-only modes (api-key,
+// oauth-proxy) refuse MCP requests without it, so a disabled, expired or
+// deleted policy fails closed (ADR-20261122194324).
+const MCPGatewayAuthorizedHeader = "Gregale-Mcp-Gateway-Authorized"
+
+// CodeMCPToolRateLimited is the problem code of a tools/call refused by an
+// MCP policy tool limit.
+const CodeMCPToolRateLimited = "mcp_tool_rate_limited"
+
+// MCP billing labels (ADR-20261123192254). The gateway gives each billable
+// MCP request an ordinary "METHOD /template" billing route, so rate-card
+// route weights, monthly allowances and plan limits price and cap MCP tools
+// like HTTP routes: "MCP /tools/<name>", "MCP /prompts/<name>", the unnamed
+// "MCP /tools" and "MCP /prompts" for entries the policy does not list, and
+// "MCP /resources". Protocol overhead has no label and no billable units.
+const (
+	MCPBillingToolsPrefix    = "MCP /tools"
+	MCPBillingPromptsPrefix  = "MCP /prompts"
+	MCPBillingResourcesLabel = "MCP /resources"
+)
+
+// MCPToolBillingLabel is the billing route of a call to tool.
+func MCPToolBillingLabel(tool string) string { return MCPBillingToolsPrefix + "/" + tool }
+
+// ValidMCPBillingName reports whether an MCP tool or prompt name can appear
+// in a billing label: 1 to MCPBillingNameMaxBytes ASCII letters, digits,
+// '_', '-' or '.', the MCP tool-name alphabet.
+func ValidMCPBillingName(name string) bool {
+	if name == "" || len(name) > MCPBillingNameMaxBytes {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		switch c := name[i]; {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// MCPToolLimit allows Requests tools/call requests per caller in each
+// WindowSeconds window.
+type MCPToolLimit struct {
+	Requests      int `json:"requests"`
+	WindowSeconds int `json:"window_seconds"`
+}
+
+func (l MCPToolLimit) validate() error {
+	if l.Requests < 1 || l.Requests > MCPToolLimitMaxRequests || l.WindowSeconds < 1 || l.WindowSeconds > MCPToolLimitMaxWindowSeconds {
+		return fmt.Errorf("MCP tool limits need 1 to %d requests per 1 to %d seconds", MCPToolLimitMaxRequests, MCPToolLimitMaxWindowSeconds)
+	}
+	return nil
+}
+
+// ConsumerKey reports whether callers present consumer keys.
+func (p *MCPResourcePolicy) ConsumerKey() bool {
+	return p != nil && p.Credential == MCPCredentialConsumerKey
 }
 
 var mcpSimpleVariable = lazyregexp.New(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
@@ -44,6 +133,23 @@ func (p *MCPResourcePolicy) Validate() error {
 	}
 	if err := validateMCPScopes(p.Scopes); err != nil {
 		return err
+	}
+	if p.Audience != "" && (p.Credential != "" || len(p.Audience) > MCPJWTAudienceMaxBytes || strings.IndexFunc(p.Audience, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0) {
+		return fmt.Errorf("MCP audience must be a bearer-token policy's audience of at most %d bytes without spaces", MCPJWTAudienceMaxBytes)
+	}
+	if p.Credential != "" && p.Credential != MCPCredentialConsumerKey {
+		return fmt.Errorf("MCP credential must be empty or %q", MCPCredentialConsumerKey)
+	}
+	if len(p.ToolLimits) > MCPPolicyMaxEntries {
+		return fmt.Errorf("MCP tool limits exceed %d entries", MCPPolicyMaxEntries)
+	}
+	for name, limit := range p.ToolLimits {
+		if name == "" || len(name) > MCPPolicyMaxKeyBytes || strings.IndexFunc(name, func(r rune) bool { return r <= 32 || r == 127 }) >= 0 {
+			return fmt.Errorf("MCP tool limits require nonempty tool names")
+		}
+		if err := limit.validate(); err != nil {
+			return err
+		}
 	}
 	for _, policy := range []map[string][]string{p.ToolScopes, p.ResourceScopes, p.PromptScopes} {
 		if len(policy) > MCPPolicyMaxEntries {
@@ -83,6 +189,12 @@ func validateMCPScopes(scopes []string) error {
 func (p *MCPResourcePolicy) EndpointPath() string { u, _ := url.Parse(p.Resource); return u.Path }
 func (p *MCPResourcePolicy) MetadataPath() string {
 	return "/.well-known/oauth-protected-resource" + p.EndpointPath()
+}
+
+// ConsumerLinkPath is where a signed-in caller links its OAuth identity to
+// a consumer key it holds (ADR-20261124094745).
+func (p *MCPResourcePolicy) ConsumerLinkPath() string {
+	return "/.well-known/gregale-consumer-link" + p.EndpointPath()
 }
 func (p *MCPResourcePolicy) MetadataURL() string {
 	u, _ := url.Parse(p.Resource)
@@ -162,4 +274,30 @@ func mcpTemplateMatcher(template string) *regexp.Regexp {
 	mcpTemplateMatchers.byTemplate[template] = re
 	mcpTemplateMatchers.Unlock()
 	return re
+}
+
+// ConsumerKeyMCPScopePrefix namespaces consumer-key scopes that only grant
+// MCP access (ADR-20261122194324). A key scope "mcp:tools" satisfies the MCP
+// policy scope "tools".
+const ConsumerKeyMCPScopePrefix = "mcp:"
+
+// ValidConsumerKeyMCPScope reports whether scope is a well-formed "mcp:<scope>".
+func ValidConsumerKeyMCPScope(scope string) bool {
+	name, ok := strings.CutPrefix(scope, ConsumerKeyMCPScopePrefix)
+	if !ok || name == "" || len(scope) > ConsumerKeyMCPScopeMaxBytes {
+		return false
+	}
+	return strings.IndexFunc(name, func(r rune) bool { return r <= 32 || r >= 127 || r == '"' || r == '\\' }) < 0
+}
+
+// ConsumerKeyMCPScopes returns the MCP scopes a consumer key grants, without
+// the namespace.
+func ConsumerKeyMCPScopes(scopes []string) []string {
+	var out []string
+	for _, scope := range scopes {
+		if ValidConsumerKeyMCPScope(scope) {
+			out = append(out, strings.TrimPrefix(scope, ConsumerKeyMCPScopePrefix))
+		}
+	}
+	return out
 }

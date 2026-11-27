@@ -60,37 +60,38 @@ type DatabaseSwitchDrain struct {
 // UndoneDeploymentIDs are the deployments whose release commands the
 // restore undoes; none when the switch keeps the release.
 type DatabaseSwitch struct {
-	ID                  string
-	AccountID           string
-	AppID               string
-	Scope               string
-	FromDeploymentID    string
-	TargetDeploymentID  string
-	UndoneDeploymentIDs []string
-	SourceDatabaseID    string
-	TargetDatabaseID    string
-	TargetName          string
-	RestorePoint        time.Time
-	CutoverID           string
-	Phase               string
-	FailureCode         string
-	FailureDetail       string
-	RequestedBy         string
-	CancelRequestedAt   *time.Time
-	FencedAt            *time.Time
-	DrainRequestedAt    *time.Time
-	ReleaseSwitchedAt   *time.Time
-	ActivatedAt         *time.Time
-	FinishedAt          *time.Time
-	PhaseStartedAt      time.Time
-	Drain               DatabaseSwitchDrain
-	AttemptCount        int
-	LastErrorCode       string
-	LeaseToken          string
-	LeaseUntil          *time.Time
-	RetryAt             time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                   string
+	AccountID            string
+	AppID                string
+	Scope                string
+	FromDeploymentID     string
+	TargetDeploymentID   string
+	UndoneDeploymentIDs  []string
+	SourceDatabaseID     string
+	TargetDatabaseID     string
+	TargetName           string
+	RestorePoint         time.Time
+	MigrationOperationID string
+	CutoverID            string
+	Phase                string
+	FailureCode          string
+	FailureDetail        string
+	RequestedBy          string
+	CancelRequestedAt    *time.Time
+	FencedAt             *time.Time
+	DrainRequestedAt     *time.Time
+	ReleaseSwitchedAt    *time.Time
+	ActivatedAt          *time.Time
+	FinishedAt           *time.Time
+	PhaseStartedAt       time.Time
+	Drain                DatabaseSwitchDrain
+	AttemptCount         int
+	LastErrorCode        string
+	LeaseToken           string
+	LeaseUntil           *time.Time
+	RetryAt              time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // DatabaseSwitchStore persists database switches. apid writes them; schedd
@@ -103,7 +104,7 @@ type DatabaseSwitchStore interface {
 	// otherwise).
 	DatabaseSwitch(ctx context.Context, accountID, id string) (DatabaseSwitch, error)
 	// ListDatabaseSwitches lists an app's switches, newest first.
-	ListDatabaseSwitches(ctx context.Context, accountID, appID string, limit int) ([]DatabaseSwitch, error)
+	ListDatabaseSwitches(ctx context.Context, accountID, appID string, migration bool, limit int) ([]DatabaseSwitch, error)
 	// ClaimDueDatabaseSwitches leases up to limit active switches whose
 	// retry time has come and whose lease is free or expired.
 	ClaimDueDatabaseSwitches(ctx context.Context, token string, now, until time.Time, limit int) ([]DatabaseSwitch, error)
@@ -145,8 +146,17 @@ func validNewDatabaseSwitch(sw DatabaseSwitch) bool {
 	if len(sw.UndoneDeploymentIDs) == 0 && (sw.FromDeploymentID == "" || sw.FromDeploymentID != sw.TargetDeploymentID) {
 		return false
 	}
-	return len(sw.UndoneDeploymentIDs) <= 64 && sw.TargetName != "" && len(sw.TargetName) <= 63 &&
-		!sw.RestorePoint.IsZero() && normalizedDeploymentScope(sw.Scope) != ""
+	if sw.TargetName == "" || len(sw.TargetName) > 63 || normalizedDeploymentScope(sw.Scope) == "" {
+		return false
+	}
+	if sw.MigrationOperationID != "" {
+		_, requestErr := uuid.Parse(sw.ID)
+		_, operationErr := uuid.Parse(sw.MigrationOperationID)
+		_, targetErr := uuid.Parse(sw.TargetDatabaseID)
+		return requestErr == nil && operationErr == nil && targetErr == nil &&
+			sw.SourceDatabaseID != sw.TargetDatabaseID && sw.KeepsRelease() && sw.RestorePoint.IsZero()
+	}
+	return len(sw.UndoneDeploymentIDs) <= 64 && !sw.RestorePoint.IsZero()
 }
 
 // KeepsRelease reports whether the switch moves the app to the restored
@@ -165,6 +175,9 @@ func (m *MemStore) CreateDatabaseSwitch(_ context.Context, sw DatabaseSwitch) (D
 	defer m.mu.Unlock()
 	if _, ok := m.apps[sw.AppID]; !ok {
 		return DatabaseSwitch{}, ErrNotFound
+	}
+	if _, exists := m.databaseSwitches[sw.ID]; sw.ID != "" && exists {
+		return DatabaseSwitch{}, ErrConflict
 	}
 	active := 0
 	for _, existing := range m.databaseSwitches {
@@ -191,7 +204,12 @@ func (m *MemStore) CreateDatabaseSwitch(_ context.Context, sw DatabaseSwitch) (D
 	sw.Scope = normalizedDeploymentScope(sw.Scope)
 	sw.UndoneDeploymentIDs = append([]string{}, sw.UndoneDeploymentIDs...)
 	sw.RestorePoint = sw.RestorePoint.UTC()
-	sw.Phase, sw.TargetDatabaseID, sw.CutoverID = DatabaseSwitchRestoring, "", ""
+	sw.CutoverID = ""
+	if sw.MigrationOperationID != "" {
+		sw.Phase = DatabaseSwitchStaging
+	} else {
+		sw.Phase, sw.TargetDatabaseID = DatabaseSwitchRestoring, ""
+	}
 	sw.FailureCode, sw.FailureDetail, sw.LastErrorCode = "", "", ""
 	sw.CancelRequestedAt, sw.FencedAt, sw.DrainRequestedAt = nil, nil, nil
 	sw.ReleaseSwitchedAt, sw.ActivatedAt, sw.FinishedAt = nil, nil, nil
@@ -211,12 +229,12 @@ func (m *MemStore) DatabaseSwitch(_ context.Context, accountID, id string) (Data
 	return copyDatabaseSwitch(sw), nil
 }
 
-func (m *MemStore) ListDatabaseSwitches(_ context.Context, accountID, appID string, limit int) ([]DatabaseSwitch, error) {
+func (m *MemStore) ListDatabaseSwitches(_ context.Context, accountID, appID string, migration bool, limit int) ([]DatabaseSwitch, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []DatabaseSwitch
 	for _, sw := range m.databaseSwitches {
-		if sw.AccountID == accountID && sw.AppID == appID {
+		if sw.AccountID == accountID && sw.AppID == appID && (sw.MigrationOperationID != "") == migration {
 			out = append(out, copyDatabaseSwitch(sw))
 		}
 	}

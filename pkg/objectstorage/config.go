@@ -38,6 +38,10 @@ type Config struct {
 	Pools map[string][]string `json:"pools,omitempty"`
 }
 
+// BackendVersioningUnsupported is BackendConfig.Versioning for a backend
+// whose buckets are never versioned through Gregale.
+const BackendVersioningUnsupported = "unsupported"
+
 type BackendConfig struct {
 	ObjectLock       ObjectLockConfig `json:"object_lock,omitempty"`
 	Encryption       EncryptionConfig `json:"encryption,omitempty"`
@@ -64,6 +68,13 @@ type BackendConfig struct {
 	GCSImpersonateServiceAccount bool     `json:"gcs_impersonate_service_account,omitempty"`
 	AllowedOrigins               []string `json:"allowed_origins,omitempty"`
 	AllowHTTP                    bool     `json:"allow_http,omitempty"`
+	// Versioning "unsupported" declares an S3 backend whose buckets Gregale
+	// never versions, but which returns version IDs anyway (OVH answers every
+	// PUT and listing with one on unversioned buckets). The adapter then reads
+	// those IDs as the "null" version, refuses to enable versioning, and the
+	// provider's versioning status stays the guard against an out-of-band
+	// change (ADR-20261121150000). Empty trusts the provider's version IDs.
+	Versioning string `json:"versioning,omitempty"`
 	// MaxBuckets caps the live buckets placed on this backend; 0 is no
 	// ceiling. Set it below the provider's per-account bucket quota.
 	MaxBuckets int64 `json:"max_buckets,omitempty"`
@@ -139,10 +150,10 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		return nil, errors.New("object storage: invalid single PUT or multipart part limit")
 	}
 	if c.PublicEndpoint == "" {
-		c.PublicEndpoint = "https://s3.gregale.dev"
+		c.PublicEndpoint = api.DefaultObjectStoragePublicEndpoint
 	}
 	if c.PublicRegion == "" {
-		c.PublicRegion = "us-east-1"
+		c.PublicRegion = api.DefaultObjectStoragePublicRegion
 	}
 	if c.MaxBucketsPerApp < 1 || c.MaxBucketsPerApp > api.MaxObjectBucketsPerApp || c.MaxUploadBytes < 1 || c.MaxUploadBytes > api.MaxObjectUploadBytes {
 		return nil, errors.New("object storage: invalid bucket or upload limit")
@@ -191,6 +202,15 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	for _, b := range c.Backends {
 		if b.MaxBuckets < 0 || b.MaxBuckets > api.MaxObjectStorageBackendBuckets {
 			return nil, fmt.Errorf("object storage: backend %s has an invalid max_buckets", b.ID)
+		}
+		switch b.Versioning {
+		case "":
+		case BackendVersioningUnsupported:
+			if b.Driver != "s3" || b.ObjectLock.Enabled {
+				return nil, fmt.Errorf("object storage: backend %s: versioning %q requires an S3 backend without Object Lock", b.ID, b.Versioning)
+			}
+		default:
+			return nil, fmt.Errorf("object storage: backend %s has an invalid versioning mode %q", b.ID, b.Versioning)
 		}
 		if b.OwnedNodeUsageCounters && !b.OwnedNodeReceipts {
 			return nil, errors.New("object storage: owned node usage counters require owned node receipts")

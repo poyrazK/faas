@@ -101,6 +101,9 @@ type AppTaskOutcome struct {
 	OutcomeCode     string
 	FailureCode     string
 	FailureMessage  string
+	// DataAPIInspectionProtocol is set by the scheduler transport after a
+	// successful versioned exchange; it is never read from guest output.
+	DataAPIInspectionProtocol uint16
 }
 
 // AppTaskSession is one fresh deployment-attached VM. Execute must honor ctx
@@ -324,9 +327,10 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			return err
 		}
 		code, message := "restore_failed", "app task environment could not be prepared"
-		if errors.Is(restoreErr, state.ErrFinancialBudgetHeld) {
+		if errors.Is(restoreErr, state.ErrFinancialBudgetHeld) || errors.Is(restoreErr, ErrAppTaskSpendCap) {
 			// No command was dispatched. Leave the restoring lease to the
-			// normal safe replay sweep; the next claim remains budget-gated.
+			// normal safe replay sweep; the next claim remains budget- and
+			// spend-cap-gated.
 			return restoreErr
 		}
 		if errors.Is(restoreErr, ErrAppTaskNotOwner) {
@@ -535,6 +539,9 @@ func (c *AppTaskCoordinator) complete(parent context.Context, task state.AppTask
 }
 
 func appTaskCompletionParams(task state.AppTask, outcome AppTaskOutcome, finishedAt time.Time) state.CompleteAppTaskParams {
+	if task.Kind != state.AppTaskKindManual || task.FailureRules != nil || outcome.StdoutTail == "" {
+		outcome.DataAPIInspectionProtocol = 0
+	}
 	var failureCode, failureMessage *string
 	if outcome.FailureCode != "" || outcome.FailureMessage != "" {
 		failureCode = stringPointer(outcome.FailureCode)
@@ -545,7 +552,8 @@ func appTaskCompletionParams(task state.AppTask, outcome AppTaskOutcome, finishe
 		StdoutTail: outcome.StdoutTail, StderrTail: outcome.StderrTail,
 		OutputTruncated: outcome.OutputTruncated, ExitCode: outcome.ExitCode,
 		FailureCode: failureCode, FailureMessage: failureMessage, FinishedAt: finishedAt,
-		OutcomeCode: outcome.OutcomeCode,
+		OutcomeCode:               outcome.OutcomeCode,
+		DataAPIInspectionProtocol: outcome.DataAPIInspectionProtocol,
 	}
 }
 
@@ -565,6 +573,9 @@ func normalizeAppTaskOutcome(outcome AppTaskOutcome, maxOutputBytes int) AppTask
 	outcome.StdoutTail, outcome.StderrTail, outcome.OutputTruncated = boundAppTaskOutput(
 		outcome.StdoutTail, outcome.StderrTail, maxOutputBytes, outcome.OutputTruncated,
 	)
+	if outcome.Status != state.AppTaskSucceeded || outcome.OutputTruncated {
+		outcome.DataAPIInspectionProtocol = 0
+	}
 	return outcome
 }
 

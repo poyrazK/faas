@@ -17,11 +17,11 @@ func TestRemoteRolloutPreservesActivationAndProbeEvidence(t *testing.T) {
 		wantExit                                                  int
 		appURL, wantAppURL                                        string
 	}{
-		{"healthy", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "", "https://e2e-probe.gregale.dev/"},
-		{"preactivation failure", "exit 17", "", "", "false", 17, "", "https://e2e-probe.gregale.dev/"},
-		{"postactivation failure", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; exit 19", "", "", "true", 19, "", "https://e2e-probe.gregale.dev/"},
-		{"customer regression", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "app", "", "true", 1, "", "https://e2e-probe.gregale.dev/"},
-		{"unhealthy API never activates", "touch \"$ROLLOUT_ACTIVATION_MARKER\"", "", "api", "false", 1, "", "https://e2e-probe.gregale.dev/"},
+		{"healthy", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "", "https://serving-probe.gregale.app/"},
+		{"preactivation failure", "exit 17", "", "", "false", 17, "", "https://serving-probe.gregale.app/"},
+		{"postactivation failure", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; exit 19", "", "", "true", 19, "", "https://serving-probe.gregale.app/"},
+		{"customer regression", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "app", "", "true", 1, "", "https://serving-probe.gregale.app/"},
+		{"unhealthy API never activates", "touch \"$ROLLOUT_ACTIVATION_MARKER\"", "", "api", "false", 1, "", "https://serving-probe.gregale.app/"},
 		{"variable retargets the canary app", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "https://canary.example/healthz", "https://canary.example/healthz"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -32,6 +32,10 @@ while [[ "$1" == -* ]]; do
   case "$1" in -i|-o) shift 2 ;; *) echo 'forwarding is disabled' >&2; exit 99 ;; esac
 done
 shift
+# The fake control plane already runs a release, so the observer requires a
+# healthy API baseline (a rebuilt one is covered by
+# scripts/ci/observe_remote_rollout_test.sh).
+if [[ "$1" == *'/opt/faas/current'* ]]; then echo active; exit 0; fi
 exec bash -c "$1"
 `)
 			writeRolloutExecutable(t, temp, "scp", `#!/usr/bin/env bash

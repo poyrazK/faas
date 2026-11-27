@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.flag_events_response_dropped import FlagEventsResponseDropped
     from ..models.flag_events_response_month import FlagEventsResponseMonth
@@ -21,6 +23,8 @@ class FlagEventsResponse:
     accepted: int
     dropped: FlagEventsResponseDropped
     month: FlagEventsResponseMonth
+    exposures: int | Unset = UNSET
+    """Exposures that matched a running subject experiment of an active customer."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -29,6 +33,8 @@ class FlagEventsResponse:
         dropped = self.dropped.to_dict()
 
         month = self.month.to_dict()
+
+        exposures = self.exposures
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -39,6 +45,8 @@ class FlagEventsResponse:
                 "month": month,
             }
         )
+        if exposures is not UNSET:
+            field_dict["exposures"] = exposures
 
         return field_dict
 
@@ -54,10 +62,13 @@ class FlagEventsResponse:
 
         month = FlagEventsResponseMonth.from_dict(d.pop("month"))
 
+        exposures = d.pop("exposures", UNSET)
+
         flag_events_response = cls(
             accepted=accepted,
             dropped=dropped,
             month=month,
+            exposures=exposures,
         )
 
         flag_events_response.additional_properties = d

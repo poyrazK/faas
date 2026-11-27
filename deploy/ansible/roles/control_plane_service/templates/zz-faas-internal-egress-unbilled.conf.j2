@@ -1,0 +1,5 @@
+[Service]
+# ADR-20261114100000 (billing review R8-2): true leaves the bytes an instance
+# sends to Gregale-internal destinations (faas_internal_tx) out of billed app
+# egress.
+Environment=FAAS_INTERNAL_EGRESS_UNBILLED={{ meterd_internal_egress_unbilled | bool | lower }}

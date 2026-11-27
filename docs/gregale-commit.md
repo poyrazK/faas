@@ -213,11 +213,20 @@ the scheduler loads it alongside host identities and rotation keys. API
 registration uses the public recipient at `FAAS_FLEET_AGE_RECIPIENT_PATH`.
 Provision the matching `fleet.age` in the scheduler's age-key directory before
 enabling registration.
-The relay discovers configured sources in bounded keyset pages, opens at most
-two customer connections per source, and closes each source pool after its tick.
+The relay claims due sources from the shared platform database in poll-time
+order. Each scheduler runs up to four polls concurrently, with at most two
+customer connections per source, and closes each source pool after its poll.
+A source lease expires after 30 seconds so another scheduler can recover it.
+Connection and qualification failures add a per-source delay that starts at five
+seconds, doubles with each failed poll, and resets on recovery. The backoff
+ceiling is 55 to 60 seconds for retryable transport failures, temporary DNS
+failures, and PostgreSQL startup failures, with a stable offset per source.
+Other connection and qualification failures have a five-minute ceiling. The
+configured poll interval is added to the backoff.
 Each connection/reconnection resolves DNS and checks the actual IP against the
-operator policy. TLS verifies the original hostname. Credential changes are
-picked up on the next source pass; no plaintext credential is exposed by APIs.
+operator policy. TLS verifies the original hostname. Credential rotation and
+resume make the source due immediately and revoke earlier leases. Source APIs
+expose relay health and omit plaintext credentials.
 
 `schedd_commit_relay_cycles_total{result}` and
 `schedd_commit_relay_accepted_total` report bounded health codes and checkpoints.
@@ -295,15 +304,19 @@ observed facts. No command claims or publishes an event as part of diagnosis.
 
 Rotation and transition from paused to enabled invalidate prior health and
 increment the observation fence. A pass started before either transition cannot
-overwrite newer source health or blocked snapshots. Source observations older
-than five minutes have unknown backlog totals.
+overwrite newer source health or blocked snapshots. For Postgres row-change
+sources, backlog observations expire five minutes after the configured poll
+interval elapses, including time spent backing off.
+Other sources have a five-minute freshness window. Expired observations have
+unknown backlog totals. A failure can remain visible in the failure gauge
+through its scheduled retry and one additional 30-second source lease window.
 
 The scheduler also exposes shared-ledger aggregate gauges for enabled, unknown
 and failing sources, fresh known pending/blocked counts, oldest pending insertion
 timestamp and snapshot-query success. They have no customer identity labels.
 Use `max` across schedulers, because each reads the same durable source ledger.
 Known counts are partial if any sources are unknown. Paused/deleted sources are
-excluded; a failed ledger read does not retain old backlog gauges. The five
+excluded; a failed ledger read does not retain old backlog gauges. The
 Commit alert rules and [recovery runbook](runbooks/FaasCommit.md) cover old work,
 blocked events, unknown source observations, relay failures and unavailable
 platform observations. `make commit-alert-check` verifies firing and healthy
@@ -312,17 +325,423 @@ qualification are still required before customer promotion.
 
 `make test-commit` is the strict PostgreSQL/Linux process gate. It rejects missing
 configuration, macOS, disabled PostgreSQL tests, skipped required scenarios, and
-failed tests. Native Firecracker acceptance remains an additional release gate.
+failed tests. It requires the source polling, expired source lease, replay
+isolation, and ordered delivery regression tests alongside the process and API
+acceptance scenarios. Native Firecracker acceptance remains an additional release gate.
 
-The managed relay deletes at most 32 accepted customer outbox rows per source pass,
-after seven days by default. Pending and blocked events are never deleted by
-cleanup. Gregale receipt identities remain separate from customer cleanup.
+Its mixed-producer quota regression fills the real account-wide pending
+Operation limit, then forces Commit and another Operation producer to contend
+for the final slot. It checks that only one admission succeeds, a rejected
+Commit leaves no receipt or owner state, an accepted event replays at the
+limit, and the rejected event can be accepted after capacity is freed.
+
+The `Commit acceptance` GitHub Actions workflow runs this gate on Linux nightly
+(called from `ci.yml`) and on manual runs
+(`gh workflow run commit-acceptance.yml --ref <branch>`). It provisions a disposable
+PostgreSQL service and a separate local TLS fixture. The job also requires the
+Node and Python SDK test summaries to show tests ran without skips. Its
+`commit-acceptance-report` artifact records the tested revision, source archive
+digest, gate outcome, and failure-event counts when available; it excludes raw
+test output. A successful job does not replace native KVM qualification.
+
+The manager outage regression runs two independently bound changes sources.
+It makes the relay's connection to one source fail while its producer database
+remains available, observes two real retry delays, and checks that the other
+source continues delivering. It verifies unknown and failing source gauges,
+then restores connectivity and checks backoff reset, pending delivery, and
+receipt-preserving replay. The alert tests simulate the corresponding firing
+and recovery transitions. This isolated connection-failure test does not
+qualify production DNS, TLS, or sustained infrastructure outages.
+
+The manager TLS and DNS regression uses a private PostgreSQL server with a
+test certificate and an in-process resolver. The affected source uses the
+production TLS and destination-policy dialer; the test changes its trust root
+and resolved address, checks unknown health and unaffected-source delivery,
+then verifies recovery and receipt replay. It does not modify system DNS or
+qualify an operator's production trust-root deployment or DNS infrastructure.
+
+`make test-commit-load` runs an opt-in PostgreSQL relay and receipt-ledger load
+and recovery test on macOS or Linux. Set `DATABASE_URL` to a test cluster where
+the role can create and drop databases and terminate its own PostgreSQL backend;
+the test creates separate private customer and platform databases. It also
+requires `promtool` and simulates the alert's firing and recovery using the
+checked-in rules. The default fault phase runs for 75 seconds at a target of
+four events per second; `GREGALE_COMMIT_LOAD_DURATION` (65 seconds to 10 minutes)
+and `GREGALE_COMMIT_LOAD_RATE` (1 to 50 events per second) adjust it. The
+combination must remain below the per-account pending Operation limit because
+the test retains accepted Operations and does not run a consumer.
+
+The test runs four competing outbox relays through the managed Operation store,
+stops a relay between durable acceptance and checkpoint, terminates a
+test-owned reconciliation connection, and gives the collector a closed pool
+until at least three failed attempts are observed. It waits for retries,
+backfill, and metric recovery, then checks receipt and Operation identities
+against business transactions and
+outbox checkpoints. Its JSON report includes baseline and fault-phase checkpoint
+latency, throughput, PostgreSQL activity deltas, sampled active sessions and lock
+waits, and backfill catch-up time. PostgreSQL statistics can lag; the phases
+have different fault conditions, so their difference does not isolate counter
+overhead. The test does not run the scheduler daemon or a consumer and is not
+production or native KVM qualification.
+
+`make test-commit-consumer-load` runs a separate opt-in Linux process test. It
+extends the HTTP consumer crash/replay fixture with 75 seconds of producer
+transactions at one event per second by default. The producer database stays
+available while the relay role is temporarily unable to log in; the test checks
+unknown source health and continued production, then restores the role. A
+blocked group head holds its follower's relay acceptance while an unrelated
+event reaches the consumer. The fixture adds a changes-style `group_key` column
+to its Commit outbox; it does not install a changes source. After repair and
+replay, the test checks every produced event's business row, checkpoint,
+receipt, completed Operation and consumer
+marker, and sends concurrent duplicate deliveries to the consumer. It also
+checks that source health and the shared observation summary return to healthy
+with zero backlog. The fixture uses private PostgreSQL databases, real daemon
+processes and the existing VMMD protocol fixture, not a native VM.
+
+Set `DATABASE_URL` to a disposable PostgreSQL cluster with CREATEDB permission
+and `FAAS_COMMIT_TLS_PG_BIN_DIR` to its PostgreSQL server binaries. The optional
+`GREGALE_COMMIT_CONSUMER_LOAD_DURATION` (65 seconds to 5 minutes) and
+`GREGALE_COMMIT_CONSUMER_LOAD_RATE` (1 to 5 events per second) tune the run;
+configurations that could exceed the pending Operation quota are rejected. This
+test does not qualify production outages, actual network failures or native KVM.
+
+### Live relay outage drill
+
+Set `GREGALE_COMMIT_LIVE_PROMETHEUS` to the Prometheus executable and run
+`make test-commit-consumer-load` with the same disposable PostgreSQL settings.
+The drill scrapes the scheduler every two seconds and loads the deployed
+`faas_commit` rule group with its 30-second evaluation interval. The producer
+commits one event every five seconds while the relay role is locked out.
+The drill checks that the source reports an unknown backlog, that the
+observation and relay failure alerts fire and clear, and that each event has
+one receipt, one completed Operation, and one consumer business effect.
+App delivery uses the VMMD protocol fixture.
+
+The November 23, 2026 staging run on AWS `gregale-test` used Prometheus 2.54.1
+and test revision `6d93dbec082c3b59d26cb3a86742ae50265ab3ed`. It verified 78
+produced events, including 65 queued during the outage.
+
+| Measurement | Observed time |
+| --- | ---: |
+| Relay access revoked to both alerts firing | 5 min 20.008 s |
+| Relay access restored to last outage event checkpoint | 42.622 s |
+| Relay access restored to both alerts clearing | 60.006 s |
+| Relay access restored to last outage Operation completing | 99.597 s |
+
+Set `GREGALE_COMMIT_RECOVERY_PROFILE=1` or `2` alongside the Prometheus
+executable to record receipt, checkpoint, claim, and completion times for
+each event. Both workloads commit 65 events during the outage and 13 after
+relay access returns at one event every five seconds in total. The two-source
+workload alternates events between separate database outboxes with independent
+Operation keys on the same scheduler and consumer.
+
+The November 23, 2026 comparison on `gregale-test` verified per-source
+ordering and one business effect per event across all three runs.
+
+| Measurement for the 65 outage events | One source before | Two sources before | One source after |
+| --- | ---: | ---: | ---: |
+| Receipt to first claim, p95 | 54.858 s | 30.497 s | 1.421 s |
+| First claim to completion, p95 | 15 ms | 15 ms | 11 ms |
+| Median wait for the next ready Operation on the same key | 990 ms | 989 ms | 7 ms |
+| Relay access restored to last outage Operation completing | 90.842 s | 51.770 s | 32.842 s |
+
+The tested scheduler revision `8d1eb485` scans for ready exclusive work
+after successful HTTP Operation completion. The single-source comparison
+used revision `42ea6392` as its baseline.
+
+Add `GREGALE_COMMIT_RELAY_TRACE=1` to a recovery profile to measure when relay
+access returns, when the next poll is due and claimed, when PostgreSQL
+authenticates the TLS connection, and when the first receipt is recorded.
+The test interrupts the relay's private proxy while the producer keeps
+access to PostgreSQL. The one-source profile also measures recovery just
+after a failed poll and just before the next poll is due. Both profiles
+hold the long outage for 6 minutes 15 seconds and count refused connections.
+
+The November 24, 2026 comparison on `gregale-test` measured the shorter
+transport backoff at revision `71e85d2a`. The one-source baseline `b8aa43e1`
+included the explicit outbox ordering fix. The earlier two-source baseline
+`25b7fdd8` passed the same ordering checks with the original relay query.
+
+| Measurement | One source before | One source after | Two sources before | Two sources after |
+| --- | ---: | ---: | ---: | ---: |
+| Restore to first receipt at every source | 279.887 s | 32.395 s | 281.170 s | 51.723 s |
+| Restore to last outage Operation completing | 291.894 s | 43.892 s | 287.857 s | 57.754 s |
+| Restore to both alerts clearing | 285.002 s | 45.002 s | 285.004 s | 75.006 s |
+| Refused connections during the outage | 7 | 9 | 14 | 18 |
+
+After a poll was claimed, all long-outage first receipts arrived within
+46 ms, including TLS authentication. Both candidate profiles verified 78
+events each with per-source ordering, one receipt, one completed Operation,
+and one business effect per event. The two short-outage first receipts
+remained near 9.5 seconds and 1.5 seconds, with one refused connection each.
+
+Set `GREGALE_COMMIT_FLEET_DRILL=1` with `GREGALE_COMMIT_LIVE_PROMETHEUS`
+to run the shared-outage profile. It uses two scheduler processes on the
+same platform database and checks that both handle failed polls. Separate
+outboxes for 32 affected sources share a private relay proxy. Four controls
+connect directly to the same disposable PostgreSQL cluster and keep producing
+through each fault and recovery. The two 6-minute-45-second fault phases
+exercise immediate TCP closes and a TLS startup wait longer than the relay's
+connection deadline. The report includes the busiest rolling one-second TCP
+attempt window, control receipt latency, and each affected source's first
+receipt and last Operation completion after access returns. The run checks
+per-source order, receipt and checkpoint identity, consumer effects, and
+Prometheus alert transitions.
+
+Both November 24, 2026 runs passed on `gregale-test`. Healthy-source p95
+receipt latency rose during connection timeouts in both runs.
+
+| Healthy-source receipt latency, p95 | First run | Repeat run |
+| --- | ---: | ---: |
+| Baseline | 5.350 s | 5.037 s |
+| During immediate closes | 5.405 s | 5.597 s |
+| During connection timeouts | 7.689 s | 7.704 s |
+
+| Affected-source measurement | Immediate closes | Connection timeouts |
+| --- | ---: | ---: |
+| Peak TCP attempts per second during the repeat outage | 18 | 7 |
+| Restore to first receipt at every source | 21.597 s | 68.994 s |
+| Restore to last outage Operation completing | 21.788 s | 69.755 s |
+| Restore to both alerts clearing | 43.002 s | 73.003 s |
+
+The repeat run verified 64 affected events per fault. The report collector
+reassembles fragmented Go test output to retain all per-source timings.
+
+Set `GREGALE_COMMIT_FLEET_RESERVATION_DRILL=1` alongside the fleet drill to
+compare a timeout affecting 32 sources with a timeout affecting all 36.
+Run once with `FAAS_COMMIT_RELAY_RESERVE_HEALTHY_WORKER=false` and once with
+it set to `true`. The flag defaults to false. When enabled, one worker per
+scheduler claims only due sources with a fresh healthy poll. The other three
+claim any due source in the usual order. The reserved worker waits when no
+healthy source is due, so the all-source outage measures the recovery cost
+of reserving capacity.
+
+The November 24, 2026 comparison on `gregale-test` ran each policy once
+with two schedulers. Both policies passed the mixed timeout and all-source
+timeout, including per-source ordering, one completed Operation and one
+business effect per event, and alert firing and clearing.
+
+| Measurement | General workers only | One reserved worker per scheduler |
+| --- | ---: | ---: |
+| Healthy-source receipt p95 before the outage | 5.039 s | 5.626 s |
+| Healthy-source receipt p95 during the mixed timeout | 8.838 s | 5.220 s |
+| Slowest healthy-source receipt during the mixed timeout | 21.935 s | 20.970 s |
+| Restore to last outage Operation completing, mixed timeout | 67.896 s | 69.238 s |
+| Restore to last outage Operation completing, all 36 sources down | 67.144 s | 67.661 s |
+
+Set `GREGALE_COMMIT_FLEET_TAIL_TRACE=1` with the fleet drill to run two mixed
+timeouts and an all-source timeout under the chosen polling policy. The mixed
+timeouts start one second after a healthy reference source's check or one
+second before its next poll is due. The trace records PostgreSQL commit
+timestamps, the accepting poll's due time and claim, TLS authentication, and
+the durable receipt. It also records timeout intervals in which a reserved
+worker polled an affected source. The percentile windows use the first 60
+seconds after fault onset, the remainder of the outage, and the interval after
+access returns.
+
+Both policies passed the November 24, 2026 tail trace on `gregale-test`.
+The table pools healthy receipts from the two mixed timeouts. Each policy
+had 58 samples in the first minute, where nearest-rank p99 equals the maximum.
+
+| Measurement | General workers only | One reserved worker per scheduler |
+| --- | ---: | ---: |
+| Healthy receipt p95, first minute | 18.077 s | 14.858 s |
+| Healthy receipt p99, first minute | 21.541 s | 21.636 s |
+| Healthy receipt p99, rest of outage | 6.651 s | 5.750 s |
+| Restore to last outage Operation completing, all 36 sources down | 67.314 s | 66.449 s |
+
+In the reserved runs, each mixed timeout produced eight affected-source
+polls on reserved workers during the first minute. All eight sources had a
+healthy observation at claim time. The slowest healthy receipt waited
+19.623 seconds after its poll became due in the early run and 13.765 seconds
+in the late run. Both reserved workers were occupied by affected-source
+timeouts for 19.608 and 13.754 seconds of those waits. TLS authentication and
+receipt admission together took 15 and 17 milliseconds after the claims.
+
+Set `FAAS_COMMIT_RELAY_FAST_RESERVED_CONNECT=true` with
+`FAAS_COMMIT_RELAY_RESERVE_HEALTHY_WORKER=true` to test a 750 ms budget for
+initial connection setup on each reserved worker. When that budget expires,
+the worker returns the source to the general queue at its original due time.
+The existing observation and retry backoff stay in effect until a general
+worker completes the poll. Both flags default to false. The tail trace
+verifies that each deferred affected source is next claimed by a general
+worker at the original due time.
+
+The November 24, 2026 fast-deadline run on `gregale-test` repeated the two
+mixed timeout offsets and the all-source timeout. It used the preceding
+reserved-worker trace as its baseline.
+
+| Measurement | Standard reserved worker | 750 ms connection budget |
+| --- | ---: | ---: |
+| Healthy receipt p95, first minute | 14.858 s | 6.918 s |
+| Slowest healthy receipt, early / late timeout | 21.636 / 18.768 s | 9.566 / 6.918 s |
+| Healthy receipt p99, rest of outage | 5.750 s | 5.625 s |
+| Restore to last outage Operation completing, early / late timeout | 57.676 / 67.006 s | 62.966 / 66.909 s |
+| Restore to last outage Operation completing, all 36 sources down | 66.449 s | 41.086 s |
+| TCP attempts during both mixed outages, total | 522 | 570 |
+
+The fast-deadline run handed off 52 affected-source polls across the two
+mixed timeouts. All reached a general worker with their original due times.
+The longest deferred poll took 763 ms from lease claim through the recorded
+handoff. All three scenarios passed the ordering, business-effect, and alert
+checks. The all-source recovery time is one observation per policy.
+
+Set `GREGALE_COMMIT_FLEET_SLOW_TLS_DRILL=1` with the fleet drill to compare
+the reserved worker with and without its fast connection budget. The control
+sources use private TCP proxies that forward real TLS and delay PostgreSQL
+startup by 0, 500, or 1,250 ms. A separate group of 32 sources times out.
+The report counts TCP attempts, healthy polls and handoffs for each control.
+The fast run also restarts the scheduler with a saved general-worker handoff
+and checks that the replacement claims the source at its original due time.
+The restart check runs before the timed outage, with the general claim held
+until the replacement scheduler is listening. Set
+`GREGALE_COMMIT_FLEET_SLOW_TLS_COOLDOWN=1` on a fast run to test a 30-second
+cooldown in the fixture's platform database. After a handoff, that fixture
+keeps the source in general polling through the cooldown even when a poll
+succeeds.
+
+All three November 24, 2026 runs passed on `gregale-test`. The 500 ms
+control incurred zero handoffs in each run. Both fast configurations
+preserved the deferred poll's original due time across scheduler restart and
+delivered its event after a general worker connected.
+
+| Measurement | Standard reserved | Fast reserved | Fast with 30 s fixture cooldown |
+| --- | ---: | ---: | ---: |
+| TCP attempts for the 1,250 ms control | 57 | 76 | 60 |
+| Healthy polls for the 1,250 ms control | 57 | 49 | 52 |
+| Handoffs for the 1,250 ms control | 0 | 27 | 8 |
+| Receipt p95 for the 1,250 ms control during the outage | 5.630 s | 12.403 s | 13.272 s |
+| Restore to last outage Operation completing, 32 affected sources | 68.452 s | 65.876 s | 65.020 s |
+
+The cooldown reduced repeated connection attempts. The 1,250 ms control
+still waited for general polling capacity during outage onset. Each policy
+ran once in this comparison.
+
+Set `FAAS_COMMIT_RELAY_ADAPTIVE_RESERVED_CONNECT=true` alongside the fast
+reserved connection budget to test a deadline based on the source's latest
+healthy poll. The worker uses 750 ms when it has no qualifying measurement.
+For successful setup above 750 ms, it adds 250 ms and caps the deadline at
+2 seconds by default. Set `FAAS_COMMIT_RELAY_ADAPTIVE_RESERVED_CONNECT_MAX_MS`
+to an integer between 750 and 2,000 to test a shorter cap. The scheduler
+writes the setup measurement with the fenced healthy observation. The
+claim requires the observation timestamp to match
+the latest check. Use `GREGALE_COMMIT_FLEET_KNOWN_SLOW_OUTAGE=1` with the slow
+TLS drill to warm eight of the 32 affected sources at 1,800 ms before their
+shared outage. Set `GREGALE_COMMIT_FLEET_KNOWN_SLOW_SOURCES` to change the
+number of warmed sources.
+
+On November 24, 2026, both policies passed one run of this drill on
+`gregale-test`. Each run took 32 sources down together for 6 minutes and
+45 seconds. All 32 recovered, and every deferred poll kept its original
+due time when a general worker claimed it.
+
+| Measurement | Fixed 750 ms | Adaptive up to 2 s |
+| --- | ---: | ---: |
+| Receipt p95 for the 1,250 ms control during the outage | 9.204 s | 6.216 s |
+| Reserved healthy polls for the 1,250 ms control | 0 | 34 |
+| Handoffs for the 1,250 ms control | 22 | 0 |
+| Receipt p95 for the 0 and 500 ms controls, first minute | 9.449 s | 6.715 s |
+| Receipt p95 for the 0 and 500 ms controls, rest of outage | 5.177 s | 5.258 s |
+| Time both reserved workers spent waiting on known-slow sources, first minute | 1.952 s | 4.002 s |
+| Restore to last outage Operation completing | 67.931 s | 66.596 s |
+
+The longest continuous overlap for two known-slow sources was 730 ms
+with the fixed budget and 1,601 ms with the adaptive budget. The longest
+adaptive timeout took 2,004 ms from claim through recorded handoff. The
+0 and 500 ms controls had zero handoffs in either run. Each first-minute
+fast-control p95 covers 22 receipts.
+
+A follow-up on `gregale-test` ran each policy twice with eight known-slow
+sources. The first round ran the 1,600 ms cap, the fixed budget, and the
+2-second cap in that order. The second round reversed the order. All six
+trials passed and recovered all 32 affected sources.
+
+| Measurement | Fixed 750 ms | Adaptive 1,600 ms | Adaptive 2 s |
+| --- | ---: | ---: | ---: |
+| Median trial receipt p95 for the 1,250 ms control | 12.331 s | 6.164 s | 5.973 s |
+| Handoffs for the 1,250 ms control by trial | 21, 20 | 0, 0 | 0, 0 |
+| Median trial receipt p95 for the 0 and 500 ms controls, first minute | 7.775 s | 8.323 s | 8.488 s |
+| Median trial time both reserves waited on known-slow sources, first minute | 1.305 s | 2.260 s | 5.259 s |
+
+The 1,600 ms cap served 35 reserved healthy polls for the 1,250 ms
+control in each trial. The longest known-slow poll took 1,604 ms from
+claim through recorded handoff. The median first-minute p95 for the fast
+controls varied by less than a second across policies, based on 22
+receipts per trial.
+
+On November 25, 2026, the two adaptive caps each passed one stress trial
+on `gregale-test` with 16 known-slow sources. All 32 affected sources
+recovered, and the reachable 1,250 ms control recorded zero handoffs
+under both caps.
+
+| Measurement | Adaptive 1,600 ms | Adaptive 2 s |
+| --- | ---: | ---: |
+| Receipt p95 for the 1,250 ms control | 5.675 s | 6.951 s |
+| Receipt p95 for the 0 and 500 ms controls, first minute | 8.725 s | 12.593 s |
+| Time both reserves waited on known-slow sources, first minute | 8.567 s | 10.613 s |
+| Restore to last outage Operation completing | 67.085 s | 67.028 s |
+
+The `Commit consumer load acceptance` GitHub Actions workflow runs the default
+load gate on Linux only when manually dispatched. It uses disposable PostgreSQL and
+publishes a `commit-consumer-load-report` artifact with the tested revision,
+source archive digest, gate outcome and bounded load summary. Raw test output
+is excluded. A successful run does not replace native KVM or production
+qualification.
+
+The managed relay removes accepted customer outbox rows after seven days by
+default. Each source pass can delete up to eight batches of 128 rows, with a
+one-second cleanup budget. Pending and blocked events remain in the outbox.
+Gregale receipt identities remain separate from customer cleanup.
+
+Scheduler metrics report cleanup rows, pass duration and bounded outcomes.
+The shared observation ledger reports eligible cleanup rows and the number of
+enabled sources whose cleanup observation is unknown. Receipt count and payload
+JSON text bytes come from a 256-shard transactional usage ledger. Schedulers
+backfill uninitialized shards and attempt to reconcile each shard after 24 hours.
+The usage sampler has a five-second query deadline. Until all shards initialize,
+the success gauge is zero, the initialized-shard gauge reports progress, and
+totals are omitted. A reconciliation-current gauge reports whether all shards
+were checked within 25 hours. Failed or expired samples omit totals. Each scan
+processes up to 1,000 receipts under a five-second deadline and persists its
+cursor and partial totals. Transactional write deltas keep the scanned prefix
+current. Failed or interrupted batches are retried after one minute while other
+shards can progress; the stalled-reconciliation alert reports prolonged failures.
+Use `max` across schedulers for shared ledger and receipt gauges. Use `sum` for
+per-scheduler cleanup counters and histograms.
+
+For an operator storage assessment, query the platform database for receipt
+count and payload JSON text bytes for one source:
+
+```sql
+SELECT count(*) AS receipt_count,
+       coalesce(sum(octet_length(payload::text)), 0) AS payload_json_bytes
+FROM commit_receipts WHERE source_id = '<source-id>'::uuid;
+```
+
+Query the bound customer database for accepted rows past the configured
+retention window. Use the source's actual window if it differs from seven days:
+
+```sql
+SELECT count(*) AS cleanup_rows
+FROM public.gregale_outbox
+WHERE accepted_at < now() - interval '7 days';
+```
+
+Repeat these reads around an outage to measure backlog growth and cleanup
+recovery. JSON text bytes exclude compression, other columns, and indexes. Use source
+health to observe unaccepted and blocked rows separately.
 
 Blocked-event snapshots contain at most 32 event IDs/types/reason codes, never
 payloads. `GET /v1/commit-sources/{source}/blocked-events` exposes this observation.
 After correcting an unaccepted source row, request replay through
 `POST /v1/commit-sources/{source}/events/{event}/replay`. The durable request waits
 for the source relay, preserves the event ID, and is fenced by generation.
+The relay budgets at most two seconds of each source pass for replay and
+reserves five seconds of the poll deadline for delivery. A failed replay stays
+pending and is eligible again after a five-second delay, on a later source poll.
+Other replay requests and ordinary delivery can proceed in the same pass.
+An unreleased block still holds later changes for the same ordering key.
 Acceptance remains at least once; the worker must deduplicate business effects.
 
 Set `FAAS_COMMIT_API_ENABLED=true` only for qualification. Disabling it blocks new
@@ -346,6 +765,44 @@ VMMD now fences exit notifications by process attempt so a retired restore
 cannot reject its healthy cold-boot replacement. The corruption fixture also
 verifies that parking publishes a new usable capture and that it restores
 successfully. Injected snapshot changes are restored between cases.
+
+The manually dispatched `Commit native KVM acceptance` workflow prepares a
+separate exact-commit run on a dedicated `gregale-commit-acceptance` x86 Linux
+self-hosted runner. The label must be assigned to an isolated, drained runner;
+the workflow file alone does not provision one. It accepts only `main` and
+requires passwordless `sudo` for its guarded runner. The host must have a
+root-owned, non-group-writable `/etc/faas/builder-acceptance-host` marker and
+a root-owned mode-0600 `/etc/faas/commit-native-acceptance.env` containing:
+
+```sh
+FAAS_TEST_KERNEL=/absolute/path/to/guest-kernel
+FAAS_TEST_FC_VERSION=1.17.0
+FAAS_BUILDER_BASE_PATH=/absolute/path/to/builder-base.ext4
+FAAS_COMMIT_TLS_PG_BIN_DIR=/absolute/path/to/postgresql/bin
+FAAS_COMMIT_TLS_PG_USER=postgres
+```
+
+The Firecracker version must match the installed binary; the other paths must
+name the runner's qualified local fixtures, and the PostgreSQL user must be
+unprivileged. Use plain `KEY=value` lines without shell expansion or quotes;
+`FAAS_PUBLIC_IFACE` may also be set when the default route is unsuitable.
+The runner also requires `/dev/kvm`, an existing `/srv/fc/snap`
+directory, a `br-tenants` bridge, IPv4
+forwarding, the native build/network tools, and at least 32 GiB free on the
+checkout, evidence, and temporary volumes. It refuses active platform services,
+other Firecracker processes, dirty or ignored checkout files, and a busy shared
+native acceptance lock. It creates a private PostgreSQL cluster, fresh daemon
+binaries and storage, and maps `/srv/fc/snap` only in a private mount namespace.
+
+The verdict requires both Commit wake cases, the parent test, and no failures
+or skips, plus successful process, PostgreSQL, staging and pre/post leak checks.
+The process check also looks for test daemons that left the test process group.
+It compares the source archive and guest kernel, builder base, Go tool,
+Firecracker, jailer, guest init and daemon binary hashes before and after the
+run. The uploaded summary contains only those identities and bounded outcomes;
+raw test output stays private on the host. Failed cleanup retains private
+staging for investigation. Nested-KVM hosts are labelled separately from bare
+metal. Neither result establishes production qualification.
 
 The managed relay reads `public.gregale_outbox`. Install the documented schema in
 `public`; the relay pins its search path and qualifies the table and event-ID

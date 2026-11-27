@@ -81,22 +81,24 @@ func cmdAlerts(args []string) int {
 // human-mode renders name | metric | threshold | window | state.
 func cmdAlertList(args []string) int {
 	fs := newFlagSet("alerts list", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
+	environment := fs.String("environment", "", "project environment whose rules to list (default production)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale alert list --app <slug>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert list [--app <slug>]", "alerts")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	rules, err := client.ListAlertRules(context.Background(), *slug)
+	rules, err := client.ListAlertRulesInEnvironment(context.Background(), *slug, *environment)
 	if err != nil {
 		return printErr("List failed", err)
 	}
@@ -118,7 +120,8 @@ func cmdAlertList(args []string) int {
 // metric == failed_invocations (constraint: alert_rules_failure_source_xor_chk).
 func cmdAlertAdd(args []string) int {
 	fs := newFlagSet("alerts add", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
+	environment := fs.String("environment", "", "project environment the rule watches (default production); a stage's rule watches its own requests, errors, latency, cold starts or failed invocations")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
 	readinessScope := fs.String("mcp-readiness-scope", "", "readiness environment; omitted means all environments (immutable)")
@@ -197,7 +200,7 @@ func cmdAlertAdd(args []string) int {
 	if err != nil {
 		return printErr("Saved log search unavailable", err)
 	}
-	resp, err := client.CreateAlertRule(context.Background(), *slug, api.CreateAlertRuleRequest{
+	resp, err := client.CreateAlertRuleInEnvironment(context.Background(), *slug, *environment, api.CreateAlertRuleRequest{
 		MCPReadinessScope: *readinessScope, Name: *name,
 		Enabled:                         enabled,
 		Metric:                          *metric,
@@ -243,6 +246,7 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 	if hasChannels && *webhookURL == "" && *webhookSecret == "" {
 		webhookMissing = false
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || *name == "" || *metric == "" || *comparison == "" ||
 		*windowSpec == "" || webhookMissing || math.IsNaN(*threshold) {
 		// The compacted usage line ends in "[flags]" and no longer shows the
@@ -269,7 +273,7 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 			missing = append(missing, "--webhook-url with --webhook-secret, or --channel")
 		}
 		_, _ = fmt.Fprintf(os.Stderr, "missing: %s\n", strings.Join(missing, ", "))
-		PrintUsage(os.Stderr, "usage: gregale alert create --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert create [--app <slug>] --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}
 	if *cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes {
@@ -313,12 +317,13 @@ func validateAlertClosedSets(metric, comparison, windowSpec, failureSource, acti
 // labelled block, --json output.
 func cmdAlertInfo(args []string) int {
 	fs := newFlagSet("alerts info", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert get --app <slug> <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert get [--app <slug>] <alert-id>", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -389,7 +394,7 @@ func cmdAlertInfo(args []string) int {
 func cmdAlertDeliveries(args []string) int {
 	fs := newFlagSet("alerts deliveries", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose a rule and inspect recent webhook deliveries")
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	limit := fs.Int("limit", 20, "max deliveries (1..100)")
 	includeTest := fs.Bool("include-test", false, "include test deliveries")
 	if err := parseInterspersed(fs, args); err != nil {
@@ -414,8 +419,9 @@ func cmdAlertDeliveries(args []string) int {
 		}
 		return cmdAlertDeliveriesInteractive(app)
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 || *limit < 1 || *limit > 100 {
-		PrintUsage(os.Stderr, "usage: gregale alert deliveries <alert-id> --app <slug> [--limit N] [--include-test]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert deliveries <alert-id> [--app <slug>] [--limit N] [--include-test]", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -455,7 +461,7 @@ func renderAlertDeliveries(deliveries []api.AlertDeliveryResponse, includeTest b
 		if errText == "" {
 			errText = "-"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s", d.FiredAt.UTC().Format(time.RFC3339), d.Status, d.AttemptCount, httpStatus, formatThreshold(d.ObservedValue), errText)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s", d.FiredAt.UTC().Format(time.RFC3339), d.Status, d.AttemptCount, httpStatus, formatObserved(d.ObservedValue), errText)
 		if includeTest {
 			_, _ = fmt.Fprintf(tw, "\t%t", d.IsTest)
 		}
@@ -498,7 +504,7 @@ func alertDeliverySummary(d api.AlertDeliveryResponse) string {
 func cmdAlertUpdate(args []string) int {
 	fs := newFlagSet("alerts update", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose an alert and edit its settings")
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	name := fs.String("name", "", "rule name (3..120 chars)")
 	enabled := fs.Bool(flagNameEnabled, true, "enable/disable the rule")
 	metric := fs.String("metric", "", "metric (closed set)")
@@ -537,8 +543,9 @@ func cmdAlertUpdate(args []string) int {
 		return cmdAlertUpdateInteractive(app)
 	}
 
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert update --app <slug> [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert update [--app <slug>] [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
 		return 1
 	}
 	if *webhookSecretStdin || *webhookSecret != "" {
@@ -680,14 +687,15 @@ func resolveAlertSecret(secret *string, fromStdin bool) error {
 // cmdAlertRm mirrors cmdWebhookRm — 204 No Content on success.
 func cmdAlertRm(args []string) int {
 	fs := newFlagSet("alerts rm", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
 	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert delete --app <slug> <alert-id> [--yes]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert delete [--app <slug>] <alert-id> [--yes]", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -717,13 +725,14 @@ func cmdAlertRm(args []string) int {
 // webhook fix).
 func cmdAlertRotateSecret(args []string) int {
 	fs := newFlagSet("alerts rotate-secret", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	fromStdin := fs.Bool("from-stdin", false, "read the replacement secret from stdin")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert secret rotate --app <slug> --from-stdin <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert secret rotate [--app <slug>] --from-stdin <alert-id>", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -770,6 +779,13 @@ var alertIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a
 // operator reads by eye.
 func formatThreshold(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// formatObserved rounds a measured value to two decimals: an error rate of
+// 25/26 printed as 96.15384615384616 (prod hunt 2026-11-21). Thresholds keep
+// formatThreshold: they are what the owner typed.
+func formatObserved(v float64) string {
+	return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
 }
 
 // ptrIfNonEmpty returns nil for an empty string, else a pointer to

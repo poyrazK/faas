@@ -27,8 +27,16 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"AlertDeferredFireRecipients":            true,
+	"CountDeploymentOutcomesSince":           true,
+	"UpdateAlertDeliveryStatus":              true,
+	"ClaimAlertFire":                         true,
+	"ListDeploymentPromotions":               true,
+	"AdmitExecution":                         true,
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
+	"LookupEventSchemaForPublish":            true,
+	"LookupPublishedEventAcceptance":         true,
 	"ListEdgeRulesForApp":                    true,
 	"ApplyConfigRestore":                     true,
 	"EvaluateStoredWorkflowFailurePolicies":  true,
@@ -39,6 +47,7 @@ var memDispatched = map[string]bool{
 	"DeploymentWorkerDrainStatuses":          true,
 	"MCPTaskPromotionHold":                   true,
 	"MCPTaskPromotionHolds":                  true,
+	"MatchHostedTaskRehearsalReservation":    true,
 	"DeleteAppPermanently":                   true,
 	"EndAppDeleteGrace":                      true,
 	"DeleteProjectIfNoStages":                true,
@@ -90,6 +99,9 @@ var memDispatched = map[string]bool{
 	"AdmitScheduledWorkflow":                                  true,
 	"AppByID":                                                 true,
 	"AppBySlug":                                               true,
+	"BuildProvenanceByBuildID":                                true,
+	"ApplyProductCustomerChange":                              true,
+	"FinalizeProductBilling":                                  true,
 	"GetProductBillingDocument":                               true,
 	"ListProductBillingDocuments":                             true,
 	"GetProductBillingHandoff":                                true,
@@ -113,6 +125,7 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"InvocationByID":                                          true,
 	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
@@ -186,6 +199,7 @@ var memDispatched = map[string]bool{
 	"RenewOperationExecution":                                 true,
 	"RequestTelemetryAnalyticsByDimension":                    true,
 	"RequestTelemetryAnalyticsByRoute":                        true,
+	"GetRequestTelemetryByAppAndIdentifier":                   true,
 	"RequestTelemetryRouteCustomers":                          true,
 	"ResolveEnvironmentQualificationService":                  true,
 	"ResolveInstanceMigrationCommit":                          true,
@@ -304,6 +318,49 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) UpdateAlertDeliveryStatus(ctx context.Context, id string, status state.AlertDeliveryStatus, attempts, code int, detail string, deliveredAt *time.Time) error {
+	if override, ok := s.over.(interface {
+		UpdateAlertDeliveryStatus(context.Context, string, state.AlertDeliveryStatus, int, int, string, *time.Time) error
+	}); ok {
+		return override.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
+	}
+	return s.MemStore.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
+}
+
+func (s *Mem) AlertDeferredFireRecipients(ctx context.Context, ruleID string, firedAt time.Time) (state.AlertDeferredRecipients, error) {
+	if override, ok := s.over.(interface {
+		AlertDeferredFireRecipients(context.Context, string, time.Time) (state.AlertDeferredRecipients, error)
+	}); ok {
+		return override.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+	}
+	return s.MemStore.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+}
+
+func (s *Mem) CountDeploymentOutcomesSince(ctx context.Context, since time.Time, excludedAccounts ...string) (state.DeploymentOutcomeCounts, error) {
+	if override, ok := s.over.(interface {
+		CountDeploymentOutcomesSince(context.Context, time.Time, ...string) (state.DeploymentOutcomeCounts, error)
+	}); ok {
+		return override.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
+	}
+	return s.MemStore.CountDeploymentOutcomesSince(ctx, since, excludedAccounts...)
+}
+
+func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, state.AlertFireRecipients, error) {
+	if override, ok := s.over.(interface {
+		ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, state.AlertFireRecipients, error)
+	}); ok {
+		return override.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+	}
+	return s.MemStore.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+}
+
+func (s *Mem) ListDeploymentPromotions(ctx context.Context, accountID, appID, scope string, before time.Time, limit int) ([]state.DeploymentPromotion, error) {
+	if override, ok := s.over.(state.DeploymentPromotionHistoryStore); ok {
+		return override.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
+	}
+	return s.MemStore.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
 }
 
 func (s *Mem) GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error) {
@@ -529,6 +586,13 @@ func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, 
 	return s.MemStore.ActiveProjectReleaseSet(p0, p1, p2, p3)
 }
 
+func (s *Mem) AdmitExecution(ctx context.Context, identity state.ExecutionAdmissionIdentity, prepare state.PrepareExecutionAdmission) (state.Execution, bool, error) {
+	if override, ok := s.over.(state.ExecutionAdmissionStore); ok {
+		return override.AdmitExecution(ctx, identity, prepare)
+	}
+	return s.MemStore.AdmitExecution(ctx, identity, prepare)
+}
+
 func (s *Mem) AdmitPublishedEventRecipient(p0 context.Context, p1 state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
 	if o, ok := s.over.(interface {
 		AdmitPublishedEventRecipient(context.Context, state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error)
@@ -662,6 +726,15 @@ func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
 	return s.MemStore.AppByID(p0, p1)
 }
 
+func (s *Mem) BuildProvenanceByBuildID(p0 context.Context, p1 string) (state.BuildProvenance, error) {
+	if o, ok := s.over.(interface {
+		BuildProvenanceByBuildID(context.Context, string) (state.BuildProvenance, error)
+	}); ok {
+		return o.BuildProvenanceByBuildID(p0, p1)
+	}
+	return s.MemStore.BuildProvenanceByBuildID(p0, p1)
+}
+
 func (s *Mem) AppBySlug(p0 context.Context, p1 string) (state.App, error) {
 	if o, ok := s.over.(interface {
 		AppBySlug(context.Context, string) (state.App, error)
@@ -786,6 +859,15 @@ func (s *Mem) CreateTCPListener(p0 context.Context, p1 state.TCPListener) (state
 		return o.CreateTCPListener(p0, p1)
 	}
 	return s.MemStore.CreateTCPListener(p0, p1)
+}
+
+func (s *Mem) InvocationByID(p0 context.Context, p1 string) (state.Invocation, error) {
+	if o, ok := s.over.(interface {
+		InvocationByID(context.Context, string) (state.Invocation, error)
+	}); ok {
+		return o.InvocationByID(p0, p1)
+	}
+	return s.MemStore.InvocationByID(p0, p1)
 }
 
 func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (state.DeadLetterEvent, error) {
@@ -1452,6 +1534,15 @@ func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 
 		return o.RenewOperationExecution(p0, p1, p2, p3)
 	}
 	return s.MemStore.RenewOperationExecution(p0, p1, p2, p3)
+}
+
+func (s *Mem) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, query sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error) {
+	if override, ok := s.over.(interface {
+		GetRequestTelemetryByAppAndIdentifier(context.Context, sqlc.GetRequestTelemetryByAppAndIdentifierParams) (sqlc.GetRequestTelemetryByAppAndIdentifierRow, error)
+	}); ok {
+		return override.GetRequestTelemetryByAppAndIdentifier(ctx, query)
+	}
+	return s.MemStore.GetRequestTelemetryByAppAndIdentifier(ctx, query)
 }
 
 func (s *Mem) RequestTelemetryAnalyticsByDimension(p0 context.Context, p1 sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
@@ -3423,6 +3514,7 @@ func (s *Pg) WithInvocationVersionSnapshot(p0 context.Context, p1 func(state.Inv
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"LiveDeployments": true,
 	"RequestTelemetryAnalyticsTimeseriesGrouped": true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
@@ -3673,6 +3765,15 @@ func (s *Store) ListApps(p0 context.Context, p1 string) ([]state.App, error) {
 		return o.ListApps(p0, p1)
 	}
 	return s.Store.ListApps(p0, p1)
+}
+
+func (s *Store) LiveDeployments(p0 context.Context, p1 string) ([]state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		LiveDeployments(context.Context, string) ([]state.Deployment, error)
+	}); ok {
+		return o.LiveDeployments(p0, p1)
+	}
+	return s.Store.LiveDeployments(p0, p1)
 }
 
 func (s *Store) ListDeploymentsForApp(p0 context.Context, p1 string, p2 int, p3 int) ([]state.Deployment, error) {
@@ -4720,6 +4821,17 @@ func (s *Mem) RecordDeploymentRegistryVerification(p0 context.Context, p1 state.
 	return s.MemStore.RecordDeploymentRegistryVerification(p0, p1)
 }
 
+// MatchHostedTaskRehearsalReservation is an optional scheduler capability
+// implemented by PgStore. A memory fixture without a matcher owns no reservation.
+func (s *Mem) MatchHostedTaskRehearsalReservation(ctx context.Context, account, run, plan string, reservedAt time.Time) (bool, error) {
+	if override, ok := s.over.(interface {
+		MatchHostedTaskRehearsalReservation(context.Context, string, string, string, time.Time) (bool, error)
+	}); ok {
+		return override.MatchHostedTaskRehearsalReservation(ctx, account, run, plan, reservedAt)
+	}
+	return false, nil
+}
+
 func (s *Mem) RuntimeReleaseQualification(p0 context.Context, p1 string) (state.RuntimeReleaseQualification, error) {
 	if o, ok := s.over.(interface {
 		RuntimeReleaseQualification(context.Context, string) (state.RuntimeReleaseQualification, error)
@@ -4862,6 +4974,24 @@ func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.P
 		return override.ListProjectsForOrg(ctx, orgID)
 	}
 	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) ApplyProductCustomerChange(ctx context.Context, account, app string, request api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error) {
+	if override, ok := s.over.(interface {
+		ApplyProductCustomerChange(context.Context, string, string, api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error)
+	}); ok {
+		return override.ApplyProductCustomerChange(ctx, account, app, request)
+	}
+	return s.MemStore.ApplyProductCustomerChange(ctx, account, app, request)
+}
+
+func (s *Mem) FinalizeProductBilling(ctx context.Context, scope state.ProductBillingScope, hash string) (api.ProductBillingDocument, error) {
+	if override, ok := s.over.(interface {
+		FinalizeProductBilling(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocument, error)
+	}); ok {
+		return override.FinalizeProductBilling(ctx, scope, hash)
+	}
+	return s.MemStore.FinalizeProductBilling(ctx, scope, hash)
 }
 
 func (s *Mem) GetProductBillingDocument(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocument, error) {
@@ -5085,4 +5215,22 @@ func (s *Store) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, 
 		return override.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
 	}
 	return s.Store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
+}
+
+func (s *Mem) LookupEventSchemaForPublish(ctx context.Context, accountID, source, typ, version string) (bool, json.RawMessage, error) {
+	if over, ok := s.over.(interface {
+		LookupEventSchemaForPublish(context.Context, string, string, string, string) (bool, json.RawMessage, error)
+	}); ok {
+		return over.LookupEventSchemaForPublish(ctx, accountID, source, typ, version)
+	}
+	return s.MemStore.LookupEventSchemaForPublish(ctx, accountID, source, typ, version)
+}
+
+func (s *Mem) LookupPublishedEventAcceptance(ctx context.Context, account string, payload []byte) (state.PublishedEventAcceptance, error) {
+	if over, ok := s.over.(interface {
+		LookupPublishedEventAcceptance(context.Context, string, []byte) (state.PublishedEventAcceptance, error)
+	}); ok {
+		return over.LookupPublishedEventAcceptance(ctx, account, payload)
+	}
+	return s.MemStore.LookupPublishedEventAcceptance(ctx, account, payload)
 }

@@ -11,9 +11,12 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.flag_experiment import FlagExperiment
     from ..models.flag_experiment_arm import FlagExperimentArm
+    from ..models.flag_experiment_bandit import FlagExperimentBandit
+    from ..models.flag_experiment_cuped import FlagExperimentCuped
     from ..models.flag_experiment_guardrail import FlagExperimentGuardrail
     from ..models.flag_experiment_latency import FlagExperimentLatency
     from ..models.flag_experiment_recommendation import FlagExperimentRecommendation
+    from ..models.flag_experiment_segment import FlagExperimentSegment
     from ..models.flag_experiment_variant_result import FlagExperimentVariantResult
 
 
@@ -34,10 +37,18 @@ class FlagExperimentResults:
     sample_ratio_mismatch: bool
     crossed_units: int
     """Customers that saw more than one variant and are left out."""
+    cuped: FlagExperimentCuped
+    """CUPED variance reduction on the results; reason says why it was not applied."""
     guardrails: list[FlagExperimentGuardrail] | Unset = UNSET
     latency: list[FlagExperimentLatency] | Unset = UNSET
     recommendation: FlagExperimentRecommendation | Unset = UNSET
     """What to do with the results; commands carry it out. Gregale never ships a variant on its own."""
+    fixed_horizon: bool | Unset = UNSET
+    """Percentile results: bootstrap p-values without a sequential guarantee; read them once, at the planned end."""
+    bandit: FlagExperimentBandit | Unset = UNSET
+    """A bandit's posterior per arm and when it last re-weighted the rule."""
+    segments: list[FlagExperimentSegment] | Unset = UNSET
+    """Results split by ?segment=COHORT: its members, then everyone else."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +66,8 @@ class FlagExperimentResults:
         sample_ratio_mismatch = self.sample_ratio_mismatch
 
         crossed_units = self.crossed_units
+
+        cuped = self.cuped.to_dict()
 
         guardrails: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.guardrails, Unset):
@@ -74,6 +87,19 @@ class FlagExperimentResults:
         if not isinstance(self.recommendation, Unset):
             recommendation = self.recommendation.to_dict()
 
+        fixed_horizon = self.fixed_horizon
+
+        bandit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.bandit, Unset):
+            bandit = self.bandit.to_dict()
+
+        segments: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.segments, Unset):
+            segments = []
+            for segments_item_data in self.segments:
+                segments_item = segments_item_data.to_dict()
+                segments.append(segments_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -84,6 +110,7 @@ class FlagExperimentResults:
                 "sample_ratio_p_value": sample_ratio_p_value,
                 "sample_ratio_mismatch": sample_ratio_mismatch,
                 "crossed_units": crossed_units,
+                "cuped": cuped,
             }
         )
         if guardrails is not UNSET:
@@ -92,6 +119,12 @@ class FlagExperimentResults:
             field_dict["latency"] = latency
         if recommendation is not UNSET:
             field_dict["recommendation"] = recommendation
+        if fixed_horizon is not UNSET:
+            field_dict["fixed_horizon"] = fixed_horizon
+        if bandit is not UNSET:
+            field_dict["bandit"] = bandit
+        if segments is not UNSET:
+            field_dict["segments"] = segments
 
         return field_dict
 
@@ -99,9 +132,12 @@ class FlagExperimentResults:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.flag_experiment import FlagExperiment
         from ..models.flag_experiment_arm import FlagExperimentArm
+        from ..models.flag_experiment_bandit import FlagExperimentBandit
+        from ..models.flag_experiment_cuped import FlagExperimentCuped
         from ..models.flag_experiment_guardrail import FlagExperimentGuardrail
         from ..models.flag_experiment_latency import FlagExperimentLatency
         from ..models.flag_experiment_recommendation import FlagExperimentRecommendation
+        from ..models.flag_experiment_segment import FlagExperimentSegment
         from ..models.flag_experiment_variant_result import FlagExperimentVariantResult
 
         d = dict(src_dict)
@@ -121,6 +157,8 @@ class FlagExperimentResults:
         sample_ratio_mismatch = d.pop("sample_ratio_mismatch")
 
         crossed_units = d.pop("crossed_units")
+
+        cuped = FlagExperimentCuped.from_dict(d.pop("cuped"))
 
         _guardrails = d.pop("guardrails", UNSET)
         guardrails: list[FlagExperimentGuardrail] | Unset = UNSET
@@ -147,6 +185,24 @@ class FlagExperimentResults:
         else:
             recommendation = FlagExperimentRecommendation.from_dict(_recommendation)
 
+        fixed_horizon = d.pop("fixed_horizon", UNSET)
+
+        _bandit = d.pop("bandit", UNSET)
+        bandit: FlagExperimentBandit | Unset
+        if isinstance(_bandit, Unset):
+            bandit = UNSET
+        else:
+            bandit = FlagExperimentBandit.from_dict(_bandit)
+
+        _segments = d.pop("segments", UNSET)
+        segments: list[FlagExperimentSegment] | Unset = UNSET
+        if _segments is not UNSET:
+            segments = []
+            for segments_item_data in _segments:
+                segments_item = FlagExperimentSegment.from_dict(segments_item_data)
+
+                segments.append(segments_item)
+
         flag_experiment_results = cls(
             experiment=experiment,
             control=control,
@@ -154,9 +210,13 @@ class FlagExperimentResults:
             sample_ratio_p_value=sample_ratio_p_value,
             sample_ratio_mismatch=sample_ratio_mismatch,
             crossed_units=crossed_units,
+            cuped=cuped,
             guardrails=guardrails,
             latency=latency,
             recommendation=recommendation,
+            fixed_horizon=fixed_horizon,
+            bandit=bandit,
+            segments=segments,
         )
 
         flag_experiment_results.additional_properties = d

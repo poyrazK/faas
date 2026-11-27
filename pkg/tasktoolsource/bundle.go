@@ -52,6 +52,20 @@ func Digest(entries []api.HostedTaskSourceEntry) (string, error) {
 			}
 		}
 	}
+	ordered := orderedEntries(entries)
+	h := sha256.New()
+	for _, e := range ordered {
+		if e.Directory {
+			_, _ = fmt.Fprintf(h, "directory:%s\x00%o\x00", e.Path, e.Mode)
+		} else {
+			_, _ = fmt.Fprintf(h, "%s\x00%d\x00%o\x00", e.Path, len(e.Content), e.Mode)
+			_, _ = h.Write(e.Content)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func orderedEntries(entries []api.HostedTaskSourceEntry) []api.HostedTaskSourceEntry {
 	ordered := slices.Clone(entries)
 	slices.SortFunc(ordered, func(a, b api.HostedTaskSourceEntry) int {
 		if a.Path == b.Path {
@@ -65,14 +79,5 @@ func Digest(entries []api.HostedTaskSourceEntry) (string, error) {
 		}
 		return slices.Compare(strings.Split(a.Path, "/"), strings.Split(b.Path, "/"))
 	})
-	h := sha256.New()
-	for _, e := range ordered {
-		if e.Directory {
-			_, _ = fmt.Fprintf(h, "directory:%s\x00%o\x00", e.Path, e.Mode)
-		} else {
-			_, _ = fmt.Fprintf(h, "%s\x00%d\x00%o\x00", e.Path, len(e.Content), e.Mode)
-			_, _ = h.Write(e.Content)
-		}
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return ordered
 }

@@ -26,6 +26,21 @@
 # - The second NVMe left blank for /srv/fc. NVMe device names change across
 #   reboots on these servers, so each host pins its data disk by
 #   /dev/disk/by-id below.
+# - /etc/netplan/62-peer-via-gw.yaml on bhs-2 and bhs-3 (added 2026-11-23):
+#   routes 15.235.50.0/25 and 15.235.50.128/25 via 15.235.50.254 (on-link)
+#   on eno1np0. Any compute node added to this /24 later (dynamic_compute)
+#   needs the same file; bhs-1 (149.56.23.0/24) has no peer and needs none.
+#   The two servers share the DHCP /24, but OVH answers ARP between them
+#   only sporadically (the gateway's proxy-ARP), so the on-link /24
+#   black-holed replies to the other node's primary address. App egress is
+#   masqueraded to that address, so an app calling *.gregale.app served by
+#   the other node's entry_ipv4 hung about half the time. The /25s are more
+#   specific than the /24; the DHCP scope-link /32 for .254 still reaches
+#   the gateway itself. See docs/runbooks/GcpToOvhMigration.md. Since
+#   ADR-20261123100000 the converge also hairpins guests' calls to the other
+#   nodes' entry addresses onto the local edge (faas_peer_entry_addrs, from
+#   entry_ipv4 below), so app calls no longer cross between the servers; the
+#   routes stay for nodes without an entry address and host traffic.
 #
 # The control plane keeps the address fsn-1.gregale.dev. During the planned
 # switchover (docs/runbooks/ControlPlaneFailover.md, step 4) only the host's
@@ -72,15 +87,27 @@ fleet:
       # The server's own address (ns5012237). OVH routes it to the host
       # directly, so it is not a forwarding rule as on GCP.
       public_ipv4: 15.235.50.108
+      # OVH Additional IP (order 23355595, routed to ns5012237), on eno1np0
+      # through /etc/netplan/61-entry-ip.yaml: the public entry address,
+      # 443 only, never the address the host is managed on.
+      entry_ipv4: 51.222.39.227
       # Samsung PM9A3 960 GB, the disk the OS is not on.
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104409
+      # Two guaranteed builder slots (ADR-20261118154632 amendment 1): 16
+      # threads and 128 GB carry two 2-vCPU builders beside tenants.
+      builder_reserved_slots: 2
     - name: bhs-3
       role: compute-only
       address: bhs-3.gregale.dev:50051
       tags: ["ovh-vrack"]
       # ns5012238.
       public_ipv4: 15.235.50.109
+      # Additional IP routed to ns5012238, as on bhs-2.
+      entry_ipv4: 51.222.39.228
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104422
+      # Two guaranteed builder slots (ADR-20261118154632 amendment 1): 16
+      # threads and 128 GB carry two 2-vCPU builders beside tenants.
+      builder_reserved_slots: 2
 
 daemons:
   schedd:
@@ -99,11 +126,15 @@ daemons:
     # The control-plane schedd reaches the local edge; compute schedds use
     # their node-local gatewayd-internal socket after host rendering.
     gateway_synth_target: tcp://127.0.0.1:8080
-    # ADR-20261021215353 early freeze. Releases re-render schedd.toml from
-    # this manifest, so a value set by hand on a node is lost at the next
-    # rollout. Set it here only after a release whose gregalectl and imaged
-    # parse the key is live on every node: older ones reject unknown keys.
-    # frozen_tier_early_freeze_after_s: 10
+    # ADR-20261021215353 early freeze. schedd defaults it to 15 s
+    # (api.FrozenEarlyFreezeDefaultSeconds) whenever hot_path.frozen_tier is
+    # on, and frozen seconds are unbilled, so 15 s would stop billing an idle
+    # instance 15 s after its last request instead of at its plan's idle
+    # timeout. 0 keeps billing unchanged: an instance freezes only at its idle
+    # timeout, where it would otherwise park (owner decision 2026-11-21).
+    # Compute schedds get it as a drop-in (renderHotPathVars), the
+    # control-plane schedd in schedd.toml.
+    frozen_tier_early_freeze_after_s: 0
   vmmd:
     bind: tcp://0.0.0.0:50051
     tls:
@@ -192,14 +223,18 @@ egress:
     - 10.20.0.0/24
 
 # Branded S3 gateway (ADR 20261025111015). `managed` installs and health-gates
-# s3-gatewayd on the control-plane node from these operator-local files; leave
-# it unset only when no backend is configured. Strict `verify-fleet` fails when
-# the gateway runs without this.
-# object_storage:
-#   gateway: managed
-#   config_src: /operator/config/object-storage.json
-#   # S3/R2/OVH only; GCS with attached ADC has no provider env file.
-#   provider_env_src: /operator/secrets/object-storage.env
+# s3-gatewayd on the control-plane node from these operator-local files on the
+# CD runner host (bhs-1). Strict `verify-fleet` fails when the gateway runs
+# without this. Customer buckets live in their own OVH Public Cloud project
+# (gregale-customer-storage-us-1, ADR-20261029174627), backend
+# ovh-bhs-prod-v1; its users and policies are in
+# deploy/ovh/customer-object-storage-policies/. The gateway stays on the
+# control plane behind Cloudflare: `public_edge.entry: direct` runs no tunnel,
+# so the compute variant (ADR-20261031122757) cannot run here.
+object_storage:
+  gateway: managed
+  config_src: /operator/config/object-storage.json
+  provider_env_src: /operator/secrets/object-storage.env
 
 # ADR-1343: every compute node runs the app edge (faas-gatewayd-public-edge
 # and the faas-cloudflared tunnel connector) and holds back 1,000 millicores
@@ -230,15 +265,50 @@ public_edge:
   # two nodes measured 508/539/513. Turn back on only once local first serves
   # a share proportional to the node's ready instances.
   local_first: false
-  # App traffic reaches the OVH edges through the Cloudflare tunnel only, as
-  # on GCP before 2026-11-02. The direct entry the GCP fleet pilots
-  # (entry: both, front: none, edgednsd's direct-pilot.gregale.dev records)
-  # needs one OVH Additional IP per compute node as entry_ipv4: the entry
-  # address takes 443 from everyone and drops everything else, SSH included,
-  # so it must not be the address the host is managed on
-  # (ADR-20261103163954 §2). Order those, then restore the GCP template's
-  # entry/front/dns block here with `entry_ipv4:` on bhs-2 and bhs-3.
-  entry: tunnel
+  # ADR-20261102081618: the edges also take TLS on 443 at their entry
+  # address (entry_ipv4, an OVH Additional IP), beside the Cloudflare tunnel.
+  # ADR-20261102081618 step 6: the cell left the Cloudflare tunnel on the
+  # 2026-11-20 move to OVHcloud; app hosts resolve to the entry addresses.
+  entry: direct
+  # ADR-20261103163954: nothing in front of the direct-entry names. Clients
+  # reach the edges on their entry addresses, which take 443 from everyone
+  # and nothing else (the entry-address firewall, ahead of sshd); the edges
+  # apply the per-client limits themselves. Names not listed under dns stay
+  # on the tunnel, untouched.
+  front: none
+  # ADR-20261103163954 pilot: edgednsd keeps direct-pilot.gregale.app's
+  # DNS-only A records (TTL 60) pointed at the edges that are ready. An edge
+  # is ready only once it has loaded the certificate below, so no record
+  # points at an edge that cannot serve it. edgednsd runs on the control
+  # plane, so one fleet writes these records at a time: GCP's until the
+  # switchover promotes this one.
+  # ADR-20261112114642: direct entry lives in the apps zone (gregale.app)
+  # only, so no compute node holds a browser-trusted key for the platform
+  # domain (gregale.dev: site, dashboard, api., s3., operations.). The
+  # gregale.dev pilot record edgednsd kept is removed by hand at the move
+  # (docs/runbooks/AppsDomainMove.md): edgednsd manages only these names.
+  dns:
+    zone_id: c04f636b34d3c83b7e05e4327cac75e7
+    names: ["direct-pilot.gregale.app"]
+    live: true
+    # §3: edgednsd orders the apps domains' certificate from Let's Encrypt
+    # with DNS-01 and stores it with its key sealed to the edge-tls seal
+    # domain; each edge serves it, its key opened in memory. A failed order
+    # is retried after 1 h, doubling to 12 h; meanwhile the pilot host has no
+    # records and nothing else changes.
+    certificate:
+      names: ["*.gregale.app"]
+      ca: letsencrypt
+      serve: letsencrypt
+      # Pages on a publicly trusted certificate under gregale.app that
+      # edgednsd did not issue. Allowed: Cloudflare's Universal SSL
+      # certificate (gregale.app, *.gregale.app), which the proxied app hosts
+      # on the tunnel use. The watch reads one domain; it followed direct
+      # entry from gregale.dev, whose hosts no compute node can now answer
+      # for.
+      transparency:
+        domain: gregale.app
+        allow_names: ["gregale.app", "*.gregale.app"]
 
 # Request- and wake-path switches on the compute nodes, each measured on
 # production by hand before it moved here (2026-11-06): the node journals
@@ -263,8 +333,8 @@ hot_path:
   invocation_dispatch_concurrency: 32
 
 # Customer log archive (pkg/logarchive). OVH has no machine identity, so the
-# archive uses its own static key pair (put, get, list; the log archive key
-# in GcpToOvhMigration.md "Keys"). The key file stays on the controller and
+# archive uses its own static key pair (put, get, list, delete for account
+# erasure; the log archive key in GcpToOvhMigration.md "Keys"). The key file stays on the controller and
 # never enters this manifest. Create the bucket in the compute region with a
 # lifecycle rule that deletes faas-logs/ objects after 90 days, as on GCS,
 # and copy the GCS archive into it before the move (runbook phase 1 step 7).
@@ -274,6 +344,11 @@ log_archive:
   region: bhs
   auth: static
   credentials_src: /operator/secrets/log-archive-s3.json
+  # Compute nodes should hold a key that can only s3:PutObject on the bucket
+  # (a rooted node could otherwise read every tenant's archived logs). Create
+  # that key, then uncomment:
+  # compute_write_only: true
+  # compute_credentials_src: /operator/secrets/log-archive-s3-put-only.json
 
 # docs/ops/serving-probe.md: each compute node requests the platform-owned
 # probe function (release-acceptance account) through the public edge every
@@ -282,11 +357,30 @@ log_archive:
 # post-deployment monitoring gate qualifies releases on these results. Keep
 # cron and synthetic checks off the probe app so it parks between probes.
 serving_probes:
-  urls: ["https://serving-probe.gregale.dev/"]
+  # gregale.app since the apps-domain move (ADR-20261026100000): the
+  # gregale.dev name is an alias that redirect mode will answer with a 308.
+  urls: ["https://serving-probe.gregale.app/"]
   expected_body: gregale-serving-probe-ok
 
+# ADR-576 private TCP service addresses (<name>.svc.gregale:<port>), which
+# managed Redis caches are reached at (ADR-20261116192126). Staged by hand on
+# bhs-2/bhs-3 on 2026-11-23 in the README's order (node, listener, dns); this
+# block keeps every converge rendering the same.
+service_tcp:
+  node: true
+  listener: true
+  dns: true
+
 dns:
-  apps_domain: gregale.dev
+  # ADR-20261026100000: apps (and PR and deployment previews) move to
+  # gregale.app; the site, dashboard, API, emails and webhooks stay on
+  # gregale.dev, which keeps serving the old app URLs as an alias.
+  # docs/runbooks/AppsDomainMove.md. Switch the alias to redirect only after
+  # customers have moved.
+  platform_domain: gregale.dev
+  apps_domain: gregale.app
+  deploy_domain: gregale.app
+  apps_domain_aliases: [gregale.dev]
   mode: cloudflare
   # ADR-20261103172551: the control plane's platform site admits Cloudflare's
   # address ranges, which every Cloudflare zone uses. any_zone keeps admitting
@@ -323,9 +417,12 @@ postgresql:
 # It applies to new volumes only, so turn it on before the first bootstrap
 # formats /srv/fc; a plain volume moves only by drain, wipe and rejoin.
 # Needs at least one operator age public key, whose identity stays off the
-# fleet (age-keygen on an operator machine).
-# disk_encryption:
-#   recovery_recipients: ["age1…"]
+# fleet (age-keygen on an operator machine). The recipient below is the
+# owner's recovery key generated 2026-11-19; its identity is held offline by
+# the owner, never on a host or in CI.
+disk_encryption:
+  recovery_recipients:
+    - age1al9thtfgakedgc6rksxcn5up3vkujv7wd7qervn7d82mygkm5sxswe6hq0
 
 release:
   id: pre-1.0-template
@@ -370,6 +467,17 @@ cgroups:
 # sign.key at /etc/faas/secrets/sign.key on the control plane first.
 # retire_compute_key (step 4) stays off until the full resign is clean.
 artifact_signer:
+  enabled: true
+
+# App outbound relay (ADR-989): apps reach managed outbound integrations and
+# the AI gateway at GREGALE_OUTBOUND_URL, and stateless agents
+# (ADR-20261030125501) call their model through it. outboundd listens on
+# 8096 on the control plane (nftables admits only compute CIDRs) and every
+# compute vmmd gets its relay client leaf from the control plane's CA. Needs
+# the cluster workload-identity key: the JWKS on the control plane and the
+# signing key on each compute node (installed on this fleet; the
+# control-plane play refuses to open the relay without the JWKS).
+outbound_relay:
   enabled: true
 
 # Workload-identity tokens for queue workers (ADR-1141). Off until an

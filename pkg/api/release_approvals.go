@@ -28,12 +28,13 @@ const (
 
 // ReleaseApprovalPolicy is an app's approval policy.
 type ReleaseApprovalPolicy struct {
-	App               string `json:"app"`
-	RequiredApprovals int    `json:"required_approvals"`
-	AfterStage        int    `json:"after_stage"`
-	TimeoutMinutes    int    `json:"timeout_minutes"`
-	Approvers         string `json:"approvers"`
-	AllowSelfApproval bool   `json:"allow_self_approval"`
+	RequirePassingSandboxSuite bool   `json:"require_passing_sandbox_suite,omitempty"`
+	App                        string `json:"app"`
+	RequiredApprovals          int    `json:"required_approvals"`
+	AfterStage                 int    `json:"after_stage"`
+	TimeoutMinutes             int    `json:"timeout_minutes"`
+	Approvers                  string `json:"approvers"`
+	AllowSelfApproval          bool   `json:"allow_self_approval"`
 	// NotifyChannels names the notification channels told when a release
 	// waits, is approved or rejected, or times out.
 	NotifyChannels []string `json:"notify_channels"`
@@ -46,11 +47,12 @@ type ReleaseApprovalPolicy struct {
 // PUT /v1/apps/{slug}/release-approval-policy. Zero values take the defaults:
 // after stage 1, a 24-hour timeout and owner or admin approvers.
 type SetReleaseApprovalPolicyRequest struct {
-	RequiredApprovals int    `json:"required_approvals"`
-	AfterStage        int    `json:"after_stage,omitempty"`
-	TimeoutMinutes    int    `json:"timeout_minutes,omitempty"`
-	Approvers         string `json:"approvers,omitempty"`
-	AllowSelfApproval bool   `json:"allow_self_approval,omitempty"`
+	RequirePassingSandboxSuite *bool  `json:"require_passing_sandbox_suite,omitempty"`
+	RequiredApprovals          int    `json:"required_approvals"`
+	AfterStage                 int    `json:"after_stage,omitempty"`
+	TimeoutMinutes             int    `json:"timeout_minutes,omitempty"`
+	Approvers                  string `json:"approvers,omitempty"`
+	AllowSelfApproval          bool   `json:"allow_self_approval,omitempty"`
 	// NotifyChannels names Slack or email notification channels.
 	NotifyChannels []string `json:"notify_channels,omitempty"`
 }
@@ -132,16 +134,18 @@ type ReleaseApprovalDecision struct {
 
 // ReleaseApprovalStatus is one release's approval state.
 type ReleaseApprovalStatus struct {
-	DeploymentID      string                    `json:"deployment_id"`
-	App               string                    `json:"app"`
-	State             string                    `json:"state"`
-	RequiredApprovals int                       `json:"required_approvals,omitempty"`
-	Approvals         int                       `json:"approvals"`
-	AfterStage        int                       `json:"after_stage,omitempty"`
-	DeployedBy        string                    `json:"deployed_by,omitempty"`
-	WaitingSince      string                    `json:"waiting_since,omitempty"`
-	ExpiresAt         string                    `json:"expires_at,omitempty"`
-	Decisions         []ReleaseApprovalDecision `json:"decisions"`
+	DeploymentID               string                    `json:"deployment_id"`
+	App                        string                    `json:"app"`
+	State                      string                    `json:"state"`
+	RequiredApprovals          int                       `json:"required_approvals,omitempty"`
+	Approvals                  int                       `json:"approvals"`
+	AfterStage                 int                       `json:"after_stage,omitempty"`
+	DeployedBy                 string                    `json:"deployed_by,omitempty"`
+	WaitingSince               string                    `json:"waiting_since,omitempty"`
+	ExpiresAt                  string                    `json:"expires_at,omitempty"`
+	Decisions                  []ReleaseApprovalDecision `json:"decisions"`
+	BeforeReleaseCommand       bool                      `json:"before_release_command,omitempty"`
+	RequirePassingSandboxSuite bool                      `json:"require_passing_sandbox_suite,omitempty"`
 }
 
 // Remaining is how many more approvals the release needs.
@@ -166,7 +170,7 @@ func ErrReleaseApprovalRequired(status ReleaseApprovalStatus) *Problem {
 	}
 	p := NewProblem(http.StatusConflict, CodeReleaseApprovalRequired, "Release waiting for approval", detail).
 		WithHint("An eligible teammate approves it on its approval page in the dashboard; the rollout then continues on its next tick.").
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 	p.ReleaseApproval = &status
 	return p
 }
@@ -176,7 +180,7 @@ func ErrReleaseApprovalRejected(status ReleaseApprovalStatus) *Problem {
 	p := NewProblem(http.StatusConflict, CodeReleaseApprovalRejected, "Release rejected",
 		fmt.Sprintf("Release %s of %s was rejected and cannot take more traffic.", status.DeploymentID, status.App)).
 		WithHint("Deploy a new release; a rejection is final.").
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 	p.ReleaseApproval = &status
 	return p
 }
@@ -187,7 +191,7 @@ func ErrReleaseApprovalCanaryRequired(app string) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
 		fmt.Sprintf("%s requires approvals for production releases, and this release would take traffic without a canary to wait in.", app)).
 		WithHint("Deploy with --rollout safe or fast (or without --rollout immediate and --traffic-percent), or remove the policy with `gregale release approval disable`.").
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 }
 
 // ErrReleaseApprovalParked refuses traffic by hand for a release that waits
@@ -197,7 +201,7 @@ func ErrReleaseApprovalParked(app, release string) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
 		fmt.Sprintf("%s requires release approvals, so %s cannot take traffic by hand.", app, release)).
 		WithHint(fmt.Sprintf("Start it through a canary that waits for approval: `gregale scheduled-releases set %s --app %s --at now`.", release, app)).
-		WithDocs(docsBase + "/deploys#scheduled-releases")
+		WithDocs(docsBase + "/release-controls#scheduled-releases")
 }
 
 // ErrReleaseApprovalPromotionUnprotected refuses a promotion into an
@@ -208,7 +212,7 @@ func ErrReleaseApprovalPromotionUnprotected(app, project, environment string) *P
 	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need an approved promotion",
 		fmt.Sprintf("%s requires approvals for production releases, and this promotion would release it into %s without one.", app, environment)).
 		WithHint(fmt.Sprintf("Protect the environment so promotions into it need an approval (`gregale projects environments protect %s %s`), or remove the app's policy with `gregale release approval disable --app %s`.", project, environment, app)).
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 }
 
 // ErrReleaseApprovalPromotionInsufficient refuses a protected-environment
@@ -218,7 +222,7 @@ func ErrReleaseApprovalPromotionInsufficient(app, environment string, required i
 	return NewProblem(http.StatusConflict, CodeReleaseApprovalCanaryRequired, "Release approvals need a canary",
 		fmt.Sprintf("%s requires %d approvals; the single approval of a promotion into %s cannot meet that.", app, required, environment)).
 		WithHint(fmt.Sprintf("Release %s with a canary so its approvers can approve it, or lower its required approvals with `gregale approvals`.", app)).
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 }
 
 // ErrReleaseApprovalPromotionSelf refuses a protected-environment promotion
@@ -228,7 +232,7 @@ func ErrReleaseApprovalPromotionSelf(app, environment string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Approve someone else's promotion",
 		fmt.Sprintf("%s does not allow self-approval, and this promotion into %s was approved by the person promoting it.", app, environment)).
 		WithHint("Ask another approver to approve this promotion, then promote with their approval.").
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 }
 
 // ErrReleaseApprovalPromotionSessionRequired refuses a protected production
@@ -238,7 +242,7 @@ func ErrReleaseApprovalPromotionSessionRequired(app, environment string) *Proble
 	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSessionRequired, "Approve as a person",
 		fmt.Sprintf("%s requires release approvals, so a person signed in to Gregale approves this promotion into %s; an API key or token cannot.", app, environment)).
 		WithHint("Approve the promotion signed in as yourself, not with an API key or token, then promote with that approval.").
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 }
 
 // ErrReleaseApprovalPromotionApprover refuses a protected production
@@ -248,7 +252,7 @@ func ErrReleaseApprovalPromotionApprover(app, environment string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgRoleForbidden, "Approver not allowed",
 		fmt.Sprintf("The person who approved this promotion into %s may not approve releases of %s under its approval policy.", environment, app)).
 		WithHint("Ask a teammate the policy lets approve to approve this promotion, then promote with their approval.").
-		WithDocs(docsBase + "/deploys#release-approvals")
+		WithDocs(docsBase + "/release-controls#release-approvals")
 }
 
 // ErrReleaseApprovalSelf refuses the deployer's own approval.
@@ -269,7 +273,7 @@ func ErrReleaseApprovalSessionRequired(pageURL string) *Problem {
 	}
 	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSessionRequired, "Approve in the dashboard",
 		"A person signed in to Gregale approves a release; an API key or token cannot.").
-		WithHint(hint).WithDocs(docsBase + "/deploys#release-approvals")
+		WithHint(hint).WithDocs(docsBase + "/release-controls#release-approvals")
 }
 
 // ErrReleaseApprovalDecided refuses a second decision, or a decision on a

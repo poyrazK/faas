@@ -298,3 +298,28 @@ such a stage longer produced no evidence and protected no request; the ADR-625
 first-wake window still covers the release when traffic arrives. The advance
 is still exported as `advance_low_traffic`, and meterd logs it with
 `no_traffic=true`.
+
+## Amendment (2026-11-20): functions are probed only on declared paths
+
+Prod found a queue function's handler running about 20 times a minute for the
+whole canary: the default probe sent `GET /` (user agent
+`gregale-route-probe/1`) to the candidate and its predecessor, and every path
+of a function is its handler, so a queue or cron handler ran on a synthetic
+event with no body. A function app is now a default probe target only when it
+declares `release_probe_paths`; without them its canary is judged on organic
+traffic and runtime signals, and a stage with no traffic takes the bounded
+advance as above. HTTP apps keep the default `GET /`.
+
+## Amendment (2026-11-23): managed Redis caches are never eligible
+
+A managed cache's resize or update (ADR-20261116192126) deploys a handoff VM
+that copies the running cache and must then take every connection at once.
+On prod the default gave a handoff its 4-step canary, so the old VM kept
+serving for 7m40s beside the new one, past the handoff's 300 s write pause:
+writes it acknowledged then would be dropped with it. A 5xx rollback would
+return to a stale copy. `ApplyDefault` (and so `ApplyDefaultToEnqueue`,
+`DefaultRollbackOn5xx` and scheduled releases) leaves an app with a managed
+cache row immediate (`release.IsManagedCache`; a failed lookup also stays
+immediate), and release gates and approval policies cannot demand a canary
+of a cache's deploy. A customer app that runs the same Valkey image is not a
+managed cache and keeps the default.

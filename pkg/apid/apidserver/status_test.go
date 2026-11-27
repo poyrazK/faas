@@ -168,7 +168,7 @@ func TestStatusQueriesDefineIdleValues(t *testing.T) {
 			name:     "api availability",
 			query:    statusAPIAvailabilityQuery,
 			fallback: "or vector(100)",
-			guard:    "sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) > 0",
+			guard:    "(sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) - (sum(rate(gateway_service_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) or vector(0))) > 0",
 		},
 		{
 			name:     "wake p95",
@@ -655,8 +655,10 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	store := state.NewMemStore()
 	ctx := context.Background()
 	// Terminal time, rather than queue time, decides whether a deployment falls
-	// inside the rolling public-status window.
-	queuedAt := time.Now().Add(-time.Hour)
+	// inside the rolling public-status window. Thirty minutes keeps the
+	// failures inside the last hour, which a breach also needs
+	// (ADR-20261127103000).
+	queuedAt := time.Now().Add(-30 * time.Minute)
 	acct, _ := store.CreateAccount(ctx, "deployment-status@example.com", api.PlanPro)
 	app, _ := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: "deployment-status", RAMMB: 256,
@@ -769,5 +771,26 @@ func TestStatus_AllQueriesFail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "down") {
 		t.Errorf("err = %q, want it to mention the upstream error", err.Error())
+	}
+}
+
+// Slow wakes are an App execution problem; they must not paint Networking
+// degraded on the public page.
+func TestWakeP95BreachDegradesAppExecutionNotNetworking(t *testing.T) {
+	wake := float64(api.StatusTargetWakeP95MS) * 8
+	snap := statusEvaluation{
+		legacy:             StatusPage{APIAvailabilityPct: 100, WakeP95MS: &wake, BuildSuccessPct: 100},
+		states:             publicstatus.Evaluate(nil, nil),
+		indicatorAvailable: map[string]bool{"api_availability": true, "wake_p95": true, "build_success": true},
+	}
+	applyStatusIndicatorBreaches(&snap)
+	if got := snap.states[publicstatus.ComponentAppExecution]; got != publicstatus.StateDegraded {
+		t.Fatalf("app_execution = %q, want degraded", got)
+	}
+	if got := snap.states[publicstatus.ComponentNetworking]; got != publicstatus.StateOperational {
+		t.Fatalf("networking = %q, want operational", got)
+	}
+	if !snap.legacy.Degraded || !strings.Contains(snap.legacy.Source, "platform wake p95 target breached") {
+		t.Fatalf("legacy = degraded %v source %q", snap.legacy.Degraded, snap.legacy.Source)
 	}
 }

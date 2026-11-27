@@ -61,6 +61,10 @@ type Policy struct {
 type Attribution struct {
 	Code   string
 	Policy Policy
+	// SubjectKind is SubjectAccount (default) or SubjectOrg. SelectedBy is the
+	// signed-in member who entered the code for an organization.
+	SubjectKind string
+	SelectedBy  string
 }
 
 type Link struct {
@@ -75,7 +79,11 @@ type Scope struct {
 	OwnerID string
 	All     bool
 	Kind    string
+	Role    string // staff role: RoleAdmin, RoleManager or RoleRep
 }
+
+// Admin reports an owner admin scope.
+func (s Scope) Admin() bool { return s.Role == RoleAdmin }
 
 type LeadUpdate struct {
 	Stage    string `json:"stage"`
@@ -103,6 +111,11 @@ type Record struct {
 	ReferredRewardCents int64      `json:"referred_reward_cents"`
 	PaidCents           int64      `json:"paid_cents"`
 	EligibleAt          *time.Time `json:"eligible_at,omitempty"`
+	SubjectKind         string     `json:"subject_kind,omitempty"`
+	OrgName             string     `json:"org_name,omitempty"`
+	CommissionBPS       int32      `json:"commission_bps,omitempty"`
+	PayoutCents         int64      `json:"payout_cents,omitempty"`
+	PayoutPaidOn        string     `json:"payout_paid_on,omitempty"`
 }
 
 type Summary struct {
@@ -113,6 +126,11 @@ type Summary struct {
 	Eligible    int64  `json:"eligible"`
 	RewardCents int64  `json:"reward_cents"`
 	PaidCents   int64  `json:"paid_cents"`
+	// Sales counts paid first invoices that were not reversed; the month
+	// fields cover first payments since the start of the UTC calendar month.
+	Sales              int64 `json:"sales"`
+	SalesThisMonth     int64 `json:"sales_this_month"`
+	PaidThisMonthCents int64 `json:"paid_this_month_cents"`
 }
 
 type Store interface {

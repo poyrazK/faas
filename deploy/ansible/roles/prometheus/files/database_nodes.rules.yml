@@ -193,6 +193,18 @@ groups:
           description: "Databases, standbys and incoming moves on {{ $labels.node }} have reserved over 90% of its volume_capacity_bytes. New databases, storage growth and standbys go elsewhere or fail with no capacity."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
+      - alert: FaasDatabasePrimaryStorageLow
+        expr: max(clamp_min(schedd_database_storage{level="low"} - ignoring(level) schedd_database_storage{level="read_only"}, 0)) > 0
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "{{ $value }} writable native database primary volume(s) low on space"
+          description: "These primaries are still writable. Find their database IDs in schedd logs ('primary is low on storage') and check free space, WAL archiving and storage resize capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
       - alert: FaasDatabaseStorageReadOnly
         expr: max(schedd_database_storage{level="read_only"}) > 0
         for: 5m

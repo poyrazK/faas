@@ -17,7 +17,10 @@ import (
 // track() events. The tree names alias `gregale insights <verb>`;
 // `gregale analytics` is request analytics.
 
-const insightsVerbs = "events|funnel|retention|requests"
+// insightsVerbs spells the subcommands as help lists them; the dispatcher
+// still takes the legacy plurals the CLI tree rewrites to (prod hunt r60:
+// `insight list` answered "events|...|requests").
+const insightsVerbs = "event|funnel|retention|request|cohorts|saved"
 
 type insightsFlags struct {
 	project, environment, from, until, unit, by *string
@@ -77,6 +80,17 @@ func cmdInsights(args []string) int {
 		return 1
 	}
 	verb, args := args[0], args[1:]
+	// insightsVerbs lists the singular names, so they must run too: `insight
+	// event signup` refused "event" while naming it as valid (review of r60).
+	if plural, ok := map[string]string{"event": "events", "request": "requests"}[verb]; ok {
+		verb = plural
+	}
+	if verb == "cohorts" {
+		return cmdInsightCohorts(args)
+	}
+	if verb == "saved" {
+		return cmdInsightSaved(args)
+	}
 	fs := newFlagSet("insights-"+verb, flag.ContinueOnError)
 	f := newInsightsFlags(fs)
 	positionals, err := parseInterleaved(fs, args)
@@ -97,6 +111,14 @@ func cmdInsights(args []string) int {
 }
 
 func runInsights(verb string, positionals []string, f *insightsFlags, from, until *time.Time) int {
+	// An unknown verb fails before any call: with --project set, `insight
+	// list` reached the API and answered "Not found" (prod hunt r61).
+	switch verb {
+	case "events", "funnel", "retention", "requests":
+	default:
+		printCommandValidation(os.Stderr, "gregale insight: unknown subcommand %q (%s)\n", verb, insightsVerbs)
+		return 1
+	}
 	// Literal counts, so the positional guard sees the check before any call.
 	if *f.project == "" || (verb == "events" && len(positionals) != 1) || (verb == "funnel" && len(positionals) < 2) ||
 		(verb == "retention" && len(positionals) != 2) || (verb == "requests" && (len(positionals) != 0 || *f.flag == "")) {

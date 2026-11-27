@@ -53,21 +53,10 @@ func flagExperimentResponse(x state.FlagExperiment) api.FlagExperiment {
 	}
 	out.Guardrails, out.LatencyThresholdMS = guardrailSettingsResponse(x.Guardrails), x.LatencyThresholdMS
 	out.StopReason, out.Breach = x.StopReason, x.Breach
+	out.NotifyChannelIDs = x.NotifyChannelIDs
+	flagExperimentMetricResponse(&out, x)
+	flagExperimentDesignResponse(&out, x)
 	return out
-}
-
-// experimentRuleWeights checks the rule against the latest configuration and
-// returns its flag's variant weights.
-func experimentRuleWeights(ctx context.Context, store state.FeatureFlagStore, scope state.FeatureFlagScope, flagKey, ruleID, control string) (map[string]int, *api.Problem) {
-	v, err := store.GetFeatureFlags(ctx, scope, 0)
-	if err != nil {
-		return nil, api.ErrInternal("feature flags unavailable")
-	}
-	_, f, err := flags.ExperimentRule(v.Config, flagKey, ruleID, control)
-	if err != nil {
-		return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", err.Error())
-	}
-	return flags.ExperimentWeights(f), nil
 }
 
 // flagExperimentMixing is the request's mixing lift, or the default for its
@@ -76,7 +65,7 @@ func flagExperimentMixing(req api.FlagExperimentCreateRequest) float64 {
 	switch {
 	case req.MixingLift != nil:
 		return *req.MixingLift
-	case req.MetricKind == flags.ExperimentMetricMean:
+	case req.MetricKind == flags.ExperimentMetricMean || customMetric(req.MetricKind):
 		return api.FlagExperimentMixingEffect
 	}
 	return api.FlagExperimentMixingLift
@@ -89,11 +78,9 @@ func validFlagExperimentRequest(req api.FlagExperimentCreateRequest) *api.Proble
 	}
 	switch {
 	case req.MetricKind != "" && !flags.ValidMetricKind(req.MetricKind):
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "metric_kind is conversion or mean")
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "metric_kind is conversion, mean, funnel, retention, ratio or percentile")
 	case !flags.ValidExperimentKey(req.Key):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "key is 1 to 64 lowercase letters, digits and hyphens")
-	case !flags.ValidEventName(req.MetricEvent):
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "metric_event is a conversion event name: ^[a-z][a-z0-9_.-]{0,63}$")
 	case !(lift > 0 && lift <= 1):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment",
 			"mixing_lift is in (0, 1]: an absolute conversion-rate lift, or a standardized effect size for mean metrics")
@@ -131,21 +118,41 @@ func (s *server) createFlagExperiment(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, p)
 		return
 	}
-	weights, p := experimentRuleWeights(r.Context(), flagStore, scope, req.Flag, req.RuleID, req.Control)
+	metric, p := s.flagExperimentMetricFrom(req, acct)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
-	kind := req.MetricKind
-	if kind == "" {
-		kind = flags.ExperimentMetricConversion
+	design, p := s.flagExperimentDesignFrom(req, metric.kind, acct)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	weights, p := experimentRuleWeights(r.Context(), flagStore, scope, req.Flag, req.RuleID, req.Control, design.unit, design.allocation)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	notify, p := s.experimentNotifyChannels(r, acct, scope, req.NotifyChannelIDs)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	guardrails := defaultFlagExperimentGuardrails(req.Guardrails)
+	if design.unit == flags.ExperimentUnitSubject {
+		guardrails = noGuardrails()
 	}
 	x, err := store.CreateFlagExperiment(r.Context(), state.FlagExperiment{AccountID: scope.AccountID, ProjectID: scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID, Key: req.Key, FlagKey: req.Flag, RuleID: req.RuleID, Control: req.Control,
-		MetricEvent: req.MetricEvent, MetricKind: kind, MixingLift: flagExperimentMixing(req), Weights: weights,
-		Guardrails: defaultFlagExperimentGuardrails(req.Guardrails), CreatedBy: acct.ID}, api.FlagExperimentsMaxPerEnvironment)
+		MetricEvent: metric.event, MetricKind: metric.kind, MetricDefinition: metric.def, Cuped: req.Cuped == nil || *req.Cuped,
+		MixingLift: flagExperimentMixing(req), Weights: weights, Guardrails: guardrails, CreatedBy: acct.ID,
+		Unit: design.unit, Layer: design.layer, Traffic: design.traffic, Allocation: design.allocation,
+		DenominatorEvent: design.denominator, Percentile: design.percentile, NotifyChannelIDs: notify}, api.FlagExperimentsMaxPerEnvironment)
 	if err == nil && req.Start {
-		x, err = store.StartFlagExperiment(r.Context(), scope.EnvironmentID, req.Key, weights, time.Now(), api.FlagExperimentsMaxRunning)
+		x, err = s.startExperiment(r.Context(), store, x, weights, acct.ID)
+	}
+	if writeIsolationError(w, err) {
+		return
 	}
 	if err != nil {
 		writeFlagExperimentError(w, err)
@@ -178,13 +185,15 @@ func (s *server) startFlagExperiment(w http.ResponseWriter, r *http.Request, acc
 		writeFlagExperimentError(w, err)
 		return
 	}
-	weights, p := experimentRuleWeights(r.Context(), flagStore, scope, x.FlagKey, x.RuleID, x.Control)
+	weights, p := experimentRuleWeights(r.Context(), flagStore, scope, x.FlagKey, x.RuleID, x.Control, x.Unit, x.Allocation)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
-	if x, err = store.StartFlagExperiment(r.Context(), scope.EnvironmentID, x.Key, weights, time.Now(), api.FlagExperimentsMaxRunning); err != nil {
-		writeFlagExperimentError(w, err)
+	if x, err = s.startExperiment(r.Context(), store, x, weights, acct.ID); err != nil {
+		if !writeIsolationError(w, err) {
+			writeFlagExperimentError(w, err)
+		}
 		return
 	}
 	s.audit.Emit(r.Context(), "flags.experiment_started", &acct.ID, map[string]any{"environment_id": scope.EnvironmentID, "experiment": x.Key, "flag": x.FlagKey})
@@ -199,6 +208,10 @@ func (s *server) stopFlagExperiment(w http.ResponseWriter, r *http.Request, acct
 	x, err := store.StopFlagExperiment(r.Context(), scope.EnvironmentID, r.PathValue("key"), time.Now(), flags.StopManual, nil)
 	if err != nil {
 		writeFlagExperimentError(w, err)
+		return
+	}
+	if err := s.clearRuleExperiment(r.Context(), x, acct.ID); err != nil {
+		api.WriteProblem(w, api.ErrInternal("the experiment stopped but its rule still carries it; stop it again"))
 		return
 	}
 	s.audit.Emit(r.Context(), "flags.experiment_stopped", &acct.ID, map[string]any{"environment_id": scope.EnvironmentID, "experiment": x.Key, "flag": x.FlagKey})
@@ -233,13 +246,21 @@ func (s *server) getFlagExperimentResults(w http.ResponseWriter, r *http.Request
 		writeFlagExperimentError(w, err)
 		return
 	}
-	in, err := loadFlagExperimentReport(r.Context(), store, x)
+	in, err := loadFlagExperimentReport(r.Context(), store, x, s.productAnalyticsOn(acct.ID, string(acct.Plan)))
 	if err != nil {
 		writeFlagExperimentError(w, err)
 		return
 	}
+	out := flagExperimentResultsResponse(x, in, r.PathValue("slug"), r.PathValue("environment"))
+	if cohort := r.URL.Query().Get("segment"); cohort != "" {
+		var p *api.Problem
+		if out.Segments, p = s.flagExperimentSegments(r.Context(), store, x, cohort); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, flagExperimentResultsResponse(x, in, r.PathValue("slug"), r.PathValue("environment")))
+	writeJSON(w, http.StatusOK, out)
 }
 
 // flagExperimentReport is what results read from the store.
@@ -248,18 +269,26 @@ type flagExperimentReport struct {
 	crossed    int64
 	errs, slow []flags.RatioArm
 	latency    map[string]map[int]int64
+	cuped      flagExperimentCupedInput
+	extras     flagExperimentExtras
 }
 
-func loadFlagExperimentReport(ctx context.Context, store state.FlagExperimentStore, x state.FlagExperiment) (flagExperimentReport, error) {
+func loadFlagExperimentReport(ctx context.Context, store state.FlagExperimentStore, x state.FlagExperiment, analyticsOn bool) (flagExperimentReport, error) {
 	var in flagExperimentReport
 	var err error
 	if in.arms, in.crossed, err = store.FlagExperimentArms(ctx, x, api.FlagExperimentMinUnitsPerArm); err != nil {
 		return in, err
 	}
+	if in.cuped, err = loadFlagExperimentCuped(ctx, store, x, analyticsOn); err != nil {
+		return in, err
+	}
 	if in.errs, in.slow, err = store.FlagExperimentGuardrailArms(ctx, x.ID); err != nil {
 		return in, err
 	}
-	in.latency, err = store.FlagExperimentLatency(ctx, x.ID)
+	if in.latency, err = store.FlagExperimentLatency(ctx, x.ID); err != nil {
+		return in, err
+	}
+	in.extras, err = loadFlagExperimentExtras(ctx, store, x)
 	return in, err
 }
 
@@ -306,23 +335,30 @@ func (s *server) shipFlagExperiment(w http.ResponseWriter, r *http.Request, acct
 }
 
 // flagExperimentResults applies the ADR's statistics to an experiment's arms.
-func flagExperimentResults(x state.FlagExperiment, arms []flags.Arm) flags.Results {
+func flagExperimentResults(x state.FlagExperiment, arms []flags.Arm, cuped flagExperimentCupedInput) flags.Results {
 	return flags.ExperimentResults(flags.ResultsInput{
 		Arms: arms, Control: x.Control, Weights: x.Weights, MixingLift: x.MixingLift,
 		Alpha: api.FlagExperimentAlpha, SRMAlpha: api.FlagExperimentSRMAlpha,
 		MinUnits: api.FlagExperimentMinUnitsPerArm, MinConversions: api.FlagExperimentMinConversionsPerArm,
 		MinPValues: x.MinPValues, Kind: x.MetricKind,
+		Cuped: cuped.arms, CupedReason: cuped.reason, MinCupedPValues: x.MinCupedPValues,
 	})
 }
 
 func flagExperimentResultsResponse(x state.FlagExperiment, in flagExperimentReport, project, environment string) api.FlagExperimentResults {
 	arms, crossed := in.arms, in.crossed
-	res := flagExperimentResults(x, arms)
+	res := flagExperimentResultsFor(x, arms, in.cuped, in.extras)
 	guardrails := flagExperimentGuardrails(x, in.errs, in.slow)
 	rec := flags.Recommend(flags.RecommendInput{Results: res, Kind: x.MetricKind, Running: x.Status == flags.ExperimentRunning,
 		StopReason: x.StopReason, Guardrails: guardrails})
+	if x.Allocation == flags.ExperimentAllocationBandit && x.StopReason != flags.StopGuardrailBreach {
+		rec = banditRecommendation(x)
+	}
 	value := flags.Arm.Rate
-	if x.MetricKind == flags.ExperimentMetricMean {
+	switch {
+	case customMetric(x.MetricKind):
+		value = func(a flags.Arm) float64 { return customArmValue(x, in.extras, a.Variant) }
+	case x.MetricKind == flags.ExperimentMetricMean:
 		value = flags.Arm.Mean
 	}
 	arm := func(a flags.Arm) api.FlagExperimentArm {
@@ -335,11 +371,16 @@ func flagExperimentResultsResponse(x state.FlagExperiment, in flagExperimentRepo
 		Recommendation: api.FlagExperimentRecommendation{Action: rec.Action, Variant: rec.Variant, Summary: rec.Summary,
 			Commands: flagExperimentCommands(rec, x, project, environment)}}
 	for _, v := range res.Variants {
-		vr := api.FlagExperimentVariantResult{FlagExperimentArm: arm(v.Arm), Status: v.Status}
+		vr := api.FlagExperimentVariantResult{FlagExperimentArm: arm(v.Arm), Status: v.Status, Unadjusted: comparisonResponse(v.Unadjusted)}
 		if c := v.Comparison; c != nil {
 			vr.Lift, vr.RelativeLift, vr.Low, vr.High, vr.PValue = &c.Lift, &c.RelativeLift, &c.Low, &c.High, &c.PValue
 		}
 		out.Variants = append(out.Variants, vr)
+	}
+	out.Cuped = cupedResponse(res.Cuped)
+	out.FixedHorizon = x.MetricKind == flags.ExperimentMetricPercentile
+	if out.Bandit = banditResponse(x); out.Bandit != nil {
+		banditVariants(&out)
 	}
 	return out
 }

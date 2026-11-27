@@ -153,10 +153,13 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ctx context.Context, ins I
 		return nil
 	}
 	if !bytes.Equal(capture.inputs, input) {
-		matches, err := standardNativeRuntimeInputsMatch(capture.inputs, input)
+		// application_standard_instance_runtime_guard: the stable inputs match
+		// (scan mirrors ignored, ADR 20261031190030), and an instance still
+		// booting keeps the account plan it was admitted under.
+		matches, err := standardRuntimeInputsMatch(capture.inputs, input)
 		old := m.instances[ins.ID]
-		if err == nil && !matches && old.State != string(StateWaking) && old.State != string(StateColdBooting) {
-			matches, err = standardRuntimeInputsMatch(capture.inputs, input)
+		if err == nil && matches && (old.State == string(StateWaking) || old.State == string(StateColdBooting)) {
+			matches, err = standardRuntimeAccountPlanUnchanged(capture.inputs, input)
 		}
 		if err != nil || !matches {
 			return ErrApplicationStandardRuntimeStale

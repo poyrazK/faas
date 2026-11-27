@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.mcp_resource_policy_credential import MCPResourcePolicyCredential, check_mcp_resource_policy_credential
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
     from ..models.mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+    from ..models.mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
     from ..models.mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
 
 
@@ -34,6 +36,18 @@ class MCPResourcePolicy:
     resource_scopes: MCPResourcePolicyResourceScopesType0 | None | Unset = UNSET
     """Absolute URIs or simple variable templates; every matching entry must authorize access."""
     prompt_scopes: MCPResourcePolicyPromptScopesType0 | None | Unset = UNSET
+    credential: MCPResourcePolicyCredential | Unset = UNSET
+    """What callers present. Omitted means a bearer JWT verified against
+    the rule's issuer. consumer_key means an app consumer key whose
+    mcp:<scope> scopes satisfy the policy's scopes.
+    """
+    tool_limits: MCPResourcePolicyToolLimits | Unset = UNSET
+    """Per-caller limits on tools/call, keyed by tool name."""
+    audience: str | Unset = UNSET
+    """Token audience an external OAuth issuer uses for this server when
+    it is not the resource. The rule's JWT audience must then be
+    exactly this value. Bearer-token policies only.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +89,16 @@ class MCPResourcePolicy:
         else:
             prompt_scopes = self.prompt_scopes
 
+        credential: str | Unset = UNSET
+        if not isinstance(self.credential, Unset):
+            credential = self.credential
+
+        tool_limits: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tool_limits, Unset):
+            tool_limits = self.tool_limits.to_dict()
+
+        audience = self.audience
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -92,6 +116,12 @@ class MCPResourcePolicy:
             field_dict["resource_scopes"] = resource_scopes
         if prompt_scopes is not UNSET:
             field_dict["prompt_scopes"] = prompt_scopes
+        if credential is not UNSET:
+            field_dict["credential"] = credential
+        if tool_limits is not UNSET:
+            field_dict["tool_limits"] = tool_limits
+        if audience is not UNSET:
+            field_dict["audience"] = audience
 
         return field_dict
 
@@ -99,6 +129,7 @@ class MCPResourcePolicy:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
         from ..models.mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
+        from ..models.mcp_resource_policy_tool_limits import MCPResourcePolicyToolLimits
         from ..models.mcp_resource_policy_tool_scopes_type_0 import MCPResourcePolicyToolScopesType0
 
         d = dict(src_dict)
@@ -159,6 +190,22 @@ class MCPResourcePolicy:
 
         prompt_scopes = _parse_prompt_scopes(d.pop("prompt_scopes", UNSET))
 
+        _credential = d.pop("credential", UNSET)
+        credential: MCPResourcePolicyCredential | Unset
+        if isinstance(_credential, Unset):
+            credential = UNSET
+        else:
+            credential = check_mcp_resource_policy_credential(_credential)
+
+        _tool_limits = d.pop("tool_limits", UNSET)
+        tool_limits: MCPResourcePolicyToolLimits | Unset
+        if isinstance(_tool_limits, Unset):
+            tool_limits = UNSET
+        else:
+            tool_limits = MCPResourcePolicyToolLimits.from_dict(_tool_limits)
+
+        audience = d.pop("audience", UNSET)
+
         mcp_resource_policy = cls(
             resource=resource,
             scopes=scopes,
@@ -166,6 +213,9 @@ class MCPResourcePolicy:
             tool_scopes=tool_scopes,
             resource_scopes=resource_scopes,
             prompt_scopes=prompt_scopes,
+            credential=credential,
+            tool_limits=tool_limits,
+            audience=audience,
         )
 
         mcp_resource_policy.additional_properties = d

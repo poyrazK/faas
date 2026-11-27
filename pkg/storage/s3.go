@@ -46,6 +46,12 @@ type S3Config struct {
 	Region          string
 	AccessKeyID     string
 	SecretAccessKey string
+	// Granted means the daemon reaches the bucket only through secretd's
+	// signed grants (FAAS_STORAGE_ACCESS=secretd, ADR-20261117190000): its
+	// stores are swapped by UseGrants, so no access key is needed and, once
+	// the compute key is deleted (slice 5), none is present. Without a key the
+	// client is anonymous and any request that bypassed a grant is refused.
+	Granted bool
 	// PathStyle addresses the bucket as https://endpoint/bucket/key instead
 	// of https://bucket.endpoint/key. MinIO and some providers require it.
 	PathStyle bool
@@ -62,8 +68,11 @@ func (c S3Config) Validate() error {
 	if strings.TrimSpace(c.Region) == "" || c.Region != strings.TrimSpace(c.Region) {
 		return errors.New("storage: FAAS_S3_REGION is required (the endpoint's signing region, for example \"bhs\" or \"us-east-1\")")
 	}
-	if c.AccessKeyID == "" || c.SecretAccessKey == "" {
-		return errors.New("storage: FAAS_S3_ACCESS_KEY_ID and FAAS_S3_SECRET_ACCESS_KEY are required")
+	if (c.AccessKeyID == "") != (c.SecretAccessKey == "") {
+		return errors.New("storage: set both FAAS_S3_ACCESS_KEY_ID and FAAS_S3_SECRET_ACCESS_KEY, or neither")
+	}
+	if c.AccessKeyID == "" && !c.Granted {
+		return errors.New("storage: FAAS_S3_ACCESS_KEY_ID and FAAS_S3_SECRET_ACCESS_KEY are required (unless FAAS_STORAGE_ACCESS=secretd)")
 	}
 	return nil
 }
@@ -145,11 +154,15 @@ func NewS3StorageBackend(cfg S3Config, snapshotCompression string) (*S3StorageBa
 	// streams for minutes. A stalled server is caught by the header timeout
 	// and by the caller's context.
 	transport.ResponseHeaderTimeout = 60 * time.Second
+	var creds aws.CredentialsProvider = credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, "")
+	if cfg.AccessKeyID == "" {
+		creds = aws.AnonymousCredentials{}
+	}
 	client := s3.New(s3.Options{
 		Region:       cfg.Region,
 		BaseEndpoint: aws.String(strings.TrimSuffix(cfg.Endpoint, "/")),
 		UsePathStyle: cfg.PathStyle,
-		Credentials:  credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		Credentials:  creds,
 		HTTPClient:   &http.Client{Transport: transport},
 		// Compatible stores (OVHcloud, R2, MinIO releases) disagree on the
 		// SDK's newer trailing CRC checksums. Integrity comes from the
@@ -322,6 +335,23 @@ func normalizeS3Error(err error) error {
 	return err
 }
 
+// ErrWriteConflict reports that the object store refused a write because
+// another writer was publishing the same key at that moment: HTTP 409 on
+// PutObject or CompleteMultipartUpload (OVH answers a concurrent complete of
+// one key this way). This attempt published nothing, so a caller that still
+// holds the bytes may publish them again.
+var ErrWriteConflict = errors.New("storage: concurrent write conflict")
+
+// s3WriteConflict marks a refused write as ErrWriteConflict when the store
+// answered HTTP 409, and returns other errors unchanged.
+func s3WriteConflict(err error) error {
+	var status interface{ HTTPStatusCode() int }
+	if errors.As(err, &status) && status.HTTPStatusCode() == http.StatusConflict {
+		return fmt.Errorf("%w: %w", ErrWriteConflict, err)
+	}
+	return err
+}
+
 func contentMD5(p []byte) *string {
 	sum := md5.Sum(p) // #nosec G401 -- S3 Content-MD5 protocol checksum.
 	return aws.String(base64.StdEncoding.EncodeToString(sum[:]))
@@ -347,7 +377,7 @@ func (s *awsS3ArtifactStore) Put(ctx context.Context, bucket, key string, body i
 			ContentType:   aws.String(gcsContentType),
 			Metadata:      metadata,
 		})
-		return normalizeS3Error(putErr)
+		return s3WriteConflict(normalizeS3Error(putErr))
 	}
 
 	created, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
@@ -403,7 +433,7 @@ func (s *awsS3ArtifactStore) Put(ctx context.Context, bucket, key string, body i
 		UploadId:        uploadID,
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
 	}); err != nil {
-		return abort(normalizeS3Error(err))
+		return abort(s3WriteConflict(normalizeS3Error(err)))
 	}
 	return nil
 }

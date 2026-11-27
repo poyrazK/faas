@@ -106,6 +106,10 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("reviewed recovery requires exact abort selectors"))
 		return
 	}
+	if req.ExpectedStep != nil && (*req.ExpectedStep < 0 || req.Action == "abort" || req.DeploymentID != "" || req.ExpectedPredecessorDeploymentID != "") {
+		api.WriteProblem(w, api.ErrValidation("expected_step must be non-negative and applies only to advance and promote"))
+		return
+	}
 	attempt, problem := s.serviceAbortAttempt(r.Context(), r, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -123,6 +127,12 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	if req.DeploymentID != "" || req.ExpectedPredecessorDeploymentID != "" {
 		s.recoverPinnedCanaryRollout(w, checkedRequest, acct, app, req, nil)
 		return
+	}
+	if req.ExpectedStep != nil {
+		if problem := s.recoverRolloutStepProblem(r.Context(), app, *req.ExpectedStep); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	if !acct.Plan.TrafficSplitAllowed() {
 		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))

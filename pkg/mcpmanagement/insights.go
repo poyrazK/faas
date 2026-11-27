@@ -60,6 +60,42 @@ func registerInsights(s *mcp.Server, m *management) {
 	register(s, m, "gregale_get_insight_funnel", "Compute a product analytics funnel: units that did 2 to 6 events in order within a window, with conversion per step, optionally split by flag variant or property. Read-only.", m.getInsightFunnel)
 	register(s, m, "gregale_get_insight_retention", "Compute product analytics retention: cohorts by first start event and the share that sent the return event in each later day or week, optionally split by flag variant or property. Read-only.", m.getInsightRetention)
 	register(s, m, "gregale_get_insight_requests", "Read request telemetry by a flag's served value: requests, server errors and p95 latency per variant. Read-only.", m.getInsightRequests)
+	register(s, m, "gregale_list_insight_cohorts", "List an environment's saved cohorts: definition, member count, the plan's member bound and the last refresh. Flag rules target a cohort with the gregale.cohort attribute. Read-only.", m.listInsightCohorts)
+	register(s, m, "gregale_list_saved_insights", "List an environment's saved insights: the saved events, funnel or retention query, its range, digest and alert, the last scheduled value and the alert state. Read-only.", m.listSavedInsights)
+	register(s, m, "gregale_run_saved_insight", "Run a saved insight now over its last range_days days and return its value and full result. Read-only.", m.runSavedInsight)
+}
+
+type savedInsightArgs struct {
+	Project     string `json:"project" jsonschema:"Project slug"`
+	Environment string `json:"environment" jsonschema:"Named project environment, e.g. production"`
+	Key         string `json:"key" jsonschema:"Saved insight key"`
+}
+
+const savedInsightGuidance = "A saved insight's value is an events total (or value sum), a funnel's overall conversion or the first-period retention rate, as a fraction. Each run covers the last range_days days. value is absent when there is no data (a funnel without entrants, retention before a period ends). A non-empty last_error means the last scheduled run failed; alert_state is kept from the last good run."
+
+func (m *management) listSavedInsights(ctx context.Context, args insightCohortsArgs) (any, error) {
+	if err := validateFlagExperimentScope(args.Project, args.Environment); err != nil {
+		return nil, err
+	}
+	res, err := m.client.ListProjectSavedInsights(ctx, args.Project, args.Environment)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"insights": res.Insights, "guidance": savedInsightGuidance}, nil
+}
+
+func (m *management) runSavedInsight(ctx context.Context, args savedInsightArgs) (any, error) {
+	if err := validateFlagExperimentScope(args.Project, args.Environment); err != nil {
+		return nil, err
+	}
+	if args.Key == "" {
+		return nil, fmt.Errorf("key is required")
+	}
+	res, err := m.client.RunProjectSavedInsight(ctx, args.Project, args.Environment, args.Key)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"result": res, "guidance": savedInsightGuidance + " " + insightGuidance}, nil
 }
 
 func parseInsightTime(raw, name string) (*time.Time, error) {
@@ -158,4 +194,22 @@ func (m *management) getInsightRequests(ctx context.Context, args insightRequest
 		return nil, err
 	}
 	return insightResult("requests", res), nil
+}
+
+type insightCohortsArgs struct {
+	Project     string `json:"project" jsonschema:"Project slug"`
+	Environment string `json:"environment" jsonschema:"Named project environment, e.g. production"`
+}
+
+const insightCohortGuidance = "Members are recomputed hourly. truncated=true means more customers matched than max_members; the lowest customer IDs were kept. A refresh_error keeps the previous members. Rules target a cohort with {\"attribute\": \"gregale.cohort\", \"op\": \"in\", \"values\": [KEY]}; requests see a change within a minute."
+
+func (m *management) listInsightCohorts(ctx context.Context, args insightCohortsArgs) (any, error) {
+	if err := validateFlagExperimentScope(args.Project, args.Environment); err != nil {
+		return nil, err
+	}
+	res, err := m.client.ListProjectInsightCohorts(ctx, args.Project, args.Environment)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"cohorts": res.Cohorts, "guidance": insightCohortGuidance}, nil
 }

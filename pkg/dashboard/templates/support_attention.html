@@ -42,7 +42,7 @@
 {{if .Summary}}<section aria-labelledby="summary-h"><h2 id="summary-h">Last {{.SummaryDays}} days</h2>
 <div class="scroll"><table><caption class="meta">Signals first seen in the period, by what support did</caption>
 <thead><tr><th scope="col">Kind</th><th scope="col">Signals</th><th scope="col">Open</th><th scope="col">Contacted</th><th scope="col">Other dismissals</th><th scope="col">False positives</th><th scope="col">Resolved on own</th><th scope="col">Median time to act</th></tr></thead><tbody>
-{{range .Summary}}<tr><th scope="row">{{.Kind}}</th><td>{{.Total}}</td><td>{{.Open}}</td><td>{{.Contacted}}</td><td>{{.OtherDismissed}}</td><td>{{.FalsePositive}}{{$p := .FalsePositivePercent}}{{if ge $p 0}} <small class="meta">({{$p}}% of acted)</small>{{end}}</td><td>{{.ResolvedOnOwn}}</td><td>{{with .MedianAct}}{{.}}{{else}}<span class="muted">—</span>{{end}}</td></tr>{{end}}
+{{range .Summary}}<tr><th scope="row">{{.Kind}}</th><td>{{.Total}}</td><td>{{.Open}}</td><td>{{.Contacted}}</td><td>{{.OtherDismissed}}</td><td>{{.FalsePositive}}{{$p := .FalsePositivePercent}}{{if ge $p 0}} <small class="meta">({{$p}}% of acted)</small>{{end}}</td><td>{{.ResolvedOnOwn}}{{if .NoOutcome}} <small class="meta">(+{{.NoOutcome}} closed with no outcome)</small>{{end}}</td><td>{{with .MedianAct}}{{.}}{{else}}<span class="muted">—</span>{{end}}</td></tr>{{end}}
 </tbody></table></div></section>{{end}}
 <h2>Signals</h2>
 <form method="get" action="/dashboard/admin/support/attention" class="filters" aria-label="Filter signals">

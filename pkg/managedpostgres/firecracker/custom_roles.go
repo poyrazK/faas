@@ -62,8 +62,33 @@ func validCustomRoleSpecs(desired []managedpostgres.CustomRoleSpec) error {
 				return managedpostgres.ErrInvalid
 			}
 		}
+		for _, access := range spec.DefaultFor {
+			if (access != managedpostgres.CredentialReadOnly && access != managedpostgres.CredentialReadWrite) || !slices.Contains(spec.GrantedTo, access) {
+				return managedpostgres.ErrInvalid
+			}
+		}
 	}
 	return nil
+}
+
+// defaultRoleSQL makes every login whose credential marker is in markers
+// start as want (” for none). It only replaces or resets a role setting
+// that names a custom role, so the migration login's schema-owner setting
+// is never touched.
+func defaultRoleSQL(markers []string, want string) string {
+	return fmt.Sprintf(`DO $gregale$ DECLARE r record; cur text; BEGIN
+  FOR r IN SELECT rolname::text AS name, COALESCE(rolconfig, ARRAY[]::text[]) AS cfg FROM pg_roles
+      WHERE rolcanlogin AND COALESCE(shobj_description(oid, 'pg_authid'), '') = ANY(%[1]s) LOOP
+    SELECT substr(c, 6) INTO cur FROM unnest(r.cfg) AS c WHERE c LIKE 'role=%%'
+      AND EXISTS (SELECT 1 FROM pg_roles p WHERE p.rolname = substr(c, 6) AND COALESCE(shobj_description(p.oid, 'pg_authid'), '') LIKE '%[2]s%%') LIMIT 1;
+    IF '%[3]s' <> '' AND cur IS DISTINCT FROM '%[3]s' THEN
+      EXECUTE format('ALTER ROLE %%I SET role TO %%I', r.name, '%[3]s');
+    ELSIF '%[3]s' = '' AND cur IS NOT NULL THEN
+      EXECUTE format('ALTER ROLE %%I RESET role', r.name);
+    END IF;
+  END LOOP;
+END $gregale$;
+`, sqlTextArray(markers), customRoleMarkerPrefix, want)
 }
 
 // customRolesSQL makes the database's custom roles exactly desired.
@@ -103,7 +128,9 @@ END $gregale$;
 ALTER ROLE %[1]s NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION %[2]s CONNECTION LIMIT -1 PASSWORD NULL;
 ALTER ROLE %[1]s RESET ALL;
 COMMENT ON ROLE %[1]s IS '%[4]s';
-`, spec.Name, bypass, customRoleMarkerPrefix, marker)
+GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO %[1]s;
+ALTER DEFAULT PRIVILEGES FOR ROLE %[5]s IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO %[1]s;
+`, spec.Name, bypass, customRoleMarkerPrefix, marker, schemaOwner)
 	}
 	for _, spec := range desired {
 		var markers, children []string
@@ -111,6 +138,9 @@ COMMENT ON ROLE %[1]s IS '%[4]s';
 			markers = append(markers, credential+string(access))
 			if access == managedpostgres.CredentialReadWrite {
 				markers = append(markers, credential+string(managedpostgres.CredentialSession))
+			}
+			if access == managedpostgres.CredentialReadOnly {
+				markers = append(markers, credential+string(managedpostgres.CredentialReplicaOnly))
 			}
 		}
 		for _, other := range desired {
@@ -144,6 +174,22 @@ END $gregale$;
 `, spec.Name, sqlTextArray(spec.MemberOf), sqlTextArray(markers), sqlTextArray(children),
 			grantSetSQL("p", "'"+spec.Name+"'", true), grantSetSQL("'"+spec.Name+"'", "r.name", false), customRoleMarkerPrefix)
 	}
+	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly} {
+		want := ""
+		for _, spec := range desired {
+			if slices.Contains(spec.DefaultFor, access) {
+				want = spec.Name
+			}
+		}
+		markers := []string{credential + string(access)}
+		if access == managedpostgres.CredentialReadWrite {
+			markers = append(markers, credential+string(managedpostgres.CredentialSession))
+		}
+		if access == managedpostgres.CredentialReadOnly {
+			markers = append(markers, credential+string(managedpostgres.CredentialReplicaOnly))
+		}
+		b.WriteString(defaultRoleSQL(markers, want))
+	}
 	fmt.Fprintf(&b, `DO $gregale$ DECLARE r record; BEGIN
   FOR r IN SELECT rolname::text AS name FROM pg_roles WHERE COALESCE(shobj_description(oid, 'pg_authid'), '') = '%[1]s'
       AND NOT (rolname::text = ANY(%[2]s)) ORDER BY rolname LOOP
@@ -161,7 +207,7 @@ COMMIT;
 // login: before it, the fence that refuses a Data API login on a database
 // with a BYPASSRLS custom role (psql stops at the first error, so no login is
 // created); after it, the grants of the declared roles that already exist.
-func customRoleLoginSQL(database, role, scope string, access managedpostgres.CredentialAccess, customRoles []string) (string, string, error) {
+func customRoleLoginSQL(database, role, scope string, access managedpostgres.CredentialAccess, customRoles []string, defaultRole string) (string, string, error) {
 	if !identifierPattern.MatchString(database) || !rolePattern.MatchString(role) || !scopePattern.MatchString(scope) {
 		return "", "", fmt.Errorf("firecracker: invalid custom role login parameters")
 	}
@@ -182,6 +228,17 @@ END $gregale$;
 			return "", "", fmt.Errorf("firecracker: invalid custom role %q", name)
 		}
 	}
+	if defaultRole != "" && !slices.Contains(customRoles, defaultRole) {
+		return "", "", fmt.Errorf("firecracker: default role %q is not granted", defaultRole)
+	}
+	// The default role is set once it exists; until then the next
+	// custom-role apply sets it.
+	setDefault := fmt.Sprintf(`DO $gregale$ BEGIN
+  IF '%[1]s' <> '' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%[1]s' AND COALESCE(shobj_description(oid, 'pg_authid'), '') = '%[2]s') THEN
+    EXECUTE format('ALTER ROLE %%I SET role TO %%I', '%[3]s', '%[1]s');
+  END IF;
+END $gregale$;
+`, defaultRole, marker, role)
 	return "", fmt.Sprintf(`\connect %[1]s
 DO $gregale$ DECLARE n text; BEGIN
   FOREACH n IN ARRAY %[2]s LOOP
@@ -192,7 +249,7 @@ DO $gregale$ DECLARE n text; BEGIN
     END IF;
   END LOOP;
 END $gregale$;
-`, database, sqlTextArray(customRoles), marker, role, grantSetSQL("n", "'"+role+"'", false)), nil
+`, database, sqlTextArray(customRoles), marker, role, grantSetSQL("n", "'"+role+"'", false)) + setDefault, nil
 }
 
 // ApplyCustomRoles implements managedpostgres.CustomRoleApplier.

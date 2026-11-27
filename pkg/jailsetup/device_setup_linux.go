@@ -85,7 +85,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err := unix.Fstat(7, &tunStat); err != nil {
 		return err
 	}
-	if rootStat.Mode&unix.S_IFMT != unix.S_IFDIR || rootStat.Mode&0o022 != 0 || rootStat.Uid != 0 && rootStat.Uid != uint32(scope.UID) || tunStat.Mode&unix.S_IFMT != unix.S_IFCHR || uint64(tunStat.Rdev) != unix.Mkdev(10, 200) || tunStat.Mode&0o777 != scope.TunMode || tunStat.Mode&0o7000 != 0 {
+	if rootStat.Mode&unix.S_IFMT != unix.S_IFDIR || rootStat.Mode&0o022 != 0 || rootStat.Uid != 0 && rootStat.Uid != uint32(scope.UID) || scope.Version != 2 && (tunStat.Mode&unix.S_IFMT != unix.S_IFCHR || uint64(tunStat.Rdev) != unix.Mkdev(10, 200) || tunStat.Mode&0o777 != scope.TunMode || tunStat.Mode&0o7000 != 0) {
 		return errors.New("native jail device setup: original root or TUN authority changed")
 	}
 	if err := unix.Unshare(unix.CLONE_FS); err != nil {
@@ -161,17 +161,20 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, unix.Close(devFD)) }()
-	netFD, err := createDeviceNet(devFD)
-	if err != nil {
-		return err
-	}
-	defer func() { result = errors.Join(result, unix.Close(netFD)) }()
-	tunFD, err := unix.Openat(netFD, "tun", unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := errors.Join(mountDeviceTun(tunFD), unix.Close(tunFD)); err != nil {
-		return err
+	netFD := -1
+	if scope.Version != 2 {
+		netFD, err = createDeviceNet(devFD)
+		if err != nil {
+			return err
+		}
+		defer func() { result = errors.Join(result, unix.Close(netFD)) }()
+		tunFD, err := unix.Openat(netFD, "tun", unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+		if err != nil {
+			return err
+		}
+		if err := errors.Join(mountDeviceTun(tunFD), unix.Close(tunFD)); err != nil {
+			return err
+		}
 	}
 	if err := unix.Mknodat(devFD, "kvm", unix.S_IFCHR|0o660, int(unix.Mkdev(10, 232))); err != nil {
 		return err
@@ -191,17 +194,21 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err != nil {
 		return err
 	}
-	tunFD, err = unix.Openat(netFD, "tun", unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return err
-	}
-	tunMount, mountErr := deviceMountAtFD(procFD, tunFD, data)
-	actual, statErr := deviceFDIdentity(tunFD)
-	if err := errors.Join(mountErr, statErr, unix.Close(tunFD)); err != nil {
-		return err
-	}
-	if actual != scope.Tun {
-		return errors.New("native jail device setup: target lost original TUN")
+	var tunMount uint64
+	if scope.Version != 2 {
+		tunFD, err := unix.Openat(netFD, "tun", unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return err
+		}
+		var mountErr error
+		tunMount, mountErr = deviceMountAtFD(procFD, tunFD, data)
+		actual, statErr := deviceFDIdentity(tunFD)
+		if err := errors.Join(mountErr, statErr, unix.Close(tunFD)); err != nil {
+			return err
+		}
+		if actual != scope.Tun {
+			return errors.New("native jail device setup: target lost original TUN")
+		}
 	}
 	// Test the exact credentials Firecracker uses, with no host groups.
 	if err := unix.Setgroups([]int{scope.GID}); err != nil {
@@ -213,12 +220,23 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err := unix.Setresuid(scope.UID, scope.UID, scope.UID); err != nil {
 		return err
 	}
-	tunFD, err = unix.Openat(netFD, "tun", unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return fmt.Errorf("native jail device setup: jail UID cannot open TUN: %w", err)
-	}
-	if err := unix.Close(tunFD); err != nil {
-		return err
+	if scope.Version == 2 {
+		fd, openErr := unix.Openat(devFD, "net/tun", unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if openErr == nil {
+			_ = unix.Close(fd)
+			return errors.New("native jail device setup: KVM-only jail exposes TUN")
+		}
+		if !errors.Is(openErr, unix.ENOENT) {
+			return openErr
+		}
+	} else {
+		tunFD, err := unix.Openat(netFD, "tun", unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return fmt.Errorf("native jail device setup: jail UID cannot open TUN: %w", err)
+		}
+		if err := unix.Close(tunFD); err != nil {
+			return err
+		}
 	}
 	kvmFD, err := unix.Openat(devFD, "kvm", unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -228,7 +246,7 @@ func setupPinnedDevices(scope DeviceSetupScope) (result error) {
 	if err := errors.Join(errnoError(errno), unix.Close(kvmFD)); err != nil {
 		return err
 	}
-	receipt := DeviceSetupReceipt{Scope: scope, DevMountID: devMount, TunMountID: tunMount, KVM: DeviceFDIdentity{Device: uint64(kvmStat.Dev), Inode: kvmStat.Ino}, KVMAPI: int(api), TunAccessible: true}
+	receipt := DeviceSetupReceipt{Scope: scope, DevMountID: devMount, TunMountID: tunMount, KVM: DeviceFDIdentity{Device: uint64(kvmStat.Dev), Inode: kvmStat.Ino}, KVMAPI: int(api), TunAccessible: scope.Version != 2}
 	if err := receipt.Validate(scope); err != nil {
 		return err
 	}

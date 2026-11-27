@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/guest/executor"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/runenv"
 	"golang.org/x/sys/unix"
 )
 
@@ -33,9 +34,10 @@ const (
 )
 
 type executionManifest struct {
-	Profile api.ExecutionProfile `json:"profile,omitempty"`
-	Kind    string               `json:"kind"`
-	Version int                  `json:"version"`
+	EnvironmentID string               `json:"environment_id,omitempty"`
+	Profile       api.ExecutionProfile `json:"profile,omitempty"`
+	Kind          string               `json:"kind"`
+	Version       int                  `json:"version"`
 }
 
 // listenExecutionHook binds AF_VSOCK on VMADDR_CID_ANY and returns a regular
@@ -63,6 +65,8 @@ func serveExecutionOnceWithBroker(ctx context.Context, ln net.Listener, handler 
 	if err != nil {
 		return fmt.Errorf("execution vsock accept: %w", err)
 	}
+	// Revoke the pristine fence before decoding any caller bytes.
+	executionGuest.Store(false)
 	defer func() { _ = conn.Close() }()
 	return executionproto.ServeWithBroker(ctx, conn, handler)
 }
@@ -100,7 +104,14 @@ func runExecutionGuest(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	runExecutor := executor.NewWithProfile(manifest.Profile)
+	executionGuestMode.Store(true)
+	executionGuest.Store(true)
+	if err := listenResumeHook(log); err != nil {
+		executionGuest.Store(false)
+		_ = poweroffExecution()
+		return fmt.Errorf("execution resume listener: %w", err)
+	}
+	runExecutor := executor.NewWithProfile(manifest.Profile).WithEnvironment(manifest.EnvironmentID).WithScratchRoot("/var/lib/faas/run-scratch")
 	// ADR-990: Runs stream outbound calls through the loopback relay when
 	// vmmd advertises it per request; the broker helper stays the fallback.
 	if err := startOutboundRelay(log); err != nil {
@@ -108,7 +119,8 @@ func runExecutionGuest(log *slog.Logger) error {
 	} else {
 		runExecutor.WithOutboundRelay(OutboundRelayEndpoint)
 	}
-	serveErr := serveExecutionOnceWithBroker(context.Background(), ln, runExecutor.HandleWithBroker)
+	guestStage("execution-ready")
+	serveErr := serveExecutionOnceWithBroker(context.Background(), ln, executionPayloadHandler(runExecutor.HandleWithBroker))
 	if serveErr != nil {
 		log.Warn("execution guest exchange failed", "err", serveErr)
 	}
@@ -119,6 +131,13 @@ func runExecutionGuest(log *slog.Logger) error {
 		return fmt.Errorf("execution guest poweroff: %w", powerErr)
 	}
 	return serveErr
+}
+
+func executionPayloadHandler(handle executionproto.HandlerWithBroker) executionproto.HandlerWithBroker {
+	return func(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter, broker executionproto.OutboundBroker) (executionproto.Result, error) {
+		executionGuest.Store(false)
+		return handle(ctx, req, stdout, stderr, broker)
+	}
 }
 
 // validateExecutionManifest is kept separate from decideMode for focused
@@ -133,6 +152,9 @@ func validateExecutionManifest(data []byte) error {
 	}
 	if marker.Kind != executionManifestKind || marker.Version != executionManifestVersion {
 		return fmt.Errorf("kind=%q version=%d", marker.Kind, marker.Version)
+	}
+	if marker.EnvironmentID != "" && (!runenv.ValidID(marker.EnvironmentID) || marker.Profile.Normalized() != api.ExecutionProfileStandard) {
+		return errors.New("invalid execution environment marker")
 	}
 	if !marker.Profile.Valid() {
 		return fmt.Errorf("unknown execution profile %q", marker.Profile)

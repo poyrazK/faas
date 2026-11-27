@@ -17,8 +17,11 @@ if TYPE_CHECKING:
     from ..models.execution_artifact import ExecutionArtifact
     from ..models.execution_failure import ExecutionFailure
     from ..models.execution_response_packages import ExecutionResponsePackages
+    from ..models.execution_result_validation import ExecutionResultValidation
+    from ..models.execution_task_ref import ExecutionTaskRef
     from ..models.execution_usage import ExecutionUsage
     from ..models.resolved_execution_limits import ResolvedExecutionLimits
+    from ..models.run_attribution import RunAttribution
 
 
 T = TypeVar("T", bound="ExecutionResponse")
@@ -41,6 +44,15 @@ class ExecutionResponse:
     """Immutable limits admitted and enforced for one execution."""
     output_truncated: bool
     created_at: datetime.datetime
+    attribution: RunAttribution | Unset = UNSET
+    """Verified customer and Agent references recorded with a Run."""
+    task: ExecutionTaskRef | Unset = UNSET
+    """Identity of a published executable task version."""
+    environment_id: UUID | Unset = UNSET
+    """Dependency environment used for this Run, when the request selected one."""
+    result_validation: ExecutionResultValidation | Unset = UNSET
+    """Host validation of a successful result. Invalid contracts preserve execution status, original result,
+    artifacts, and usage; dependent workflows fail and CLI waits return nonzero."""
     profile: ExecutionResponseProfile | Unset = UNSET
     runtime_image_digest: str | Unset = UNSET
     """Scheduler-pinned base image digest, recorded before dispatch of a dependency profile."""
@@ -78,6 +90,22 @@ class ExecutionResponse:
         output_truncated = self.output_truncated
 
         created_at = self.created_at.isoformat()
+
+        attribution: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.attribution, Unset):
+            attribution = self.attribution.to_dict()
+
+        task: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.task, Unset):
+            task = self.task.to_dict()
+
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
+
+        result_validation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.result_validation, Unset):
+            result_validation = self.result_validation.to_dict()
 
         profile: str | Unset = UNSET
         if not isinstance(self.profile, Unset):
@@ -156,6 +184,14 @@ class ExecutionResponse:
                 "created_at": created_at,
             }
         )
+        if attribution is not UNSET:
+            field_dict["attribution"] = attribution
+        if task is not UNSET:
+            field_dict["task"] = task
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
+        if result_validation is not UNSET:
+            field_dict["result_validation"] = result_validation
         if profile is not UNSET:
             field_dict["profile"] = profile
         if runtime_image_digest is not UNSET:
@@ -192,8 +228,11 @@ class ExecutionResponse:
         from ..models.execution_artifact import ExecutionArtifact
         from ..models.execution_failure import ExecutionFailure
         from ..models.execution_response_packages import ExecutionResponsePackages
+        from ..models.execution_result_validation import ExecutionResultValidation
+        from ..models.execution_task_ref import ExecutionTaskRef
         from ..models.execution_usage import ExecutionUsage
         from ..models.resolved_execution_limits import ResolvedExecutionLimits
+        from ..models.run_attribution import RunAttribution
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -207,6 +246,34 @@ class ExecutionResponse:
         output_truncated = d.pop("output_truncated")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _attribution = d.pop("attribution", UNSET)
+        attribution: RunAttribution | Unset
+        if isinstance(_attribution, Unset):
+            attribution = UNSET
+        else:
+            attribution = RunAttribution.from_dict(_attribution)
+
+        _task = d.pop("task", UNSET)
+        task: ExecutionTaskRef | Unset
+        if isinstance(_task, Unset):
+            task = UNSET
+        else:
+            task = ExecutionTaskRef.from_dict(_task)
+
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
+
+        _result_validation = d.pop("result_validation", UNSET)
+        result_validation: ExecutionResultValidation | Unset
+        if isinstance(_result_validation, Unset):
+            result_validation = UNSET
+        else:
+            result_validation = ExecutionResultValidation.from_dict(_result_validation)
 
         _profile = d.pop("profile", UNSET)
         profile: ExecutionResponseProfile | Unset
@@ -327,6 +394,10 @@ class ExecutionResponse:
             limits=limits,
             output_truncated=output_truncated,
             created_at=created_at,
+            attribution=attribution,
+            task=task,
+            environment_id=environment_id,
+            result_validation=result_validation,
             profile=profile,
             runtime_image_digest=runtime_image_digest,
             packages=packages,

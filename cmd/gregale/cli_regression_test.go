@@ -213,7 +213,7 @@ func TestCLIRegressionDeployRecoveryAndCancellation(t *testing.T) {
 	if err := json.Unmarshal([]byte(stderr.String()), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Recovery.IdempotencyKey != key || report.Recovery.InspectCommand != "gregale --profile staging release list --app demo" || report.Recovery.RetryFlag != "--idempotency-key="+key {
+	if report.Recovery.IdempotencyKey != key || report.Recovery.InspectCommand != "gregale --profile staging --json release list --app demo" || report.Recovery.RetryFlag != "--idempotency-key="+key {
 		t.Fatalf("recovery=%+v", report.Recovery)
 	}
 	retryKey, _ := deployIdempotencyKey(key, deployIdempotencyIntent{Slug: "demo", Image: "image@sha256:abc"})
@@ -245,7 +245,7 @@ func TestCLIRegressionDeployRecoveryAndCancellation(t *testing.T) {
 		if rollout {
 			stage = "rollout"
 		}
-		if code != 130 || !receipt.Interrupted || receipt.TimedOut || receipt.ID != "d1" || receipt.WaitStage != stage || receipt.Recovery == nil || !strings.HasPrefix(receipt.ResumeCommand, "gregale --profile staging release wait d1") {
+		if code != 130 || !receipt.Interrupted || receipt.TimedOut || receipt.ID != "d1" || receipt.WaitStage != stage || receipt.Recovery == nil || !strings.HasPrefix(receipt.ResumeCommand, "gregale --profile staging --json release wait d1") {
 			t.Fatalf("exit=%d receipt=%+v stderr=%s", code, receipt, stderr.String())
 		}
 		assertOneProblem(t, stderr.String())
@@ -369,5 +369,32 @@ func TestCLIRegressionRejectedSubmissionShowsFindingsAndNoRetryAdvice(t *testing
 	}
 	if strings.Contains(out, "may have accepted") || strings.Contains(out, "--idempotency-key=") {
 		t.Errorf("rejected submission still advises an idempotent retry:\n%s", out)
+	}
+}
+
+// Prod hunt r25: a deploy refused by a release freeze (409 release_frozen)
+// printed an idempotent retry flag and "Next step: gregale release list"
+// beside the freeze's own lift/override hint, because every 409 counted as
+// possibly accepted.
+func TestCLIRegressionFrozenReleaseShowsNoRetryAdvice(t *testing.T) {
+	setupCLIRegression(t)
+	jsonOutput = false
+	key, _ := deployIdempotencyKey("", deployIdempotencyIntent{Slug: "demo", Image: "image@sha256:abc"})
+	stderr, restore := captureStderr(t)
+	defer restore()
+	frozen := &APIError{Problem: api.Problem{
+		Status: 409, Code: api.CodeReleaseFrozen, Title: "Production releases are frozen",
+		Detail: `Production releases of demo are frozen: "incident" until 2026-11-22T10:53:46Z.`,
+		Hint:   "Wait for the freeze to end, lift it with `gregale release freeze lift`, or release anyway with --override-freeze REASON.",
+	}}
+	if code := printDeploySubmissionError("Deploy failed", frozen, "demo", key, "submission", ""); code == 0 {
+		t.Fatal("frozen submission exited 0")
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "gregale release freeze lift") {
+		t.Errorf("freeze hint missing:\n%s", out)
+	}
+	if strings.Contains(out, "--idempotency-key=") || strings.Contains(out, "Next step (POSIX shells):\n  gregale release list") {
+		t.Errorf("frozen submission still advises a retry or release list:\n%s", out)
 	}
 }

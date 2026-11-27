@@ -20,11 +20,12 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executioncontract"
 )
 
 const (
 	executionPollIntervalDefault = 250 * time.Millisecond
-	executionWaitTimeoutDefault  = 5 * time.Minute
+	executionWaitTimeoutDefault  = 6 * time.Minute
 )
 
 type executionArtifactInputFlags []api.ExecutionArtifactInput
@@ -48,14 +49,38 @@ func (f *executionArtifactInputFlags) Set(value string) error {
 }
 
 func cmdRun(args []string) int {
+	if len(args) > 0 && args[0] == "deliveries" {
+		return cmdRunDeliveries(args[1:])
+	}
+	if len(args) > 0 && args[0] == "controls" {
+		return cmdRunControls(args[1:])
+	}
+	if len(args) > 0 && args[0] == "history" {
+		return cmdRunHistory(args[1:])
+	}
+	if len(args) > 0 && args[0] == "tasks" {
+		return cmdRunTasks(args[1:])
+	}
+	if len(args) > 0 && args[0] == "environments" {
+		return cmdRunEnvironments(args[1:])
+	}
 	fs := newFlagSet("run", flag.ContinueOnError)
+	customerRef := fs.String("customer-ref", "", "customer policy; bindings determine narrow caller attribution")
 	runtimeName := fs.String("runtime", string(api.ExecutionRuntimeNode22), "isolated runtime (node22|node24|python312|python313)")
+	environmentID := fs.String("environment", "", "immutable ready dependency environment ID")
 	profile := fs.String("profile", string(api.ExecutionProfileStandard), "dependency profile (standard|python-data-v1; data requires python313)")
 	workflowID := fs.String("workflow-id", "", "caller-generated workflow grouping id")
 	stepLabel := fs.String("step-label", "", "short label for this step within --workflow-id")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying the same source Run submission")
 	source := fs.String("source", "", "source code (use --file for a local file)")
 	file := fs.String("file", "", "read source from a local regular file")
 	dir := fs.String("dir", "", "read a bounded ephemeral source bundle from a local directory")
+	var inputFileIDs executionInputFileIDFlags
+	fs.Var(&inputFileIDs, "input-file-id", "retained file at RELATIVE_PATH=FILE_UUID below context.input_dir (repeatable)")
+	var inputFiles executionInputFileFlags
+	fs.Var(&inputFiles, "input-file", "data file at RELATIVE_PATH=LOCAL_FILE below context.input_dir (repeatable)")
+	artifactStorage := fs.String("artifact-storage", "", "output artifact storage (inline|stored)")
+	maxArtifactBytes := fs.Int64("max-artifact-bytes", 0, "stored output file byte budget")
 	var outputFiles executionOutputFileFlags
 	fs.Var(&outputFiles, "output-file", "file below context.output_dir to export (repeatable)")
 	var artifactInputs executionArtifactInputFlags
@@ -63,6 +88,9 @@ func cmdRun(args []string) int {
 	outputDir := fs.String("output-dir", "", "save exported artifacts locally; implies --wait")
 	entrypoint := fs.String("entrypoint", "", "normalized bundle path to execute (required with --dir)")
 	input := fs.String("input", "", "JSON input (inline | @file | - for stdin)")
+	inputSchemaPath := fs.String("input-schema", "", "local JSON Schema for input validation")
+	resultSchemaPath := fs.String("result-schema", "", "local JSON Schema for the returned result")
+	executionClass := fs.String("execution-class", "", "execution class: standard or extended (up to five minutes)")
 	timeoutMS := fs.Int("timeout-ms", 0, "maximum execution time in milliseconds")
 	memoryMB := fs.Int("memory-mb", 0, "memory limit in MB")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "CPU limit in millicores")
@@ -75,6 +103,15 @@ func cmdRun(args []string) int {
 	flags, positional := splitArgsForFlags(args, "wait", "watch")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	key := strings.TrimSpace(*idempotencyKey)
+	if err := validateDeployIdempotencyKey(key); err != nil {
+		return printErr("Invalid --idempotency-key", err)
+	}
+	for _, character := range key {
+		if character > '~' {
+			return printErr("Invalid --idempotency-key", errors.New("must contain printable ASCII characters only"))
+		}
 	}
 	if err := api.ValidateExecutionOutputFiles(outputFiles); err != nil {
 		return printErr("Invalid output files", err)
@@ -115,31 +152,56 @@ func cmdRun(args []string) int {
 		return printErr("Invalid input", err)
 	}
 	req := api.CreateExecutionRequest{
-		WorkflowID: *workflowID, StepLabel: *stepLabel,
+		CustomerRef: *customerRef,
+		WorkflowID:  *workflowID, StepLabel: *stepLabel,
 		Profile: api.ExecutionProfile(*profile),
 		Runtime: api.ExecutionRuntime(*runtimeName), Source: string(sourceBytes),
 		Entrypoint: *entrypoint, Files: files, ArtifactInputs: artifactInputs,
-		Input: inputBytes, OutputFiles: outputFiles,
+		Input: inputBytes, InputFiles: inputFileIDs, OutputFiles: outputFiles, ArtifactStorage: api.ExecutionArtifactStorage(*artifactStorage),
 		Limits: &api.ExecutionLimitRequest{
+			Class:           api.ExecutionClass(*executionClass),
 			TimeoutMS:       *timeoutMS,
 			MemoryMB:        *memoryMB,
 			CPUMillicores:   *cpuMillicores,
 			EphemeralDiskMB: *diskMB,
-			MaxOutputBytes:  *maxOutputBytes,
+			MaxOutputBytes:  *maxOutputBytes, MaxArtifactBytes: *maxArtifactBytes,
 		},
 	}
 	// Explicitly send the v1 deny-all policy. This keeps receipts and audit
 	// records unambiguous and prevents a future server default from widening
 	// the security posture of an older CLI binary.
+	req.EnvironmentID = *environmentID
 	req.Network = &api.ExecutionNetworkPolicy{Mode: api.ExecutionNetworkNone}
+	if req.InputSchema, err = readExecutionSchema(*inputSchemaPath); err != nil {
+		return printErr("Invalid input schema", err)
+	}
+	if req.ResultSchema, err = readExecutionSchema(*resultSchemaPath); err != nil {
+		return printErr("Invalid result schema", err)
+	}
+	if err := executioncontract.CheckRequest(req); err != nil {
+		return printErr("Invalid Run contract", err)
+	}
 
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.CreateExecution(context.Background(), req)
+	submitCtx := api.ContextWithIdempotencyKey(context.Background(), key)
+	if len(inputFileIDs)+len(inputFiles) > api.ExecutionFileMaxInputs {
+		return printErr("Too many input files", fmt.Errorf("at most %d inputs are allowed", api.ExecutionFileMaxInputs))
+	}
+	localInputs, err := prepareExecutionLocalInputs(submitCtx, client, inputFiles)
 	if err != nil {
-		return printErr("Run submission failed", err)
+		return printErr("Could not prepare input files", err)
+	}
+	defer closeExecutionLocalInputs(localInputs)
+	resp, err := submitExecutionWithLocalFiles(submitCtx, client, req, localInputs)
+	if err != nil {
+		inspect := recoveryCLI() + " sandbox list"
+		if *workflowID != "" {
+			inspect += " --workflow-id " + recoveryArgument(*workflowID)
+		}
+		return printRunSubmissionError("Run submission failed", err, inspect, key != "")
 	}
 	if !*wait && !*watch {
 		if jsonOutput {
@@ -168,11 +230,11 @@ func cmdRun(args []string) int {
 			}
 			return printErr("Run watch failed", err)
 		}
-		if err := saveExecutionArtifacts(resp, *outputDir); err != nil {
+		if err := saveExecutionArtifactsWithClient(ctx, client, resp, *outputDir); err != nil {
 			return printErr("Could not save artifacts", err)
 		}
 		if jsonOutput {
-			if resp.Status != api.ExecutionStatusSucceeded {
+			if resp.Status != api.ExecutionStatusSucceeded || resp.ContractFailed() {
 				return 1
 			}
 			return 0
@@ -190,14 +252,14 @@ func cmdRun(args []string) int {
 			return printErr("Run status failed", err)
 		}
 	}
-	if err := saveExecutionArtifacts(resp, *outputDir); err != nil {
+	if err := saveExecutionArtifactsWithClient(ctx, client, resp, *outputDir); err != nil {
 		return printErr("Could not save artifacts", err)
 	}
 	if jsonOutput {
 		if code := jsonOut(writeJSON(resp)); code != 0 {
 			return code
 		}
-		if resp.Status != api.ExecutionStatusSucceeded {
+		if resp.Status != api.ExecutionStatusSucceeded || resp.ContractFailed() {
 			return 1
 		}
 		return 0
@@ -261,6 +323,15 @@ func cmdRuns(args []string) int {
 }
 
 func cmdRunsWorkflow(args []string) int {
+	if len(args) > 0 && args[0] == "watch" {
+		return cmdPipelineWatch(args[1:])
+	}
+	if len(args) > 0 && args[0] == "rerun" {
+		return cmdPipelineRerun(args[1:])
+	}
+	if len(args) > 0 && args[0] == "cancel" {
+		return cmdRunsWorkflowCancel(args[1:])
+	}
 	if len(args) > 0 && args[0] == "run" {
 		return cmdRunsWorkflowRun(args[1:])
 	}
@@ -285,6 +356,13 @@ func cmdRunsWorkflow(args []string) int {
 	PrintOK(osStdout, "Workflow %s: runs=%d queued=%d restoring=%d running=%d succeeded=%d failed=%d timed_out=%d out_of_memory=%d cancelled=%d", resp.WorkflowID, resp.RunCount, counts.Queued, counts.Restoring, counts.Running, counts.Succeeded, counts.Failed, counts.TimedOut, counts.OutOfMemory, counts.Cancelled)
 	for _, managed := range resp.Managed {
 		PrintProgress(osStdout, "Managed continuation: status=%s steps=%d admitted_steps=%d plan=%s.", managed.Status, managed.StepCount, managed.NextStep, managed.PlanID)
+		if managed.Pipeline != nil {
+			for _, step := range managed.Pipeline.Steps {
+				for _, a := range step.Attempts {
+					PrintProgress(osStdout, "Step %q attempt %d: Run %s (%s).", step.Label, a.Attempt, a.RunID, a.Status)
+				}
+			}
+		}
 		if managed.Error != "" {
 			PrintProgress(osStdout, "Managed workflow detail: %s", managed.Error)
 		}
@@ -306,6 +384,9 @@ func cmdRunsWorkflowRun(args []string) int {
 	if *manifestPath == "" || len(fs.Args()) != 0 || *pollInterval <= 0 || *waitTimeout <= 0 {
 		PrintUsage(osStderr, "usage: gregale sandbox workflow run --manifest PLAN.json [--managed] [--dry-run] [--poll-interval D] [--wait-timeout D]", "runs")
 		return 1
+	}
+	if handled, code := cmdPipelineManifest(*manifestPath, *managed, *dryRun); handled {
+		return code
 	}
 	plan, err := loadExecutionWorkflowPlan(*manifestPath)
 	if err != nil {
@@ -591,7 +672,9 @@ func renderExecutionTerminal(resp api.ExecutionResponse) int {
 }
 
 func renderExecutionTerminalSummary(resp api.ExecutionResponse) int {
-	if resp.Status == api.ExecutionStatusSucceeded {
+	if resp.ContractFailed() {
+		PrintFail(osStdout, "Run %s executed successfully but its result does not match result_schema.", resp.ID)
+	} else if resp.Status == api.ExecutionStatusSucceeded {
 		PrintOK(osStdout, "Run %s succeeded.", resp.ID)
 		for _, artifact := range resp.Artifacts {
 			_, _ = fmt.Fprintf(osStdout, "Artifact %s (%d bytes, %s)\n", artifact.Name, artifact.SizeBytes, artifact.SHA256)
@@ -602,8 +685,27 @@ func renderExecutionTerminalSummary(resp api.ExecutionResponse) int {
 	if resp.Result != nil {
 		_, _ = fmt.Fprintln(osStdout, string(resp.Result))
 	}
-	if resp.Status != api.ExecutionStatusSucceeded {
+	if resp.Status != api.ExecutionStatusSucceeded || resp.ContractFailed() {
 		return 1
 	}
 	return 0
+}
+
+func readExecutionSchema(path string) (json.RawMessage, error) {
+	if path == "" {
+		return nil, nil
+	}
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	body, err := io.ReadAll(io.LimitReader(f, api.ExecutionContractSchemaMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > api.ExecutionContractSchemaMaxBytes || !json.Valid(body) {
+		return nil, errors.New("schema must be valid JSON and at most 64 KiB")
+	}
+	return body, nil
 }

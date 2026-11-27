@@ -19,8 +19,11 @@ import (
 // validateAccountReleaseWebhookFilter accepts release events, and agent run
 // events for an account in the agent_runs rollout (ADR-20261027090010 §8). Outside
 // it the agent events are rejected like any unknown event.
-func validateAccountReleaseWebhookFilter(events []string, agentEvents bool) *api.Problem {
-	vocabulary := api.AllowedAccountReleaseWebhookEvents
+func validateAccountReleaseWebhookFilter(events []string, agentEvents bool, runEvents ...bool) *api.Problem {
+	vocabulary := append([]string{}, api.AllowedAccountReleaseWebhookEvents...)
+	if len(runEvents) > 0 && runEvents[0] {
+		vocabulary = append(vocabulary, api.AllowedAccountRunWebhookEvents...)
+	}
 	if agentEvents {
 		vocabulary = append(append([]string{}, vocabulary...), api.AllowedAccountAgentWebhookEvents...)
 	}
@@ -109,7 +112,7 @@ func (s *server) createAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	input, prob := accountReleaseWebhookInput(r.Context(), acct.ID, req, s.agentStepsAllowed(acct))
+	input, prob := accountReleaseWebhookInput(r.Context(), acct.ID, req, s.agentStepsAllowed(acct), s.executionAPIEnabled && s.executionV2Enabled)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -125,11 +128,11 @@ func (s *server) createAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, accountReleaseWebhookResponse(row))
 }
 
-func accountReleaseWebhookInput(ctx context.Context, accountID string, req api.CreateAccountReleaseWebhookRequest, agentEvents bool) (state.AppWebhook, *api.Problem) {
+func accountReleaseWebhookInput(ctx context.Context, accountID string, req api.CreateAccountReleaseWebhookRequest, agentEvents bool, runEvents ...bool) (state.AppWebhook, *api.Problem) {
 	if prob := validateWebhookURL(req.TargetURL); prob != nil {
 		return state.AppWebhook{}, prob
 	}
-	if prob := validateAccountReleaseWebhookFilter(req.EventFilter, agentEvents); prob != nil {
+	if prob := validateAccountReleaseWebhookFilter(req.EventFilter, agentEvents, runEvents...); prob != nil {
 		return state.AppWebhook{}, prob
 	}
 	if prob := validateWebhookRetryPolicy(req.RetryPolicy); prob != nil {
@@ -201,7 +204,7 @@ func (s *server) updateAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	if _, ok := s.accountReleaseWebhookByRequest(w, r, acct); !ok {
 		return
 	}
-	params, prob := accountReleaseWebhookUpdateParams(r.Context(), req, s.agentStepsAllowed(acct))
+	params, prob := accountReleaseWebhookUpdateParams(r.Context(), req, s.agentStepsAllowed(acct), s.executionAPIEnabled && s.executionV2Enabled)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -222,7 +225,7 @@ func (s *server) updateAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, accountReleaseWebhookResponse(row))
 }
 
-func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccountReleaseWebhookRequest, agentEvents bool) (state.UpdateAppWebhookParams, *api.Problem) {
+func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccountReleaseWebhookRequest, agentEvents bool, runEvents ...bool) (state.UpdateAppWebhookParams, *api.Problem) {
 	p := state.UpdateAppWebhookParams{}
 	if req.TargetURL != nil {
 		if prob := validateWebhookURL(*req.TargetURL); prob != nil {
@@ -234,7 +237,7 @@ func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccoun
 		p.TargetURL = req.TargetURL
 	}
 	if req.EventFilter != nil {
-		if prob := validateAccountReleaseWebhookFilter(*req.EventFilter, agentEvents); prob != nil {
+		if prob := validateAccountReleaseWebhookFilter(*req.EventFilter, agentEvents, runEvents...); prob != nil {
 			return p, prob
 		}
 		p.EventFilter = req.EventFilter

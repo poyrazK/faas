@@ -45,7 +45,7 @@ func TestTemplateReadmesMatchMaterializationAndCLIContract(t *testing.T) {
 				}
 			}
 
-			if name == "hello-go" || name == "mcp-go" {
+			if name == "hello-go" || name == "mcp-go" || name == "mcp-go-tasks" {
 				mod, err := os.ReadFile(filepath.Join(dest, "go.mod"))
 				if err != nil {
 					t.Fatalf("%s materialization missing go.mod: %v", name, err)
@@ -55,7 +55,10 @@ func TestTemplateReadmesMatchMaterializationAndCLIContract(t *testing.T) {
 					t.Errorf("%s go.mod missing patched %s directive: %q", name, goDirective, mod)
 				}
 				wants := []string{"go.mod", goDirective}
-				if name == "mcp-go" {
+				switch name {
+				case "mcp-go":
+					wants = append(wants, "github.com/modelcontextprotocol/go-sdk v1.8.0")
+				case "mcp-go-tasks":
 					wants = append(wants, "github.com/modelcontextprotocol/go-sdk v1.8.0", "github.com/jackc/pgx/v5 v5.11.0")
 				}
 				for _, want := range wants {

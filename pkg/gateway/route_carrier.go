@@ -17,6 +17,32 @@ type observedRouteCarrierKey struct{}
 type ObservedRouteCarrier struct {
 	mu    sync.Mutex
 	route string
+	// unanswered marks a 5xx the guest never started answering: a wake that
+	// failed or a platform refusal (platformErrorForSLO). The app errors
+	// recorder files it as wake_failed, not as the app's own exception.
+	unanswered bool
+}
+
+// MarkUnanswered5xx records that the response is a 5xx the guest never began
+// to answer.
+func (c *ObservedRouteCarrier) MarkUnanswered5xx() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.unanswered = true
+	c.mu.Unlock()
+}
+
+// Unanswered5xx reports whether the handler marked the response a 5xx the
+// guest never began to answer.
+func (c *ObservedRouteCarrier) Unanswered5xx() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.unanswered
 }
 
 // WithObservedRouteCarrier returns r carrying a fresh carrier.

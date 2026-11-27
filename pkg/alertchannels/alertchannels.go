@@ -46,22 +46,26 @@ const (
 	EventFire    = "fire"
 	EventResolve = "resolve"
 	EventTest    = "test"
+	// EventDigest is a scheduled report, not an incident: a saved insight's
+	// digest (ADR-20261122190000). Callers do not send it to PagerDuty.
+	EventDigest = "digest"
 )
 
 // Message is one notification. DedupKey groups a fire with its resolve
 // (the alert rule id); DashboardURL links back to the app.
 type Message struct {
-	Event        string
-	RuleName     string
-	AppSlug      string
-	Metric       string
-	Comparison   string
-	Threshold    float64
-	Observed     float64
-	Window       string
-	DashboardURL string
-	OccurredAt   time.Time
-	DedupKey     string
+	Event            string
+	RuleName         string
+	AppSlug          string
+	EnvironmentScope string
+	Metric           string
+	Comparison       string
+	Threshold        float64
+	Observed         float64
+	Window           string
+	DashboardURL     string
+	OccurredAt       time.Time
+	DedupKey         string
 	// Release is set for release approval events (ADR-20261020085706),
 	// which render from it instead of the alert fields.
 	Release *ReleaseNotice
@@ -228,13 +232,19 @@ func Headline(msg Message) string {
 	if msg.Release != nil {
 		return releaseHeadline(*msg.Release)
 	}
+	name := msg.RuleName
+	if msg.EnvironmentScope != "" {
+		name += " [" + msg.EnvironmentScope + "]"
+	}
 	switch msg.Event {
 	case EventResolve:
-		return fmt.Sprintf("Resolved: %s", msg.RuleName)
+		return fmt.Sprintf("Resolved: %s", name)
 	case EventTest:
 		return "Test notification from Gregale"
+	case EventDigest:
+		return fmt.Sprintf("Digest: %s", msg.RuleName)
 	}
-	return fmt.Sprintf("Alert: %s", msg.RuleName)
+	return fmt.Sprintf("Alert: %s", name)
 }
 
 // Detail describes the condition: "metric observed vs comparison threshold".
@@ -260,7 +270,7 @@ func Detail(msg Message) string {
 }
 
 func comparisonWord(c string) string {
-	return map[string]string{"gt": ">", "gte": "≥", "lt": "<", "lte": "≤"}[c]
+	return map[string]string{"gt": ">", "gte": "≥", "lt": "<", "lte": "≤", "above_baseline": "above baseline ×", "below_baseline": "below baseline ×"}[c]
 }
 
 func fmtNum(v float64) string {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,7 +36,7 @@ type operationPlan struct {
 	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true, "edge_change": true, "preview_change": true, "event_change": true, "consumer_change": true, "workflow_publish": true, "verify_contract_change": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -133,6 +134,12 @@ func (m *management) operationBase(ctx context.Context, a operationArgs, kind st
 func (m *management) planRestart(ctx context.Context, a operationArgs) (any, error) {
 	if a.Project != "" || a.Environment != "" {
 		return nil, invalid("unsupported_scope", "the native restart is app-wide; use an approved environment rollout for a named target")
+	}
+	// A parked app has nothing to restart: its next request boots it with the
+	// current configuration. The apply used to be refused with a recovery
+	// that said to plan the same restart again.
+	if instances, err := m.client.ListInstancesWithHistory(ctx, a.App, false); err == nil && !anyInstanceRunning(instances) {
+		return nil, invalid("nothing_to_restart", a.App+" is parked, so nothing is running to restart; its next request boots it with the current variables and secrets. No restart is needed.")
 	}
 	p, err := m.operationBase(ctx, a, "restart", struct{}{})
 	if err != nil {
@@ -385,6 +392,22 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 			return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
 		}
 		return result, nil
+	case "dlq_replay", "workflow_recovery", "monitoring_change":
+		return m.runAsyncOperation(ctx, p)
+	case "run_command":
+		return m.runCommand(ctx, p)
+	case "edge_change":
+		return m.runEdgeChange(ctx, p, retry)
+	case "verify_contract_change":
+		return m.runVerifyContractChange(ctx, p)
+	case "preview_change":
+		return m.runPreviewChange(ctx, p, retry)
+	case "event_change":
+		return m.runEventChange(ctx, p)
+	case "consumer_change":
+		return m.runConsumerChange(ctx, p)
+	case "workflow_publish":
+		return m.runWorkflowPublish(ctx, p)
 	case "cron_update", "cron_delete", "domain_delete":
 		return m.applyResourceOperation(ctx, p)
 	}
@@ -477,4 +500,18 @@ func (m *management) previewScaling(ctx context.Context, p *releasePlan, a scale
 		return nil
 	}
 	return &out
+}
+
+// anyInstanceRunning reports an instance holding host memory or booting.
+func anyInstanceRunning(instances []api.InstanceResponse) bool {
+	for _, ins := range instances {
+		switch strings.ToLower(ins.State) {
+		case "running", "waking", "cold_booting":
+			return true
+		}
+		if ins.Resident {
+			return true
+		}
+	}
+	return false
 }

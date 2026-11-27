@@ -125,6 +125,10 @@ const (
 	CodeSandboxNotFound = "sandbox_not_found"
 	// CodeSandboxEnded: the session closed, expired or failed.
 	CodeSandboxEnded = "sandbox_ended"
+	// CodeSandboxNotPausable: a pause of a session that is not a running
+	// persistent one, or a resume of one that is not paused
+	// (ADR-20261122132055 §1).
+	CodeSandboxNotPausable = "sandbox_not_pausable"
 	// CodeSandboxUnsupported: the request asks for something sessions do
 	// not offer yet; the detail names it.
 	CodeSandboxUnsupported = "sandbox_unsupported"
@@ -146,6 +150,12 @@ const (
 	// background commands as it can.
 	CodeSandboxBusy               = "sandbox_busy"
 	CodeSandboxCommandStartFailed = "sandbox_command_start_failed"
+	// CodeSandboxCommandEnded: input for a background command that has
+	// exited, or whose input was already ended.
+	CodeSandboxCommandEnded = "sandbox_command_ended"
+	// CodeSandboxInputStalled: a background command stopped reading its
+	// input; part of it may have been written, so it is not safe to resend.
+	CodeSandboxInputStalled = "sandbox_input_stalled"
 
 	// Persisted workspaces (ADR-20261027090013 step 7).
 	// CodeSandboxSnapshotNotFound: no such snapshot, or one not ready,
@@ -275,6 +285,11 @@ type CreateSandboxRequest struct {
 	// registry host.
 	Pull         string                `json:"pull,omitempty"`
 	RegistryAuth *ImageRunRegistryAuth `json:"registry_auth,omitempty"`
+	// VCPU and VolumeGB size a persistent session (ADR-20261122132055 §4,
+	// §5): its vCPUs within SandboxPersistentVCPUMax and its workspace
+	// volume within SandboxVolumeMaxGB (SandboxVolumeDefaultGB when 0).
+	VCPU     int `json:"vcpu,omitempty"`
+	VolumeGB int `json:"volume_gb,omitempty"`
 }
 
 // SandboxImageSource is a seller image to cache for a session: the image,
@@ -288,6 +303,11 @@ type SandboxImageSource struct {
 // SandboxPresetTemplate is the preset recorded for a session booted from a
 // sandbox template.
 const SandboxPresetTemplate = "template"
+
+// SandboxPresetCodeInterpreter boots the platform's code-interpreter image,
+// whose sessions run code in Jupyter kernels (ADR-20261027090013 step 14).
+// apid turns it into an image session, so sessions record preset image.
+const SandboxPresetCodeInterpreter = "code-interpreter"
 
 // SandboxTemplateRefPrefix starts the image reference a template session
 // records: template:<name>.
@@ -393,6 +413,10 @@ func SandboxEgressRuleCovered(rule string, allow []string) bool {
 type UpdateSandboxRequest struct {
 	IdleTimeoutS *int `json:"idle_timeout_s,omitempty"`
 	LifetimeS    *int `json:"lifetime_s,omitempty"`
+	// VolumeGB grows a paused persistent session's workspace volume
+	// (ADR-20261122132055 §4); it never shrinks, and the session sees the
+	// new size when it resumes.
+	VolumeGB *int `json:"volume_gb,omitempty"`
 }
 
 // Sandbox is one session. Token is a fresh session token for the data plane,
@@ -424,6 +448,18 @@ type Sandbox struct {
 	Template string `json:"template,omitempty"`
 	// Browser is a session created with the sandbox browser running.
 	Browser bool `json:"browser,omitempty"`
+	// Persistent sessions (ADR-20261122132055): the shape and volume, the
+	// pending pause or resume, when the session paused, where its capture
+	// is kept (node, then remote once uploaded), whether its last resume
+	// cold-booted, and the session it was forked from.
+	VCPU              int        `json:"vcpu,omitempty"`
+	VolumeGB          int        `json:"volume_gb,omitempty"`
+	PauseRequestedAt  *time.Time `json:"pause_requested_at,omitempty"`
+	ResumeRequestedAt *time.Time `json:"resume_requested_at,omitempty"`
+	PausedAt          *time.Time `json:"paused_at,omitempty"`
+	Durability        string     `json:"durability,omitempty"`
+	ResumedCold       bool       `json:"resumed_cold,omitempty"`
+	ForkedFrom        string     `json:"forked_from,omitempty"`
 }
 
 // SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a
@@ -491,8 +527,8 @@ func ErrSandboxUnsupported(field, detail string) *Problem {
 }
 
 // IsSandboxDataPath reports a sandbox session's data-plane path
-// (ADR-20261027090013 §3): its commands, files, terminal input and workspace
-// archives. Those calls run in the session's VM, so the compute gateway serves
+// (ADR-20261027090013 §3): its commands, files, terminal input, environment
+// (step 13), code interpreter (step 14) and workspace archives. Those calls run in the session's VM, so the compute gateway serves
 // them; the session itself and its ports are apid's.
 func IsSandboxDataPath(p string) bool {
 	rest, ok := strings.CutPrefix(p, "/v1/sandboxes/")
@@ -506,7 +542,7 @@ func IsSandboxDataPath(p string) bool {
 	resource, _, _ := strings.Cut(tail, "/")
 	resource, _, _ = strings.Cut(resource, ":")
 	switch resource {
-	case "exec", "files", "stdin", "workspace":
+	case "exec", "files", "stdin", "env", "code", "workspace":
 		return true
 	}
 	return false

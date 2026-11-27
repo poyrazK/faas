@@ -50,8 +50,10 @@ func TestAnalyticsCoverageMigrationReplayPreservesEvidence(t *testing.T) {
 	// because its primary key would differ from the tracked interval's key.
 	exec(`INSERT INTO request_telemetry_app_gaps(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
  VALUES('analytics-replay',$1,now()-interval '1 minute',0,1,now())`, app)
-	exec(`INSERT INTO request_analytics_app_gaps(node_name,app_id,last_gap_at,pending_count,updated_at)
- VALUES('analytics-replay',$1,now()-interval '1 minute',0,now())`, app)
+	// A gap is coverage loss only when rows were lost (#7982), so both
+	// seeded gaps record one dropped row.
+	exec(`INSERT INTO request_analytics_app_gaps(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
+ VALUES('analytics-replay',$1,now()-interval '1 minute',0,1,now())`, app)
 	var trackedGaps int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM request_analytics_coverage_gaps g
  JOIN request_analytics_coverage_watermarks w USING(node_name,source_kind)

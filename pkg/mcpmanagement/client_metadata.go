@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +41,10 @@ type clientMetadataDocument struct {
 	GrantTypes              []string `json:"grant_types"`
 	ResponseTypes           []string `json:"response_types"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
+	// TokenEndpointAuthMethods lists every method the client can use (MCP
+	// SEP-3149). ChatGPT publishes ["none", "private_key_jwt"] and keeps the
+	// legacy singular field as a preference for private_key_jwt.
+	TokenEndpointAuthMethods []string `json:"token_endpoint_auth_methods_supported"`
 }
 
 // isClientMetadataURL reports whether a client_id names a metadata document:
@@ -114,13 +119,11 @@ func validClientMetadata(id string, doc clientMetadataDocument) error {
 		return fmt.Errorf("%w: redirect_uris must list 1 to %d URIs", errClientMetadata, clientMetadataRedirects)
 	case len(doc.ClientName) > 256:
 		return fmt.Errorf("%w: client_name is too long", errClientMetadata)
-	case doc.TokenEndpointAuthMethod != "" && doc.TokenEndpointAuthMethod != "none":
+	case !publicClientMetadata(doc):
 		return fmt.Errorf("%w: only public clients (token_endpoint_auth_method none) are supported", errClientMetadata)
 	}
-	for _, grant := range doc.GrantTypes {
-		if grant != "authorization_code" && grant != "refresh_token" {
-			return fmt.Errorf("%w: unsupported grant type", errClientMetadata)
-		}
+	if !grantTypesAllowed(doc.GrantTypes) {
+		return fmt.Errorf("%w: grant_types must include authorization_code", errClientMetadata)
 	}
 	for _, response := range doc.ResponseTypes {
 		if response != "code" {
@@ -128,6 +131,19 @@ func validClientMetadata(id string, doc clientMetadataDocument) error {
 		}
 	}
 	return nil
+}
+
+// publicClientMetadata reports whether the client can exchange codes as a
+// public client, the only kind this server supports. A document that lists
+// the methods it can use (MCP SEP-3149) is public when "none" is among them:
+// the server picks from the intersection with its own methods, and the legacy
+// singular field is then only a preference. Without the list, the singular
+// field decides, and its absence means none.
+func publicClientMetadata(doc clientMetadataDocument) bool {
+	if len(doc.TokenEndpointAuthMethods) > 0 {
+		return slices.Contains(doc.TokenEndpointAuthMethods, "none")
+	}
+	return doc.TokenEndpointAuthMethod == "" || doc.TokenEndpointAuthMethod == "none"
 }
 
 // clientMetadataTTL honors a document's max-age within the server's bounds.
@@ -192,6 +208,44 @@ func (r *remoteServer) resolveMetadataClient(req *http.Request, id string) error
 	}
 	r.clients[id] = &oauthClient{ID: id, Name: safetext.Truncate(safetext.Clean(doc.ClientName), 80), Redirects: redirects, Expires: expires, Metadata: true, Refresh: now.Add(ttl)}
 	return nil
+}
+
+// grantTypesAllowed reports whether a client's grant_types let it sign in.
+// The list is what the client may use; the token endpoint still issues only
+// authorization_code and refresh_token grants, and registration answers with
+// exactly those. A client that also lists another grant (device code, token
+// exchange) can sign in, so only a list without authorization_code is
+// refused. An empty list means authorization_code (RFC 7591 §2).
+func grantTypesAllowed(grants []string) bool {
+	return len(grants) == 0 || slices.Contains(grants, "authorization_code")
+}
+
+// clientRedirectMatches reports whether an authorization request's
+// redirect_uri is one the client registered. A metadata document cannot know
+// the ephemeral port a native client listens on, so a loopback http URI the
+// document lists without a port matches that host and path on any port
+// (RFC 8252 §7.3); Claude Code's document lists http://localhost/callback.
+// Registered clients name their exact URI and keep exact matching. The path
+// stays exact here too: the operator's /callback/* suffix allowance is for
+// registered clients (Codex), which name their suffixed URI when registering.
+func clientRedirectMatches(c *oauthClient, redirect string) bool {
+	if slices.Contains(c.Redirects, redirect) {
+		return true
+	}
+	if !c.Metadata {
+		return false
+	}
+	got, err := url.Parse(redirect)
+	if err != nil || got.Scheme != "http" || !loopbackHost(got.Hostname()) || got.Port() == "" || got.User != nil || got.Fragment != "" {
+		return false
+	}
+	for _, registered := range c.Redirects {
+		want, err := url.Parse(registered)
+		if err == nil && want.Scheme == "http" && want.Port() == "" && want.Hostname() == got.Hostname() && want.EscapedPath() == got.EscapedPath() && want.RawQuery == got.RawQuery {
+			return true
+		}
+	}
+	return false
 }
 
 // clientHost is the site a metadata-document client proved it is.

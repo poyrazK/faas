@@ -87,7 +87,7 @@ func (e *Evaluator) sendChannelTest(ctx context.Context, req state.AlertTestSend
 
 func (e *Evaluator) sendRuleWebhookTest(ctx context.Context, req state.AlertTestSend) state.AlertTestSendResult {
 	rule, err := e.store.AlertRuleByID(ctx, req.SubjectID)
-	if err != nil || rule.AccountID != req.AccountID || rule.WebhookURL == "" {
+	if err != nil || rule.AccountID != req.AccountID || rule.ObserveOnly || rule.WebhookURL == "" {
 		return state.AlertTestSendResult{Failure: state.AlertTestSendNotFound}
 	}
 	ids := e.unsealIdentities()

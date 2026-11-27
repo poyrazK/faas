@@ -157,6 +157,7 @@ func (c deploymentResponseChecker) check(ctx context.Context, target deploymentR
 	api.PlatformIdentity{AppID: target.AppID, DeploymentID: target.DeploymentID, InstanceID: target.InstanceID, NodeID: target.NodeID}.ApplyGuestHeaders(probe.Header)
 	probe.Header.Set("x-faas-wake-id", target.WakeID)
 	probe.Header.Set("x-faas-protocol", target.protocol)
+	applyPublicProbeScheme(probe.Header)
 	response := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: api.DeploymentResponseCheckMaxBodyBytes}
 	if serveBoundedProbe(c.forward(target.Target), response, probe) || ctx.Err() != nil || response.status < 200 || response.status > 599 {
 		return result, errors.New("no complete HTTP response")
@@ -168,6 +169,17 @@ func (c deploymentResponseChecker) check(ctx context.Context, target deploymentR
 	result.Body = safetext.Truncate(text, api.DeploymentResponseCheckMaxBodyBytes)
 	result.BodyTruncated = result.BodyTruncated || !utf8.Valid(response.body) || len(text) > len(result.Body)
 	return result, nil
+}
+
+// applyPublicProbeScheme stamps a platform probe with the scheme public
+// traffic carries. Customer requests reach the guest as HTTPS (the edge
+// redirects plain http), so an app that enforces HTTPS — Django
+// SECURE_SSL_REDIRECT, Rails force_ssl, Express behind a proxy — serves them
+// directly. Without the header the same app answers a probe with a redirect
+// to https, and release verify reports that redirect instead of the response
+// customers get.
+func applyPublicProbeScheme(h http.Header) {
+	h.Set("X-Forwarded-Proto", "https")
 }
 
 func (c deploymentResponseChecker) problem(w http.ResponseWriter, status int, code, detail string) {

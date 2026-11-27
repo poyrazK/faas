@@ -158,6 +158,12 @@ func (s *Service) PutTenantSpendCap(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, problem)
 		return
 	}
+	if currency, _, err := s.Host.QuoteTenantMonthUsage(r.Context(), acct.ID, tenant.ID, s.now()); err == nil {
+		if problem := spendCapCurrencyProblem(req.Currency, currency); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	stored, err := caps.PutPlatformTenantSpendCap(r.Context(), state.PlatformTenantSpendCap{TenantID: tenant.ID, AccountID: acct.ID,
 		Currency: req.Currency, MonthlyCapMillicents: *req.MonthlyCapMillicents})
 	if err != nil {

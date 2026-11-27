@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -37,6 +38,9 @@ type flagExperimentReconciler struct {
 	events  state.FlagEventStore
 	log     *slog.Logger
 	afterID string
+	// notifyChecked is when each running experiment's recommendation was
+	// last checked for a notification (ADR-20261125085913).
+	notifyChecked map[string]time.Time
 }
 
 func startFlagExperimentReconciler(ctx context.Context, s *server, log *slog.Logger) {
@@ -73,6 +77,7 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 	// Retention holds whatever the flags say: raw analytics events past
 	// their plan's retention go even while analytics or flags are off.
 	r.sweepAnalytics(ctx, now)
+	r.refreshCohorts(ctx, now)
 	if !r.server.platformFlagOn(platformflags.CustomerFlags) {
 		return
 	}
@@ -101,6 +106,12 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 		}
 		if err := r.guard(xCtx, x, now); err != nil {
 			r.warn(ctx, "flag experiments: guardrail check failed", err, "experiment", x.ID)
+		}
+		if err := r.banditStep(xCtx, x, now); err != nil {
+			r.warn(ctx, "flag experiments: bandit step failed", err, "experiment", x.ID)
+		}
+		if err := r.notify(xCtx, x, now); err != nil {
+			r.warn(ctx, "flag experiments: notification failed", err, "experiment", x.ID)
 		}
 		cancel()
 	}
@@ -134,6 +145,11 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 	if earliest := now.AddDate(0, 0, -api.Plan(x.Plan).DebugTelemetryRetentionDays()); from.Before(earliest) {
 		from = earliest
 	}
+	if x.SubjectUnits() {
+		// Subject units come from SDK exposures, not request telemetry
+		// (ADR 20261119173702 §1); the cursor still bounds conversions.
+		from = until
+	}
 	for i := 0; i < flagExperimentWindowsPerPass && from.Before(until); i++ {
 		end := from.Add(flagExperimentWindow)
 		if end.After(until) {
@@ -151,28 +167,60 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 	if from.Before(x.TelemetryCursor) {
 		from = x.TelemetryCursor
 	}
-	if x.MetricKind == flags.ExperimentMetricMean {
+	if x.MetricKind == flags.ExperimentMetricMean || customMetric(x.MetricKind) {
 		if err := r.foldValues(ctx, &x, now, from); err != nil {
 			return err
 		}
+	}
+	// Funnel and retention units count once their deadline is before the
+	// new cursor (ADR 20261119102741 §1).
+	x.TelemetryCursor = from
+	if err := r.analyticsSteps(ctx, x, now); err != nil {
+		r.warn(ctx, "flag experiments: analytics metrics failed", err, "experiment", x.ID)
 	}
 	arms, _, err := r.store.FlagExperimentArms(ctx, x, api.FlagExperimentMinUnitsPerArm)
 	if err != nil {
 		return err
 	}
-	minP := map[string]float64{}
-	for k, v := range x.MinPValues {
-		minP[k] = v
+	if x.MetricKind == flags.ExperimentMetricPercentile {
+		// Bootstrap p-values are fixed-horizon: no running minimum.
+		return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, x.MinPValues, x.MinCupedPValues)
 	}
-	for _, v := range flagExperimentResults(x, arms).Variants {
-		if v.Comparison == nil {
+	cuped, err := loadFlagExperimentCuped(ctx, r.store, x, r.server.productAnalyticsOn(x.AccountID, x.Plan))
+	if err != nil {
+		return err
+	}
+	extras, err := loadFlagExperimentExtras(ctx, r.store, x)
+	if err != nil {
+		return err
+	}
+	minP, minCuped := cloneFloatMap(x.MinPValues), cloneFloatMap(x.MinCupedPValues)
+	keepMin := func(m map[string]float64, variant string, c *flags.Comparison) {
+		if c == nil {
+			return
+		}
+		if prev, ok := m[variant]; !ok || c.PValue < prev {
+			m[variant] = c.PValue
+		}
+	}
+	for _, v := range flagExperimentResultsFor(x, arms, cuped, extras).Variants {
+		if v.Unadjusted != nil {
+			// CUPED applied: Comparison is adjusted.
+			keepMin(minP, v.Variant, v.Unadjusted)
+			keepMin(minCuped, v.Variant, v.Comparison)
 			continue
 		}
-		if prev, ok := minP[v.Variant]; !ok || v.Comparison.PValue < prev {
-			minP[v.Variant] = v.Comparison.PValue
-		}
+		keepMin(minP, v.Variant, v.Comparison)
 	}
-	return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, minP)
+	return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, minP, minCuped)
+}
+
+func cloneFloatMap(in map[string]float64) map[string]float64 {
+	out := make(map[string]float64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // guard fixes the latency threshold and checks the guardrails on the units
@@ -254,6 +302,9 @@ func (r *flagExperimentReconciler) checkGuardrails(ctx context.Context, x state.
 		return err
 	}
 	breach := breachRecord(g, v, version, rolledBack)
+	if err := r.notifyRollback(ctx, x, g.Name, v.Variant, rolledBack, now); err != nil {
+		return fmt.Errorf("queue guardrail notification (the experiment stops on the next pass): %w", err)
+	}
 	if _, err := r.store.StopFlagExperiment(ctx, x.EnvironmentID, x.Key, now, flags.StopGuardrailBreach, breach); err != nil && !errors.Is(err, state.ErrNotFound) {
 		return err
 	}

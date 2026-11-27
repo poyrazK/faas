@@ -179,6 +179,7 @@ func standbySettings(archive bool) []string {
 		"-c", "primary_conninfo=host=" + databaseReplicationSocketDir + " user=" + databaseReplicationRole + " application_name=" + databaseStandbyName,
 		"-c", "primary_slot_name=" + databaseStandbyName,
 		"-c", "hot_standby=on",
+		"-c", "wal_receiver_status_interval=1s",
 	}
 	if archive {
 		settings = append(settings, "-c", "restore_command="+databaseRestoreCommand)
@@ -238,20 +239,23 @@ func replicationStatements(mode dbguest.ReplicationMode) []string {
 }
 
 // replicationStatusQuery reports the standby as the primary sees it: one
-// row of state|sync_state|lag bytes (-1 unknown)|synchronous_standby_names|slot.
+// row of state|sync_state|flush lag|synchronous_standby_names|slot|replay lag.
 const replicationStatusQuery = `SELECT coalesce(r.state, ''), coalesce(r.sync_state, ''),
  coalesce(pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), r.flush_lsn)::bigint, -1),
  pg_catalog.current_setting('synchronous_standby_names'),
- EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = '` + databaseStandbyName + `')
+ EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = '` + databaseStandbyName + `'),
+ CASE WHEN r.replay_lsn IS NOT NULL THEN
+   greatest(0, pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_flush_lsn(), r.replay_lsn))::bigint
+ END
 FROM (SELECT 1) AS one
-LEFT JOIN LATERAL (SELECT state, sync_state, flush_lsn FROM pg_catalog.pg_stat_replication
+LEFT JOIN LATERAL (SELECT state, sync_state, flush_lsn, replay_lsn FROM pg_catalog.pg_stat_replication
  WHERE application_name = '` + databaseStandbyName + `' ORDER BY state = 'streaming' DESC LIMIT 1) AS r ON true`
 
 // parseReplicationStatus reads replicationStatusQuery's row, as psql -tA
 // prints it with | between fields.
 func parseReplicationStatus(row string) (dbguest.ReplicationStatus, error) {
 	fields := strings.Split(strings.TrimSpace(row), "|")
-	if len(fields) != 5 {
+	if len(fields) != 6 {
 		return dbguest.ReplicationStatus{}, fmt.Errorf("replication status: %d fields", len(fields))
 	}
 	lag, err := strconv.ParseInt(fields[2], 10, 64)
@@ -268,6 +272,13 @@ func parseReplicationStatus(row string) (dbguest.ReplicationStatus, error) {
 	status.Synchronous = status.Streaming && fields[1] == "sync"
 	if status.Streaming && lag > 0 {
 		status.LagBytes = lag
+	}
+	if status.Streaming && fields[5] != "" {
+		replay, err := strconv.ParseInt(fields[5], 10, 64)
+		if err != nil || replay < 0 {
+			return dbguest.ReplicationStatus{}, fmt.Errorf("replication status: replay lag %q", fields[5])
+		}
+		status.ReplayLagBytes = &replay
 	}
 	return status, nil
 }
@@ -369,8 +380,11 @@ func lookupPasswdUser(passwd []byte, name string) (uid, gid int, ok bool) {
 const databaseRestoreCommand = "/sbin/init archive-wal get %f %p"
 
 // recoverySettings are the targeted-recovery parameters of a restore boot.
-func recoverySettings(target time.Time) []string {
+func recoverySettings(target time.Time, timeline uint32) []string {
 	settings := []string{"-c", "restore_command=" + databaseRestoreCommand}
+	if timeline != 0 {
+		settings = append(settings, "-c", "recovery_target_timeline="+strconv.FormatUint(uint64(timeline), 10))
+	}
 	if target.IsZero() {
 		// No target: recover to the end of the archive, then promote.
 		return settings

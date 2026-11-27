@@ -22,7 +22,9 @@ import (
 // variables containing secrets. Backend IDs are immutable and must remain in
 // config for as long as a database references them.
 type Config struct {
-	DefaultRegion          string            `json:"default_region"`
+	DefaultRegion string `json:"default_region"`
+	// RecoveryTargets maps a source region to a dedicated recovery backend ID.
+	RecoveryTargets        map[string]string `json:"recovery_targets,omitempty"`
 	Defaults               map[string]string `json:"defaults"`
 	MaxDatabasesPerAccount int               `json:"max_databases_per_account"`
 	ProvisioningEnabled    bool              `json:"provisioning_enabled"`
@@ -120,6 +122,10 @@ type BackendConfig struct {
 	SecretEnv        map[string]string   `json:"secret_env,omitempty"`
 	// DataAPIEnabled changes the qualified credential contract, not placement.
 	DataAPIEnabled bool `json:"data_api_enabled,omitempty"`
+	// DataAPIInspectionTrustSHA256 pins the CA set used for hosted Data API
+	// inspection. It is public trust configuration, not database placement.
+	// Inspection verification must fence changes to it explicitly.
+	DataAPIInspectionTrustSHA256 string `json:"data_api_inspection_trust_sha256,omitempty"`
 	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
 	// rule: a fresh qualification report must carry its evidence.
 	AuthEnabled bool `json:"auth_enabled,omitempty"`
@@ -147,6 +153,18 @@ type Backend struct {
 	LiveHubURL string
 	// previous holds the fingerprints of BackendConfig.PreviousSettings.
 	previous map[string]bool
+}
+
+// SupportsBindingAccess checks placement for native routing options and the
+// qualified SQL privileges for every binding mode.
+func (b Backend) SupportsBindingAccess(spec Spec, access CredentialAccess) error {
+	if access == CredentialReplicaOnly {
+		if b.Driver != "firecracker" || spec.Class != ClassProduction {
+			return ErrUnsupported
+		}
+		access = access.Privileges()
+	}
+	return b.Capabilities.SupportsCredentialAccess(access)
 }
 
 // capacitySettings are the backend settings that bound what a database may
@@ -203,14 +221,16 @@ func (b Backend) LiveHub(databaseID string) string {
 type Factory func(BackendConfig, func(string) string) (Provider, error)
 
 type Registry struct {
-	DefaultRegion          string
-	MaxDatabasesPerAccount int
-	ProvisioningEnabled    bool
-	usage                  UsagePolicy
-	health                 HealthPolicy
-	fleet                  FleetPolicy
-	backends               map[string]Backend
-	defaults               map[string]string
+	DefaultRegion   string
+	recoveryTargets map[string]string
+	health          HealthPolicy
+	// policy holds the operator policy: the file's values with the live
+	// runtime config policy laid over them (live_policy.go). Read it only
+	// through ProvisioningEnabled, MaxDatabasesPerAccount, UsagePolicy,
+	// Fleet and ProductionApproval.
+	policy   *livePolicyState
+	backends map[string]Backend
+	defaults map[string]string
 }
 
 func NewRegistry(config Config, getenv func(string) string, factories map[string]Factory) (*Registry, error) {
@@ -238,15 +258,23 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 		return nil, err
 	}
 	registry := &Registry{
-		DefaultRegion:          config.DefaultRegion,
-		MaxDatabasesPerAccount: config.MaxDatabasesPerAccount,
-		ProvisioningEnabled:    config.ProvisioningEnabled,
-		usage:                  usagePolicy,
-		health:                 healthPolicy,
-		fleet:                  fleetPolicy,
-		backends:               make(map[string]Backend, len(config.Backends)),
-		defaults:               make(map[string]string, len(config.Defaults)),
+		DefaultRegion: config.DefaultRegion,
+		health:        healthPolicy,
+		policy: &livePolicyState{file: filePolicy{
+			provisioningEnabled:    config.ProvisioningEnabled,
+			maxDatabasesPerAccount: config.MaxDatabasesPerAccount,
+			usage:                  config.Usage,
+			fleet:                  config.Fleet,
+		}},
+		backends: make(map[string]Backend, len(config.Backends)),
+		defaults: make(map[string]string, len(config.Defaults)),
 	}
+	registry.policy.current.Store(&effectivePolicy{
+		provisioningEnabled:    config.ProvisioningEnabled,
+		maxDatabasesPerAccount: config.MaxDatabasesPerAccount,
+		usage:                  usagePolicy,
+		fleet:                  fleetPolicy,
+	})
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	validEnv := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	for _, backendConfig := range config.Backends {
@@ -298,17 +326,28 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 		}
 		registry.defaults[region] = backendID
 	}
+	registry.recoveryTargets = make(map[string]string, len(config.RecoveryTargets))
+	destinations := make(map[string]bool, len(config.RecoveryTargets))
+	for source, id := range config.RecoveryTargets {
+		home, err := registry.Default(source)
+		recovery, ok := registry.backends[id]
+		if err != nil || !ok || source == recovery.Region || registry.defaults[recovery.Region] != "" || destinations[recovery.Region] ||
+			home.Driver != "firecracker" || recovery.Driver != "firecracker" ||
+			!home.Capabilities.PointInTimeRestore || !recovery.Capabilities.PointInTimeRestore {
+			return nil, fmt.Errorf("managed postgres: invalid recovery backend %q for region %q", id, source)
+		}
+		destinations[recovery.Region] = true
+		registry.recoveryTargets[source] = id
+	}
 	if _, ok := registry.defaults[registry.DefaultRegion]; !ok {
 		return nil, errors.New("managed postgres: default_region is not configured")
 	}
+	registry.pushSuspendTimeout(registry.SuspendTimeoutSeconds())
 	return registry, nil
 }
 
 func (r *Registry) UsagePolicy() UsagePolicy {
-	if r == nil {
-		return UsagePolicy{}
-	}
-	return r.usage
+	return r.effective().usage
 }
 
 func Load(getenv func(string) string, factories map[string]Factory) (*Registry, error) {

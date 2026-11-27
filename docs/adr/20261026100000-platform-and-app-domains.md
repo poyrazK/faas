@@ -119,6 +119,9 @@ deployment-preview and alias domains) with that zone's Origin CA certificate at
 
 ## Moving apps to gregale.app
 
+The operator steps, including direct entry on gregale.app only
+(ADR-20261112114642), are in `docs/runbooks/AppsDomainMove.md`.
+
 1. Buy gregale.app; add the Cloudflare zone, an Origin CA certificate for
    `gregale.app` and `*.gregale.app`, the Worker route and tunnel ingress
    (`APPS_DOMAIN=gregale.app APPS_DOMAIN_ALIASES=gregale.dev

@@ -201,3 +201,33 @@ func TestRealDriveBuildExport(t *testing.T) {
 		t.Fatalf("dump staging left behind (err=%v)", err)
 	}
 }
+
+// adr: 20261029171525 amendment 2 — on a real ext4 image, the cache export
+// run's inputs replace the build's, and its BuildKit state stays.
+func TestRealDriveCacheExportRun(t *testing.T) {
+	v := realStagingVMM(t, "build-1-cache")
+	drive := realDrive(t, v, "build-1-cache", func(root string) {
+		mustWriteFile(t, filepath.Join(root, "upper/etc/faas/build.json"), []byte(`{"defer_cache_export":true}`))
+		mustWriteFile(t, filepath.Join(root, "upper/etc/faas/entropy.seed"), []byte("build seed"))
+		mustWriteFile(t, filepath.Join(root, "upper/etc/faas/build-done.json"), []byte(`{"exit_code":0}`))
+		mustWriteFile(t, filepath.Join(root, "upper/var/lib/buildkit/state.db"), []byte("state"))
+	})
+	manifest := []byte(`{"dependency_cache":true,"cache_export_only":true}`)
+	if err := v.stageCacheExportRunForOwner(context.Background(), nativeLaunchRecord{}, "build-1-cache", manifest); err != nil {
+		t.Fatal(err)
+	}
+	if got := readDriveFile(t, drive, "/upper/etc/faas/build.json"); !bytes.Equal(got, manifest) {
+		t.Fatalf("build.json = %q", got)
+	}
+	if got := readDriveFile(t, drive, "/upper/etc/faas/entropy.seed"); len(got) != cacheExportEntropyBytes {
+		t.Fatalf("entropy seed is %d bytes", len(got))
+	}
+	if got := readDriveFile(t, drive, "/upper/var/lib/buildkit/state.db"); string(got) != "state" {
+		t.Fatalf("BuildKit state = %q", got)
+	}
+	out, err := exec.Command(realE2fsTool(t, "debugfs"), "-R", "stat /upper/etc/faas/build-done.json", drive).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "File not found") {
+		t.Fatalf("build-done.json still on the drive: %v\n%s", err, out)
+	}
+	fsckDrive(t, drive)
+}

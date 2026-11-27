@@ -122,6 +122,12 @@ BEGIN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_open_audit FROM faas_runtime;
 		GRANT SELECT, INSERT ON public.secret_open_audit TO faas_secretd;
 	END IF;
+	-- ADR-20261117190000: storage_grant_audit names every tenant object
+	-- grant secretd signed for a node; compute must not erase it.
+	IF to_regclass('public.storage_grant_audit') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.storage_grant_audit FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.storage_grant_audit TO faas_secretd;
+	END IF;
 	IF to_regclass('public.secret_verification_audit') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_verification_audit FROM faas_runtime;
 		GRANT SELECT, INSERT ON public.secret_verification_audit TO faas_secretd;

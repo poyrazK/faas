@@ -204,6 +204,102 @@ func TestComposeCompletionDependencyBecomesReleaseCommand(t *testing.T) {
 	}
 }
 
+// A worker that waits for a completion step owns it when only workers wait
+// for it (agent eval 2026-11-24, voting app: a queue worker's Compose
+// migration step was refused). A worker's release runs the command before
+// its first instance starts, so the worker never consumes before the
+// migration ran.
+func TestComposeCompletionDependencyWorkerOwnsStep(t *testing.T) {
+	result, err := Scan(composeFixture(`services:
+  migrate:
+    build: ./tools
+    command: npm run migrate
+  worker:
+    build: ./tools
+    command: npm run work
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  mailer:
+    build: ./admin
+    command: npm run mail
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := scanWorkload(t, result, "worker")
+	if worker.Class != ClassWorker {
+		t.Fatalf("worker class = %q", worker.Class)
+	}
+	if !slices.Equal(worker.ReleaseCommand, []string{"npm run migrate"}) || !worker.ReleaseCommandShell || worker.ReleaseService != "migrate" {
+		t.Fatalf("worker release = %v shell=%v service=%q", worker.ReleaseCommand, worker.ReleaseCommandShell, worker.ReleaseService)
+	}
+	if mailer := scanWorkload(t, result, "mailer"); len(mailer.ReleaseCommand) != 0 || slices.Contains(mailer.DependsOn, "migrate") {
+		t.Fatalf("mailer = release %v deps %v", mailer.ReleaseCommand, mailer.DependsOn)
+	}
+	if !hasWarning(result, "migrate runs as the release command of worker") || !hasWarning(result, "mailer depends on migrate", "does not wait") {
+		t.Fatalf("fold not reported: %v", result.Warnings)
+	}
+}
+
+// A web service that waits for the step but builds elsewhere would lose its
+// wait and serve before the worker's release ran it, so the plan refuses.
+func TestComposeCompletionDependencyWorkerOwnerRefusedWithServingWaiter(t *testing.T) {
+	_, err := Scan(composeFixture(`services:
+  migrate:
+    build: ./tools
+    command: npm run migrate
+  worker:
+    build: ./tools
+    command: npm run work
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  web:
+    build: ./web
+    ports: ["8080:3000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+`))
+	if err == nil || !strings.Contains(err.Error(), "web would serve before migrate ran") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// A serving waiter that shares the step's build owns it before a worker.
+func TestComposeCompletionDependencyServingWaiterPreferred(t *testing.T) {
+	result, err := Scan(composeFixture(`services:
+  migrate:
+    build: ./api
+    command: npm run migrate
+  aworker:
+    build: ./api
+    command: npm run work
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  api:
+    build: ./api
+    ports: ["3000:3000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api := scanWorkload(t, result, "api"); api.ReleaseService != "migrate" {
+		t.Fatalf("api release service = %q", api.ReleaseService)
+	}
+	if w := scanWorkload(t, result, "aworker"); len(w.ReleaseCommand) != 0 {
+		t.Fatalf("worker also runs the migration: %v", w.ReleaseCommand)
+	}
+}
+
 // Exec-form commands and prebuilt images fold the same way.
 func TestComposeCompletionDependencyExecFormImage(t *testing.T) {
 	result, err := Scan(composeFixture(`services:
@@ -292,17 +388,6 @@ func TestComposeCompletionDependencyRefusals(t *testing.T) {
       seed:
         condition: service_completed_successfully
 `, "chained completion dependencies"},
-		{"only a worker waits", `services:
-  migrate:
-    build: ./tools
-    command: npm run migrate
-  worker:
-    build: ./tools
-    command: npm run work
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-`, "waiting service that serves requests"},
 		{"two steps for one service", `services:
   migrate:
     build: ./api

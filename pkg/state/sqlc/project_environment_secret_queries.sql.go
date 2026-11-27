@@ -116,6 +116,99 @@ func (q *Queries) DeleteProjectEnvironmentSecret(ctx context.Context, db DBTX, a
 	return result.RowsAffected(), nil
 }
 
+const insertProjectEnvironmentCloneSecretRef = `-- name: InsertProjectEnvironmentCloneSecretRef :execrows
+INSERT INTO app_environment_secret_refs (account_id, project_id, environment_id, app_id, scope, key, secret_name)
+SELECT a.account_id, a.project_id, e.id, a.id, e.slug, $1::text, $2::text
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+WHERE a.id = $3::uuid AND a.account_id = $4::uuid AND a.project_id = $5::uuid
+  AND a.status <> 'deleted' AND e.slug = $6::text
+`
+
+type InsertProjectEnvironmentCloneSecretRefParams struct {
+	Key             string
+	SecretName      string
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneSecretRef(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSecretRefParams) (int64, error) {
+	result, err := db.Exec(ctx, insertProjectEnvironmentCloneSecretRef,
+		arg.Key,
+		arg.SecretName,
+		arg.AppID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentSlug,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertProjectEnvironmentCloneSecretSuppression = `-- name: InsertProjectEnvironmentCloneSecretSuppression :execrows
+INSERT INTO app_environment_secret_ref_suppressions (account_id, project_id, environment_id, app_id, scope, key)
+SELECT a.account_id, a.project_id, e.id, a.id, e.slug, $1::text
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+WHERE a.id = $2::uuid AND a.account_id = $3::uuid AND a.project_id = $4::uuid
+  AND a.status <> 'deleted' AND e.slug = $5::text
+`
+
+type InsertProjectEnvironmentCloneSecretSuppressionParams struct {
+	Key             string
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneSecretSuppression(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSecretSuppressionParams) (int64, error) {
+	result, err := db.Exec(ctx, insertProjectEnvironmentCloneSecretSuppression,
+		arg.Key,
+		arg.AppID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentSlug,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertProjectEnvironmentCloneSharedSecret = `-- name: InsertProjectEnvironmentCloneSharedSecret :exec
+INSERT INTO project_environment_secrets (account_id, project_id, environment_slug, key, ciphertext, kid, value_hash, secret_version)
+VALUES ($1::uuid, $2::uuid, $3::text, $4::text,
+        $5::bytea, $6::text, $7::text, $8::bigint)
+`
+
+type InsertProjectEnvironmentCloneSharedSecretParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Key             string
+	Ciphertext      []byte
+	Kid             string
+	ValueHash       string
+	SecretVersion   int64
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneSharedSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSharedSecretParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneSharedSecret,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentSlug,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.SecretVersion,
+	)
+	return err
+}
+
 const listProjectEnvironmentSecrets = `-- name: ListProjectEnvironmentSecrets :many
 SELECT account_id, project_id, environment_slug, key, kid, value_hash, secret_version, created_at, updated_at
 FROM project_environment_secrets
@@ -241,6 +334,139 @@ func (q *Queries) ProjectEnvironmentSharedSecretGeneration(ctx context.Context, 
 	var i ProjectEnvironmentSharedSecretGenerationRow
 	err := row.Scan(&i.SharedSecretGeneration, &i.HasSharedSecrets)
 	return i, err
+}
+
+const readProjectEnvironmentCloneSecretRefs = `-- name: ReadProjectEnvironmentCloneSecretRefs :many
+SELECT r.app_id, r.key, r.secret_name
+FROM app_environment_secret_refs r
+JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id AND a.project_id = r.project_id
+JOIN project_environments e ON e.id = r.environment_id AND e.project_id = r.project_id
+WHERE r.account_id = $1::uuid AND r.project_id = $2::uuid
+  AND e.slug = $3::text AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ORDER BY r.app_id, r.key
+`
+
+type ReadProjectEnvironmentCloneSecretRefsParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+type ReadProjectEnvironmentCloneSecretRefsRow struct {
+	AppID      pgtype.UUID
+	Key        string
+	SecretName string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneSecretRefs(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSecretRefsParams) ([]ReadProjectEnvironmentCloneSecretRefsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneSecretRefs, arg.AccountID, arg.ProjectID, arg.EnvironmentSlug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneSecretRefsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneSecretRefsRow
+		if err := rows.Scan(&i.AppID, &i.Key, &i.SecretName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneSecretSuppressions = `-- name: ReadProjectEnvironmentCloneSecretSuppressions :many
+SELECT r.app_id, r.key
+FROM app_environment_secret_ref_suppressions r
+JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id AND a.project_id = r.project_id
+JOIN project_environments e ON e.id = r.environment_id AND e.project_id = r.project_id
+WHERE r.account_id = $1::uuid AND r.project_id = $2::uuid
+  AND e.slug = $3::text AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ORDER BY r.app_id, r.key
+`
+
+type ReadProjectEnvironmentCloneSecretSuppressionsParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+type ReadProjectEnvironmentCloneSecretSuppressionsRow struct {
+	AppID pgtype.UUID
+	Key   string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneSecretSuppressions(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSecretSuppressionsParams) ([]ReadProjectEnvironmentCloneSecretSuppressionsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneSecretSuppressions, arg.AccountID, arg.ProjectID, arg.EnvironmentSlug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneSecretSuppressionsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneSecretSuppressionsRow
+		if err := rows.Scan(&i.AppID, &i.Key); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneSharedSecrets = `-- name: ReadProjectEnvironmentCloneSharedSecrets :many
+SELECT key, ciphertext, kid, value_hash, secret_version
+FROM project_environment_secrets
+WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND environment_slug = $3::text
+ORDER BY key
+`
+
+type ReadProjectEnvironmentCloneSharedSecretsParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+type ReadProjectEnvironmentCloneSharedSecretsRow struct {
+	Key           string
+	Ciphertext    []byte
+	Kid           string
+	ValueHash     string
+	SecretVersion int64
+}
+
+// A full clone captures the source environment's shared secrets as sealed
+// envelopes (ADR-20261104120000 amendment 2026-11-21).
+func (q *Queries) ReadProjectEnvironmentCloneSharedSecrets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSharedSecretsParams) ([]ReadProjectEnvironmentCloneSharedSecretsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneSharedSecrets, arg.AccountID, arg.ProjectID, arg.EnvironmentSlug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneSharedSecretsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneSharedSecretsRow
+		if err := rows.Scan(
+			&i.Key,
+			&i.Ciphertext,
+			&i.Kid,
+			&i.ValueHash,
+			&i.SecretVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertProjectEnvironmentSecret = `-- name: UpsertProjectEnvironmentSecret :one

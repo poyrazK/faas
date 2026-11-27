@@ -38,6 +38,11 @@ class VerdictTest(unittest.TestCase):
             path.write_bytes(b"synthetic artifact; never native execution")
         provider_source = root / verdict.SOURCES["provider"]
         provider_source.write_text(provider_source.read_text() + '\nfor _, scenario := range []string{"unavailable", "lost_reply"} {}\n')
+        # The fixture's proofs are priced at these rates (1 GB-h compute +
+        # 1 GiB egress = 3000 millicents); the checker reads them from source.
+        limits = root / verdict.LIMITS_SOURCE
+        limits.parent.mkdir(parents=True, exist_ok=True)
+        limits.write_text("\tOverageMillicentsPerGBHour = 1_000\n\tEgressOverageMillicentsPerGiB int64 = 2_000\n")
         records = root / "financial-system-records"
         records.mkdir()
         for scenario in ("unavailable", "lost_reply"):
@@ -90,6 +95,19 @@ class VerdictTest(unittest.TestCase):
         path.write_text(json.dumps(original))
         self.assertFalse(self.report()["qualified"])
         path.unlink()
+        self.assertFalse(self.report()["qualified"])
+
+    def test_invoice_is_priced_at_the_published_rates(self):
+        limits = self.args.root / verdict.LIMITS_SOURCE
+        self.assertTrue(self.report()["qualified"])
+        proof = self.report()["reconciliation"]["lost_reply"]
+        self.assertEqual((proof["ram_millicents_per_gb_hour"], proof["egress_millicents_per_gib"]), (1000, 2000))
+        # A published price change the evidence was not priced at fails.
+        limits.write_text("\tOverageMillicentsPerGBHour = 5_000\n\tEgressOverageMillicentsPerGiB int64 = 3_000\n")
+        self.assertFalse(self.report()["qualified"])
+        limits.write_text("\tOverageMillicentsPerGBHour = 5_000\n")
+        self.assertFalse(self.report()["qualified"])
+        limits.unlink()
         self.assertFalse(self.report()["qualified"])
 
     def test_new_source_scenario_requires_new_execution(self):

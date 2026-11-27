@@ -7,6 +7,9 @@ sets `public_edge.compute_nodes`:
   `127.0.0.1:8090`, with its control port on 9109 (9092 on a compute node is gatewayd-internal's
   egress listener).
 - **`faas-cloudflared`:** the Cloudflare Tunnel connector, with metrics on 20241.
+  A cell on `public_edge.entry: direct` (ADR-20261102081618 step 6; production
+  since the 2026-11-20 move to OVHcloud) runs no connector: the converge
+  removes it and its token, and Prometheus does not scrape it.
 
 Prometheus discovers both per node through apid HTTP-SD, as the
 `gatewayd-public-edge` and `cloudflared` jobs. These alerts are silent on
@@ -16,7 +19,7 @@ fleets without the edge.
 
 | Alert | Severity | Meaning |
 |---|---|---|
-| `FaasComputeEdgeUnavailable` | page | For 2 minutes no node has both its edge answering and its connector holding a tunnel connection, including every connector stopped. App requests through the tunnel fail. |
+| `FaasComputeEdgeUnavailable` | page | For 2 minutes no node is serving. With the tunnel: no node has both its edge answering and its connector holding a tunnel connection, including every connector stopped. With direct entry (no connector scraped): no edge answers. App requests fail. |
 | `FaasComputeEdgeDown` | warn | One node's edge does not answer. |
 | `FaasComputeEdgeConnectorDisconnected` | warn | One node's connector is down or holds no tunnel connection. |
 | `FaasComputeEdgeLocalFallback` | warn | One node's edge keeps routing to the compute pool because its own gatewayd-internal is unhealthy. |
@@ -54,7 +57,9 @@ curl -fsS http://127.0.0.1:9109/metrics | grep gatewayd_public_edge_
 - **Edge down on one node.** Restart the edge:
   `systemctl restart faas-gatewayd-public-edge`. If it keeps failing, stop
   that node's connector (`systemctl stop faas-cloudflared`) so Cloudflare
-  stops sending it requests, then investigate. Common causes:
+  stops sending it requests, then investigate. With direct entry there is no
+  connector: take the node's entry address out of the app records instead
+  (`EdgeDirectEntry.md`). Common causes:
   - `FAAS_APPS_DOMAIN` missing from `99-faas-edge.conf`;
   - the compute database DSN in `/etc/faas/compute-db.env`;
   - the release missing the binary.

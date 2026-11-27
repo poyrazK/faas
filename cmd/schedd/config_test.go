@@ -563,3 +563,29 @@ postgres_majors = [16, 17]
 		t.Fatal("a missing database file was accepted")
 	}
 }
+
+// ADR-20261119140000: readiness probes keep the instance address by default;
+// readiness_probe_app_host or FAAS_READINESS_PROBE_APP_HOST turns on the
+// app's public host, and the env wins.
+func TestLoadConfig_ReadinessProbeAppHost(t *testing.T) {
+	t.Setenv("FAAS_READINESS_PROBE_APP_HOST", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.ReadinessProbeAppHost {
+		t.Fatalf("default ReadinessProbeAppHost = %v, %v; want off", cfg != nil && cfg.ReadinessProbeAppHost, err)
+	}
+	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(tomlPath, []byte("readiness_probe_app_host = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.ReadinessProbeAppHost {
+		t.Fatalf("readiness_probe_app_host = true: %v, %v", cfg != nil && cfg.ReadinessProbeAppHost, err)
+	}
+	t.Setenv("FAAS_READINESS_PROBE_APP_HOST", "false")
+	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.ReadinessProbeAppHost {
+		t.Fatalf("FAAS_READINESS_PROBE_APP_HOST=false over TOML: %v, %v", cfg != nil && cfg.ReadinessProbeAppHost, err)
+	}
+	t.Setenv("FAAS_READINESS_PROBE_APP_HOST", "maybe")
+	if _, err := LoadConfig(tomlPath); err == nil {
+		t.Fatal("FAAS_READINESS_PROBE_APP_HOST=maybe accepted")
+	}
+}

@@ -3,6 +3,8 @@ package neon
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,10 +18,15 @@ var _ managedpostgres.StorageCapProber = (*Provider)(nil)
 
 // Storage pool probe timings. Neon reports a branch's logical size with a
 // lag, and a new limit takes a moment to reach the compute, so the probe
-// retries until the behaviour shows or its wait runs out.
+// retries until the behaviour shows or its wait runs out. Measured on
+// 2026-11-22 against the production backend: Neon publishes a branch's
+// logical size only after its compute suspends (76 s and 287 s after the
+// compute went idle), and a compute that stays active never reports a write
+// (a 2 MB write was still unreported after 20 minutes). So the probe suspends
+// the compute after its write and then waits for the size.
 const (
-	storageCapProbeSizeWait  = 5 * time.Minute
-	storageCapProbeLimitWait = 2 * time.Minute
+	storageCapProbeSizeWait  = 20 * time.Minute
+	storageCapProbeLimitWait = 5 * time.Minute
 	storageCapProbeHold      = time.Minute
 	storageCapProbePoll      = 5 * time.Second
 	storageCapProbeRaise     = 1 << 30
@@ -62,6 +69,9 @@ func (p *Provider) ProbeStorageCap(ctx context.Context, providerResourceID strin
 	if err := storageProbeExec(ctx, dsn, storageCapProbeWrite); err != nil {
 		return evidence, err
 	}
+	if err := p.suspendForSizeReport(ctx, providerResourceID); err != nil {
+		return evidence, err
+	}
 	grown, reported := p.awaitStorageSize(ctx, providerResourceID, start.SizeBytes)
 	evidence.SizeReported = reported
 	if !reported {
@@ -91,6 +101,30 @@ func (p *Provider) ProbeStorageCap(ctx context.Context, providerResourceID strin
 	}
 	evidence.ComputeQuotaPreserved = sameQuota(final.Settings.Quota.ComputeTimeSeconds, before.Settings.Quota.ComputeTimeSeconds)
 	return evidence, nil
+}
+
+// suspendForSizeReport asks Neon to suspend the database's read-write
+// compute, because Neon publishes the branch's logical size only once its
+// compute suspends. An idle compute is left as it is. A 423 while the project
+// runs another operation is waited out as for a hold.
+func (p *Provider) suspendForSizeReport(ctx context.Context, providerResourceID string) error {
+	ref, err := parseResourceRef(providerResourceID)
+	if err != nil {
+		return err
+	}
+	metadata, err := p.readDatabaseMetadata(ctx, ref, false)
+	if err != nil {
+		return err
+	}
+	_, primary, _ := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
+	if !validProviderID.MatchString(primary.ID) {
+		return managedpostgres.ErrUnavailable
+	}
+	if primary.CurrentState == "idle" {
+		return nil
+	}
+	path := "/projects/" + url.PathEscape(ref.projectID) + "/endpoints/" + url.PathEscape(primary.ID) + "/suspend"
+	return p.sendWhileProjectBusy(ctx, http.MethodPost, path, nil)
 }
 
 // awaitStorageSize waits until the branch's reported size grows past start.

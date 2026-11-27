@@ -2,6 +2,7 @@ package legal
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -194,7 +195,7 @@ func TestOperatorValuesAreEscaped(t *testing.T) {
 // vendored by the docs site as-is, so it must read as a finished agreement:
 // the live page once showed raw {{CUSTOMER_NAME}} placeholders (#2644).
 func TestDPAHasNoPlaceholders(t *testing.T) {
-	raw, err := os.ReadFile("../../docs/DPA.md")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "DPA.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,6 +204,16 @@ func TestDPAHasNoPlaceholders(t *testing.T) {
 		if m := re.Find(raw); m != nil {
 			t.Errorf("docs/DPA.md contains placeholder %q", m)
 		}
+	}
+}
+
+func TestDPAHasNoMaintainerComments(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "DPA.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "<!--") {
+		t.Fatal("docs/DPA.md is served as public Markdown; keep comments in the operator notes")
 	}
 }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -70,6 +71,9 @@ class CreateAppRequest:
 
     slug: str
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
+    project_id: UUID | Unset = UNSET
+    """Existing project in the selected workspace. Projects managed by a repository or an active release set
+    require their project release workflow."""
     profiling: ProfilingConfig | Unset = UNSET
     """Opt-in sampled CPU profiling baked into each deployment."""
     tracing: TracingConfig | Unset = UNSET
@@ -238,6 +242,10 @@ class CreateAppRequest:
 
     def to_dict(self) -> dict[str, Any]:
         slug = self.slug
+
+        project_id: str | Unset = UNSET
+        if not isinstance(self.project_id, Unset):
+            project_id = str(self.project_id)
 
         profiling: dict[str, Any] | Unset = UNSET
         if not isinstance(self.profiling, Unset):
@@ -433,6 +441,8 @@ class CreateAppRequest:
                 "slug": slug,
             }
         )
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
         if profiling is not UNSET:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
@@ -571,6 +581,13 @@ class CreateAppRequest:
 
         d = dict(src_dict)
         slug = d.pop("slug")
+
+        _project_id = d.pop("project_id", UNSET)
+        project_id: UUID | Unset
+        if isinstance(_project_id, Unset):
+            project_id = UNSET
+        else:
+            project_id = UUID(_project_id)
 
         _profiling = d.pop("profiling", UNSET)
         profiling: ProfilingConfig | Unset
@@ -838,6 +855,7 @@ class CreateAppRequest:
 
         create_app_request = cls(
             slug=slug,
+            project_id=project_id,
             profiling=profiling,
             tracing=tracing,
             type_=type_,

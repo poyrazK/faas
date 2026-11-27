@@ -36,6 +36,12 @@ func TestCmdWebhooks_Add_HappyPath(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody api.CreateAppWebhookRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// create then checks whether the target is a key-protected
+			// app of the caller's (prod hunt r45); example.com is not.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)

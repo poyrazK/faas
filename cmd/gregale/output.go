@@ -284,17 +284,27 @@ func printCommandValidationWithCLI(w io.Writer, advice *cliFlagDiagnostic, forma
 // text diagnostic and typo hint for interactive use.
 func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got string) int {
 	command = visibleSubcommands(path, command)
-	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", path, got)
+	shown := path
+	if tree, noun, ok := treeChoices(path); ok && typedNoun == noun {
+		// Typed as the tree noun (`org agent x`): answer in its words.
+		// The dispatcher's names (orgs: ls, info, rm, agent-policy...) are
+		// not what `org --help` lists (prod hunt r60).
+		shown, command = noun, tree
+	}
+	detail := fmt.Sprintf("gregale %s: unknown subcommand %q", shown, got)
 	suggestion, ok := suggestSubcommand(got, command)
+	// The word typed is never its own suggestion (`org agent x` offered
+	// "Did you mean agent?"): list the verbs instead.
+	ok = ok && suggestion != got
 	if ok && jsonOutput && !jsonUsageHelp {
-		detail += fmt.Sprintf("; did you mean %q?", "gregale "+path+" "+suggestion)
+		detail += fmt.Sprintf("; did you mean %q?", "gregale "+shown+" "+suggestion)
 	}
 	printUnknownCommandValidation(w, path, got, "%s\n", detail)
 	if ok && !jsonOutput {
 		maybeSuggestSub(suggestion)
 	}
 	if !ok && !jsonOutput && len(command.Subcommands) > 0 {
-		printSubcommandChoices(w, path, command, got)
+		printSubcommandChoices(w, shown, command, got)
 	}
 	return 1
 }
@@ -318,7 +328,22 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 		return 1
 	}
 	command = visibleSubcommands(path, command)
-	if suggestion, ok := suggestSubcommand(got, command); ok {
+	if tree, noun, ok := treeChoices(path); ok {
+		if typedNoun == noun {
+			// The verbs `<noun> --help` lists, which run under the noun typed.
+			// A noun spelled as today's command (`env`, `registry`) is not
+			// here: its dispatcher's verbs all still run under it.
+			command.Subcommands = tree.Subcommands
+		} else if _, treeVerb := findCliSubcommand(tree.Subcommands, got); treeVerb {
+			// A tree verb after today's noun (`alerts get`) runs only under
+			// the tree noun.
+			_, _ = fmt.Fprintf(w, "  Did you mean 'gregale %s %s'?\n", noun, got)
+			return 1
+		}
+	}
+	// The word typed is never its own suggestion: a dispatcher that does not
+	// run it lists its verbs instead.
+	if suggestion, ok := suggestSubcommand(got, command); ok && suggestion != got {
 		_, _ = fmt.Fprintf(w, "  Did you mean %q?\n", suggestion)
 		return 1
 	}
@@ -326,6 +351,31 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 		printSubcommandChoices(w, path, command, got)
 	}
 	return 1
+}
+
+// treeChoices returns the tree noun whose command is today's command path,
+// with its verbs as `<noun> --help` lists them. On prod rc.369 `cron
+// history` listed next, add, info, rm while `cron --help` lists create, get,
+// delete (ADR-20261026145832). `app` takes its slug before the verb, so its
+// dispatcher keeps its own choices.
+func treeChoices(path string) (cliCommand, string, bool) {
+	if strings.Contains(path, " ") || path == appSlugFallback {
+		return cliCommand{}, "", false
+	}
+	for _, noun := range cliTreeNouns {
+		if noun.Name == appSlugFallback || noun.Name == path || cliTreeNounCommand(noun.Name) != path || !cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name) {
+			continue
+		}
+		// The offline view: an error path never waits on the API (H14-89).
+		discovery := cliTreeDiscoveryOf(offlineCapabilityView().discoverableCommands(visibleCliCommands()))
+		tree, ok := discovery.treeCommand(noun)
+		if !ok {
+			return cliCommand{}, "", false
+		}
+		tree = visibleSubcommands(noun.Name, tree)
+		return tree, noun.Name, len(tree.Subcommands) > 0
+	}
+	return cliCommand{}, "", false
 }
 
 // visibleSubcommands drops the subcommands whose capability is hidden for
@@ -387,7 +437,8 @@ func listAppForm(list cliSub, slug string) string {
 // is a mistyped verb, not an app slug in the verb position.
 func commonVerbWord(word string) bool {
 	switch word {
-	case "get", "show", "describe", "view", "ls", "delete", "del", "remove", "create", "new", "edit", "set", "help", "status", "logs":
+	case "get", "show", "describe", "view", "ls", "delete", "del", "remove", "create", "new", "edit", "set", "help", "status", "logs",
+		"revoke", "update", "rotate", "enable", "disable":
 		return true
 	}
 	return false
@@ -452,6 +503,11 @@ func printUsageWithCLI(w io.Writer, usage, topic string, advice *cliFlagDiagnost
 // flag errors name the command the user typed (`release gate delete`, not
 // `release-gates rm`).
 var treeUsageFrom, treeUsageTo string
+
+// typedNoun is the first word the current run() was typed with, before the
+// tree rewrite: `cron` or today's `crons`. Unknown-subcommand choices list
+// the verbs that run under it (treeChoices).
+var typedNoun string
 
 // spellUsageForTree spells today's command path in text as the typed tree
 // path.

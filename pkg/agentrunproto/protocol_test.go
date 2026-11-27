@@ -133,7 +133,7 @@ func TestRequestValidation(t *testing.T) {
 		"huge command": func(r *agentrunproto.Request) {
 			r.Command = []string{"x", strings.Repeat("p", agentrunproto.MaxCommandArgBytes), strings.Repeat("p", agentrunproto.MaxCommandArgBytes)}
 		},
-		"long timeout":   func(r *agentrunproto.Request) { r.TimeoutSec = 3601 },
+		"long timeout":   func(r *agentrunproto.Request) { r.TimeoutSec = agentrunproto.MaxTimeoutSec + 1 },
 		"bad env":        func(r *agentrunproto.Request) { r.Env = map[string]string{"1X": "y"} },
 		"absolute input": func(r *agentrunproto.Request) { r.Files = []agentrunproto.File{{Path: "/etc/passwd"}} },
 		"escaping input": func(r *agentrunproto.Request) { r.Files = []agentrunproto.File{{Path: "../x"}} },

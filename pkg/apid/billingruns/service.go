@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,8 +36,12 @@ type Host interface {
 	FinalizeConsumerStatement(ctx context.Context, acct state.Account, appID, consumerID, statementID string) (state.APIConsumerUsageStatement, *api.Problem)
 	// ConsumerCompleteness compares the consumer's ledger with request
 	// telemetry over the period (ADR-954).
-	ConsumerCompleteness(ctx context.Context, acct state.Account, appID, consumerID string, start, end time.Time) (status string, missing int64, err error)
+	ConsumerCompleteness(ctx context.Context, acct state.Account, appID, consumerID string, start, end time.Time) (billing.APIConsumerUsageCompleteness, error)
 	ExportConsumerStatement(ctx context.Context, acct state.Account, consumer state.APIConsumer, statement state.APIConsumerUsageStatement, provider string) (state.StatementInvoiceExport, *api.Problem)
+	ReviewConsumerDraftExport(ctx context.Context, acct state.Account, consumer state.APIConsumer, statement state.APIConsumerUsageStatement, conn state.BillingConnection) (string, *api.StatementInvoiceExportResponse, *api.Problem)
+	LinkConsumerStripeCustomer(ctx context.Context, acct state.Account, consumer state.APIConsumer, conn state.BillingConnection, customer string) *api.Problem
+	FinalizeReviewedConsumerStatement(ctx context.Context, acct state.Account, statement state.APIConsumerUsageStatement, due int64) (state.APIConsumerUsageStatement, *api.Problem)
+	ExportReviewedConsumerDraft(ctx context.Context, acct state.Account, consumer state.APIConsumer, statement state.APIConsumerUsageStatement, customer string, conn state.BillingConnection) (api.StatementInvoiceExportResponse, *api.Problem)
 
 	DraftTenantStatement(ctx context.Context, acct state.Account, tenantID string, start, end time.Time) (state.PlatformTenantStatement, *api.Problem)
 	FinalizeTenantStatement(ctx context.Context, acct state.Account, tenantID, statementID string) (state.PlatformTenantStatement, *api.Problem)
@@ -330,7 +335,7 @@ func itemResponse(item state.BillingRunItem) api.BillingRunItemResponse {
 	out := api.BillingRunItemResponse{SourceKind: item.SourceKind, ExternalRef: item.ExternalRef, Outcome: item.Outcome,
 		StatementID: item.StatementID, Revision: item.Revision, Currency: item.Currency, Completeness: item.Completeness,
 		InvoiceID: item.InvoiceID, ExportedInvoices: item.ExportedCount, Reason: item.Reason, Attempts: item.Attempts,
-		UpdatedAt: item.UpdatedAt.UTC(), PaymentStatus: item.PaymentStatus}
+		UpdatedAt: item.UpdatedAt.UTC(), PaymentStatus: item.PaymentStatus, UsageRecoveredAt: item.UsageRecoveredAt}
 	switch item.SourceKind {
 	case state.StatementSourceAppConsumer:
 		out.AppID, out.ConsumerID = item.AppID, item.SourceID

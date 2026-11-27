@@ -138,6 +138,11 @@ func (s *PgStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, a
 		}
 		records = append(records, record)
 	}
+	// Buckets carry their notification rules, which reservation copies; a rule
+	// must reach a captured workload (ADR-20261104120000 amendment 2026-11-16).
+	if err := requireCloneNotificationDestinations(records); err != nil {
+		return nil, err
+	}
 	if err := pinCloneLayerArtifactsTx(ctx, tx, records); err != nil {
 		return nil, err
 	}
@@ -164,6 +169,13 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if snapshot.Artifact.AppID != appID || snapshot.Artifact.Scope != scope {
 		return snapshot, ErrConflict
 	}
+	urls, err := q.GetDeploymentPublicBuildURLs(ctx, tx, mustPgUUID(snapshot.Artifact.ID))
+	if err != nil {
+		return snapshot, mapErr(err)
+	}
+	if err := json.Unmarshal(urls, &snapshot.PublicBuildURLs); err != nil {
+		return snapshot, ErrConflict
+	}
 	hasReleasePin, err := q.HasDeploymentReleaseEnvironmentSnapshot(ctx, tx, snapshot.Artifact.ID)
 	if err != nil {
 		return snapshot, err
@@ -171,10 +183,9 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if hasReleasePin {
 		return snapshot, ErrReleaseConfigurationTransferUnsupported
 	}
-	if shared, err := projectEnvironmentSecretsDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment); err != nil {
+	sharedSecrets, err := readCloneSharedSecretsDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
+	if err != nil {
 		return snapshot, err
-	} else if len(shared) > 0 {
-		return snapshot, ErrProjectSecretCloneTransferUnsupported
 	}
 
 	config, err := readCloneProjectConfigDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
@@ -189,7 +200,7 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if err != nil {
 		return snapshot, err
 	}
-	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot})
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot, SharedSecrets: &sharedSecrets})
 	if err != nil {
 		return snapshot, err
 	}
@@ -358,6 +369,15 @@ func attachCloneDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnviro
 	}
 	for name, signal := range record.snapshot.SidecarSignals {
 		if err := q.InsertProjectEnvironmentCloneSidecarSignal(ctx, tx, sqlc.InsertProjectEnvironmentCloneSidecarSignalParams{DeploymentID: mustPgUUID(deployment.ID), SidecarName: name, Signal: signal}); err != nil {
+			return mapErr(err)
+		}
+	}
+	if len(record.snapshot.PublicBuildURLs) > 0 {
+		urls, err := json.Marshal(record.snapshot.PublicBuildURLs)
+		if err != nil {
+			return err
+		}
+		if err := q.SetProjectEnvironmentCloneDeploymentPublicBuildURLs(ctx, tx, sqlc.SetProjectEnvironmentCloneDeploymentPublicBuildURLsParams{DeploymentID: mustPgUUID(deployment.ID), Urls: urls}); err != nil {
 			return mapErr(err)
 		}
 	}

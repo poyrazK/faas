@@ -78,7 +78,7 @@ func TestRollbackApp_TrafficSplitPointsAtEarlierRelease(t *testing.T) {
 	if v1.Revision > 0 {
 		earlier = "v" + strconv.Itoa(v1.Revision)
 	}
-	if problem.Code != api.CodeNoRollbackTarget || !strings.Contains(problem.Detail, "gregale traffic promote --app rb-split --deployment "+earlier) {
+	if problem.Code != api.CodeNoRollbackTarget || !strings.Contains(problem.Detail, "gregale release traffic rollback rb-split --to "+earlier) {
 		t.Fatalf("problem = %+v, want the traffic promote command for %s", problem, earlier)
 	}
 	if d, _ := store.DeploymentByID(ctx, v2.ID); d.Status != state.DeploySuperseded {

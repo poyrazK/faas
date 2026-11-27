@@ -32,6 +32,7 @@ package githubd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 )
@@ -116,3 +117,17 @@ type SourceRefStream struct {
 	Body              io.ReadCloser
 	ResolvedCommitSHA string
 }
+
+// PublicSourceRefStreamer streams the archive of a repository GitHub reports
+// as public, with no account or installation (ADR-20261126164847). The
+// implementation must prove the repository is public on every call and must
+// read with a credential that cannot reach a private repository.
+type PublicSourceRefStreamer interface {
+	StreamPublic(ctx context.Context, repoFullName, ref string, maxArchiveBytes int64) (SourceRefStream, error)
+}
+
+// ErrRepositoryNotPublic reports that GitHub did not confirm a public
+// repository under the requested name: it is private, missing or renamed.
+// Callers must not tell these apart, so the answer never discloses that a
+// private repository exists.
+var ErrRepositoryNotPublic = errors.New("githubd: repository is not a public repository under this name")

@@ -341,17 +341,20 @@ func cmdInvocationsGet(args []string) int {
 	fs := newFlagSet("invocations get", flag.ContinueOnError)
 	replay := fs.Bool("replay", false, "re-issue a failed invocation (returns the new async invocation)")
 	replayKeyed := fs.Bool("replay-keyed", false, "recover failed keyed work in its captured policy lane")
-	if err := fs.Parse(args); err != nil {
+	// Flags may follow the ID (prod hunt r55: `invocation get ID --replay`
+	// printed usage), in either dash spelling.
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectArgumentCount(fs.Name(), invocationGetCmdUsage, invocationCmdDocsTopic, fs.NArg(), 1, 1, "ID") {
+	positional := fs.Args()
+	if rejectArgumentCount(fs.Name(), invocationGetCmdUsage, invocationCmdDocsTopic, len(positional), 1, 1, "ID") {
 		return 1
 	}
 	if *replay && *replayKeyed {
 		PrintUsage(os.Stderr, invocationGetCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
-	id := fs.Arg(0)
+	id := positional[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -409,6 +412,9 @@ func cmdInvocationsGet(args []string) int {
 // formats as "<rfc3339> (<ago>)" — the ago delta is what a customer
 // usually wants ("how long ago did this finish?") and the absolute
 // timestamp is the fallback for scripts / cross-references.
+//
+// Method and Path are empty for queue and cron invocations and are then
+// left out; they printed as blank lines (prod hunt r31).
 func renderInvocation(w io.Writer, inv api.Invocation) {
 	_, _ = fmt.Fprintf(w, "Invocation: %s\n", inv.ID)
 	_, _ = fmt.Fprintf(w, "App:        %s\n", inv.AppID)
@@ -417,8 +423,12 @@ func renderInvocation(w io.Writer, inv api.Invocation) {
 	}
 	_, _ = fmt.Fprintf(w, "Source:     %s\n", invocationSourceLabel(inv))
 	_, _ = fmt.Fprintf(w, "State:      %s\n", inv.State)
-	_, _ = fmt.Fprintf(w, "Method:     %s\n", inv.Method)
-	_, _ = fmt.Fprintf(w, "Path:       %s\n", inv.Path)
+	if inv.Method != "" {
+		_, _ = fmt.Fprintf(w, "Method:     %s\n", inv.Method)
+	}
+	if inv.Path != "" {
+		_, _ = fmt.Fprintf(w, "Path:       %s\n", inv.Path)
+	}
 	_, _ = fmt.Fprintf(w, "Attempts:   %d\n", inv.Attempts)
 	_, _ = fmt.Fprintf(w, "Created:    %s\n", inv.CreatedAt.UTC().Format(time.RFC3339))
 	if inv.ScheduledAt != nil {

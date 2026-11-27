@@ -63,7 +63,12 @@ func (s *server) getExecutionWorkflow(w http.ResponseWriter, r *http.Request, ac
 		Usage:        summary.Usage,
 	}
 	for _, managedRow := range managed {
-		response.Managed = append(response.Managed, managedExecutionWorkflowResponse(managedRow))
+		managedResponse, err := s.pipelineResponse(r.Context(), managedRow)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("pipeline attempt history unavailable"))
+			return
+		}
+		response.Managed = append(response.Managed, managedResponse)
 	}
 	writeJSON(w, http.StatusOK, response)
 }

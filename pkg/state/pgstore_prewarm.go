@@ -236,3 +236,18 @@ func scanPrewarmRow(row interface{ Scan(...any) error }) (PrewarmIntent, error) 
 	}
 	return intent, nil
 }
+
+// PruneCronPrewarmIntents implements CronPrewarmRetentionStore.
+func (s *PgStore) PruneCronPrewarmIntents(ctx context.Context, before time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `delete from prewarm_intents where id in (
+		select id from prewarm_intents
+		where trigger = 'cron' and status in ('succeeded', 'failed', 'cancelled') and expires_at < $1
+		limit $2)`, before.UTC(), limit)
+	if err != nil {
+		return 0, fmt.Errorf("state: prune cron prewarm intents: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}

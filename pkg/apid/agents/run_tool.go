@@ -148,7 +148,7 @@ func runDedupeKey(grant CallbackToken, callID string) string {
 // tasks into their threads until ctx ends. Every apid runs it: the publish
 // is idempotent, so two passes over one run publish it once.
 func (h *Handler) RunRunCallbacks(ctx context.Context) {
-	if h.RunCallbacks == nil && h.SandboxTasks == nil && h.BrowserSessions == nil || !h.callbacksConfigured() {
+	if (h.RunCallbacks == nil && h.TaskCallbacks == nil && h.PipelineCallbacks == nil && h.SandboxTasks == nil && h.BrowserSessions == nil) || !h.callbacksConfigured() {
 		return
 	}
 	ticker := time.NewTicker(runCallbackInterval)
@@ -161,6 +161,12 @@ func (h *Handler) RunRunCallbacks(ctx context.Context) {
 		}
 		if _, err := h.DeliverRunCallbacks(ctx); err != nil && ctx.Err() == nil && h.Log != nil {
 			h.Log.Warn("agent run callbacks", "err", err)
+		}
+		if _, err := h.DeliverTaskCallbacks(ctx); err != nil && h.Log != nil {
+			h.Log.Warn("Run task callbacks", "err", err)
+		}
+		if _, err := h.DeliverPipelineCallbacks(ctx); err != nil && h.Log != nil {
+			h.Log.Warn("Run pipeline callbacks", "err", err)
 		}
 		if _, err := h.DeliverSandboxTasks(ctx); err != nil && ctx.Err() == nil && h.Log != nil {
 			h.Log.Warn("agent browse results", "err", err)
@@ -227,6 +233,10 @@ func (h *Handler) threadReceives(ctx context.Context, grant CallbackToken) (bool
 	if h.AgentsEnabled == nil || !h.AgentsEnabled(ctx, grant.AccountID) {
 		return false, nil
 	}
+	return h.threadExists(ctx, grant)
+}
+
+func (h *Handler) threadExists(ctx context.Context, grant CallbackToken) (bool, error) {
 	revokedAt, revoked, err := h.Revocations.CallbacksRevokedAt(ctx, grant.EndpointID, grant.ThreadID)
 	if err != nil {
 		return false, fmt.Errorf("check callback revocation: %w", err)

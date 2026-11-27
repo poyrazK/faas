@@ -1,0 +1,210 @@
+{
+  "changes_after_qualified_snapshot": {
+    "diagnostic_classifier_refinement": {
+      "files": [
+        {
+          "current_sha256": "0bb39d2a7832e53f7b7450af488d806f47d642af193a558006c2b09f87f5d2ce",
+          "path": "pkg/runenv/diagnostics.go",
+          "qualified_sha256": "0618ba43e3310e2f00f581956074d93731f4316de97f6b0d65d6c683f33ee2cd"
+        },
+        {
+          "current_sha256": "094acd711f153d2d481938498ac1f09ad0b18f8860b7718607a46639724b62ce",
+          "path": "pkg/runenv/diagnostics_test.go",
+          "qualified_sha256": "dd43c0f685e44f3e8ba03155b4b9a96884b055bd3a094c3d94f167a90ef2bc1b"
+        }
+      ],
+      "reason": "The observed insufficient-host-free-space refusal is a builder availability failure; guest workspace exhaustion remains a customer size limit.",
+      "verification": "focused runenv test suite and full package lint passed",
+      "vm_lifecycle_changed": false
+    },
+    "migration_identity_normalization": {
+      "files": [
+        {
+          "new": "migrations/20261115160103001_execution_environment_diagnostics.sql",
+          "old": "migrations/20261115160000000_execution_environment_diagnostics.sql",
+          "sql_sha256": "ac8771d9bffb6ad74ff4d7ca3135fe3365a9be22062ff952fcd266a37022d823"
+        },
+        {
+          "new": "migrations/20261115160103002_validate_environment_diagnostics.sql",
+          "old": "migrations/20261115160001000_validate_environment_diagnostics.sql",
+          "sql_sha256": "5f9e228b548e643c220f602110d79f7f4aaf44725329ea8faf86c424c6b9c932"
+        },
+        {
+          "new": "migrations/20261115160103003_expand_run_completion_receivers.sql",
+          "old": "migrations/20261115160100000_expand_run_completion_receivers.sql",
+          "sql_sha256": "3d483d2eac99e3b853202719444e57746fd4d7c86695d5985edacfff3df9d097"
+        },
+        {
+          "new": "migrations/20261115160103004_validate_run_completion_receivers.sql",
+          "old": "migrations/20261115160101000_validate_run_completion_receivers.sql",
+          "sql_sha256": "fde9e59d586ce5623387d94326dc133cb4ce66f59e3b8a8b1ce21ab88d139e20"
+        },
+        {
+          "new": "migrations/20261115160103005_retire_old_completion_receiver_constraint.sql",
+          "old": "migrations/20261115160102000_retire_old_completion_receiver_constraint.sql",
+          "sql_sha256": "e66320b11d27f2250f399be1c5e9624dc31ede5dce5e786c7566806ddebc26b6"
+        },
+        {
+          "new": "migrations/20261115160103006_restore_receiver_constraint_name.sql",
+          "old": "migrations/20261115160102500_restore_receiver_constraint_name.sql",
+          "sql_sha256": "37f8aedad6925ccf886f54435027a940a6ba9d18fcd5e203bba72f62b31fedf2"
+        },
+        {
+          "new": "migrations/20261115160103007_execution_completion_delivery.sql",
+          "old": "migrations/20261115160103000_execution_completion_delivery.sql",
+          "sql_sha256": "4da1a8a10a89cae237c62f595b06303aa0d048ab5f674dbfa38d2dae7e4fb435"
+        }
+      ],
+      "source_digest": "ea3c5a005c4e70f63f7c92e18234ae4a183062a15f4fabd65e899278e27c7b8a",
+      "sql_bytes_unchanged": true
+    },
+    "wrapped_eof_handling": {
+      "current_sha256": "0bc54142275fa3935ad58897a3b7e9f2f2009aee362c4f508feb6ac06da3742f",
+      "path": "pkg/builderd/environment_logs_metal.go",
+      "qualified_sha256": "1b5995ebb6d20179d044aae0c185c759ad297a85d27c98090bac4765fd87da28",
+      "reason": "Use errors.Is for streamed EOF so wrapped EOF is handled normally; direct EOF behavior is unchanged.",
+      "verification": "final Linux metal lint",
+      "vm_lifecycle_changed": false
+    }
+  },
+  "checks": [
+    {
+      "covers": [
+        "lease and completion fencing",
+        "128-event tail",
+        "1 KiB line bound",
+        "control/UTF-8 rejection",
+        "retirement erasure",
+        "clone-schema coverage"
+      ],
+      "name": "memory and real PostgreSQL diagnostic contract",
+      "result": "pass"
+    },
+    {
+      "covers": [
+        "all five terminal outcomes",
+        "queued cancellation",
+        "queued expiry",
+        "owner loss",
+        "duplicate suppression",
+        "metadata-only payload",
+        "terminal rollback on enqueue failure"
+      ],
+      "name": "atomic completion producer",
+      "result": "pass",
+      "terminal_paths": 8
+    },
+    {
+      "covers": [
+        "512-event live budget and explicit gap",
+        "credential/path filtering",
+        "decoded streaming request authorization",
+        "account/key-family isolation",
+        "cursor replay and rollback reads",
+        "preview subscription gate",
+        "runs-only receiver administration refused"
+      ],
+      "name": "builder, scoped API and VM log authorization",
+      "result": "pass"
+    },
+    {
+      "covers": [
+        "503 retry",
+        "dispatcher replacement",
+        "400 dead letter",
+        "manual redrive",
+        "204 acknowledgement",
+        "stable event/delivery identity",
+        "one Run"
+      ],
+      "name": "real signed HTTP dispatcher integration",
+      "result": "pass"
+    },
+    {
+      "covers": [
+        "cursor replay",
+        "explicit gaps",
+        "interrupted watches leave builds running"
+      ],
+      "go_sdk": "selected environment tests across module packages",
+      "name": "CLI and SDK contracts",
+      "node_selected_tests": 8,
+      "python_selected_tests": 10,
+      "result": "pass"
+    },
+    {
+      "covers": [
+        "SpecCompliance",
+        "Node/Python regeneration",
+        "SQLC exact regeneration parity",
+        "fresh schema byte parity",
+        "migration source digest parity"
+      ],
+      "name": "API and generated artifacts",
+      "result": "pass"
+    },
+    {
+      "covers": [
+        "expand/validate/contract lint",
+        "rolling protocol compatibility against base",
+        "store fake wrapper policy",
+        "daemon environment contract",
+        "18 acceptance-verdict tests",
+        "Bash and ShellCheck",
+        "changed-code Go lint"
+      ],
+      "name": "repository policy checks",
+      "result": "pass"
+    },
+    {
+      "covers": [
+        "insufficient host free space maps to builder_unavailable",
+        "guest no-space-left maps to size_limit",
+        "full runenv package lint"
+      ],
+      "name": "observed host-capacity diagnostic regression",
+      "result": "pass"
+    },
+    {
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "name": "final Linux metal changed-code lint",
+      "packages": [
+        "pkg/builderd",
+        "pkg/imaged",
+        "pkg/vmmdgrpc",
+        "pkg/e2etest/runlifecycle"
+      ],
+      "result": "pass",
+      "source_manifest_sha256": "1d03d70d01c6a6385454dee5b8695f79087255a0fc6e7b78dd434073bb545640"
+    }
+  ],
+  "environment_writer_gate": "FAAS_EXECUTION_ENVIRONMENTS_ENABLED",
+  "final_code_matches_linux_validation_snapshot": true,
+  "final_linux_validation_source_manifest_sha256": "1d03d70d01c6a6385454dee5b8695f79087255a0fc6e7b78dd434073bb545640",
+  "new_subscription_gates": [
+    "FAAS_EXECUTION_API_ENABLED",
+    "FAAS_EXECUTION_V2_ENABLED"
+  ],
+  "production_writers_enabled": false,
+  "qualified_non_documentation_files_unchanged": 51049,
+  "qualified_source_manifest_sha256": "be07b967aa22ce8d5205c1087e1eaeab3c122ad8ed8b8de63d831a5b80bd2b6d",
+  "raw_local_log_sha256": {
+    "api-final2": "b3e08d26dbced6ddd2420a44356832014bfaeb9685fb12de5b5bf66d9277eba6",
+    "final-contracts": "b134e7d7583e4060f26b5774dd98a04607a89175c82e782b69fa4d7b354c02e4",
+    "final-edge-tests": "b08c027c5af8db2fe1ffa8507f0402e13c9143188cdbf572fa4ce32f2e471100",
+    "generated-migration-tests": "f2ed95b9ffa6b21e95a071b6dd2ce79cd6a5d66e5bb15e0767c4a62d88150f8c",
+    "go-sdk2": "2bf89e774237f1a979d69785cdf238dd9598a0f7ec1fdb2c0d510dbce936806c",
+    "host-capacity-regression": "1c46f3c94f18136c8529e3e94089e734a7389af4aa32ab285a01bd9bf201df55",
+    "lint-changed-final": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "migration-final": "3c13fa8b959db1376998aff4b58fa62831cba5cdcac85727912b4bba2d8d6c7b",
+    "node-final-check": "8b4ba3522a8afb002829ae6b1ae384826dc578e1e7b6d897983e5f5e43894971",
+    "policy-final": "efa363e63ce11e46b8c838d2dfa87b580e10f2f2e6558076299084945dd35ec3",
+    "python-final-check": "4d991d5b543c7aee64b38c7698d2a4f180660291228654e62db1b966c718a2b7",
+    "schema-final": "b2a915ce8f5cbc4c8a95fa7c6f26fdf8777f22538c0c60afb587d29ab730c571",
+    "sqlc-final": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855",
+    "webhook-tests2": "af327e20b5c7bff5374fde014d677d91c74e971534afb6a40ba172eb9774463f",
+    "worker-tests": "a0a401453e34b68c39173974597c39ea744825db44659cd74de4f7ecfb7512b4"
+  },
+  "schema": "gregale.run-diagnostics-completion-portable-validation/v1",
+  "scope": "Selected feature checks; not a full repository test run."
+}

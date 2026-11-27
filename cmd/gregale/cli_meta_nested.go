@@ -13,13 +13,13 @@ func accountWebhookCLISubcommand() cliSub {
 	}
 	add := []cliFlag{
 		{Name: "target-url", Short: "HTTPS receiver URL", Value: "URL", Req: true},
-		{Name: "event", Short: "distinct account event (repeatable)", Value: "EVENT", Req: true, Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
+		{Name: "event", Short: "distinct account event (repeatable)", Value: "EVENT", Req: true, Repeatable: true, ClosedSet: api.AllowedAccountWebhookEvents},
 	}
 	add = append(add, secret...)
 	add = append(add, settings...)
 	update := []cliFlag{
 		{Name: "target-url", Short: "replacement HTTPS receiver URL", Value: "URL"},
-		{Name: "event", Short: "replacement account event filter (repeatable)", Value: "EVENT", Repeatable: true, ClosedSet: api.AllowedAccountReleaseWebhookEvents},
+		{Name: "event", Short: "replacement account event filter (repeatable)", Value: "EVENT", Repeatable: true, ClosedSet: api.AllowedAccountWebhookEvents},
 		{Name: "enable", Short: "enable the receiver; mutually exclusive with --disable"},
 		{Name: "disable", Short: "disable the receiver; mutually exclusive with --enable"},
 	}
@@ -178,4 +178,40 @@ func appUDPListenerCLISubcommand(slugPositional bool) cliSub {
 		command.SubcommandsAfterPositionals = true
 	}
 	return command
+}
+
+func runTasksCLISubcommand() cliSub {
+	return cliSub{Name: "tasks", Short: "Author, publish and invoke immutable named Run tasks", Subcommands: []cliSub{
+		{Name: "validate", Short: "Validate a manifest and optional fixture offline", Flags: []cliFlag{
+			{Name: "manifest", Value: "PATH", Req: true}, {Name: "plan", Value: "PLAN"}, {Name: "input", Value: "JSON|@PATH"},
+		}},
+		{Name: "generate", Short: "Generate or check version-pinned SDK bindings offline", Flags: []cliFlag{
+			{Name: "manifest", Value: "PATH", Req: true}, {Name: "plan", Value: "PLAN"},
+			{Name: "language", Value: "typescript|python", Req: true}, {Name: "check", Value: "PATH"},
+		}},
+		{Name: "test", Short: "Run a draft manifest as a smoke test before publication", Flags: []cliFlag{
+			{Name: "manifest", Value: "PATH", Req: true}, {Name: "input", Value: "JSON|@PATH"},
+			{Name: "input-file", Value: "PATH=LOCAL_FILE", Repeatable: true}, {Name: "customer-ref", Value: "REF"},
+			{Name: "idempotency-key", Value: "KEY", Req: true}, {Name: "wait-timeout", Value: "DURATION"}, {Name: "output-dir", Value: "PATH"},
+		}},
+		{Name: "publish", Short: "Publish an account-owned immutable version", Flags: []cliFlag{{Name: "manifest", Value: "PATH", Req: true}}},
+		{Name: "list", Short: "List task metadata", Flags: []cliFlag{{Name: "cursor", Value: "CURSOR"}}},
+		{Name: "get", Short: "Read metadata without retained code", Positionals: []string{"<name@vN>"}},
+		{Name: "retire", Short: "Erase retained code and retire a version", Positionals: []string{"<name@vN>"}},
+		{Name: "invoke", Short: "Invoke a task using key-scoped input and receipt", Positionals: []string{"<name@vN>"}, Flags: []cliFlag{{Name: "customer-ref", Value: "REF"}, {Name: "input", Value: "JSON|@PATH"}, {Name: "input-file-id", Value: "PATH=FILE_UUID", Repeatable: true}, {Name: "idempotency-key", Value: "KEY"}, {Name: "wait", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}, {Name: "output-dir", Value: "PATH"}}},
+	}}
+}
+
+func runControlsCLISubcommand() cliSub {
+	return cliSub{Name: "controls", Short: "Manage customer budgets and authenticated attribution", Subcommands: []cliSub{
+		{Name: "customer", Short: "Read or replace a customer budget", Positionals: []string{"<ref>"}, Flags: []cliFlag{{Name: "manifest", Value: "PATH"}}},
+		{Name: "task", Short: "Read or replace a task budget across versions", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "manifest", Value: "PATH"}}},
+		{Name: "binding", Short: "Read or replace an API key or Agent endpoint binding", Positionals: []string{"<api_key|agent_endpoint>", "<id>"}, Flags: []cliFlag{{Name: "manifest", Value: "PATH"}}},
+		{Name: "unbind", Short: "Disable a binding using its current revision", Positionals: []string{"<api_key|agent_endpoint>", "<id>"}, Flags: []cliFlag{{Name: "expected-revision", Value: "N", Req: true}}},
+	}}
+}
+func runHistoryCLISubcommand() cliSub {
+	return cliSub{Name: "history", Short: "Read payload-free invocation history", Flags: []cliFlag{
+		{Name: "task-name", Value: "NAME"}, {Name: "task-version", Value: "N"}, {Name: "customer-ref", Value: "REF"}, {Name: "agent-ref", Value: "REF"}, {Name: "status", Value: "STATUS"}, {Name: "since", Value: "RFC3339"}, {Name: "until", Value: "RFC3339"}, {Name: "cursor", Value: "CURSOR"},
+	}}
 }

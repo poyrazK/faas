@@ -23,7 +23,7 @@ func TestWakeNamesADarkLiveDeployment(t *testing.T) {
 		wantHint     string
 		unwantedHint string
 	}{
-		{"only a 0% live deployment", true, "deployment %s is live at 0% traffic", "gregale traffic promote --app app-pro --deployment %s", ""},
+		{"only a 0% live deployment", true, "deployment %s is live at 0% traffic", "gregale release traffic promote --app app-pro --release %s", ""},
 		{"no live deployment at all", false, "the app has no live deployment to wake", "", "traffic promote"},
 	}
 	for _, tt := range tests {

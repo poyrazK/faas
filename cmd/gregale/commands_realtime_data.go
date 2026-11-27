@@ -303,7 +303,7 @@ func cmdRealtimePublish(args []string) int {
 		PrintUsage(osStderr, realtimePublishUsage(), "realtime")
 		return 1
 	}
-	if *delivery == string(api.ManagedRealtimeDeliveryRetained) && !realtimePreviewCLI() {
+	if *delivery == string(api.ManagedRealtimeDeliveryRetained) && !realtimePreviewForAccount() {
 		return printErr("Could not publish realtime message", fmt.Errorf("--delivery must be live"))
 	}
 	if *delivery != string(api.ManagedRealtimeDeliveryLive) && *delivery != string(api.ManagedRealtimeDeliveryRetained) {

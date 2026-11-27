@@ -18,7 +18,13 @@ vmmd_adoption_record: true
 # first rollout with the switch drains anyway, so the release that proves the
 # rc.309 fixes on fsn-2 also turns the switch on for fsn-3. If that release's
 # fsn-2 restart does not adopt every guest, take fsn-3 out again before the next.
+#
+# 2026-11-21: production moved to OVH and fsn-2/fsn-3 retired, so this list
+# matched no node and a vmmd restart on bhs-2/bhs-3 quarantined its guests.
+# `vmmd adoption-check` proved every guest on both (15 and 7), and one-off
+# adoption restarts adopted 13 and 7 with none refused. Each node's first
+# rollout with the switch still drains; later ones skip the drain.
 vmmd_adoption_canary_nodes:
-  - fsn-2.faas
-  - fsn-3.faas
+  - bhs-2.faas
+  - bhs-3.faas
 vmmd_adopt_running_vms: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_adoption_canary_nodes }}"

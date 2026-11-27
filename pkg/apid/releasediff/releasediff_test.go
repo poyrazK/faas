@@ -32,6 +32,11 @@ func TestPredecessorIsTheLastReleaseThatServed(t *testing.T) {
 		release("old", t0, nil),
 		release("served", t0.Add(time.Hour), nil),
 		release("failed", t0.Add(2*time.Hour), func(d *state.Deployment) { d.Status = state.DeployFailed }),
+		release("parked", t0.Add(3*time.Hour), func(d *state.Deployment) {
+			d.Status, d.TrafficPercentExplicit = state.DeployLive, true
+			completed := t0.Add(3 * time.Hour)
+			d.RolloutCompletedAt = &completed
+		}),
 		release("staging", t0.Add(3*time.Hour), func(d *state.Deployment) { d.Scope = "staging" }),
 		release("newer", t0.Add(5*time.Hour), nil),
 		to,
@@ -42,6 +47,14 @@ func TestPredecessorIsTheLastReleaseThatServed(t *testing.T) {
 	}
 	if _, ok := Predecessor([]state.Deployment{to}, to); ok {
 		t.Fatal("a first release has no predecessor")
+	}
+	rows = append(rows, release("demoted", t0.Add(3*time.Hour+time.Minute), func(d *state.Deployment) {
+		d.Status, d.TrafficPercentExplicit = state.DeployLive, true
+		ended := to.CreatedAt
+		d.ServingEndedAt = &ended
+	}))
+	if got, ok := Predecessor(rows, to); !ok || got.ID != "demoted" {
+		t.Fatalf("predecessor = %q, %v; want demoted", got.ID, ok)
 	}
 }
 

@@ -57,7 +57,12 @@ func devWatchFixture(t *testing.T, body string) []byte {
 "scripts":{"build":"node -e \"require('fs').writeFileSync('build-ran.txt','yes')\"","start":"node index.js","dev":"node --watch index.js"},
 "dependencies":{}}
 `
+	// Like next dev (.next) and Nuxt (.nuxt), the server creates its build
+	// cache in the app directory at start and dies when it cannot: the app
+	// user could not before guest-init handed it the working directory
+	// (EACCES mkdir /app/.next on prod 2026-11-21).
 	indexJS := `const http = require('http');
+require('fs').mkdirSync(require('path').join(__dirname, '.devcache', 'cache'), {recursive: true});
 const hostFlag = process.argv.indexOf('--host');
 const listenHost = hostFlag >= 0 ? process.argv[hostFlag + 1] : '127.0.0.1';
 const allowed = (process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS || '').split(',').filter(Boolean);

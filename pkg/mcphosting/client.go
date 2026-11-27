@@ -22,6 +22,10 @@ import (
 // Diagnostic bounds are client memory protections, not product quotas.
 const maxResponseBytes = 8 << 20
 
+const taskSubmissionExtension = "io.gregale/task-submission"
+const taskSubmissionKeyMeta = "io.gregale/task-submission-key"
+const taskSubmissionMethodHeader = "gregale/tasks/submit"
+
 // Client is a sequential, diagnostic MCP client. It never retries tool calls
 // and opens a task status stream only while waiting for a Tasks handle. Use
 // the official SDK for general MRTR and Tasks support.
@@ -149,6 +153,13 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	req.Header.Set("MCP-Protocol-Version", c.Version)
 	if c.Version == ProtocolVersion {
 		req.Header.Set("Mcp-Method", method)
+		// A replica without the extension rejects the method header mismatch.
+		// The gateway still authorizes the tools/call method from the body.
+		if method == "tools/call" {
+			if key, ok := p["_meta"].(map[string]any)[taskSubmissionKeyMeta].(string); ok && key != "" {
+				req.Header.Set("Mcp-Method", taskSubmissionMethodHeader)
+			}
+		}
 		if name, ok := p["name"].(string); ok {
 			req.Header.Set("Mcp-Name", encodeHeader(name))
 		} else if method == "resources/read" {
@@ -172,6 +183,8 @@ func (c *Client) request(ctx context.Context, method string, params map[string]a
 	defer func() { _ = res.Body.Close() }()
 	x := Exchange{WakeTier: res.Header.Get(wire.WakeHeader), SessionID: res.Header.Get("Mcp-Session-Id"), StreamingStatus: api.StreamingStatus(res.Header.Get(api.StreamingStatusHeader)), HTTPStatus: res.StatusCode, AuthChallenge: res.Header.Get("WWW-Authenticate")}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
+		// Error exchanges report their latency too: 0 ms read as "never sent".
+		x.DurationMS = time.Since(start).Milliseconds()
 		if rpcErr := jsonRPCErrorCode(res, id); rpcErr != nil {
 			return x, rpcErr
 		}
@@ -310,7 +323,7 @@ func consumeSSE(r io.Reader, id int, x *Exchange, start time.Time) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("read MCP SSE: %w", err)
 	}
-	return fmt.Errorf("MCP SSE ended before its final result")
+	return fmt.Errorf("MCP SSE ended before its final result: %w", io.ErrUnexpectedEOF)
 }
 
 func (c *Client) Initialize(ctx context.Context) error {
@@ -449,6 +462,17 @@ func (c *Client) CallInteractive(ctx context.Context, tool Tool, args map[string
 // EnableTasks is true, a task handle may be returned directly; WaitForTask
 // additionally polls until completion. Neither option retries tools/call.
 func (c *Client) CallWithOptions(ctx context.Context, tool Tool, args map[string]any, options CallOptions) (Exchange, error) {
+	if options.DeferFormInput && options.TaskSubmissionKey == "" {
+		return Exchange{}, errors.New("deferred form input requires a keyed Task submission")
+	}
+	if options.TaskSubmissionKey != "" {
+		if err := validateTaskSubmissionKey(options.TaskSubmissionKey); err != nil {
+			return Exchange{}, err
+		}
+		if !options.EnableTasks || options.WaitForTask || options.Responder != nil || c.Token == "" {
+			return Exchange{}, fmt.Errorf("MCP Task submission keys require an authenticated handle-only Task call")
+		}
+	}
 	if (options.EnableTasks || options.WaitForTask || options.Responder != nil) && c.Version != ProtocolVersion {
 		return Exchange{}, fmt.Errorf("interactive input and MCP Tasks require protocol %s", ProtocolVersion)
 	}
@@ -459,6 +483,9 @@ func (c *Client) CallWithOptions(ctx context.Context, tool Tool, args map[string
 		if err := c.requireTasksCapability(ctx); err != nil {
 			return Exchange{}, err
 		}
+	}
+	if options.TaskSubmissionKey != "" && !c.Capabilities.HasExtension(taskSubmissionExtension) {
+		return Exchange{}, fmt.Errorf("MCP server does not advertise keyed Task submission")
 	}
 	return c.call(ctx, tool, args, options)
 }
@@ -479,13 +506,16 @@ func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, optio
 			params["_meta"] = meta
 		}
 		capabilities := make(map[string]any)
-		if options.Responder != nil {
+		if options.Responder != nil || options.DeferFormInput {
 			capabilities["elicitation"] = map[string]any{"form": map[string]any{}}
 		}
 		if options.EnableTasks {
 			capabilities["extensions"] = map[string]any{TasksExtensionID: map[string]any{}}
 		}
 		meta["io.modelcontextprotocol/clientCapabilities"] = capabilities
+		if options.TaskSubmissionKey != "" {
+			meta[taskSubmissionKeyMeta] = options.TaskSubmissionKey
+		}
 	}
 	startedAt := time.Now()
 	inputRounds := 0
@@ -508,7 +538,13 @@ func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, optio
 			return x, fmt.Errorf("decode tool result: %w", err)
 		}
 		if result.IsError {
+			if options.TaskSubmissionKey != "" {
+				return Exchange{}, fmt.Errorf("MCP server rejected the keyed Task submission")
+			}
 			return x, fmt.Errorf("MCP tool returned isError=true")
+		}
+		if options.TaskSubmissionKey != "" && result.ResultType != "task" {
+			return Exchange{}, fmt.Errorf("MCP server did not return a Task handle for the keyed submission")
 		}
 		if result.ResultType == "input_required" && options.Responder != nil {
 			if inputRounds >= maxInteractiveInputRounds {

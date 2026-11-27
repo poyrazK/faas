@@ -8,7 +8,7 @@
 export type RestoreManagedPostgresDatabaseRequest = {
   name: string;
   /**
-   * A time inside the source's restore_range. Omit it to restore from the latest point, a couple of seconds before the request.
+   * A time inside the source's restore_range. Omit it to use the latest point.
    */
   point_in_time?: string;
   /**

@@ -14,14 +14,15 @@ T = TypeVar("T", bound="AgentBudgetResponse")
 
 @_attrs_define
 class AgentBudgetResponse:
-    """An agent connection's monthly budget for always-on capacity, and what it committed this month."""
+    """An agent connection's monthly budget for always-on capacity, and the always-on cost its changes keep running."""
 
     source: AgentBudgetResponseSource
     """Where the budget comes from."""
     spent_cents: int
-    """Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent."""
+    """Always-on cost a month that the agent's changes keep running, priced at the overage rate and rounded up to
+    the cent. It does not reset each month; lowering capacity gives budget back."""
     month: str
-    """The UTC month spend counts in."""
+    """The current UTC month (kept for compatibility; spent_cents no longer resets monthly)."""
     monthly_cents: int | Unset = UNSET
     """The budget that applies, in cents a month; absent when unlimited."""
     key_monthly_cents: int | Unset = UNSET

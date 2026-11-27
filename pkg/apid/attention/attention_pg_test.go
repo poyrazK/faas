@@ -165,6 +165,8 @@ func TestEvaluateOpensRefreshesDismissesAndResolves(t *testing.T) {
 	f.refusals(stuck, "plan_excess", api.AttentionRefusedBurst, 10*time.Minute)
 	f.refusals(healthy, "plan_excess", api.AttentionRefusedBurst-1, 10*time.Minute)
 	f.refusals(healthy, api.CodeNotFound, 50, 10*time.Minute)
+	f.refusals(healthy, api.CodeMFARequired, 50, 10*time.Minute)
+	f.refusals(healthy, api.CodeStepUpRequired, 50, 10*time.Minute)
 	f.refusals(recovered, "plan_excess", api.AttentionRefusedBurst, 2*time.Hour)
 
 	f.exec("INSERT INTO custom_domains(domain, app_id, cert_status, cert_failed_at, cert_last_error, verified_at, verification_expires_at) VALUES ($1, $2, 'failed', $3, 'CAA forbids', $3, $4)",
@@ -205,7 +207,8 @@ func TestEvaluateOpensRefreshesDismissesAndResolves(t *testing.T) {
 	}
 	for _, missing := range [][3]string{{healthy, api.AttentionKindDeployFailing, "blog"}, {recovered, api.AttentionKindDeployFailing, "api"},
 		{healthy, api.AttentionKindDeployFailing, "old"}, {healthy, api.AttentionKindRefusedBurst, "plan_excess"},
-		{healthy, api.AttentionKindRefusedBurst, api.CodeNotFound}, {recovered, api.AttentionKindRefusedBurst, "plan_excess"},
+		{healthy, api.AttentionKindRefusedBurst, api.CodeNotFound},
+		{healthy, api.AttentionKindRefusedBurst, api.CodeMFARequired}, {healthy, api.AttentionKindRefusedBurst, api.CodeStepUpRequired}, {recovered, api.AttentionKindRefusedBurst, "plan_excess"},
 		{stuck, api.AttentionKindDomainStuck, "fresh.shop.example"}, {healthy, api.AttentionKindDomainStuck, "new.blog.example"}} {
 		if s := find(signals, missing[0], missing[1], missing[2]); s != nil {
 			t.Errorf("unexpected signal %+v", s)

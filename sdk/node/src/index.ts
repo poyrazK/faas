@@ -109,6 +109,19 @@ export {
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 
+export type { ExecutionPipelineOptions } from './generated-public/models/ExecutionPipelineOptions.js';
+export type { ExecutionRetryPolicy } from './generated-public/models/ExecutionRetryPolicy.js';
+export type { ExecutionTaskBatch } from './generated-public/models/ExecutionTaskBatch.js';
+export type { ExecutionTaskBatchItem } from './generated-public/models/ExecutionTaskBatchItem.js';
+export type { ExecutionPipelineResponse } from './generated-public/models/ExecutionPipelineResponse.js';
+export type { ExecutionPipelineStepResponse } from './generated-public/models/ExecutionPipelineStepResponse.js';
+export type { ExecutionPipelineAttemptResponse } from './generated-public/models/ExecutionPipelineAttemptResponse.js';
+
+export type { CreateManagedExecutionWorkflowRequest } from './generated-public/models/CreateManagedExecutionWorkflowRequest.js';
+export type { CreateManagedExecutionWorkflowStep } from './generated-public/models/CreateManagedExecutionWorkflowStep.js';
+export type { ManagedExecutionWorkflowResponse } from './generated-public/models/ManagedExecutionWorkflowResponse.js';
+export type { ManagedExecutionWorkflowArtifactInput } from './generated-public/models/ManagedExecutionWorkflowArtifactInput.js';
+
 export { SourceUploadError, parseSourceUploadCheckpoint, saveSourceUploadCheckpoint, loadSourceUploadCheckpoint, type SourceUploadCheckpoint, type SourceUploadOptions, type SourceUploadProgress, type SourceUploadStage, type SourceUploadCode, type SourceUploadInput, type SourceUploads } from './source-upload.js';
 export { inspectSource, prepareSource, SourcePreparationError, type SourcePreparationCode, type SourcePreparationOptions, type SourcePreparationProgress, type SourceIssue, type SourceEntry, type SourcePlan, type PreparedSource } from './source-preparation.js';
 export { SourceDeploymentError, loadSourceDeploymentState, parseSourceDeploymentState, type SourceDeploymentCode, type SourceDeploymentPhase, type SourceDeploymentArchive, type SourceDeploymentState, type SourceDeploymentProgress, type SourceDeploymentOptions, type SourceDeploymentPreparationOptions, type SourceDeploymentWaitOptions, type SourceDeploymentReleaseProgress, type SourceDeploymentInput, type SourceDeploymentResumeInput, type SourceDeploymentResult, type SourceDeployments } from './source-deployment.js';

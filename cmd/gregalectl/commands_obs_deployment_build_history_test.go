@@ -96,6 +96,15 @@ func TestBuildHistoryAggregateDeduplicationAndClockRegression(t *testing.T) {
 	if changed.History.TotalEvents != 5 || *changed.History.Events[len(changed.History.Events)-1].SourceHTTPStatus != 502 {
 		t.Fatal("source status change was deduplicated")
 	}
+	unknown.SourceHTTPStatus = newInt(429)
+	unknown.Reason = "source_rate_limited"
+	r.observe(unknown, now.Add(5*time.Second))
+	unknown.Reason = "source_runtime_busy"
+	changed = r.observe(unknown, now.Add(6*time.Second))
+	events := changed.History.Events
+	if changed.History.TotalEvents != 7 || len(events) < 2 || events[len(events)-2].Reason != "source_rate_limited" || events[len(events)-1].Reason != "source_runtime_busy" {
+		t.Fatal("different 429 reasons were deduplicated")
+	}
 }
 
 func TestBuildHistoryCountAndByteRetention(t *testing.T) {

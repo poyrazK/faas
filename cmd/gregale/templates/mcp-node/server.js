@@ -1,14 +1,9 @@
 import { startProtocolHeartbeat } from './protocol-telemetry.js';
 import { readFileSync } from 'node:fs';
 import { createApp } from './app.js';
-import { startMcpTaskRuntime } from './task-runtime.js';
 
 const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
-const role = process.env.MCP_TASKS_ROLE || 'combined';
-if (!['combined', 'web'].includes(role)) throw new Error('Set MCP_TASKS_ROLE to combined or web; start the dedicated worker with npm run start:tasks-worker');
-const taskServices = await startMcpTaskRuntime(config, { role });
-const { taskRuntime } = taskServices;
-const { app, handler, beginDrain, closeTaskSubscriptions } = createApp(config, { taskRuntime });
+const { app, handler, beginDrain, closeTaskSubscriptions } = createApp(config);
 const appID = process.env.FAAS_APP_ID || '';
 const host = process.env.MCP_BIND_ADDRESS || (appID ? '0.0.0.0' : '127.0.0.1');
 let stopHeartbeat = () => {};
@@ -21,16 +16,14 @@ async function shutdown() {
   stopHeartbeat();
   beginDrain();
   shutdownPromise = (async () => {
-    const taskDrain = taskServices.close();
     let timeout;
-    const webDrain = new Promise(resolve => {
+    await new Promise(resolve => {
       listener.close(resolve);
       timeout = setTimeout(() => {
         closeTaskSubscriptions();
         listener.closeAllConnections();
       }, drainSeconds * 1000);
     });
-    await Promise.all([webDrain, taskDrain]);
     clearTimeout(timeout);
     closeTaskSubscriptions();
     await handler.close();

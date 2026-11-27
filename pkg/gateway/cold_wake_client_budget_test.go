@@ -53,7 +53,7 @@ func TestColdWakeClientBudgetLimitsDistinctAppsPerNetwork(t *testing.T) {
 // account's wake takes a free slot at once, and it may queue at most
 // GatewayWakeAdmissionQueuedPerAccount more.
 func TestWakeAdmissionQueueAccountShare(t *testing.T) {
-	q := newWakeAdmissionQueue(4, 128, nil)
+	q := newWakeAdmissionQueue(api.GatewayWakeAdmissionParallelism, api.GatewayWakeAdmissionQueueCap, nil)
 	policy := WakeAdmissionPolicyForPlan(api.PlanPro)
 	release := make(chan struct{})
 	started := make(chan string, 64)
@@ -110,5 +110,28 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("condition not reached")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// The account shares only keep the gateway fair while other accounts still
+// find room: one account's running share must leave free slots, and its
+// queued share must fit the gateway's queue with room for others.
+func TestWakeAdmissionAccountShareLeavesRoomForOthers(t *testing.T) {
+	tests := []struct {
+		name         string
+		share, total int
+	}{
+		{"running share leaves two accounts a slot", 3 * api.GatewayWakeAdmissionRunningPerAccount, api.GatewayWakeAdmissionParallelism},
+		{"queued share leaves other accounts queue room", 2 * api.GatewayWakeAdmissionQueuedPerAccount, api.GatewayWakeAdmissionQueueCap},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.share > tt.total {
+				t.Fatalf("share %d exceeds total %d", tt.share, tt.total)
+			}
+		})
+	}
+	if api.GatewayWakeAdmissionRunningPerAccount < 2 {
+		t.Fatalf("running share %d serializes one account's wakes", api.GatewayWakeAdmissionRunningPerAccount)
 	}
 }

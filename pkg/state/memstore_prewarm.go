@@ -249,3 +249,20 @@ func (m *MemStore) CancelPrewarmIntent(_ context.Context, id, accountID string) 
 	m.prewarmIntents[id] = intent
 	return nil
 }
+
+// PruneCronPrewarmIntents mirrors PgStore.PruneCronPrewarmIntents.
+func (m *MemStore) PruneCronPrewarmIntents(_ context.Context, before time.Time, limit int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for id, intent := range m.prewarmIntents {
+		if deleted >= limit {
+			break
+		}
+		if intent.Trigger == PrewarmTriggerCron && prewarmSettled(intent.Status) && intent.ExpiresAt.Before(before) {
+			delete(m.prewarmIntents, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}

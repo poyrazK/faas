@@ -459,8 +459,9 @@ type Instance struct {
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
 	// one-shot guest by guessing its instance id.
-	ExecutionOnly  bool
-	DataRepairOnly bool
+	ExecutionOnly         bool
+	executionTemplateOnly bool
+	DataRepairOnly        bool
 	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
 	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
 	AgentRunOnly bool
@@ -505,6 +506,11 @@ type Instance struct {
 	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
 	// running while it waits on the model.
 	AgentWaitPauseAfter time.Duration
+	// AgentRunDeadline is an agent run's seller deadline when it is below
+	// the request's timeout, the guest ceiling (ADR-20261027090016
+	// amendment 3; agent_run_deadline.go). Zero: the request's timeout.
+	// Guarded by Manager.mu.
+	AgentRunDeadline time.Duration
 	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
 	// for the frozen tier, until Thaw resumes it or teardown kills it.
 	// FrozenSince is when that pause took effect. Both are guarded by
@@ -547,6 +553,11 @@ type Instance struct {
 	RestoreMs    int64
 	NetnsTapMs   int64
 	GuestReadyMs int64
+	// StartupOOM: the guest reported a workload OOM kill (ADR-121) before
+	// this wake returned, yet the instance became ready. The wake's latency
+	// includes the app's memory exhaustion, which is the app's fault, not
+	// the platform's.
+	StartupOOM bool
 	// RestoreError is populated when a requested snapshot restore falls
 	// back to a successful cold boot. It is diagnostic-only: the fallback
 	// remains a successful wake, but vmmd must retain the reason so an
@@ -655,6 +666,8 @@ type Instance struct {
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
 	HealthcheckPath string
+	// ProbeHost is WakeRequest.ProbeHost, kept for the prime burst.
+	ProbeHost       string
 	HealthcheckGRPC bool
 	// HealthcheckGRPCService is the health.v1 service gRPC readiness checked;
 	// plan-default liveness checks the same service.
@@ -914,6 +927,7 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
+	executionTemplateCaptureActive  atomic.Int32
 	financialEgressRead             func(string) (uint64, error)
 	computeAuthority                FinancialComputeAuthority
 	computeNode, computeIncarnation string
@@ -1484,6 +1498,9 @@ type Manager struct {
 	agentWaitMetrics *AgentWaitMetrics
 	agentWaitMu      sync.Mutex
 	agentWaits       map[string]*agentWaitState
+	// agentDeadlineMu guards agentDeadlines, a leaf lock like agentWaitMu.
+	agentDeadlineMu sync.Mutex
+	agentDeadlines  map[string]*agentDeadline
 	// agentUsageTick is the agent run usage sample interval
 	// (agent_run_usage.go); zero is api.AgentRunUsageSampleMillis.
 	agentUsageTick time.Duration
@@ -2421,11 +2438,14 @@ type LivenessProbeConfig struct {
 	GRPC                     bool
 	GRPCService              string
 	Port                     int
-	PeriodSeconds            int
-	TimeoutSeconds           int
-	ConsecutiveFailures      int
-	CooldownSeconds          int
-	IdleResetOnDestroy       bool
+	// Host (ADR-20261119140000) is the Host header guest-init's HTTP probe
+	// sends, with X-Forwarded-Proto: https; empty keeps 127.0.0.1:<port>.
+	Host                string
+	PeriodSeconds       int
+	TimeoutSeconds      int
+	ConsecutiveFailures int
+	CooldownSeconds     int
+	IdleResetOnDestroy  bool
 	// UnpromisedPath marks an HTTP probe of the plan-default path on an app
 	// whose startup contract never proved that path: its readiness was a
 	// declared path such as /actuator/health, or its TCP listener (a direct
@@ -2816,6 +2836,7 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		if inst.Port > 0 && inst.Port <= 65535 {
 			cfg.Port = inst.Port
 		}
+		cfg.Host = inst.ProbeHost
 	}
 	m.mu.Unlock()
 	if m.livenessStarter == nil {
@@ -4101,6 +4122,9 @@ type WakeRequest struct {
 	agentRunOnly     bool
 	agentRunRelay    *AgentRunRelay
 	agentRunInputKey string
+	// sandboxVolume is a persistent sandbox session's workspace volume
+	// (ADR-20261122132055 §4), a host path WakeSandbox sets.
+	sandboxVolume string
 	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
@@ -4142,7 +4166,8 @@ type WakeRequest struct {
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
-	ExecutionOnly bool
+	ExecutionOnly         bool
+	executionTemplateOnly bool
 	// Runs broker metadata is host-only and is accepted only from
 	// WakeExecution. Ordinary app wake paths leave these fields empty.
 	ExecutionLeaseToken             string   `json:"-"`
@@ -4207,6 +4232,9 @@ type WakeRequest struct {
 	// It must match the timeout written by builderd into the build manifest;
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
+	// BorrowedBuilder runs a builder VM in faas-borrowed.slice on a
+	// borrowed builder slot (ADR-20261118154632). Ignored for app VMs.
+	BorrowedBuilder bool
 	// BuildRegistryCredentials are the sealed registry credentials of the
 	// app a builder VM builds (ADR-20261026091500). prepareWakeFiles opens
 	// them into the builder's secrets.env as a Docker config. Ignored for
@@ -4221,6 +4249,12 @@ type WakeRequest struct {
 	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
 	// a two-drive builder and for every VM that is not a builder.
 	BuildKitSeedDrive string
+	// CacheExportManifest is a deferred dependency cache export run's
+	// build.json (ADR-20261029171525 amendment 2). The run boots on the
+	// drive its build left; before boot vmmd stages this manifest and a
+	// fresh entropy seed there and removes the build's build-done.json, in
+	// the guest disk sandbox. Empty for every other VM.
+	CacheExportManifest []byte
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
 	// (netns.AppPort default). The host's published and readiness port
@@ -4235,6 +4269,9 @@ type WakeRequest struct {
 	// customer bind there. The path is stamped on Instance for readers
 	// that resolve it without a second request lookup.
 	HealthcheckPath string
+	// ProbeHost (ADR-20261119140000) is the Host header readiness and prime
+	// GETs send; empty sends the instance address (legacy).
+	ProbeHost string
 	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
@@ -5234,8 +5271,14 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		lease.restoreIdentity = newRestoreIdentityExpectation()
 	}
 	lease.IsBuilder = req.ExportDir != ""
+	if lease.IsBuilder {
+		lease.cacheExportManifest = string(req.CacheExportManifest)
+	}
 	lease.buildMirrors = m.leaseBuildMirrors(req)
 	m.stampCgroupParent(&lease)
+	if lease.IsBuilder && req.BorrowedBuilder {
+		lease.cgroupParent = BorrowedBuilderCgroupParent
+	}
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
@@ -5767,7 +5810,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// teardown kills it and releases the lease.
 	if !m.preparesWakeStateBeforeBoot() {
 		if lease.IsBuilder {
-			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
+			err = writeBuildCgroup(builderCgroupParent(lease), req.Instance, req.MemSizeMiB)
 		} else {
 			err = writeLeaseCgroup(lease, wakeGuestMemoryMiB(req))
 		}
@@ -5876,7 +5919,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID, resumeIdentity: resumeIdentity,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, SandboxID: req.sandboxID, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, executionTemplateOnly: req.executionTemplateOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, SandboxID: req.sandboxID, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
@@ -5887,7 +5930,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		StaticEgressExcluded:   req.StaticEgressExcluded,
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
-		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, ProbeHost: req.ProbeHost, HealthcheckGRPC: req.HealthcheckGRPC,
 		HealthcheckGRPCService:   req.HealthcheckGRPCService,
 		RoutedPortRawTCP:         req.RoutedPortRawTCP,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
@@ -5903,6 +5946,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 		BaseScanGrace: timings.baseScanGrace,
+	}
+	if oom, ok := m.vmm.(interface{ StartupOOMKilled(string) bool }); ok {
+		inst.StartupOOM = oom.StartupOOMKilled(req.Instance)
 	}
 	if err = m.stampNativeInstanceGeneration(inst); err != nil {
 		return nil, fmt.Errorf("wake %s: original launch identity: %w", req.Instance, err)
@@ -6225,6 +6271,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// Per-deployment readiness action. The HTTP path and gRPC
 			// mode/service are forwarded together; both target :8080.
 			HealthcheckPath:          req.HealthcheckPath,
+			ProbeHost:                req.ProbeHost,
 			HealthcheckGRPC:          req.HealthcheckGRPC,
 			HealthcheckGRPCService:   req.HealthcheckGRPCService,
 			ImageHealthcheckRequired: req.ImageHealthcheckRequired,
@@ -6246,6 +6293,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			KeepPaused:         req.KeepPaused,
 			AgentInput:         req.agentRunOnly,
 			InputKey:           req.agentRunInputKey,
+			SandboxVolume:      req.sandboxVolume,
 		}
 		if timings != nil {
 			// ADR-192: hand the pre-restore Manager phases to the VMM so

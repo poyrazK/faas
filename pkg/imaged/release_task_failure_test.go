@@ -76,6 +76,10 @@ func TestReleaseTaskFailureNamesWhoFailed(t *testing.T) {
 			if tc.exitCode != nil && (!strings.Contains(candidate.Error, "exit code 1") || !strings.Contains(candidate.Error, "/tasks/"+task.ID)) {
 				t.Fatalf("candidate error = %q, want the exit code and the task receipt", candidate.Error)
 			}
+			// prod 2026-11-19: the receipt path named a literal {slug}.
+			if tc.exitCode != nil && strings.Contains(candidate.Error, "{slug}") {
+				t.Fatalf("candidate error = %q, want the app named in the receipt path", candidate.Error)
+			}
 			previous, _ := fx.store.DeploymentByID(ctx, fx.previous.ID)
 			if previous.Status != state.DeployLive {
 				t.Fatalf("previous deployment status = %q, want live", previous.Status)

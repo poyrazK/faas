@@ -16,6 +16,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ComposeLoopbackPortWarning explains why a loopback-only Compose mapping
+// produces an internal service. It is part of the scan's text response.
+const ComposeLoopbackPortWarning = "ports are bound to a loopback address, which publishes them only on the machine running Compose; the service is internal, with no public URL (remove the address to publish it)"
+
 // composeCandidate is the loose, decoded shape of one
 // docker-compose services entry. The decoder stays non-strict; keys the scan
 // does not apply are reported per service by composeServiceKeyWarnings
@@ -71,6 +75,10 @@ type composeCandidate struct {
 	// --streaming-enabled` and `gregale app wake-ahead <slug> on` do.
 	Streaming *bool `yaml:"x-gregale-streaming"`
 	WakeAhead *bool `yaml:"x-gregale-wake-ahead"`
+	// Access opens the service's public URL to everyone ("public") or keeps
+	// the Gregale API key requirement ("key"), as `access:` under
+	// project.services in gregale.yaml does (ADR-20261124090000).
+	Access string `yaml:"x-gregale-access"`
 	// RenamedFrom names the service this one was called before, so a
 	// rename keeps its app (ADR-20261029090000).
 	RenamedFrom string `yaml:"x-gregale-renamed-from"`
@@ -346,6 +354,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasWorkload && s.WakeAhead != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-wake-ahead requires a deployable workload", src, name)
 		}
+		access, accessErr := NormalizeServiceAccess(s.Access)
+		if accessErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-access: %w", src, name, accessErr)
+		}
+		if !hasWorkload && access != "" {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-access requires a deployable workload", src, name)
+		}
 		conditions, dependencyErr := composeDependencyConditions(s.DependsOn)
 		if dependencyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, dependencyErr)
@@ -463,8 +478,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// Compose, so the service stays internal (ADR-20261102192943).
 		portsLoopback := len(ports) > 0 && composePortsLoopbackOnly(s.Ports)
 		if portsLoopback {
-			warnings = append(warnings, "reposcan: "+src+": "+name+
-				": ports are bound to a loopback address, which publishes them only on the machine running Compose; the service is internal, with no public URL (remove the address to publish it)")
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+ComposeLoopbackPortWarning)
 		}
 		// build: path — emit a workloadSeed. Class stays empty so an
 		// explicit hint from another detector can fill it. If no hint
@@ -516,6 +530,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			platformTenantRequired:    s.PlatformTenantRequired,
 			streaming:                 s.Streaming,
 			wakeAhead:                 s.WakeAhead,
+			access:                    access,
 			renamedFrom:               renamedFrom,
 
 			ports:         ports,

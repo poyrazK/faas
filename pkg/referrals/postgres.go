@@ -102,6 +102,14 @@ func (s *PostgresStore) List(ctx context.Context, scope Scope, after string, lim
 			at := r.EligibleAt.Time
 			record.EligibleAt = &at
 		}
+		record.SubjectKind, record.OrgName = r.SubjectKind, r.OrgName
+		if r.Kind == "sales" {
+			record.CommissionBPS = r.CommissionBps
+		}
+		if r.PayoutID.Valid {
+			record.PayoutCents = r.PayoutCents
+			record.PayoutPaidOn = r.PayoutPaidOn.Time.Format(time.DateOnly)
+		}
 		out = append(out, record)
 	}
 	return out, nil
@@ -114,7 +122,8 @@ func (s *PostgresStore) Summary(ctx context.Context, scope Scope) ([]Summary, er
 	}
 	out := make([]Summary, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Summary{Kind: r.Kind, Currency: r.Currency, Signups: r.Signups, Paid: r.Paid, Eligible: r.Eligible, RewardCents: r.RewardCents, PaidCents: r.PaidCents})
+		out = append(out, Summary{Kind: r.Kind, Currency: r.Currency, Signups: r.Signups, Paid: r.Paid, Eligible: r.Eligible, RewardCents: r.RewardCents, PaidCents: r.PaidCents,
+			Sales: r.Sales, SalesThisMonth: r.SalesThisMonth, PaidThisMonthCents: r.PaidThisMonthCents})
 	}
 	return out, nil
 }

@@ -308,6 +308,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		sampler.WithInternalEgressUnbilled(true)
 		l.log.Info("meter: internal egress unbilled (ADR-20261114100000)")
 	}
+	sampler.WithGatewayResponseEgress(l.cfg.GatewayResponseEgress)
 	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
 		l.log.Warn("meter: quiet pause billing stays off", "err", err)
 	} else if mode != QuietPauseOff {
@@ -404,9 +405,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 	if l.evaluator != nil {
 		go func() {
-			errc <- l.runTicks(ctx, l.cfg.AlertEvalInterval,
-				func(c context.Context) error {
-					_, err := l.evaluator.RunOnce(c)
+			errc <- l.runScheduledTicks(ctx, l.cfg.AlertEvalInterval,
+				func(c context.Context, scheduled time.Time) error {
+					_, err := l.evaluator.RunOnceAt(c, scheduled)
 					return err
 				}, "alerts")
 		}()
@@ -499,14 +500,20 @@ func (l *Loop) Run(ctx context.Context) error {
 // failures are retained separately so /healthz cannot report a failed billing
 // pass as healthy.
 func (l *Loop) runTicks(ctx context.Context, interval time.Duration, tick func(context.Context) error, name string) error {
+	return l.runScheduledTicks(ctx, interval, func(ctx context.Context, _ time.Time) error {
+		return tick(ctx)
+	}, name)
+}
+
+func (l *Loop) runScheduledTicks(ctx context.Context, interval time.Duration, tick func(context.Context, time.Time) error, name string) error {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
-			l.runTick(ctx, tick, name)
+		case scheduled := <-t.C:
+			l.runTick(ctx, func(ctx context.Context) error { return tick(ctx, scheduled) }, name)
 		}
 	}
 }

@@ -55,4 +55,36 @@ tests:
             exp_annotations:
               summary: "API availability is consuming its monthly error budget rapidly"
               description: "The platform-produced 5xx rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
+              first_action: "Open API Availability and compare the onset with recent deploys. Check gateway errors for the affected routes and nodes."
+              customer_impact: "Platform-generated 5xx accounted for 50% of eligible requests over the last hour."
+              failure_stage: "Request serving before the guest returned a response"
+              dashboard_path: '/d/faas-fleet-m8?viewPanel=11&from=now-2h&to=now'
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
+
+  # A public request fanning out to internal service calls must not dilute
+  # the platform figure: gateway_service_requests_total is subtracted.
+  - name: service fan-out does not hide platform 5xx
+    interval: 1m
+    input_series:
+      - series: 'gateway_requests_total{app="a1",plan="scale",code="200"}'
+        values: '0+99x60'
+      - series: 'gateway_requests_total{app="a1",plan="scale",code="503"}'
+        values: '0+1x60'
+      - series: 'gateway_platform_errors_total{app="a1",plan="scale"}'
+        values: '0+1x60'
+      - series: 'gateway_requests_total{app="svc",plan="scale",code="200"}'
+        values: '0+900x60'
+      - series: 'gateway_service_requests_total{app="svc",code="200"}'
+        values: '0+900x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasApiAvailabilityLow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: api_availability
+            exp_annotations:
+              summary: "API availability < 99.5% (rolling 5m)"
+              description: "The share of eligible requests the platform answered (everything except platform-produced 5xx) over the last 5 minutes has been below the §12 public SLO (99.5%) for 10m. This is rolling, not monthly — the alert is intentionally more sensitive than the customer-facing SLO. Status page /status/slo.json shows the same metric."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"

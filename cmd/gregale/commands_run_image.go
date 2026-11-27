@@ -54,16 +54,20 @@ func (f *imageRunStringList) Set(value string) error {
 // runs (ADR-171) take. Without one of them, a positional argument names an
 // image, as `docker run IMAGE` does; disposable runs take no positional.
 var disposableRunFlags = map[string]bool{
-	"runtime": true, "profile": true, "workflow-id": true, "step-label": true, "source": true,
+	"execution-class": true, "environment": true, "runtime": true, "profile": true, "workflow-id": true, "step-label": true, "source": true,
+	"input-schema": true, "result-schema": true, "input-file": true, "input-file-id": true, "artifact-storage": true, "max-artifact-bytes": true,
 	"file": true, "dir": true, "output-file": true, "artifact-input": true, "output-dir": true,
 	"input": true, "timeout-ms": true, "memory-mb": true, "cpu-millicores": true,
 	"ephemeral-disk-mb": true, "max-output-bytes": true, "wait": true, "watch": true,
-	"poll-interval": true, "wait-timeout": true,
+	"poll-interval": true, "wait-timeout": true, "idempotency-key": true,
 }
 
 // runImageRequested selects image mode from its options or positional image.
 // Arguments belonging to the image command are never scanned as source flags.
 func runImageRequested(args []string) bool {
+	if len(args) > 0 && (args[0] == "controls" || args[0] == "history" || args[0] == "environments" || args[0] == "tasks" || args[0] == "deliveries") {
+		return false
+	}
 	requested, _ := imageRunArgumentBoundary(args)
 	return requested
 }
@@ -80,6 +84,9 @@ var imageRunValueFlags = map[string]bool{
 // The boundary is the positional image, or the command when --image is
 // explicit. A terminator already protects the remaining arguments.
 func imageRunArgumentBoundary(args []string) (bool, int) {
+	if len(args) > 0 && (args[0] == "controls" || args[0] == "history" || args[0] == "tasks" || args[0] == "environments" || args[0] == "deliveries") {
+		return false, -1
+	}
 	image := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]

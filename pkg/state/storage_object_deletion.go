@@ -6,11 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // StorageObjectDeletion is one requested delete of a shared-store object
@@ -59,9 +61,12 @@ type StorageObjectDeletionStore interface {
 
 // Classes of shared-store keys the object GC knows how to check.
 const (
-	StorageObjectClassSnapshot     = "snapshot"
-	StorageObjectClassLayer        = "layer"
-	StorageObjectClassPlatform     = "platform"
+	StorageObjectClassSnapshot = "snapshot"
+	StorageObjectClassLayer    = "layer"
+	StorageObjectClassPlatform = "platform"
+	// StorageObjectClassSource is a build's uploaded source archive
+	// (sources/<build>.tar.gz, ADR-20261117190000).
+	StorageObjectClassSource       = "source"
 	StorageObjectClassUnclassified = "unclassified"
 )
 
@@ -78,6 +83,8 @@ func ClassifyStorageObject(key string) (class, memKey, family string) {
 		return StorageObjectClassPlatform, "", ""
 	case strings.HasPrefix(base, "apps/"), strings.HasPrefix(base, "layers/"), strings.HasPrefix(base, "jobs/"):
 		return StorageObjectClassLayer, "", ""
+	case strings.HasPrefix(key, "sources/"):
+		return StorageObjectClassSource, "", ""
 	case !strings.HasPrefix(base, "snap/"):
 		return StorageObjectClassUnclassified, "", ""
 	}
@@ -171,8 +178,26 @@ func (s *PgStore) StorageObjectReferenced(ctx context.Context, key string) (bool
 		if !ref.Valid || ref.Bool {
 			return true, class, nil
 		}
-		retained, err := s.OperationJobImageRetained(ctx, base)
-		return retained || err != nil, class, err
+		if retained, err := s.OperationJobImageRetained(ctx, base); retained || err != nil {
+			return true, class, err
+		}
+		if !storagekey.IsJobLayer(base) {
+			return false, class, nil
+		}
+		// A job's published image, or any attempt of a job still
+		// materializing (its worker may be writing an unpublished key).
+		job, _ := storagekey.JobLayerJobID(base)
+		jobUUID, err := uuid.Parse(job)
+		if err != nil {
+			return true, class, nil //nolint:nilerr // a key IsJobLayer accepted always parses
+		}
+		jobRef, err := q.JobArtifactReferenced(ctx, s.pool, sqlc.JobArtifactReferencedParams{JobID: pgtype.UUID{Bytes: jobUUID, Valid: true}, StorageKey: base})
+		if err != nil {
+			return true, class, mapErr(err)
+		}
+		return jobRef, class, nil
+	case StorageObjectClassSource:
+		return s.sourceObjectReferenced(ctx, key)
 	default:
 		return true, class, nil
 	}
@@ -183,4 +208,30 @@ func truncateDetail(s string) string {
 		return s[:1000]
 	}
 	return s
+}
+
+// SourceOrphanGrace is how long a source archive with no build row is kept:
+// apid uploads sources/<build>.tar.gz before it creates the build, so an
+// apid crash in between leaves an orphan (builderd's source GC rule).
+const SourceOrphanGrace = 24 * time.Hour
+
+// sourceObjectReferenced keeps a source archive while its build is queued or
+// running, and keeps any whose name does not carry a UUIDv7 creation time or
+// that is younger than SourceOrphanGrace.
+func (s *PgStore) sourceObjectReferenced(ctx context.Context, key string) (bool, string, error) {
+	const class = StorageObjectClassSource
+	name, ok := strings.CutSuffix(strings.TrimPrefix(key, "sources/"), ".tar.gz")
+	id, err := uuid.Parse(name)
+	if !ok || err != nil || id.Version() != 7 || id.String() != name {
+		return true, class, nil //nolint:nilerr // a name without a UUIDv7 creation time is kept, not an error
+	}
+	sec, nsec := id.Time().UnixTime()
+	if time.Since(time.Unix(sec, nsec)) < SourceOrphanGrace {
+		return true, class, nil
+	}
+	ref, err := sqlc.New().BuildSourceReferenced(ctx, s.pool, pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		return true, class, mapErr(err)
+	}
+	return ref, class, nil
 }

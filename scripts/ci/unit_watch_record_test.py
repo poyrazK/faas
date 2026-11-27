@@ -102,6 +102,42 @@ class RecordTest(unittest.TestCase):
                     uwr.open_host(None, **args)
 
 
+class HostConfigTest(unittest.TestCase):
+    """The control plane's host configuration (ADR-20261122170000)."""
+
+    def test_first_step_keeps_the_previous_configuration_as_known_good(self):
+        r = uwr.set_host_config(None, owner="10", previous=A, commit=B, now=100)
+        self.assertEqual(r["host_config"]["known_good"], A)
+        self.assertEqual(r["host_config"]["current"], B)
+        self.assertEqual(r["host_config"]["gate"], uwr.HOST_CONFIG_GATE)
+        self.assertEqual((r["owner_run"], r["hosts"]), ("10", {}))
+        r = uwr.set_host_config(r, owner="11", previous=B, commit=C, now=200)
+        self.assertEqual((r["host_config"]["known_good"], r["host_config"]["current"]), (A, C))
+        self.assertEqual((r["host_config"]["first_activation"], r["host_config"]["last_activation"]), (100, 200))
+        self.assertEqual(r["owner_run"], "11")
+
+    def test_converging_the_known_good_configuration_records_nothing(self):
+        self.assertIsNone(uwr.set_host_config(None, owner="10", previous=A, commit=A, now=1))
+        r = uwr.set_host_config(None, owner="10", previous=A, commit=B, now=1)
+        self.assertIsNone(uwr.set_host_config(r, owner="10", previous=B, commit=A, now=2))
+
+    def test_a_record_with_only_host_configuration_survives_host_changes(self):
+        r = uwr.set_host_config(None, owner="10", previous=A, commit=B, now=1)
+        r = opened(r, "control-plane", plan(G, G), G, 2)  # a converge rerun adds no release
+        self.assertIsNotNone(r)
+        self.assertIn("host_config", r)
+        self.assertIsNotNone(uwr.revert_host(r, host="control-plane", live=G))
+        self.assertTrue(uwr.empty(None))
+        self.assertFalse(uwr.empty(r))
+
+    def test_bad_values_are_refused(self):
+        for kw in ({"previous": "x", "commit": B}, {"previous": A, "commit": "y"}):
+            with self.subTest(kw=kw), self.assertRaises(uwr.RecordError):
+                uwr.set_host_config(None, owner="10", now=1, **kw)
+        with self.assertRaises(uwr.RecordError):
+            uwr.set_host_config(None, owner="run", previous=A, commit=B, now=1)
+
+
 class CommandTest(unittest.TestCase):
     def setUp(self):
         d = tempfile.mkdtemp()
@@ -138,9 +174,9 @@ class CommandTest(unittest.TestCase):
     def test_open_at_the_cap_exits_3_and_keeps_the_record(self):
         for release, expect in ((A, G), (B, A)):
             self.cli("open", "--owner", "10", "--host", "control-plane", "--plan", self.plan_file(plan(release, expect)),
-                     "--live", expect, "--base", BASE, "--now", "100")
+                     "--live", expect, "--base", BASE, "--now", "100", "--max-unwatched", "2")
         code, rec, err = self.cli("open", "--owner", "12", "--host", "control-plane", "--plan", self.plan_file(plan(C, B)),
-                                  "--live", B, "--base", BASE, "--now", "300")
+                                  "--live", B, "--base", BASE, "--now", "300", "--max-unwatched", "2")
         self.assertEqual(code, uwr.CAP_REACHED)
         self.assertIn("wait for the watch to finish", err)
         self.assertEqual(rec["owner_run"], "10")

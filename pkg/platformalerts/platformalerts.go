@@ -53,15 +53,18 @@ const (
 
 // The fleet-wide queries the detector runs: one round trip each, whatever
 // the number of apps. The error rate matches appmetrics.ErrorRatePctQuery
-// (5xx over 2xx and 5xx; client 3xx/4xx are not evidence of an outage).
+// (5xx and capacity refusals over 2xx, 5xx and refusals; client 3xx/4xx are
+// not evidence of an outage). An app refusing all its traffic for lack of
+// capacity answered 429s the detector never saw (Observe audit 2026-11-21,
+// finding 8).
 var (
 	outageErrorRateQuery = fmt.Sprintf(
 		// "> 0" drops an idle app instead of answering 0/0 = NaN for it
 		// (prod rc.347: one idle app failed every detection pass).
-		`sum by (app) (rate(gateway_request_duration_seconds_count{class="5xx"}[%[1]s])) / (sum by (app) (rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s])) > 0) * 100`,
+		`sum by (app) (rate(gateway_request_duration_seconds_count{class="5xx"}[%[1]s]) or rate(gateway_capacity_refusals_total[%[1]s])) / (sum by (app) (rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s]) or rate(gateway_capacity_refusals_total[%[1]s])) > 0) * 100`,
 		api.AppOutageWindow)
 	outageRequestsQuery = fmt.Sprintf(
-		`sum by (app) (increase(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%s]))`, api.AppOutageWindow)
+		`sum by (app) (increase(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s]) or increase(gateway_capacity_refusals_total[%[1]s]))`, api.AppOutageWindow)
 )
 
 // Worker detects outages and delivers platform alert notices.
@@ -75,6 +78,14 @@ type Worker struct {
 	Now          func() time.Time
 	// Outcome, when set, counts each notice's delivery outcome.
 	Outcome func(kind, outcome string)
+	// CheckReleased and SLOReleased decide whether the account's plan and
+	// capability flags still cover a synthetic check or an SLO, the same
+	// gates meterd's runner and SLO rollup apply (ADR-20261028101615). A
+	// check the runner no longer probes keeps its last failed runs for days;
+	// without the gate it was reported as failing every day until they aged
+	// out. nil covers every check and SLO.
+	CheckReleased func(ctx context.Context, check state.RunnableSyntheticCheck) bool
+	SLOReleased   func(ctx context.Context, def state.SLO) bool
 
 	lastDetect, lastTrim time.Time
 }
@@ -196,7 +207,9 @@ func (w *Worker) hasOwnErrorRateRule(ctx context.Context, app state.App) (bool, 
 		return false, err
 	}
 	for _, r := range rules {
-		if !r.Enabled || r.AppID != app.ID {
+		// A stage's rule watches the stage's traffic, not production's
+		// (ADR-20261104120000).
+		if !r.Enabled || r.AppID != app.ID || r.EnvironmentID != "" {
 			continue
 		}
 		if string(r.Metric) == "error_rate_pct" {
@@ -383,7 +396,7 @@ func message(n state.PlatformAlertNotice, app state.App, dashboardURL string) (s
 		var d outageDetail
 		_ = json.Unmarshal(n.Detail, &d)
 		subject = fmt.Sprintf("Gregale: %s is failing (%.0f%% of requests return errors)", app.Slug, d.ErrorRatePct)
-		fmt.Fprintf(&b, "Your app %s answered %.1f%% of its last %d requests with a server error (5xx) over the past %s.\n\n",
+		fmt.Fprintf(&b, "Your app %s answered %.1f%% of its last %d requests with a server error (5xx) or a capacity refusal (429) over the past %s.\n\n",
 			app.Slug, d.ErrorRatePct, d.Requests, d.Window)
 		b.WriteString("Find out why:\n")
 		fmt.Fprintf(&b, "  gregale debug status %s\n  gregale logs %s --since 30m\n\n", app.Slug, app.Slug)

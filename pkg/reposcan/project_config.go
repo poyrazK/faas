@@ -116,7 +116,14 @@ func applyProjectConfig(fsys fs.FS, workloads []Workload) ([]string, error) {
 		case "public":
 			w.Unpublished = false
 		}
+		if service.Access != "" {
+			w.Access = service.Access
+		}
 		w.DependsOn = mergeDependsOn(w.DependsOn, service.DependsOn)
+		if service.Uses != nil {
+			uses := service.Uses.Normalized()
+			w.Uses = &uses
+		}
 	}
 	return warnings, nil
 }

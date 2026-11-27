@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sharedruntime"
@@ -45,7 +46,17 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 	return loadLocalOCIArchiveContext(context.Background(), archivePath)
 }
 
+type localOCIProvenance struct {
+	Evidence *imagechain.Evidence
+	Image    imagechain.Image
+	Digest   string
+	Streams  []*imagechain.LayerStream
+}
+
 func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Config, []io.ReadCloser, func(), error) {
+	return loadLocalOCIArchiveWithProvenance(ctx, archivePath, nil)
+}
+func loadLocalOCIArchiveWithProvenance(ctx context.Context, archivePath string, proof *localOCIProvenance) (oci.Config, []io.ReadCloser, func(), error) {
 	archive, err := openLocalOCIArchive(archivePath)
 	if err != nil {
 		return oci.Config{}, nil, func() {}, err
@@ -79,7 +90,7 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 		layerFiles = append(layerFiles, f)
 	}
 
-	configBytes, err := extractVerifiedLocalOCIBlobs(ctx, archive, manifest, layerFiles)
+	configBytes, err := extractVerifiedLocalOCIBlobs(ctx, archive, manifest.Manifest, layerFiles)
 	if err != nil {
 		return fail(err)
 	}
@@ -101,6 +112,23 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 	readers := make([]io.ReadCloser, len(layerFiles))
 	for i, f := range layerFiles {
 		readers[i] = f
+		if proof != nil {
+			d := manifest.Layers[i]
+			stream, err := imagechain.NewLayerStream(ctx, f, imagechain.Descriptor{MediaType: d.MediaType, Digest: d.Digest, Size: d.Size}, config.DiffIDs[i], i)
+			if err != nil {
+				return fail(err)
+			}
+			readers[i] = stream
+			proof.Streams = append(proof.Streams, stream)
+		}
+	}
+	if proof != nil {
+		proof.Digest = manifest.digest
+		proof.Evidence = &imagechain.Evidence{SourceManifest: bytes.Clone(manifest.raw), Config: bytes.Clone(configBytes)}
+		proof.Image, err = imagechain.Validate(proof.Evidence, proof.Digest, proof.Digest)
+		if err != nil {
+			return fail(err)
+		}
 	}
 	return config, readers, cleanup, nil
 }
@@ -113,15 +141,19 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding, runtime string, manifest api.AppManifest, in rootfs.BuildInput) (rootfs.BuildResult, error) {
 	var baseDiffIDs []string
 	if runtime != "" {
-		_, ids, err := h.runtimeBaseDiffIDs(ctx, runtime, "")
+		ids, err := h.sharedRuntimeBaseDiffIDs(ctx, runtime, dep)
 		if err != nil {
 			return rootfs.BuildResult{}, fmt.Errorf("imaged: shared runtime app layer: %w", err)
 		}
 		baseDiffIDs = ids
 	}
+	release := sharedRuntimeSplit{
+		keepsToolchain: runtime != "" && sharedruntime.ReleaseNeedsPackageManager(runtime, dep.ReleaseCommand, dep.ReleaseCommandShell),
+		keepsApp:       runtime != "" && len(dep.ReleaseCommand) > 0,
+	}
 	reuseKey := ""
 	if source == nil {
-		reuseKey = h.appLayerReuseKey(app, acct, dep.ImageDigest, runtime, baseDiffIDs, manifest)
+		reuseKey = h.appLayerReuseKey(app, acct, dep.ImageDigest, runtime, baseDiffIDs, manifest, release)
 	}
 	in.Manifest = manifest
 	var prepareErr error
@@ -136,14 +168,14 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 		if runtime == "" {
 			return cleanup, nil
 		}
-		shared, err := h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, dep.RootfsPath, config, layers, &build.Manifest, app)
+		shared, err := h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, dep.RootfsPath, config, layers, &build.Manifest, app, release)
 		if err != nil {
 			cleanup()
 			prepareErr = fmt.Errorf("imaged: shared runtime app layer: %w", err)
 			return nil, prepareErr
 		}
 		if shared.Reason != "" {
-			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
+			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason, "outside_app", shared.OutsideApp)
 		}
 		markLayerPhase(ctx, "split")
 		build.Layers = shared.layers
@@ -160,36 +192,42 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 	}
 }
 
+type verifiedLocalOCIManifest struct {
+	oci.Manifest
+	digest string
+	raw    []byte
+}
+
 // readVerifiedLocalOCIManifest reads an archive's single image manifest
 // through its index and checks the manifest against its descriptor and the
 // local OCI format limits.
-func readVerifiedLocalOCIManifest(ctx context.Context, archive io.ReadSeeker) (oci.Manifest, error) {
+func readVerifiedLocalOCIManifest(ctx context.Context, archive io.ReadSeeker) (verifiedLocalOCIManifest, error) {
 	indexBytes, err := readLocalOCIEntryFrom(ctx, archive, "index.json", api.LocalOCIMaxIndexBytes)
 	if err != nil {
-		return oci.Manifest{}, fmt.Errorf("read OCI index: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("read OCI index: %w", err)
 	}
 	var index localOCIIndex
 	if err := json.Unmarshal(indexBytes, &index); err != nil {
-		return oci.Manifest{}, fmt.Errorf("decode OCI index: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("decode OCI index: %w", err)
 	}
 	if len(index.Manifests) != 1 {
-		return oci.Manifest{}, fmt.Errorf("OCI index has %d manifests, want exactly one", len(index.Manifests))
+		return verifiedLocalOCIManifest{}, fmt.Errorf("OCI index has %d manifests, want exactly one", len(index.Manifests))
 	}
 	if index.SchemaVersion != 2 || (index.MediaType != "" && index.MediaType != "application/vnd.oci.image.index.v1+json") {
-		return oci.Manifest{}, errors.New("unsupported OCI index format")
+		return verifiedLocalOCIManifest{}, errors.New("unsupported OCI index format")
 	}
 	manifestBytes, err := readLocalOCIDescriptor(ctx, archive, index.Manifests[0], api.LocalOCIMaxManifestBytes)
 	if err != nil {
-		return oci.Manifest{}, fmt.Errorf("read OCI manifest: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("read OCI manifest: %w", err)
 	}
 	var manifest oci.Manifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return oci.Manifest{}, fmt.Errorf("decode OCI manifest: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("decode OCI manifest: %w", err)
 	}
 	if err := validateLocalOCIManifest(index.Manifests[0], manifest); err != nil {
-		return oci.Manifest{}, err
+		return verifiedLocalOCIManifest{}, err
 	}
-	return manifest, nil
+	return verifiedLocalOCIManifest{Manifest: manifest, digest: index.Manifests[0].Digest, raw: manifestBytes}, nil
 }
 
 // loadLocalOCIConfigContext reads and verifies only a builderd OCI export's
@@ -342,6 +380,47 @@ type appLayerReport struct {
 	// Python is what a package manager's `run` in the start command is
 	// checked against (ADR-1500 amendment 3); filled with PythonInterpreter.
 	Python sharedruntime.PythonLayer
+	// KeepBun keeps mise's Bun install beside /app for an app that starts
+	// through Bun (ADR-20261124160000); BunBinDir is where its bun was.
+	KeepBun   bool
+	BunBinDir string
+	// NextStandalone records the builder's marker beside a Next.js
+	// standalone server whose static and public files it copied.
+	NextStandalone bool
+	// YarnPnP records Yarn Plug'n'Play's loader at the root of /app
+	// (ADR-20261125170000): the app runs only through yarn.
+	YarnPnP bool
+}
+
+// keepName returns the name a kept entry has in the filtered layer: an /app
+// entry, or a Bun install entry when the report keeps Bun.
+func (r *appLayerReport) keepName(name string) (string, bool) {
+	if kept, ok := functionAppEntryName(name); ok {
+		return kept, true
+	}
+	if r == nil || !r.KeepBun || name == "" || pathpkg.IsAbs(name) {
+		return "", false
+	}
+	clean := pathpkg.Clean(name)
+	if !sharedruntime.BunInstallEntry(clean) {
+		return "", false
+	}
+	return clean, true
+}
+
+// noteKept records what a kept entry tells the shared runtime start.
+func (r *appLayerReport) noteKept(hdr *tar.Header) {
+	if r == nil {
+		return
+	}
+	switch {
+	case hdr.Name == sharedruntime.NextStandaloneMarker && hdr.Typeflag == tar.TypeReg:
+		r.NextStandalone = true
+	case sharedruntime.YarnPnPLoader(hdr.Name):
+		r.YarnPnP = true
+	case r.KeepBun && r.BunBinDir == "" && (hdr.Typeflag == tar.TypeReg || hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink):
+		r.BunBinDir = sharedruntime.BunBinDir(hdr.Name)
+	}
 }
 
 const appLayerReportMaxUnexpected = 8
@@ -503,13 +582,14 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 				_ = zr.Close()
 				return fail(fmt.Errorf("read function layer %d: %w", i, nextErr))
 			}
-			name, keep := functionAppEntryName(hdr.Name)
+			name, keep := report.keepName(hdr.Name)
 			if !keep {
 				report.dropped(hdr)
 				continue
 			}
 			copyHeader := *hdr
 			copyHeader.Name = name
+			report.noteKept(&copyHeader)
 			var content io.Reader = tr
 			if report != nil && report.PythonInterpreter != "" {
 				relinked, relinkErr := report.relinkVenv(&copyHeader, tr)
@@ -530,7 +610,7 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 				return fail(fmt.Errorf("function layers exceed %d uncompressed bytes", maxFunctionAppUncompressedBytes))
 			}
 			if copyHeader.Typeflag == tar.TypeLink {
-				linkName, linkOK := functionAppEntryName(copyHeader.Linkname)
+				linkName, linkOK := report.keepName(copyHeader.Linkname)
 				if !linkOK {
 					_ = tw.Close()
 					_ = zw.Close()

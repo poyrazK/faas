@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,9 @@ type credentialRole struct {
 	// customRoles are the declared custom roles the login receives
 	// (ADR-20261116213000).
 	customRoles []string
+	// defaultCustomRole, one of customRoles, is the role the login starts
+	// every session as; "" for none (amendment 2).
+	defaultCustomRole string
 }
 
 type credentialRoleManager interface {
@@ -69,7 +73,7 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
 		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID,
-		customRoles: request.CustomRoles.Names()}
+		customRoles: request.CustomRoles.Names(), defaultCustomRole: request.CustomRoleDefault}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
@@ -243,6 +247,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 			"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO " + name,
 			"ALTER DEFAULT PRIVILEGES FOR ROLE " + owner + " IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO " + name,
 			"ALTER DEFAULT PRIVILEGES FOR ROLE " + owner + " IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO " + name,
+			// PUBLIC has no EXECUTE on the owner's functions (initializeCredentialSchema),
+			// so the app's own login gets it on those in public: an app calls the
+			// functions its migrations made (ADR-20261123112326).
+			"GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO " + name,
+			"ALTER DEFAULT PRIVILEGES FOR ROLE " + owner + " IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO " + name,
 		}
 		if role.access == managedpostgres.CredentialReadOnly {
 			queries = []string{
@@ -348,6 +357,8 @@ type sqlRoleInfo struct {
 	// customMarkers are the markers of the custom roles (ADR-20261116213000)
 	// the role is a member of; memberships leaves those roles out.
 	customMarkers []string
+	// customNames are those custom roles' names, in the same order.
+	customNames []string
 }
 
 func credentialRoleInfo(ctx context.Context, tx pgx.Tx, name string) (sqlRoleInfo, error) {
@@ -358,9 +369,11 @@ func credentialRoleInfo(ctx context.Context, tx pgx.Tx, name string) (sqlRoleInf
    AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') NOT LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname),
  EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND COALESCE((to_jsonb(m)->>'inherit_option')::boolean, false)),
  ARRAY(SELECT COALESCE(shobj_description(parent.oid, 'pg_authid'), '') FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
-   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') LIKE 'gregale:custom-role:v1:%')
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname),
+ ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname)
  FROM pg_roles r WHERE rolname = $1`, name).Scan(&info.login, &info.superuser, &info.createDB, &info.createRole, &info.replication, &info.bypassRLS,
-		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership, &info.customMarkers)
+		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership, &info.customMarkers, &info.customNames)
 	return info, err
 }
 
@@ -384,7 +397,23 @@ func (i sqlRoleInfo) matches(role credentialRole) bool {
 	if role.access == managedpostgres.CredentialAuth {
 		return len(i.memberships) == 1 && i.memberships[0] == role.authOwner && sameSettings(i.configuration, authLoginSettings(role))
 	}
-	return len(i.memberships) == 0 && len(i.configuration) == 0
+	// A runtime or read-only login may start as one of its custom roles
+	// (amendment 2); Ensure and the custom-role apply keep that setting.
+	return len(i.memberships) == 0 && (len(i.configuration) == 0 ||
+		len(i.configuration) == 1 && i.defaultCustomRole() != "")
+}
+
+// defaultCustomRole is the custom role a login's only setting starts it as,
+// or "" when that setting is not role=<one of its custom roles>.
+func (i sqlRoleInfo) defaultCustomRole() string {
+	if len(i.configuration) != 1 {
+		return ""
+	}
+	name, ok := strings.CutPrefix(i.configuration[0], "role=")
+	if !ok || !slices.Contains(i.customNames, name) {
+		return ""
+	}
+	return name
 }
 
 // captureTables mirrors commit.CaptureTables: the Postgres change outbox

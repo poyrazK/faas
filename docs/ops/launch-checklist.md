@@ -121,6 +121,13 @@ production deployment.
   then `[meter] internal_egress_unbilled = true` is set on meterd. Turned on
   while instances run, each instance's first internal reading is a baseline
   only (billing review R12-3).
+- **Verify:** meterd logs `gateway response bytes are billed as app egress`
+  at start (`FAAS_GATEWAY_RESPONSE_EGRESS=true`, ADR-20261121210517), and a
+  test app's response bytes show up in its account's egress
+  (`GET /v1/account/usage`) within a few minutes. Compute runs the
+  namespace-local bridge, so without it public responses are outside the
+  egress allowance and unbilled (billing review R12-1). Turn it off in the
+  same change that turns on public forwarding (ADR-1749) for any node.
 - **Signed:** ____________________  date: _________
 
 ## Known limits at launch

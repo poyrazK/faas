@@ -51,7 +51,14 @@ type CustomRole struct {
 	// member of, with inheritance (Windmill grants windmill_user to
 	// windmill_admin).
 	MemberOf []string
-	State    CustomRoleState
+	// DefaultFor lists the access modes (read_write, read_only; a subset of
+	// GrantedTo) whose logins start every session as this role, as if each
+	// session began with SET ROLE. At most one role per access mode of a
+	// database. Tools whose own connection must bypass row-level security
+	// (Windmill) use it with a BYPASSRLS role; poolers refuse a role set in
+	// the connection string.
+	DefaultFor []CredentialAccess
+	State      CustomRoleState
 	// Revision increases with every change, so an apply only settles the
 	// declaration it read.
 	Revision     int64
@@ -64,10 +71,11 @@ type CustomRole struct {
 
 // CustomRoleSpec is the provider's view of one desired role.
 type CustomRoleSpec struct {
-	Name      string
-	BypassRLS bool
-	GrantedTo []CredentialAccess
-	MemberOf  []string
+	Name       string
+	BypassRLS  bool
+	GrantedTo  []CredentialAccess
+	MemberOf   []string
+	DefaultFor []CredentialAccess
 }
 
 // CustomRoleApplier is an optional provider capability. ApplyCustomRoles
@@ -90,6 +98,10 @@ var ErrBypassRLSConflict = fmt.Errorf("%w: BYPASSRLS custom roles cannot coexist
 // ErrBypassRLSUnavailable means the backend cannot create BYPASSRLS roles on
 // this database (for example a Neon project from before 2023-08-15).
 var ErrBypassRLSUnavailable = fmt.Errorf("%w: this database cannot create BYPASSRLS roles", pgerrors.ErrUnsupported)
+
+// ErrCustomRoleDefaultTaken refuses a DefaultFor access mode another
+// declared role is already the default role of.
+var ErrCustomRoleDefaultTaken = fmt.Errorf("%w: another custom role is already the default role of that access mode", pgerrors.ErrConflict)
 
 // ErrCustomRolesUnsupported means the database's backend has no custom-role
 // support.
@@ -164,7 +176,60 @@ func (r CustomRole) grantsTo(access CredentialAccess) bool {
 }
 
 func (r CustomRole) spec() CustomRoleSpec {
-	return CustomRoleSpec{Name: r.Name, BypassRLS: r.BypassRLS, GrantedTo: slices.Clone(r.GrantedTo), MemberOf: slices.Clone(r.MemberOf)}
+	return CustomRoleSpec{Name: r.Name, BypassRLS: r.BypassRLS, GrantedTo: slices.Clone(r.GrantedTo), MemberOf: slices.Clone(r.MemberOf), DefaultFor: slices.Clone(r.DefaultFor)}
+}
+
+// customRoleDefaultable lists the access modes a custom role can be the
+// default role of. A migration login already starts as the schema owner.
+var customRoleDefaultable = []CredentialAccess{CredentialReadOnly, CredentialReadWrite}
+
+// NormalizeCustomRoleDefaults validates, deduplicates and orders the access
+// modes a role is the default of; each must be one it is granted to.
+func NormalizeCustomRoleDefaults(defaults, grants []CredentialAccess) ([]CredentialAccess, error) {
+	seen := map[CredentialAccess]bool{}
+	for _, access := range defaults {
+		access = access.Privileges()
+		if !slices.Contains(customRoleDefaultable, access) {
+			return nil, fmt.Errorf("%w: a custom role can be the default role of read_write and read_only logins, not %q", ErrInvalid, access)
+		}
+		if !slices.Contains(grants, access) {
+			return nil, fmt.Errorf("%w: a custom role can be the default role only of logins it is granted to; grant it to %q first", ErrInvalid, access)
+		}
+		seen[access] = true
+	}
+	out := make([]CredentialAccess, 0, len(seen))
+	for access := range seen {
+		out = append(out, access)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// customRoleDefaultTaken names another declared role that is already the
+// default of one of role's DefaultFor access modes.
+func customRoleDefaultTaken(roles []CustomRole, role CustomRole) string {
+	for _, other := range roles {
+		if other.State == CustomRoleDeleting || other.Name == role.Name {
+			continue
+		}
+		for _, access := range role.DefaultFor {
+			if slices.Contains(other.DefaultFor, access) {
+				return other.Name
+			}
+		}
+	}
+	return ""
+}
+
+// CustomRoleDefaultFor names the declared role logins of access start as,
+// or "" for none.
+func CustomRoleDefaultFor(roles []CustomRole, access CredentialAccess) string {
+	for _, role := range roles {
+		if role.State != CustomRoleDeleting && role.grantsTo(access) && slices.Contains(role.DefaultFor, access.Privileges()) {
+			return role.Name
+		}
+	}
+	return ""
 }
 
 // DesiredCustomRoles is the declaration a provider applies: every role not
@@ -277,8 +342,10 @@ type CustomRoleStore interface {
 	ListCustomRoles(ctx context.Context, accountID, databaseID string) ([]CustomRole, error)
 	// SaveCustomRole inserts or replaces one role as pending. It refuses
 	// with ErrBypassRLSConflict a BYPASSRLS role on a database with a live
-	// Data API or Auth binding, ErrQuotaExceeded past limit roles, and
-	// ErrInvalid a MemberOf name that is not a declared role.
+	// Data API or Auth binding, ErrQuotaExceeded past limit roles,
+	// ErrInvalid a MemberOf name that is not a declared role, and
+	// ErrCustomRoleDefaultTaken a DefaultFor access mode another role is
+	// the default of.
 	SaveCustomRole(ctx context.Context, role CustomRole, limit int, now time.Time) (CustomRole, error)
 	// DeleteCustomRole marks the role deleting. A role another role is a
 	// member of is refused with ErrConflict.

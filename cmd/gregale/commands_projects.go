@@ -37,6 +37,8 @@ func cmdProjects(args []string) int {
 		return cmdProjectsRemove(args[1:])
 	case "rollback":
 		return cmdProjectsRollback(args[1:])
+	case "destroy":
+		return cmdProjectsDestroy(args[1:])
 	case "preview-secrets":
 		return cmdProjectsPreviewSecrets(args[1:])
 	case "import":
@@ -51,7 +53,12 @@ func cmdProjects(args []string) int {
 		}
 		return cmdAppProject(append([]string{args[0], "--project", args[1]}, args[2:]...))
 	default:
-		printCommandValidation(os.Stderr, "unknown projects subcommand %q\n", args[0])
+		// The command is `project`; `project create` also named the old
+		// plural and gave no way to create one (prod 2026-11-19).
+		printCommandValidation(os.Stderr, "unknown project subcommand %q\n", args[0])
+		if args[0] == "create" || args[0] == "new" {
+			_, _ = fmt.Fprintln(os.Stderr, "A project is created by its first deploy: run `gregale deploy --project` in the project's directory.")
+		}
 		return unknownSubcommandChoices(os.Stderr, "projects", nestedCliCommand("projects"), args[0])
 	}
 }
@@ -1292,6 +1299,9 @@ func renderProjectParked(project api.ProjectResponse, parked map[string]api.AppR
 // liveness-parked service no longer reads as plain "live".
 func projectWorkloadDeploymentStatus(workload api.ProjectWorkloadResponse, parked map[string]api.AppResponse) string {
 	status := orDash(workload.DeploymentStatus)
+	if status == "live" && workload.TrafficPercent > 0 && workload.TrafficPercent < 100 {
+		status = fmt.Sprintf("live/%d%%", workload.TrafficPercent)
+	}
 	if workload.Status != appStatusParked {
 		return status
 	}

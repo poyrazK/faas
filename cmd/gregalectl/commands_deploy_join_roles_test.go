@@ -118,7 +118,10 @@ func TestNodeJoinSelectsRolesOnlyOnAManagedHost(t *testing.T) {
 	}
 	facts, _ := selection["ansible.builtin.set_fact"].(map[string]any)
 	expr, _ := facts["faas_join_converge_roles"].(string)
-	for _, want := range []string{"faas_join_managed_host", "faas_join_converge_roles_requested", "else none"} {
+	// A manifest or operator-vars change since the record converges every
+	// role: the role hashes cover repository content only (rc.364).
+	for _, want := range []string{"faas_join_managed_host", "faas_join_converge_roles_requested", "else none",
+		"faas_join_recorded_role_record", ".environment", "faas_join_environment_sha256"} {
 		if !strings.Contains(expr, want) {
 			t.Errorf("role selection %q must mention %q", expr, want)
 		}

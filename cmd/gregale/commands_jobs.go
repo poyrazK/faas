@@ -295,6 +295,7 @@ func cmdJobsAdd(args []string) int {
 	}
 	if *command != "" {
 		req.Command = parseJobCommand(*command)
+		warnShellLineCommand(req.Command)
 	} else if len(argv) > 0 {
 		req.Command = argv
 	}
@@ -314,6 +315,15 @@ func cmdJobsAdd(args []string) int {
 }
 
 const jobCommandFlagUsage = "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after --"
+
+// warnShellLineCommand flags a --command that parsed to one argument holding
+// a shell line: the guest would exec the whole string as a program name and
+// every task would fail with 127 (prod hunt r62).
+func warnShellLineCommand(argv []string) {
+	if len(argv) == 1 && strings.ContainsAny(argv[0], " \t;|&$") {
+		_, _ = fmt.Fprintf(osStderr, "warning: --command is one argument %q, which runs as a program name; to run a shell line pass --command '/bin/sh,-c,<line>' or give the command after --\n", argv[0])
+	}
+}
 
 // parseJobCommand reads --command. A JSON array of strings is taken as the
 // exact argv; otherwise the value is split on commas, and "\," is a comma
@@ -427,6 +437,7 @@ func cmdJobsUpdate(args []string) int {
 	}
 	if set["command"] {
 		req.Command = parseJobCommand(*command)
+		warnShellLineCommand(req.Command)
 		touched = true
 	} else if len(argv) > 0 {
 		req.Command = argv
@@ -1468,6 +1479,13 @@ func cmdJobsReplayFailed(args []string) int {
 	if run.ID != args[1] {
 		rememberAcceptedJob(args[0], run)
 	}
+	if !jsonOutput {
+		if job, jobErr := client.GetJob(requestCtx, args[0]); jobErr == nil {
+			if note := jobReplayCommandNote(args[0], job.Command, run.Command); note != "" {
+				PrintWarn(osStderr, "%s", note)
+			}
+		}
+	}
 	if waitRequested {
 		if run.ID == args[1] {
 			if jsonOutput {
@@ -1899,8 +1917,13 @@ func renderJobState(w io.Writer, j api.JobResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "name:", j.Name)
 	if j.Schedule != "" {
 		_, _ = fmt.Fprintf(w, "  %-10s %s (%s)\n", "schedule:", j.Schedule, j.Timezone)
+		// last_scheduled_at is the schedule's cursor: the last slot it
+		// handled, reset to the change time when the schedule changes so
+		// earlier slots are not backfilled. It was labelled "last run" and
+		// showed a time with no run right after `job update --schedule`
+		// (prod hunt r56); `job occurrences` lists real scheduled runs.
 		if j.LastScheduledAt != "" {
-			_, _ = fmt.Fprintf(w, "  %-10s %s\n", "last run:", j.LastScheduledAt)
+			_, _ = fmt.Fprintf(w, "  %-10s %s (runs: gregale job occurrences %s)\n", "last slot:", j.LastScheduledAt, j.Name)
 		}
 	}
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "image:", j.ImageRef)

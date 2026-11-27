@@ -29,7 +29,7 @@ import (
 
 const (
 	rolloutsUsage        = rolloutsRecoverUsage + "\n" + rolloutsStatusUsage
-	rolloutsRecoverUsage = "usage: gregale rollouts recover <slug> --action advance|promote|abort [--deployment ID|vN --expected-predecessor ID|vN] [--reason <text>]"
+	rolloutsRecoverUsage = "usage: gregale rollouts recover <slug> --action advance|promote|abort [--expected-step N] [--deployment ID|vN --expected-predecessor ID|vN] [--reason <text>]"
 )
 
 func cmdRollouts(args []string) int {
@@ -91,6 +91,7 @@ func cmdRolloutsRecover(args []string) int {
 	reason := fs.String("reason", "", "operator-supplied reason (logged to deployment_audit)")
 	deployment := fs.String("deployment", "", "exact deployment ID or vN (abort only)")
 	predecessor := fs.String("expected-predecessor", "", "exact retained predecessor ID or vN (requires --deployment)")
+	expectedStep := fs.Int("expected-step", -1, "observed canary step; refuse if the canary has moved (advance and promote)")
 	// The public usage is `recover <slug> --action ...`, while the
 	// standard flag package stops parsing at the first positional
 	// argument. Peel off the documented slug first so both that
@@ -132,6 +133,9 @@ func cmdRolloutsRecover(args []string) int {
 		return printErr("Invalid --action", fmt.Errorf("--action must be one of: advance, promote, abort; got %q", *action))
 	}
 	pinned := *deployment != "" || *predecessor != ""
+	if *expectedStep >= 0 && (*action == "abort" || pinned) {
+		return printErr("Invalid recovery selection", fmt.Errorf("--expected-step applies only to --action advance or promote"))
+	}
 	if pinned && (*action != "abort" || *deployment == "" || *predecessor == "") {
 		return printErr("Invalid recovery selection", fmt.Errorf("exact recovery requires --action abort, --deployment and --expected-predecessor"))
 	}
@@ -157,6 +161,8 @@ func cmdRolloutsRecover(args []string) int {
 			return printErr("Invalid recovery selection", fmt.Errorf("the predecessor must be different from the candidate deployment"))
 		}
 		resp, err = client.RecoverExactRollout(ctx, slug, *deployment, *predecessor, *reason)
+	} else if *expectedStep >= 0 {
+		resp, err = client.RecoverRolloutAtStep(ctx, slug, *action, *reason, *expectedStep)
 	} else {
 		resp, err = client.RecoverRollout(ctx, slug, *action, *reason)
 	}

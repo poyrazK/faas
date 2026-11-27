@@ -59,3 +59,21 @@ func (q *Queries) SetAppPublicBuildURLs(ctx context.Context, db DBTX, arg SetApp
 	}
 	return result.RowsAffected(), nil
 }
+
+const setProjectEnvironmentCloneDeploymentPublicBuildURLs = `-- name: SetProjectEnvironmentCloneDeploymentPublicBuildURLs :exec
+INSERT INTO deployment_public_build_urls(deployment_id,urls)
+VALUES ($1::uuid, $2::jsonb)
+ON CONFLICT(deployment_id) DO UPDATE SET urls=EXCLUDED.urls
+`
+
+type SetProjectEnvironmentCloneDeploymentPublicBuildURLsParams struct {
+	DeploymentID pgtype.UUID
+	Urls         []byte
+}
+
+// A clone's target deployment carries the build URLs captured from its source
+// deployment (ADR-20261104120000 amendment 2026-11-21).
+func (q *Queries) SetProjectEnvironmentCloneDeploymentPublicBuildURLs(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentPublicBuildURLsParams) error {
+	_, err := db.Exec(ctx, setProjectEnvironmentCloneDeploymentPublicBuildURLs, arg.DeploymentID, arg.Urls)
+	return err
+}

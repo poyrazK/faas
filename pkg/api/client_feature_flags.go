@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 func flagsPath(project, environment string) string {
@@ -105,6 +106,14 @@ func (c *Client) PromoteProjectFlagRollout(ctx context.Context, project, environ
 	return out, err
 }
 
+// KillProjectFlag sets one flag's kill on the latest configuration
+// (ADR-20261117215858). It needs no expected version and is idempotent.
+func (c *Client) KillProjectFlag(ctx context.Context, project, environment, key string) (FeatureFlagKillResponse, error) {
+	var out FeatureFlagKillResponse
+	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/kill", struct{}{}, &out)
+	return out, err
+}
+
 // RuntimeFlags requires a Client constructed with a workload JWT for gregale:flags.
 // Account API keys cannot read this endpoint.
 func (c *Client) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {
@@ -172,11 +181,94 @@ func (c *Client) ProjectFlagExperimentResults(ctx context.Context, project, envi
 	return out, err
 }
 
+// ProjectFlagExperimentResultsBySegment reads an experiment's results split
+// by a cohort's members (ADR 20261119173702 §3).
+func (c *Client) ProjectFlagExperimentResultsBySegment(ctx context.Context, project, environment, key, cohort string) (FlagExperimentResults, error) {
+	var out FlagExperimentResults
+	path := experimentsPath(project, environment) + "/" + url.PathEscape(key) + "/results?segment=" + url.QueryEscape(cohort)
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func experimentEnvPath(project, environment, rest string) string {
+	return "/v1/projects/" + url.PathEscape(project) + "/environments/" + url.PathEscape(environment) + rest
+}
+
+// ListProjectFlagExperimentLayers lists an environment's experiment layers
+// (ADR 20261119173702 §2).
+func (c *Client) ListProjectFlagExperimentLayers(ctx context.Context, project, environment string) (FlagExperimentLayerList, error) {
+	var out FlagExperimentLayerList
+	err := c.do(ctx, http.MethodGet, experimentEnvPath(project, environment, "/experiment-layers"), nil, &out)
+	return out, err
+}
+
+// CreateProjectFlagExperimentLayer creates an experiment layer.
+func (c *Client) CreateProjectFlagExperimentLayer(ctx context.Context, project, environment, key string) (FlagExperimentLayerList, error) {
+	var out FlagExperimentLayerList
+	err := c.do(ctx, http.MethodPost, experimentEnvPath(project, environment, "/experiment-layers"), FlagExperimentLayerRequest{Key: key}, &out)
+	return out, err
+}
+
+// DeleteProjectFlagExperimentLayer deletes a layer no running experiment
+// holds a slice of.
+func (c *Client) DeleteProjectFlagExperimentLayer(ctx context.Context, project, environment, key string) error {
+	return c.do(ctx, http.MethodDelete, experimentEnvPath(project, environment, "/experiment-layers/"+url.PathEscape(key)), nil, nil)
+}
+
+// GetProjectFlagExperimentHoldout reads the environment holdout.
+func (c *Client) GetProjectFlagExperimentHoldout(ctx context.Context, project, environment string) (FlagExperimentHoldout, error) {
+	var out FlagExperimentHoldout
+	err := c.do(ctx, http.MethodGet, experimentEnvPath(project, environment, "/experiment-holdout"), nil, &out)
+	return out, err
+}
+
+// SetProjectFlagExperimentHoldout sets the environment holdout; 0 turns it
+// off.
+func (c *Client) SetProjectFlagExperimentHoldout(ctx context.Context, project, environment string, basisPoints int) (FlagExperimentHoldout, error) {
+	var out FlagExperimentHoldout
+	err := c.do(ctx, http.MethodPut, experimentEnvPath(project, environment, "/experiment-holdout"), FlagExperimentHoldout{BasisPoints: basisPoints}, &out)
+	return out, err
+}
+
+// GetProjectFlagExperimentHoldoutReport compares held-out customers with
+// everyone else on event; zero from and until take the defaults.
+func (c *Client) GetProjectFlagExperimentHoldoutReport(ctx context.Context, project, environment, event string, from, until time.Time) (FlagExperimentHoldoutReport, error) {
+	q := url.Values{"event": {event}}
+	if !from.IsZero() {
+		q.Set("from", from.UTC().Format(time.RFC3339))
+	}
+	if !until.IsZero() {
+		q.Set("until", until.UTC().Format(time.RFC3339))
+	}
+	var out FlagExperimentHoldoutReport
+	err := c.do(ctx, http.MethodGet, experimentEnvPath(project, environment, "/experiment-holdout/report?"+q.Encode()), nil, &out)
+	return out, err
+}
+
 // RuntimeFlagEvents reports conversion events for experiments
 // (ADR 20261115163113). Like RuntimeFlags it requires a Client constructed
 // with a workload JWT for gregale:flags.
 func (c *Client) RuntimeFlagEvents(ctx context.Context, req FlagEventsRequest) (FlagEventsResponse, error) {
 	var out FlagEventsResponse
 	err := c.do(ctx, http.MethodPost, "/v1/runtime/flags/events", req, &out)
+	return out, err
+}
+
+// ProjectFlagNotifications reads an environment's flag notification
+// channels (ADR-20261125085913).
+func (c *Client) ProjectFlagNotifications(ctx context.Context, project, environment string) (FlagNotificationSettings, error) {
+	var out FlagNotificationSettings
+	err := c.do(ctx, http.MethodGet, flagsPath(project, environment)+"/notifications", nil, &out)
+	return out, err
+}
+
+// SetProjectFlagNotifications replaces an environment's flag notification
+// channels; none turns them off.
+func (c *Client) SetProjectFlagNotifications(ctx context.Context, project, environment string, channelIDs []string) (FlagNotificationSettings, error) {
+	if channelIDs == nil {
+		channelIDs = []string{}
+	}
+	var out FlagNotificationSettings
+	err := c.do(ctx, http.MethodPut, flagsPath(project, environment)+"/notifications", FlagNotificationSettingsRequest{ChannelIDs: channelIDs}, &out)
 	return out, err
 }

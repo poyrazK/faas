@@ -52,6 +52,12 @@ func builderSliceOOMDelta(handle BuildHandle, path string) uint64 {
 	if !handle.BuilderSliceOOMCounterValid {
 		return 0
 	}
+	if handle.SliceShared != nil && handle.SliceShared() {
+		// Another builder ran in the slice too: its kill would land in the
+		// same counter. The VM's own exit status (137) still reports an OOM
+		// of this build (failure_class.go).
+		return 0
+	}
 	current, err := readCgroupOOMKills(path)
 	if err != nil || current <= handle.BuilderSliceOOMKillsAtStart {
 		return 0

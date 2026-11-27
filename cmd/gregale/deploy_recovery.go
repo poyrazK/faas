@@ -29,6 +29,17 @@ func recoveryCLI() string {
 	return "gregale"
 }
 
+func deployRecoveryCLI() string {
+	command := recoveryCLI()
+	if nonInteractive {
+		command += " --non-interactive"
+	}
+	if jsonOutput {
+		command += " --json"
+	}
+	return command
+}
+
 type deployRecovery struct {
 	Configuration     *api.DeploymentConfigurationStatus `json:"configuration,omitempty"`
 	SessionID         string                             `json:"session_id,omitempty"`
@@ -44,13 +55,23 @@ type deployRecovery struct {
 	NextCommand       string                             `json:"next_command,omitempty"`
 }
 
+func (r *deployRecovery) setResumeCommand(command string) {
+	r.ResumeCommand = command
+	r.NextCommand = r.InspectCommand
+	if command != "" {
+		r.NextCommand = command
+	}
+}
+
 func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Duration, rollout bool) *deployRecovery {
 	r := &deployRecovery{Stage: stage, App: slug, DeploymentID: deploymentID, IdempotencyKey: key}
-	r.InspectCommand = recoveryCLI() + " release list --app " + recoveryArgument(slug)
+	command := deployRecoveryCLI()
+	r.InspectCommand = command + " release list --app " + recoveryArgument(slug)
+	r.NextCommand = r.InspectCommand
 	if deploymentID != "" {
 		r.SubmissionOutcome = deploySubmissionAccepted
-		r.InspectCommand = recoveryCLI() + " deployment " + recoveryArgument(deploymentID)
-		r.ResumeCommand = deploymentWaitResumeCommandWithRollout(deploymentID, timeout, rollout)
+		r.InspectCommand = command + " deployment " + recoveryArgument(deploymentID)
+		r.setResumeCommand(deploymentWaitResumeCommandWithRollout(deploymentID, timeout, rollout))
 		r.Hint = "The deployment was accepted. Inspect it or resume waiting; do not submit another deployment to resume the wait."
 	} else {
 		r.Hint = "No deployment ID was confirmed. Inspect deployment history before retrying; the server may have accepted the submission."
@@ -62,10 +83,6 @@ func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Durat
 			r.Hint += " Retry the original command with this retry flag, unchanged source and options, and the same profile, endpoint, and account. Server replay retention limits still apply."
 		}
 	}
-	r.NextCommand = r.InspectCommand
-	if r.ResumeCommand != "" {
-		r.NextCommand = r.ResumeCommand
-	}
 	return r
 }
 
@@ -76,7 +93,7 @@ func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Durat
 func failedDeploymentRecovery(slug string, dep api.DeploymentResponse) *deployRecovery {
 	r := newDeployRecovery("deployment", slug, dep.ID, "", 0, false)
 	r.ResumeCommand = ""
-	r.NextCommand = recoveryCLI() + " logs " + recoveryArgument(slug) + " --deployment " + recoveryArgument(dep.ID)
+	r.NextCommand = deployRecoveryCLI() + " logs " + recoveryArgument(slug) + " --deployment " + recoveryArgument(dep.ID)
 	r.Hint = "The deployment reached a failed terminal state. Read its evidence before submitting a corrected deployment."
 	return r
 }
@@ -166,7 +183,7 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 		}
 	}
 	r := *e.recovery
-	if r.DeploymentID == "" && remote != nil && submissionRejected(remote.Problem.Status) {
+	if r.DeploymentID == "" && remote != nil && submissionRejected(remote.Problem) {
 		// The server answered with a definitive rejection: nothing was
 		// accepted, so "the server may have accepted the submission" and
 		// an idempotent retry flag were wrong advice (production-us
@@ -208,8 +225,14 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 
 // submissionRejected reports a 4xx that proves the submission was refused
 // rather than possibly accepted: everything except timeouts, conflicts with
-// an in-flight submission, and rate limiting.
-func submissionRejected(status int) bool {
+// an in-flight submission, and rate limiting. A release freeze answers 409
+// too but refuses outright; its retry flag and `release list` next step were
+// noise beside the freeze's own lift/override hint (prod hunt r25).
+func submissionRejected(p api.Problem) bool {
+	if p.Code == api.CodeReleaseFrozen {
+		return true
+	}
+	status := p.Status
 	return status >= 400 && status < 500 && status != 408 && status != 409 && status != 429
 }
 

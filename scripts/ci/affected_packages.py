@@ -20,7 +20,7 @@ every package in the vet set; tests still cover changed packages only.
 
 A text-contract package (TEXT_CONTRACT_PACKAGES) also counts as changed when
 a file its tests read as text changes: a workflow, an Ansible role, a deploy
-or release script. Its inputs are read from the tests themselves. The
+or release script, a customer docs page. Its inputs are read from the tests themselves. The
 light tier compile-checks only the importers that use a changed exported
 name (scripts/ci/select_importers.py); the mega tier (ci.yml) vets every
 package and runs every package's -race tests nightly and before every
@@ -57,6 +57,8 @@ EXCLUDED_TEST_PREFIXES = ("cmd/e2e", "migrations")
 # CLAUDE.md §6.2 invariants (property-based, never deleted). They are tested
 # whenever any package in their transitive import tree changes, not only when
 # they import a changed package directly, and on every global-input change.
+# A text-contract package selected only by a text file (a docs page, a role)
+# does not count: its code did not change.
 INVARIANT_PACKAGES = ("tests/property",)
 
 # Suites too large for the light tier's 10-minute budget (thousands of tests
@@ -84,7 +86,17 @@ SELECTIVE_WEIGHT = 6
 # test unseen by the light tier. PR #4950 then changed postgres_capacity's
 # tasks and broke pkg/daemonunitspec's role test the same way; pkg/db's tests
 # read that role's pool budgets.
-TEXT_CONTRACT_PACKAGES = ("cmd/gregalectl", "pkg/daemonunitspec", "pkg/db")
+#
+# The docs packages read docs/ the same way. A docs-only pull request selected
+# no package, so the docs search eval (pkg/mcpmanagement) did not run: #7514
+# changed the FastAPI answer, main fell below the eval's floors, and the next
+# Go change to pkg/mcpmanagement found it failing. pkg/gregalemanifest checks
+# the gregale.yaml examples in docs/ and pkg/legal the DPA. pkg/docsindex
+# checks that its shipped index (index.json.gz) matches docs/: a docs change
+# that skipped UPDATE_DOCS_INDEX=1 must fail on its own pull request.
+TEXT_CONTRACT_PACKAGES = ("cmd/gregalectl", "pkg/daemonunitspec", "pkg/db",
+                          "pkg/docsindex", "pkg/gregalemanifest", "pkg/legal",
+                          "pkg/mcpmanagement")
 
 # The ways those tests name a repository file: filepath.Join climbing from the
 # package directory to the repository root, or from the repository root by
@@ -199,6 +211,9 @@ def select(paths, pkgs, contract_inputs=None):
         owner = owning_package(p, pkgs)
         if owner is not None:
             changed.add(owner)
+    # Packages whose own files changed. A text-contract package selected only
+    # by a file its tests read has no new code for the invariants to check.
+    code_changed = set(changed)
     if contract_inputs is None:
         contract_inputs = {d: text_inputs(d) for d in TEXT_CONTRACT_PACKAGES if d in pkgs}
     for d, inputs in contract_inputs.items():
@@ -214,7 +229,7 @@ def select(paths, pkgs, contract_inputs=None):
         vet = set(changed) | {d for d, info in pkgs.items() if info["imports"] & changed_paths}
     test = set(changed)
     for inv in INVARIANT_PACKAGES:
-        if inv in pkgs and (everything or (internal_deps(inv, pkgs) | {inv}) & changed):
+        if inv in pkgs and (everything or (internal_deps(inv, pkgs) | {inv}) & code_changed):
             test.add(inv)
     test = {d for d in test if not d.startswith(EXCLUDED_TEST_PREFIXES)}
     return everything, sorted(changed), sorted(vet), sorted(test)

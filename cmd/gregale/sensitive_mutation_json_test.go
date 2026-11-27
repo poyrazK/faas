@@ -74,6 +74,12 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 			method: http.MethodPost, path: "/v1/keys",
 		},
 		{
+			// --agent before the label must not swallow it (#7696 regression).
+			name:   "api key add agent before label",
+			args:   []string{"--json", "keys", "add", "--agent", "ci"},
+			method: http.MethodPost, path: "/v1/keys",
+		},
+		{
 			name: "api key remove with environment",
 			args: []string{"keys", "rm", "key-old"}, jsonEnv: true,
 			method: http.MethodDelete, path: "/v1/keys/key-old",
@@ -221,7 +227,7 @@ func TestSensitiveMutationJSONContract(t *testing.T) {
 				if receipt["app"] != "demo" || receipt["id"] != alertID || receipt["deleted"] != true {
 					t.Fatalf("alert remove receipt = %#v", receipt)
 				}
-			case "api key add":
+			case "api key add", "api key add agent before label":
 				if receipt["id"] != "key-new" || receipt["plaintext"] != "fp_live_one_time" {
 					t.Fatalf("key add receipt = %#v", receipt)
 				}

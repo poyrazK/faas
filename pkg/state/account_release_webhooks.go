@@ -6,15 +6,15 @@ import "github.com/onebox-faas/faas/pkg/api"
 // app_webhooks_scope_chk constraint. Account receivers must opt in to a
 // non-empty subset of release and environment events, never a wildcard.
 func validAccountReleaseWebhookFilter(events []string) bool {
-	if len(events) == 0 || len(events) > len(api.AllowedAccountReleaseWebhookEvents)+len(api.AllowedAccountAgentWebhookEvents) {
+	if len(events) == 0 || len(events) > len(api.AllowedAccountReleaseWebhookEvents)+len(api.AllowedAccountAgentWebhookEvents)+len(api.AllowedAccountRunWebhookEvents) {
 		return false
 	}
 	seen := make(map[string]struct{}, len(events))
 	for _, event := range events {
 		switch AppWebhookEvent(event) {
-		case AppWebhookEventDeploymentLive, AppWebhookEventDeploymentFailed,
+		case AppWebhookEvent(api.ExecutionPipelineFinishedWebhookEvent), AppWebhookEvent(api.RunBudgetThresholdWebhookEvent), AppWebhookEventExecutionFinished, AppWebhookEventDeploymentLive, AppWebhookEventDeploymentFailed,
 			AppWebhookEventRolloutCompleted, AppWebhookEventRolloutAborted, AppWebhookEventEnvironmentGitOpsChanged,
-			AppWebhookEvent(api.AgentRunFinishedWebhookEvent),
+			AppWebhookEvent(api.AgentRunFinishedWebhookEvent), AppWebhookEvent(api.AgentRunApprovalRequestedWebhookEvent),
 			AppWebhookEvent(api.AgentApprovalRequestedWebhookEvent), AppWebhookEvent(api.AgentApprovalApprovedWebhookEvent),
 			AppWebhookEvent(api.AgentApprovalDeniedWebhookEvent):
 		default:

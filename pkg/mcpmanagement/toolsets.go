@@ -103,6 +103,14 @@ var toolsetOf = map[string]string{
 	"gregale_get_restart":                       ToolsetOperate,
 	"gregale_plan_scale":                        ToolsetOperate,
 	"gregale_apply_operation":                   ToolsetOperate,
+	"gregale_plan_run_command":                  ToolsetOperate,
+	"gregale_get_command_run":                   ToolsetOperate,
+	"gregale_cancel_command_run":                ToolsetOperate,
+	"gregale_plan_dead_letter_replay":           ToolsetOperate,
+	"gregale_plan_workflow_recovery":            ToolsetOperate,
+	"gregale_plan_monitoring_change":            ToolsetOperate,
+	"gregale_acknowledge_incident":              ToolsetOperate,
+	"gregale_add_incident_note":                 ToolsetOperate,
 	"gregale_get_plan":                          ToolsetOperate,
 	"gregale_verify_plan":                       ToolsetOperate,
 	"gregale_list_plans":                        ToolsetOperate,
@@ -133,6 +141,7 @@ var toolsetOf = map[string]string{
 	"gregale_apply_env_change":                  ToolsetCore,
 	"gregale_promote_deployment":                ToolsetCore,
 	"gregale_plan_rollback":                     ToolsetCore,
+	"gregale_plan_promotion":                    ToolsetCore,
 	"gregale_apply_rollback":                    ToolsetCore,
 	"gregale_get_rollback":                      ToolsetCore,
 	"gregale_request_secret":                    ToolsetCore,
@@ -156,10 +165,18 @@ var toolsetOf = map[string]string{
 	"gregale_list_environments":           ToolsetRelease,
 	"gregale_list_flag_experiments":       ToolsetRelease,
 	"gregale_get_flag_experiment_results": ToolsetRelease,
+	"gregale_list_flags":                  ToolsetRelease,
+	"gregale_plan_flag_change":            ToolsetRelease,
+	"gregale_plan_flag_rollback":          ToolsetRelease,
+	"gregale_apply_flag_change":           ToolsetRelease,
+	"gregale_kill_flag":                   ToolsetRelease,
 	"gregale_get_insight_events":          ToolsetDiagnose,
 	"gregale_get_insight_funnel":          ToolsetDiagnose,
 	"gregale_get_insight_retention":       ToolsetDiagnose,
 	"gregale_get_insight_requests":        ToolsetDiagnose,
+	"gregale_list_insight_cohorts":        ToolsetDiagnose,
+	"gregale_list_saved_insights":         ToolsetDiagnose,
+	"gregale_run_saved_insight":           ToolsetDiagnose,
 	"gregale_get_environment":             ToolsetRelease,
 	"gregale_plan_environment_promotion":  ToolsetRelease,
 	"gregale_apply_environment_promotion": ToolsetRelease,
@@ -193,6 +210,57 @@ var toolsetOf = map[string]string{
 	"gregale_list_instances":                   ToolsetDiagnose,
 	"gregale_get_routes":                       ToolsetDiagnose,
 	"gregale_get_operational_summary":          ToolsetDiagnose,
+	"gregale_get_queue_state":                  ToolsetDiagnose,
+	"gregale_list_dead_letters":                ToolsetDiagnose,
+	"gregale_list_workflow_runs":               ToolsetDiagnose,
+	"gregale_get_workflow_run":                 ToolsetDiagnose,
+	"gregale_list_workflow_attention":          ToolsetDiagnose,
+	"gregale_list_alerts":                      ToolsetDiagnose,
+	"gregale_get_slo_status":                   ToolsetDiagnose,
+	"gregale_list_synthetics":                  ToolsetDiagnose,
+	"gregale_list_incidents":                   ToolsetDiagnose,
+	"gregale_get_incident":                     ToolsetDiagnose,
+	"gregale_get_postgres_schema":              ToolsetDiagnose,
+	"gregale_query_postgres":                   ToolsetDiagnose,
+	"gregale_get_postgres_activity":            ToolsetDiagnose,
+	"gregale_list_edge_rules":                  ToolsetDiagnose,
+	"gregale_get_edge_activity":                ToolsetDiagnose,
+	"gregale_list_objects":                     ToolsetDiagnose,
+	"gregale_read_object":                      ToolsetDiagnose,
+	"gregale_list_previews":                    ToolsetRelease,
+	"gregale_get_preview":                      ToolsetRelease,
+	"gregale_plan_preview_change":              ToolsetRelease,
+	"gregale_list_workflow_tests":              ToolsetRelease,
+	"gregale_run_workflow_tests":               ToolsetRelease,
+	"gregale_plan_edge_rule_change":            ToolsetOperate,
+	"gregale_list_event_subscriptions":         ToolsetDiagnose,
+	"gregale_get_event_subscription_health":    ToolsetDiagnose,
+	"gregale_list_event_deliveries":            ToolsetDiagnose,
+	"gregale_list_event_recoveries":            ToolsetDiagnose,
+	"gregale_list_audit_events":                ToolsetDiagnose,
+	"gregale_plan_event_change":                ToolsetOperate,
+	"gregale_list_api_consumers":               ToolsetOperate,
+	"gregale_get_mcp_seller_stats":             ToolsetOperate,
+	"gregale_get_api_consumer":                 ToolsetOperate,
+	"gregale_plan_api_consumer_change":         ToolsetOperate,
+	"gregale_get_spend_forecast":               ToolsetOperate,
+	"gregale_list_budgets":                     ToolsetOperate,
+	"gregale_plan_budget_change":               ToolsetOperate,
+	"gregale_apply_budget_change":              ToolsetOperate,
+	"gregale_search_logs":                      ToolsetDiagnose,
+	"gregale_get_log_facets":                   ToolsetDiagnose,
+	"gregale_list_log_drains":                  ToolsetDiagnose,
+	"gregale_get_log_drain_health":             ToolsetDiagnose,
+	"gregale_list_notification_channels":       ToolsetOperate,
+	"gregale_test_notification_channel":        ToolsetOperate,
+	"gregale_list_org_members":                 ToolsetOperate,
+	"gregale_plan_experiment_change":           ToolsetRelease,
+	"gregale_apply_reviewed_change":            ToolsetRelease,
+	"gregale_list_event_schemas":               ToolsetDiagnose,
+	"gregale_plan_event_schema_registration":   ToolsetOperate,
+	"gregale_save_workflow_draft":              ToolsetRelease,
+	"gregale_plan_workflow_publish":            ToolsetRelease,
+	"gregale_diagnose_domain":                  ToolsetDiagnose,
 
 	"gregale_plan_domain":     ToolsetProvision,
 	"gregale_plan_bucket":     ToolsetProvision,
@@ -200,6 +268,11 @@ var toolsetOf = map[string]string{
 	"gregale_plan_cron":       ToolsetProvision,
 	"gregale_check_domain":    ToolsetProvision,
 	"gregale_apply_provision": ToolsetProvision,
+
+	// ADR-20261122220000 verification contracts.
+	"gregale_validate_verification_contract":    ToolsetRelease,
+	"gregale_get_verification_contract":         ToolsetRelease,
+	"gregale_plan_verification_contract_change": ToolsetRelease,
 }
 
 func toolsetIncludes(name, selected string) bool {
@@ -221,6 +294,8 @@ func toolsetIncludes(name, selected string) bool {
 		return selected == ToolsetCore
 	case "gregale_apply_operation":
 		return selected == ToolsetProvision
+	case "gregale_apply_reviewed_change":
+		return selected == ToolsetOperate
 	}
 	return false
 }
@@ -339,6 +414,10 @@ func defaultConnectionToolsets(maximum []string) []string {
 
 // toolListed reports whether the connection's toolsets include name.
 func (m *management) toolListed(name string) bool {
+	if name == findToolsName {
+		// Listed only when the catalog is deferred (tool_catalog.go).
+		return m.catalog.deferring
+	}
 	if m.opts.agentKey && m.opts.AllowedApps != nil {
 		// App-bound native credentials deliberately cannot enumerate global
 		// inventory or operate on project/environment registries.

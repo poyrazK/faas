@@ -1,0 +1,145 @@
+{
+  "attempts": [
+    {
+      "attempt": "preview1",
+      "functional_pass": false,
+      "process_exits": {
+        "extended_environments": 1,
+        "leakcheck_after": 0,
+        "leakcheck_before": 0
+      },
+      "raw_evidence_sha256": {
+        "artifacts.sha256": "c2d513fe723c30b508d98a4f570228208117c92a8b7fc8b9b1eb861b0615ac83",
+        "build.log": "cce4f184e26ff47cbc47373a984787c2d46b4a9b4aea026f672850e52464b1f3",
+        "extended-environments.jsonl": "f2b30d684b9727289fd94c539f2a4d004199132c5467b0138cba9e86c71b0449",
+        "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+        "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "process-exits.json": "a8076427c87ab8ed050cec66d0d62aa4e6b42eddcbc1066ea3fa4865902664ed",
+        "source.json": "0f2689f22301630de33e5c0193921b371c7f1a66a1312af1ff3d16676cfa6bd8"
+      },
+      "reason": "Fixture builder image missing its explicit platform scan",
+      "source": {
+        "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+        "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+        "go_version": "go version go1.26.11 linux/amd64",
+        "source_files": 55346,
+        "source_manifest_sha256": "196ffe3cd9210cf50285695ad2732d27b6a7cfab3d1cc314e3521f22f6fbf2da"
+      }
+    },
+    {
+      "attempt": "preview2/evidence-attempt1",
+      "functional_pass": false,
+      "process_exits": {
+        "extended_environments": 1,
+        "leakcheck_after": 0,
+        "leakcheck_before": 0
+      },
+      "raw_evidence_sha256": {
+        "artifacts.sha256": "624f79ff441f95a507866645feb8ad42d20c43dd7f2cdf65c6dddd8194d0e0ef",
+        "build.log": "cce4f184e26ff47cbc47373a984787c2d46b4a9b4aea026f672850e52464b1f3",
+        "extended-environments.jsonl": "c1e2c626e79e339d19b9bf48ea5cc0cbd05e9e66ebc1b006fb2fd7f51432b040",
+        "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+        "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "process-exits.json": "a8076427c87ab8ed050cec66d0d62aa4e6b42eddcbc1066ea3fa4865902664ed",
+        "source.json": "d88c0b78c74f40720abad950d32c77bc3ad20630fff5b9e74af5f2ad8bd36fab"
+      },
+      "reason": "Builder free-space guard refused admission",
+      "source": {
+        "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+        "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+        "go_version": "go version go1.26.11 linux/amd64",
+        "source_files": 55366,
+        "source_manifest_sha256": "b71e33e4176c81eada3ff989a3024a33dd99384885dce64bb8cef83a071aed1e"
+      }
+    },
+    {
+      "attempt": "preview2",
+      "functional_pass": false,
+      "process_exits": {
+        "extended_environments": 1,
+        "leakcheck_after": 0,
+        "leakcheck_before": 0
+      },
+      "raw_evidence_sha256": {
+        "artifacts.sha256": "1510e7bae47b3e5c94103d3bcb0a7abf599438f07c5b860cffe2ce542f0be6c4",
+        "build.log": "cce4f184e26ff47cbc47373a984787c2d46b4a9b4aea026f672850e52464b1f3",
+        "extended-environments.jsonl": "49e96d1330aa13abd77ebf7fcb8f3a0832959b31369f5feff07e15029ffc5ec7",
+        "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+        "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "process-exits.json": "a8076427c87ab8ed050cec66d0d62aa4e6b42eddcbc1066ea3fa4865902664ed",
+        "source.json": "d88c0b78c74f40720abad950d32c77bc3ad20630fff5b9e74af5f2ad8bd36fab"
+      },
+      "reason": "Guest registry DNS preflight failed",
+      "source": {
+        "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+        "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+        "go_version": "go version go1.26.11 linux/amd64",
+        "source_files": 55366,
+        "source_manifest_sha256": "b71e33e4176c81eada3ff989a3024a33dd99384885dce64bb8cef83a071aed1e"
+      }
+    },
+    {
+      "attempt": "preview3",
+      "functional_pass": false,
+      "process_exits": {
+        "extended_environments": 1,
+        "leakcheck_after": 0,
+        "leakcheck_before": 0
+      },
+      "raw_evidence_sha256": {
+        "artifacts.sha256": "6d734ab5baafae0cfe101228cd436e47f9a2a33bc71043a8ebb8753ed67f826a",
+        "build.log": "cce4f184e26ff47cbc47373a984787c2d46b4a9b4aea026f672850e52464b1f3",
+        "extended-environments.jsonl": "c060984a7fbdeabc96221c5885cc68f05505116debe409512c1e90ea66f2504b",
+        "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+        "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "process-exits.json": "a8076427c87ab8ed050cec66d0d62aa4e6b42eddcbc1066ea3fa4865902664ed",
+        "source.json": "a385d0d509a9c7d422239dc44425900b4e1fdcbb1b9d8d6d64636e34a988f07c"
+      },
+      "reason": "Retained builder diagnostics confirmed missing fixture DNS/NAT setup",
+      "source": {
+        "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+        "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+        "go_version": "go version go1.26.11 linux/amd64",
+        "source_files": 55366,
+        "source_manifest_sha256": "63f0d254301ea772d7821d21049fbb0b5ff8c2bc41bb4eba9a2706ec2fb6c6f1"
+      }
+    },
+    {
+      "attempt": "preview4",
+      "functional_pass": false,
+      "process_exits": {
+        "extended_environments": 1,
+        "leakcheck_after": 0,
+        "leakcheck_before": 0
+      },
+      "raw_evidence_sha256": {
+        "artifacts.sha256": "6de73ccc6564d5fff87b2ad7bf2451e3094abc572584196bd688776bcd46e5f9",
+        "build.log": "cce4f184e26ff47cbc47373a984787c2d46b4a9b4aea026f672850e52464b1f3",
+        "extended-environments.jsonl": "fabba38da818bc4ea41e46f72ad8ae572215c29b5e8e79da0e61353d89203f56",
+        "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+        "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "process-exits.json": "a8076427c87ab8ed050cec66d0d62aa4e6b42eddcbc1066ea3fa4865902664ed",
+        "source.json": "5176d51e1327c16e8818a2e8713a0284b0d789c2276f6098ba6351dc97f59972"
+      },
+      "reason": "Node environment published with real Grype; Python build refused by free-space guard",
+      "source": {
+        "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+        "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+        "go_version": "go version go1.26.11 linux/amd64",
+        "source_files": 55366,
+        "source_manifest_sha256": "efe3908c5fffca2cba05a2743453d335fc43682680166dce682e65f9d2794daf"
+      }
+    }
+  ],
+  "schema": "gregale.run-extended-environments-attempts/v1"
+}

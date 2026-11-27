@@ -111,6 +111,17 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 		return Snapshot{}, snapshotPublicationOwnerError(err)
 	}
 	snap.RecoveryGeneration = generation
+	if replaced := replacedSnapshotID(ctx); replaced != "" {
+		// Same statement as MarkSnapshotStale, inside this transaction, so a
+		// reader sees the old row or the new one, never neither.
+		tag, err := tx.Exec(ctx, `update snapshots set stale = true where id = $1`, replaced)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if tag.RowsAffected() == 0 {
+			return Snapshot{}, ErrNotFound
+		}
+	}
 	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
 	if err != nil {
 		return Snapshot{}, err
@@ -128,6 +139,23 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 		return Snapshot{}, err
 	}
 	return stored, nil
+}
+
+type replacedSnapshotKey struct{}
+
+// WithReplacedSnapshot asks PublishSnapshotIfRuntimeFresh to retire the live
+// row snapshotID in the same transaction that publishes the new capture. A
+// managed cache's park capture replaces its live row this way
+// (ADR-20261116192126): retiring first and publishing in a second statement
+// let a wake in between find no row and cold-boot an empty cache (native run
+// redis-20261118T230904).
+func WithReplacedSnapshot(ctx context.Context, snapshotID string) context.Context {
+	return context.WithValue(ctx, replacedSnapshotKey{}, snapshotID)
+}
+
+func replacedSnapshotID(ctx context.Context) string {
+	id, _ := ctx.Value(replacedSnapshotKey{}).(string)
+	return id
 }
 
 func snapshotPublicationOwnerError(err error) error {

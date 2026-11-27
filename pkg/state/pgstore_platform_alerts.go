@@ -116,7 +116,11 @@ func (s *PgStore) PauseCronIfFailing(ctx context.Context, cronID string, runs in
 			select state, created_at, due_at, coalesce(last_error, '') as last_error
 			  from invocations
 			 where cron_id = $1::uuid and source = 'cron'
-			   and (state = 'completed' or (state in ('failed','dead_letter') and received_at is not null))
+			   and (state = 'completed' or (state in ('failed','dead_letter') and received_at is not null
+			        -- A run the platform failed before the app ran (the wake, the
+			        -- version pin, binding the instance) is not the app failing
+			        -- (Observe audit 2026-11-21, finding 20).
+			        and coalesce(last_error, '') !~ '^(wake|version pin|bind operation instance): '))
 			   -- Runs before the last pause do not count again after a resume.
 			   and created_at > coalesce((select max(n.created_at) from platform_alert_notices n
 			                               where n.kind = 'cron_failing_paused' and n.subject_id = $1::text), '-infinity')

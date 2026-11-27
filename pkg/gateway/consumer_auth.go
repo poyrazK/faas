@@ -26,6 +26,14 @@ type ConsumerAuthStore interface {
 	TouchConsumerKeyLastUsed(ctx context.Context, keyID string) error
 }
 
+// ConsumerAuthEnvironmentStore resolves a key for a request to one
+// environment's host: a stage that holds consumers of its own answers with
+// its keys only, and one with none with production's (ADR-20261104120000
+// amendment 2026-11-22).
+type ConsumerAuthEnvironmentStore interface {
+	ConsumerKeyForEnvironment(ctx context.Context, accountID, appID, environmentID, prefix string) (ConsumerAuthKey, error)
+}
+
 // ConsumerAuthKey is the read-only key shape required by the gateway. Hash is
 // the SHA-256 of the complete plaintext credential; the plaintext never enters
 // this type or the request context.
@@ -39,6 +47,9 @@ type ConsumerAuthKey struct {
 	Scopes     []string
 	ExpiresAt  *time.Time
 	RevokedAt  *time.Time
+	// EnvironmentID is the stage the key's consumer belongs to; empty for
+	// production (ADR-20261104120000 amendment 2026-11-22).
+	EnvironmentID string
 }
 
 // Active reports whether a key is eligible for authentication at now. The
@@ -57,6 +68,7 @@ type ConsumerAuthConsumer struct {
 	AccountID        string
 	AppID            string
 	PlatformTenantID string
+	ExternalRef      string
 	Status           string
 	RevokedAt        *time.Time
 }
@@ -155,7 +167,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		// edge CORS rule or the app could answer it (Hunt 34 H34-36). The
 		// preflight carries no consumer and the real request is still
 		// checked.
-		if mode == api.ConsumerAuthModeOptional || isCORSPreflight(r) {
+		if mode == api.ConsumerAuthModeOptional || (!app.IsAPISandbox && isCORSPreflight(r)) {
 			return true
 		}
 		api.WriteProblem(w, api.ErrConsumerKeyRequired())
@@ -195,8 +207,8 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	}
 	prefix := consumerKeyPrefixFromPlaintext(token)
 	keyAppID := app.ID
-	key, err := h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, keyAppID, prefix)
-	if errors.Is(err, ErrConsumerAuthNotFound) && app.IsPreview && app.ProductionAppID != "" {
+	key, err := h.lookupConsumerKey(r.Context(), app, prefix)
+	if errors.Is(err, ErrConsumerAuthNotFound) && app.IsPreview && !app.IsAPISandbox && app.ProductionAppID != "" {
 		// A preview keeps its production app's consumer-auth gate, so it
 		// accepts that app's consumers' keys; without them a required-mode
 		// preview refused every request (ADR-20261105090226).
@@ -277,10 +289,17 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	if !consumerScopeAllows(key.Scopes, r.Method) {
+	// MCP scopes (ADR-20261122194324) reach only a consumer-key MCP server's
+	// endpoint, whose policy then checks them.
+	mcpScoped := len(api.ConsumerKeyMCPScopes(key.Scopes)) > 0 && h.mcpConsumerKeyEndpoint(r, app)
+	if !mcpScoped && !consumerScopeAllows(key.Scopes, r.Method) {
 		api.WriteProblem(w, api.ErrConsumerScopeMissing(r.Method))
 		rec.status = http.StatusForbidden
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
+
+	if (app.APISandboxPartner || app.APISandboxRun) && !h.enforceIsolatedSandboxKey(w, r, rec, app, consumer, key) {
 		return false
 	}
 
@@ -288,6 +307,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	authenticated.ConsumerID = consumer.ID
 	authenticated.ConsumerKeyID = key.ID
 	authenticated.PlatformTenantID = consumer.PlatformTenantID
+	authenticated.StageConsumer = key.EnvironmentID != ""
 	ctx := authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
 		ID:     consumer.ID,
 		AppID:  keyAppID,
@@ -347,4 +367,16 @@ func consumerScopeAllows(scopes []string, method string) bool {
 		}
 	}
 	return false
+}
+
+// lookupConsumerKey reads the key for the request's environment: an
+// environment URL or scoped domain asks for that environment's keys, every
+// other host for production's.
+func (h *Handler) lookupConsumerKey(ctx context.Context, app App, prefix string) (ConsumerAuthKey, error) {
+	if app.PublicEnvironmentID != "" {
+		if environments, ok := h.consumerAuthStore.(ConsumerAuthEnvironmentStore); ok {
+			return environments.ConsumerKeyForEnvironment(ctx, app.AccountID, app.ID, app.PublicEnvironmentID, prefix)
+		}
+	}
+	return h.consumerAuthStore.ConsumerKeyByAppAndPrefix(ctx, app.AccountID, app.ID, prefix)
 }

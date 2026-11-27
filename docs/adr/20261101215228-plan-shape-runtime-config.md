@@ -1,6 +1,6 @@
 # ADR-20261101215228: One request limit per instance for every plan, and plan CPU and request values as runtime config
 
-- **Status:** proposed
+- **Status:** accepted (rollout step 3 live in production 2026-11-21)
 - **Date:** 2026-11-01
 - **Amends:** spec §13 (`concurrency_per_vm` Free 4 · Hobby 5 · Pro 25 · Scale
   80) and §4.9.1, issue #559, ADR-20261022203523 (the bound is per plan, and
@@ -23,8 +23,8 @@
 
      | Key | Value once set | Read by | Bounds |
      |---|---|---|---|
-     | `app_request_concurrency_default` | 80 | apid, gatewayd-internal, schedd (vmmd through schedd) | 1 to the maximum |
-     | `app_request_concurrency_max` | 1,000 | apid, gatewayd-internal, schedd (vmmd through schedd) | the default to 10,000 |
+     | `app_request_concurrency_default` | 80 | apid, gatewayd-internal, schedd (vmmd through schedd), imaged (amendment 1) | 1 to the maximum |
+     | `app_request_concurrency_max` | 1,000 | apid, gatewayd-internal, schedd (vmmd through schedd), imaged (amendment 1) | the default to 10,000 |
      | `app_cpu_baseline_millicores_per_gb` | 1,000 | apid, schedd | 125 to 2,000 |
      | `app_cpu_ceiling_floor_millicores` | 1,000 | apid, schedd | 250 to 2,000 |
      | `guest_vcpu_millicores` | 1,000 | schedd | 500 to 2,000 |
@@ -190,9 +190,38 @@
   3. **In production, set `app_request_concurrency_default` and the maximum.**
      Watch instances per app, in-flight requests per instance, p99 latency,
      and warm-queue and 429 outcomes.
+     - **Done 2026-11-21 07:47Z:** `app_request_concurrency_default` = 80
+       and `app_request_concurrency_max` = 1,000 (version 1 each, `gregalectl
+       config history`). Every vmmd ran rc.362, which takes the limit from
+       the wake. Apply receipts at version 1 came from apid, schedd on all
+       three nodes and gatewayd-internal on both compute nodes within 50 ms
+       of each write.
+     - The only live instances then were 18 Scale instances, whose plan
+       bound was already 80, so no running instance answered App busy below
+       the new limit while it kept the bound it woke with.
+     - No app declared `per_instance_concurrency`; declarations stay
+       dark-launched (`FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS`).
   4. **Make the docs follow the values:** spec §13 and §4.9.1, the customer
      docs and the plan pages. Releasing `per_instance_concurrency` to every
      account is a separate owner decision.
+     - Done 2026-11-21 for this repository's spec, plans, functions,
+       Postgres pool and node admission pages, with amendment 1 below.
+     - `function_concurrency` and `functions[].concurrency` stay capped at
+       the compiled plan bound: worker multiplexing is a separate limit.
+- **Amendment 1 (2026-11-21): imaged reads the request keys; the CLI checks
+  the reported maximum.**
+  - imaged stamps `GREGALE_POSTGRES_POOL_MAX` from
+    `api.Limits.PostgresPoolMax` (ADR-20261104141122), which resolves the
+    per-instance limit. It applied no runtime config, so with the keys set it
+    still sized a Free app's pool for 4 requests while the gateway admitted
+    80. Its existing platform-flag watcher now also applies
+    `app_request_concurrency_default` and `app_request_concurrency_max` and
+    writes their apply receipts as `imaged`. The value is still fixed when a
+    deployment is built.
+  - `gregale app scale --plan` warned when a `per_instance_concurrency`
+    exceeded the plan's compiled bound. It now checks the app's
+    `concurrency_per_vm` from the API, which reports the maximum, and falls
+    back to the compiled bound only when an older apid reports none.
 - **Rejected alternatives:**
   - **A request limit that scales with RAM** (10, 20, 40 and 80). Requests in
     flight are not bound by RAM in the common I/O-bound case, and the RAM and

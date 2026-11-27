@@ -21,6 +21,10 @@ type dependencyCatalog struct {
 	lostRecoveryAck bool
 }
 
+func (c *dependencyCatalog) ScenarioPostgresTaskParticipants(ctx context.Context, r rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	return c.base.ScenarioPostgresTaskParticipants(ctx, r)
+}
+
 func (c *dependencyCatalog) ReserveScenarioPostgres(ctx context.Context, r rehearsalpg.Resource) (rehearsalpg.Resource, error) {
 	return c.base.ReserveScenarioPostgres(ctx, r)
 }

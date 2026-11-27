@@ -51,12 +51,21 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 	h.beginWakePageCycle(app.ID, acceptedAt)
 	var wakeID string
 	var method WakeMethod
+	h.debugWake("gateway: public wake enter", "app_id", app.ID, "deployment", deployment, "joins_inflight", h.gate.WakeInProgress(app.ID), "max_wait", policy.MaxWait.String())
 	for {
 		err := h.gate.WaitWithPolicy(waitCtx, app.ID, app.AccountID, policy,
 			func() bool { return !pickPublicDeployment(h.backend, app.ID, deployment, "").OK },
 			func(wakeCtx context.Context) error {
+				leaderStart := time.Now()
+				h.debugWake("gateway: public wake leader start", "app_id", app.ID, "deployment", deployment)
+				defer func() {
+					h.debugWake("gateway: public wake leader end", "app_id", app.ID, "took", time.Since(leaderStart).String())
+				}()
 				if reconciler, ok := h.backend.(liveTargetReconciler); ok {
-					if err := reconciler.ReconcileLiveTargets(wakeCtx, app.ID); err != nil {
+					reconcileStart := time.Now()
+					err := reconciler.ReconcileLiveTargets(wakeCtx, app.ID)
+					h.debugWake("gateway: public wake reconciled live targets", "app_id", app.ID, "took", time.Since(reconcileStart).String(), "err", err)
+					if err != nil {
 						h.finishWakePageCycle(wakeCtx, app.ID, "")
 						return err
 					}
@@ -68,7 +77,10 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 				var atCapacity bool
 				var err error
 				admit := func(admitCtx context.Context) error {
+					admitStart := time.Now()
+					h.debugWake("gateway: public wake admit start", "app_id", app.ID, "deployment", deployment)
 					wakeID, method, atCapacity, err = h.backend.Admit(admitCtx, app.ID, deployment, scope, trigger, maximum)
+					h.debugWake("gateway: public wake admit end", "app_id", app.ID, "took", time.Since(admitStart).String(), "at_capacity", atCapacity, "err", err)
 					return err
 				}
 				if h.admissionQueue == nil {
@@ -77,6 +89,7 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 					var queued bool
 					var wait time.Duration
 					queued, wait, err = h.admissionQueue.Do(wakeCtx, app.ID, app.AccountID, string(app.Plan), policy, admit)
+					h.debugWake("gateway: public wake admission queue done", "app_id", app.ID, "queued", queued, "wait", wait.String(), "err", err)
 					if h.metrics != nil {
 						h.metrics.ObserveWakeAdmission(string(app.Plan), err, queued, wait)
 					}
@@ -92,7 +105,7 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 					// becomes routable soon after, the waiters re-pick and serve
 					// it once this generation completes.
 					limits := api.MustLimitsFor(app.Plan)
-					_, err = h.settleAtCapacity(wakeCtx, app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+					_, err = h.settleAtCapacity(wakeCtx, app, deployment, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
 						return pickPublicDeployment(h.backend, app.ID, deployment, "")
 					})
 					return err
@@ -119,6 +132,13 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 	}
 }
 
+// debugWake logs one wake-path step at debug level (owner_crash diagnosis).
+func (h *Handler) debugWake(msg string, args ...any) {
+	if h.log != nil {
+		h.log.Debug(msg, args...)
+	}
+}
+
 func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder, wakeWaitExpired bool, err error) {
 	if h.clientLeftDuringWake(r, app) {
 		return
@@ -130,8 +150,8 @@ func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Req
 	showPage := acceptsWakePage(r)
 	if showPage && r.Context().Err() == nil && wakeWaitExpired && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 		h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
-		w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
-		writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+		w.Header().Set(canonicalWakeHeader, wire.ColdWakeValue)
+		writeWakePage(w, r.Header.Get("X-Faas-Wake-Id"))
 	} else if trafficRevocationCause(r.Context()) != nil {
 		writeTrafficRevocationError(w, r, trafficRevocationCause(r.Context()))
 	} else if requestBudgetExpired(r.Context()) {
@@ -157,7 +177,7 @@ func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Req
 		if reason, ok := wakeNotDispatchedReason(err); ok {
 			markNotDispatched(w, r, reason)
 		}
-		writeWakeError(w, err)
+		writeRequestWakeError(w, r, err)
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 }

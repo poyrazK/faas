@@ -27,10 +27,18 @@ type AgentBudgetStore interface {
 	// SetAgentKeyBudget writes the key's budget; a budget with Set false
 	// returns the key to its plan's default.
 	SetAgentKeyBudget(ctx context.Context, keyID string, budget AgentKeyBudget, updatedBy string) error
-	// AgentBudgetSpent is what the key added in the UTC month of at.
+	// AgentBudgetSpent is the always-on cost the key's changes keep running
+	// (cost-control review 2026-11-19, N10). It does not reset each month;
+	// at is unused.
 	AgentBudgetSpent(ctx context.Context, keyID string, at time.Time) (int64, error)
-	// AddAgentBudgetSpend adds millicents (> 0) to the key's month of at.
+	// AddAgentBudgetSpend adds a signed change to the key's standing cost: a
+	// change that lowers cost gives budget back, never below zero.
 	AddAgentBudgetSpend(ctx context.Context, keyID string, at time.Time, millicents int64) error
+	// ReserveAgentBudget adds millicents (> 0) only while the standing cost
+	// stays within limitMillicents, atomically, so concurrent requests
+	// cannot both pass a check of the same total (N9). ok false means the
+	// change is past the budget and nothing was added.
+	ReserveAgentBudget(ctx context.Context, keyID string, millicents, limitMillicents int64) (ok bool, err error)
 }
 
 // AgentBudgetView is the budget that applies to an agent key
@@ -139,10 +147,8 @@ func (s *PgStore) SetAgentKeyBudget(ctx context.Context, keyID string, budget Ag
 	}))
 }
 
-func (s *PgStore) AgentBudgetSpent(ctx context.Context, keyID string, at time.Time) (int64, error) {
-	spent, err := sqlc.New().GetAgentBudgetSpend(ctx, s.pool, sqlc.GetAgentBudgetSpendParams{
-		KeyID: mustPgUUID(keyID), Month: pgtype.Date{Time: budgetMonth(at), Valid: true},
-	})
+func (s *PgStore) AgentBudgetSpent(ctx context.Context, keyID string, _ time.Time) (int64, error) {
+	spent, err := sqlc.New().GetAgentBudgetStanding(ctx, s.pool, mustPgUUID(keyID))
 	if err != nil {
 		if err = mapErr(err); errors.Is(err, ErrNotFound) {
 			return 0, nil
@@ -152,20 +158,33 @@ func (s *PgStore) AgentBudgetSpent(ctx context.Context, keyID string, at time.Ti
 	return spent, nil
 }
 
-func (s *PgStore) AddAgentBudgetSpend(ctx context.Context, keyID string, at time.Time, millicents int64) error {
-	if millicents <= 0 {
+func (s *PgStore) AddAgentBudgetSpend(ctx context.Context, keyID string, _ time.Time, millicents int64) error {
+	if millicents == 0 {
 		return nil
 	}
-	return mapErr(sqlc.New().AddAgentBudgetSpend(ctx, s.pool, sqlc.AddAgentBudgetSpendParams{
-		KeyID: mustPgUUID(keyID), Month: pgtype.Date{Time: budgetMonth(at), Valid: true}, Millicents: millicents,
+	return mapErr(sqlc.New().AdjustAgentBudgetStanding(ctx, s.pool, sqlc.AdjustAgentBudgetStandingParams{
+		KeyID: mustPgUUID(keyID), Millicents: millicents,
 	}))
+}
+
+func (s *PgStore) ReserveAgentBudget(ctx context.Context, keyID string, millicents, limitMillicents int64) (bool, error) {
+	if millicents <= 0 {
+		return true, nil
+	}
+	rows, err := sqlc.New().ReserveAgentBudgetStanding(ctx, s.pool, sqlc.ReserveAgentBudgetStandingParams{
+		KeyID: mustPgUUID(keyID), Millicents: millicents, LimitMillicents: limitMillicents,
+	})
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return len(rows) == 1, nil
 }
 
 // --- MemStore ---------------------------------------------------------------
 
+// agentBudgetSpendKey keys a MemStore agent key's standing cost.
 type agentBudgetSpendKey struct {
 	keyID string
-	month time.Time
 }
 
 func (m *MemStore) AgentKeyBudget(_ context.Context, keyID string) (AgentKeyBudget, error) {
@@ -197,14 +216,14 @@ func (m *MemStore) SetAgentKeyBudget(_ context.Context, keyID string, budget Age
 	return nil
 }
 
-func (m *MemStore) AgentBudgetSpent(_ context.Context, keyID string, at time.Time) (int64, error) {
+func (m *MemStore) AgentBudgetSpent(_ context.Context, keyID string, _ time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.agentBudgetSpend[agentBudgetSpendKey{keyID, budgetMonth(at)}], nil
+	return m.agentBudgetSpend[agentBudgetSpendKey{keyID: keyID}], nil
 }
 
-func (m *MemStore) AddAgentBudgetSpend(_ context.Context, keyID string, at time.Time, millicents int64) error {
-	if millicents <= 0 {
+func (m *MemStore) AddAgentBudgetSpend(_ context.Context, keyID string, _ time.Time, millicents int64) error {
+	if millicents == 0 {
 		return nil
 	}
 	m.mu.Lock()
@@ -215,6 +234,27 @@ func (m *MemStore) AddAgentBudgetSpend(_ context.Context, keyID string, at time.
 	if m.agentBudgetSpend == nil {
 		m.agentBudgetSpend = map[agentBudgetSpendKey]int64{}
 	}
-	m.agentBudgetSpend[agentBudgetSpendKey{keyID, budgetMonth(at)}] += millicents
+	k := agentBudgetSpendKey{keyID: keyID}
+	m.agentBudgetSpend[k] = max(m.agentBudgetSpend[k]+millicents, 0)
 	return nil
+}
+
+func (m *MemStore) ReserveAgentBudget(_ context.Context, keyID string, millicents, limitMillicents int64) (bool, error) {
+	if millicents <= 0 {
+		return true, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasKeyLocked(keyID) {
+		return false, ErrNotFound
+	}
+	k := agentBudgetSpendKey{keyID: keyID}
+	if m.agentBudgetSpend[k]+millicents > limitMillicents {
+		return false, nil
+	}
+	if m.agentBudgetSpend == nil {
+		m.agentBudgetSpend = map[agentBudgetSpendKey]int64{}
+	}
+	m.agentBudgetSpend[k] += millicents
+	return true, nil
 }

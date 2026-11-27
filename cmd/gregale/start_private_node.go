@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/featurehints"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"gopkg.in/yaml.v3"
 )
 
@@ -104,6 +107,7 @@ func (r *startRunner) reviewPrivateNodePlan(ctx context.Context, client *Client,
 	if account.ID != r.session.AccountID || client.BaseURL() != r.client.BaseURL() {
 		return errors.New("account or API changed; start again to review the current connection")
 	}
+	r.account = account
 	if err := r.requireStartCompatibility(ctx, client); err != nil {
 		return err
 	}
@@ -141,7 +145,23 @@ func (r *startRunner) reviewPrivateNodePlan(ctx context.Context, client *Client,
 func (r *startRunner) confirmPrivateNodePlan(plan api.PlanResponse) (bool, error) {
 	_, _ = fmt.Fprintf(osStdout, "\nReady to launch %s\n  Source   %s\n  Account  %s (%s plan)\n  Access   Internal only\n",
 		r.session.AppSlug, r.session.SourcePath, r.account.Email, r.account.Plan)
-	printPlanText(osStdout, plan, nil, false)
+	if r.session.ProjectID != "" {
+		_, _ = fmt.Fprintf(osStdout, "  Project  Reuse %s (%s)\n", r.session.Project, r.session.ProjectID)
+	}
+	_, _ = fmt.Fprintln(osStdout, "  Check    Gregale verifies the deployment response through your account.")
+	plan = withFeatureHints(plan)
+	if r.account.Plan == string(api.PlanFree) {
+		// The validated starter plan expects loopback-only ingress. Show it as
+		// internal access above and keep any other scan warnings visible.
+		loopbackWarning := "reposcan: compose.yaml: " + r.session.AppSlug + ": " + reposcan.ComposeLoopbackPortWarning
+		plan.Warnings = slices.DeleteFunc(slices.Clone(plan.Warnings), func(warning string) bool {
+			return warning == loopbackWarning
+		})
+		plan.FeatureHints = slices.DeleteFunc(slices.Clone(plan.FeatureHints), func(hint api.FeatureHint) bool {
+			return hint.ID == featurehints.IDHealthDefault
+		})
+	}
+	printPreparedPlanText(osStdout, plan, nil, false, false)
 	return r.prompt.confirm(r.ctx, "Deploy this app")
 }
 

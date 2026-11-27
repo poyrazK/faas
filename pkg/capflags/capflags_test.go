@@ -134,13 +134,13 @@ func TestReleasedByDefaultIgnoresAccountRules(t *testing.T) {
 	if d.ReleasedByDefault("queues") || !d.ReleasedByDefault("github-deploys") || d.ReleasedByDefault(id) {
 		t.Fatal("released by default means kill switch and default on, for the capability and its ancestors")
 	}
-	if !load(t, nil).ReleasedByDefault("crons") || load(t, nil).ReleasedByDefault("realtime") {
+	if !load(t, nil).ReleasedByDefault("crons") || load(t, nil).ReleasedByDefault("queues") {
 		t.Fatal("without a snapshot, tier defaults decide")
 	}
 }
 
 func TestEveryAccountRequiresAllAncestorsWithoutNarrowingRules(t *testing.T) {
-	if !load(t, nil).EveryAccount("workflows") || load(t, nil).EveryAccount("stored-workflows") {
+	if !load(t, nil).EveryAccount("workflows") || load(t, nil).EveryAccount("gregale-commit") {
 		t.Fatal("tier defaults should decide when no flag is configured")
 	}
 	id, parent := child(t)

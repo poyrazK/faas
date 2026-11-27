@@ -141,7 +141,12 @@ func previewLogQuery(fs *flag.FlagSet, slug, source, since string, archive *api.
 			}
 			filters["request"] = strings.TrimSpace(fs.Lookup("request").Value.String())
 			filters["trace"] = strings.TrimSpace(fs.Lookup("trace").Value.String())
-			if filters["request"] == "" {
+			if logsFlagWasSet(fs, "follow") {
+				add("follow")
+				filters["poll_interval"] = httpLogsFollowInterval.String()
+				filters["poll_window"] = httpLogsFollowWindow.String()
+				notes = append(notes, "Follow polls new HTTP request rows until interrupted; rows appear about a minute after their minute ends.")
+			} else if filters["request"] == "" {
 				add("limit")
 				add("all")
 			}

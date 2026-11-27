@@ -4,6 +4,8 @@ Everything your app writes to standard output and standard error is a log
 line. Gregale keeps the lines of every running instance, archives them when
 the instance stops, and lets you read, follow, filter and forward them.
 
+Read an app's logs and errors from the CLI:
+
 ```sh
 gregale logs my-api                # recent lines
 gregale logs my-api --follow       # stream until Ctrl-C
@@ -32,6 +34,8 @@ faster than its buffer could hold before the lines were archived, the output
 says so instead of skipping silently.
 
 ## Retention
+
+How long logs and request events are kept depends on your plan:
 
 | Plan | Archived logs readable for | Job task output kept for | HTTP request events | Log drains |
 |---|---|---|---|---|
@@ -113,8 +117,12 @@ change configuration.
 
 `--level` reads the `level` or `severity` field of JSON log lines (the
 format Pino, Zap, Logrus and Cloud Logging use) and common text shapes such as
-`[ERROR]` or `level=error`. Lines with no recognisable level are left out when
-you filter by level.
+`[ERROR]`, `level=error`, or a line that starts with `ERROR `, `WARN ` or
+`INFO `. Lines with no recognisable level are left out when you filter by level.
+
+An app's stdout and stderr reach Gregale through one console, so every app
+line is labelled `stdout` whichever stream the app wrote it to. Mark severity
+in the line itself rather than relying on the stream.
 
 Save filters you use often with `gregale logs views save NAME ...` and reuse
 them with `--view NAME`.
@@ -168,6 +176,17 @@ gregale logs drain health my-api <drain-id>
 - `--kind http_json` (the default) posts each line as one JSON object;
   `--kind otlp` sends OTLP/HTTP log records in batches of up to 100 lines,
   as does the Datadog integration.
+- OTLP records use the standard fields, so your backend can link lines to
+  traces, filter by level and group by app without custom mapping: the
+  request's trace id is the record's `traceId`; the line's level (the same
+  detection as `gregale logs --level`: a structured `"level"` field, a marker
+  such as `[error]` or `level=warn`, or a crash line such as `Traceback` or
+  `panic:`) is `severityText` and `severityNumber` (`ERROR`, `WARN` or
+  `INFO`), and Datadog drains send it as `status`; and the
+  resource carries `service.name` (the app's slug), `service.instance.id`,
+  `service.version` (the deployed commit), `deployment.environment.name` and
+  `cloud.region`. The `faas.*` record attributes (app, deployment, request
+  and trace ids) are still sent.
 - A drain picks up where it left off after a restart or a change: lines
   still held by the running instances are forwarded once, and lines that
   were no longer available are counted as gaps in `health`.

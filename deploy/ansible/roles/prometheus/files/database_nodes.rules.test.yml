@@ -373,6 +373,35 @@ tests:
               summary: pgproxyd's certificate on db-3 expires in 2d 11h 49m 0s
               description: The public certificate pgproxyd serves on db-3 expires within 72 hours; after that every client connection to the node's databases fails verification.
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+  - name: writable low storage warns and resolves when all low primaries are read-only
+    interval: 1m
+    input_series:
+      - series: schedd_database_storage{level="low",instance="10.42.0.2:9102"}
+        values: 0 0 2 2 2 2 2
+      - series: schedd_database_storage{level="read_only",instance="10.42.0.2:9102"}
+        values: 0 0 1 1 1 2 2
+      - series: schedd_database_storage{level="low",instance="10.42.0.3:9102"}
+        values: 0 0 1 1 1 1 1
+      - series: schedd_database_storage{level="read_only",instance="10.42.0.3:9102"}
+        values: 0 0 1 1 1 1 1
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasDatabasePrimaryStorageLow
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FaasDatabasePrimaryStorageLow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: 1 writable native database primary volume(s) low on space
+              description: "These primaries are still writable. Find their database IDs in schedd logs ('primary is low on storage') and check free space, WAL archiving and storage resize capacity."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
+      - eval_time: 6m
+        alertname: FaasDatabasePrimaryStorageLow
+        exp_alerts: []
   - name: a read-only database warns after five minutes, not before
     interval: 1m
     input_series:

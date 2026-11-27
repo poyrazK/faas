@@ -71,6 +71,7 @@ type PgStore struct {
 	trafficScopedBinding   bool
 	realtimeEventSchemas   *realtimeEventSchemaCache
 	taskToolExecutionSlots *semaphore.Weighted
+	finalUsage             *finalUsageBeforeCache
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -86,7 +87,8 @@ func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
 		slots = int64(pool.Config().MaxConns / 2)
 	}
 	return &PgStore{taskToolExecutionSlots: semaphore.NewWeighted(slots), pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
-		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
+		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache(),
+		finalUsage: newFinalUsageBeforeCache()}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -406,6 +408,11 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 
 	if params.Referral != nil {
 		if err := referrals.Attribute(ctx, tx, acct.ID, *params.Referral); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, err
+		}
+	}
+	if u := params.Unclaimed; u != nil {
+		if err := insertUnclaimedAccountTx(ctx, tx, acct.ID, *u); err != nil {
 			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
@@ -2442,6 +2449,7 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 // --- apps --------------------------------------------------------------------
 
 func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
+	app = app.WithAPISandboxEgress()
 	// ADR-093 / PR-E: DB call seam — propagate the inbound budget
 	// with a 10 ms overhead reservation. Hot-path Store methods
 	// follow this pattern; the wrapper is a no-op when no Budget
@@ -2753,6 +2761,7 @@ func (s *PgStore) createPRPreviewAppsIfUnderQuotaOnce(ctx context.Context, apps 
 }
 
 func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api.Limits) (App, error) {
+	app = app.WithAPISandboxEgress()
 
 	// 1. Lock the parent accounts row. SELECT 1 + FOR UPDATE keeps the
 	//    lock acquisition in one round-trip; the FOR UPDATE blocks any
@@ -2767,6 +2776,11 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
 	}
 
+	if app.AddToProject {
+		if err := validateProjectAppCreateTx(ctx, tx, app); err != nil {
+			return App{}, err
+		}
+	}
 	limits, personal, err := resolveAppQuotaTx(ctx, tx, &app, limits)
 	if err != nil {
 		return App{}, err
@@ -2777,7 +2791,13 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	// returning the quota error first strands a customer's first app forever
 	// on plans with a single slot.
 	var slugExists bool
-	if err := tx.QueryRow(ctx, `select exists(select 1 from apps where slug = $1 and status <> 'deleted')`, app.Slug).Scan(&slugExists); err != nil {
+	if IsAPISandbox(app) {
+		// A delayed retry must not recreate an ended sandbox.
+		slugExists, err = sqlc.New().APISandboxSlugExists(ctx, tx, app.Slug)
+	} else {
+		err = tx.QueryRow(ctx, `select exists(select 1 from apps where slug = $1 and status <> 'deleted')`, app.Slug).Scan(&slugExists)
+	}
+	if err != nil {
 		return App{}, fmt.Errorf("state: check app slug %s: %w", app.Slug, err)
 	}
 	if slugExists {
@@ -2972,6 +2992,40 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
+	}
+	if IsAPISandbox(created) {
+		var scenario []byte
+		if app.APISandboxScenario != nil {
+			scenario, err = json.Marshal(app.APISandboxScenario)
+			if err != nil {
+				return App{}, fmt.Errorf("state: encode sandbox scenario: %w", err)
+			}
+		}
+		if err := sqlc.New().EnqueueAPISandboxOperation(ctx, tx, sqlc.EnqueueAPISandboxOperationParams{
+			AppID: mustPgUUID(created.ID), SmokePath: app.APISandboxSmokePath, Scenario: scenario,
+		}); err != nil {
+			return App{}, fmt.Errorf("state: enqueue API sandbox: %w", err)
+		}
+		if app.APISandboxPartnerLabel != "" {
+			if err := sqlc.New().CreateAPISandboxPartner(ctx, tx, sqlc.CreateAPISandboxPartnerParams{
+				AppID: mustPgUUID(created.ID), Label: app.APISandboxPartnerLabel,
+			}); err != nil {
+				return App{}, fmt.Errorf("state: reserve sandbox partner: %w", err)
+			}
+		}
+		if app.APISandboxRunID != "" {
+			if app.APISandboxScenario == nil {
+				return App{}, ErrInvalidArgument
+			}
+			if err := sqlc.New().CreateAPISandboxRun(ctx, tx, sqlc.CreateAPISandboxRunParams{
+				ID: mustPgUUID(app.APISandboxRunID), SourceDeploymentID: mustPgUUID(app.Manifest.APISandboxSourceDeploymentID),
+				SandboxAppID: mustPgUUID(created.ID), ScenarioRevision: mustPgUUID(app.APISandboxScenario.Revision),
+				ScenarioName: app.APISandboxScenario.Name, PartnerStepCount: int32(apiSandboxPartnerStepCount(app)),
+				PartnerWebhook: app.APISandboxRunPartnerWebhook,
+			}); err != nil {
+				return App{}, fmt.Errorf("state: reserve sandbox run: %w", mapErr(err))
+			}
+		}
 	}
 	return created, nil
 }
@@ -3748,7 +3802,7 @@ func (s *PgStore) ReassignAppOwner(ctx context.Context, appID, fromNodeID, toNod
 	}
 	tag, err := s.pool.Exec(ctx,
 		`update apps
-		    set node_id = $3, reassigned_at = now()
+		    set node_id = $3, reassigned_at = now(), owner_home_node_id = null
 		  where id = $1
 		    and node_id = $2
 		    and status in ('active', 'evicted_cold')`,
@@ -4176,9 +4230,12 @@ func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID,
 		      select 1 from compute_nodes n
 		       where n.id = instances.node_id
 		         and ((n.active = true and n.last_heartbeat_at >= $3)
-		           or (instances.app_id is not null and n.lifecycle in ('draining', 'force_draining', 'unavailable', 'recovering')))
+		           -- The recovery arbiter owns app rows on a managed node
+		           -- only while a handoff can still succeed.
+		           or (instances.app_id is not null and n.lifecycle in ('draining', 'force_draining', 'unavailable', 'recovering')
+		               and n.last_heartbeat_at >= clock_timestamp() - make_interval(secs => $4)))
 		    )`,
-		instanceID, nodeID, threshold)
+		instanceID, nodeID, threshold, float64(api.DeadNodeRecoveryHandoffMaxSeconds))
 	if err != nil {
 		return fmt.Errorf("state: fail running instance on dead node: %w", err)
 	}
@@ -5076,8 +5133,37 @@ func restoreAppTx(ctx context.Context, tx pgx.Tx, id string, limits api.Limits) 
 	if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason = $2`, id, CronSuspendedAppDeleted); err != nil {
 		return App{}, fmt.Errorf("state: restore app crons: %w", err)
 	}
+	// safedeploy closes a canary whose app was deleted by stamping it
+	// aborted; the deleted app had no traffic to hand back, so the row kept
+	// its share. After a restore that split served the aborted candidate
+	// forever (prod 2026-11-21: 50/50, 10% and 1% splits since 11-15). Its
+	// share goes to the release with the most traffic in its scope, in one
+	// statement so the scope still sums to 100.
+	if _, err := tx.Exec(ctx, `
+		with stuck as (
+			select d.id, d.scope, d.traffic_percent from deployments d
+			 where d.app_id = $1 and d.status = 'live' and d.rollout_state = 'aborted'
+			   and d.rollout_aborted_reason = $2 and d.traffic_percent > 0
+		), heir as (
+			select distinct on (s.id) s.id as stuck_id, o.id as heir_id, s.traffic_percent as moved
+			  from stuck s
+			  join deployments o on o.app_id = $1 and o.scope = s.scope and o.status = 'live'
+			   and o.id not in (select id from stuck)
+			 order by s.id, o.traffic_percent desc, o.created_at desc, o.id
+		)
+		update deployments d
+		   set traffic_percent = case when d.id in (select stuck_id from heir) then 0
+		       else d.traffic_percent + (select coalesce(sum(moved), 0) from heir where heir_id = d.id)::int end
+		 where d.id in (select stuck_id from heir) or d.id in (select heir_id from heir)`,
+		id, RolloutAbortedAppDeleted); err != nil {
+		return App{}, fmt.Errorf("state: restore app return aborted canary traffic: %w", err)
+	}
 	return a, nil
 }
+
+// RolloutAbortedAppDeleted is the rollout_aborted_reason safedeploy stamps on
+// a canary whose app was deleted mid-rollout.
+const RolloutAbortedAppDeleted = "app deleted during rollout"
 
 // ListDeletedApps returns app tombstones for the app grace sweeper.
 func (s *PgStore) ListDeletedApps(ctx context.Context) ([]App, error) {
@@ -7972,6 +8058,10 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 		return Deployment{}, 0, err
 	}
 	d.Scope = normalizedDeploymentScope(d.Scope)
+	schedule, err := deploymentScheduleForCreate(ctx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	tx, err := s.beginAppTrafficMutation(ctx, d.AppID)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
@@ -8032,14 +8122,17 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 	//    acquisition in one round-trip; apps.status flips are blocked
 	//    behind this lock until COMMIT/ROLLBACK. apps_pkey is the
 	//    primary key on id, so the lock search is an index hit.
-	var locked int
+	var sandboxSourceID string
 	if err := tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
-		d.AppID).Scan(&locked); err != nil {
+		`select coalesce(manifest->>'api_sandbox_source_deployment_id', '') from apps where id = $1 and status in ('active', 'evicted_cold') for update`,
+		d.AppID).Scan(&sandboxSourceID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Deployment{}, 0, ErrNotFound
 		}
 		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+	}
+	if sandboxSourceID != "" && (d.branchInput == nil || d.branchInput.SandboxSourceID != sandboxSourceID) {
+		return Deployment{}, 0, ErrConflict
 	}
 	if err := guardReleaseAdditionDeploymentDB(ctx, tx, d); err != nil {
 		return Deployment{}, 0, err
@@ -8370,6 +8463,11 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 	if err != nil {
 		return Deployment{}, 0, err
 	}
+	if d.ProjectDeployGroupID != "" {
+		if err := recordProjectDeployGroup(ctx, tx, created, d.ProjectDeployGroupID); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if d.submissionAttemptID != "" {
 		if _, err := attachDeploymentSubmission(ctx, tx, created.AppID, d.submissionAttemptID, created.ID); err != nil {
 			return Deployment{}, 0, err
@@ -8465,8 +8563,19 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 		}
 		created.StagedReview = &review
 	}
+	var schedules DeploymentScheduleResult
+	if schedule.result != nil {
+		schedule.schedule.DeploymentID = created.ID
+		schedules.Created, schedules.Replaced, err = scheduleReleaseTx(ctx, tx, schedule.schedule, schedule.replacedCode, schedule.replacedDetail, time.Now())
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: commit create deployment: %w", err)
+	}
+	if schedule.result != nil {
+		*schedule.result = schedules
 	}
 	return created, outboxID, nil
 }
@@ -8759,6 +8868,11 @@ func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rollout
 		id, rolloutState, startedAt, completedAt, abortedAt, abortedReason); err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp update: %w", err)
 	}
+	if rolloutState == "aborted" {
+		if _, err := pgRebalanceAbortedTraffic(ctx, tx, dep); err != nil {
+			return Deployment{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp commit: %w", err)
 	}
@@ -8897,28 +9011,54 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 
 // CountDeploymentOutcomesSince returns one bounded fleet aggregate for the
 // public status page. Successful deployments are live or superseded rows.
-// Failed rows are excluded when a user_error build backs them or when their
-// error code places the failure in the customer's workload or content
+// Failed rows are excluded when the failure is the customer's
+// (deploymentOutcomeCustomerCausedSQL): a user_error build, an error code
+// that places it in the customer's workload or content
 // (api.CustomerCausedDeploymentFailureCodes: app crashed, nothing listening,
-// OOM, ...). Other failures after a successful build (scan, snapshot,
-// readiness timeouts) remain visible as platform failures. Deleted apps
-// remain in the aggregate because release-acceptance apps are deliberately
-// cleaned up after their terminal result is recorded. FailedAccounts counts the
-// tenants behind the failures; a deployment whose app row is gone counts as
-// its own tenant.
-func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+// OOM, ...), a release command's own failure, or a 4xx the candidate itself
+// answered the smoke check with. Other failures after a successful build
+// (scan, snapshot, readiness timeouts) remain visible as platform failures.
+// Deleted apps stay in the aggregate (apps are soft-deleted; release-
+// acceptance apps are deleted after their terminal result is recorded); a
+// deployment whose app row was purged counts as its own tenant and cannot be
+// matched to an excluded account. Failures of one app with one error code in
+// the same hour count once: an owner (or an agent) retrying the same broken
+// release is one problem, while a fault that recurs through the day still
+// counts each hour. excludedAccounts (operator runtime config
+// status_excluded_account_ids: internal test, probe and release-acceptance
+// accounts) leave both sides of the ratio.
+func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time, excludedAccounts ...string) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
 		with outcomes as (
 			select coalesce(a.account_id, d.app_id) as tenant,
+			       coalesce(d.app_id::text, d.id::text) || ':' || coalesce(d.error_code, '') || ':' ||
+			         date_trunc('hour', coalesce(d.rollout_aborted_at, d.created_at))::text as failure_key,
 			       d.status in ('live', 'superseded') as succeeded,
-			       d.status = 'failed'
-			         and coalesce(d.error_code, '') <> all($2::text[])
-			         and not exists (
-					select 1 from builds b
-					 where b.deployment_id = d.id
-					   and b.failure_class = 'user_error'
-				 ) as platform_failed
+			       d.status = 'failed' and not (
+			         coalesce(d.error_code, '') = any($2::text[])
+			         or exists (
+			           select 1 from builds b
+			            where b.deployment_id = d.id
+			              and b.failure_class = 'user_error'
+			         )
+			         or (d.error_code = $4 and exists (
+			           select 1 from app_tasks t
+			            where t.deployment_id = d.id
+			              and t.kind = 'release'
+			              and (
+			                (t.exit_code is not null and not (t.exit_code = any($3::int[]) and (
+			                  coalesce(t.failure_code, '') = any($9::text[])
+			                  or btrim(coalesce(t.stderr_tail, '')) = ''
+			                  or coalesce(t.stderr_tail, '') ~ $8)))
+			                or t.status = 'timed_out'
+			                or (t.status = 'cancelled' and t.cancel_requested_at is not null)
+			              )
+			         ))
+			         or (d.error_code = $5
+			             and d.api_hosting_receipt #>> '{smoke,error_code}' = $6
+			             and coalesce((d.api_hosting_receipt #>> '{smoke,status_code}')::int, 0) between 400 and 499)
+			       ) as platform_failed
 			  from deployments d
 			  left join apps a on a.id = d.app_id
 			 where (
@@ -8926,21 +9066,24 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 				or
 				(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
 			   )
+			   and coalesce(a.account_id::text, '') <> all($7::text[])
 		)
 		select
 			count(*) filter (where succeeded),
-			count(*) filter (where platform_failed),
+			count(distinct failure_key) filter (where platform_failed),
 			count(distinct tenant) filter (where platform_failed)
-		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
+		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes,
+		api.CodeReleaseCommandFailed, api.CodeDeploymentSmokeFailed, api.CustomerCausedSmokeErrorCode,
+		nonNilStrings(excludedAccounts), api.PlatformToolMissingPattern, api.PlatformReleaseStartFailureCodes).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
 	return out, err
 }
 
 // LatestPlatformDeploymentOutcome returns the newest successful deployment or
-// platform-attributable failure. A user-code build failure or a
-// customer-caused runtime failure is not platform health evidence and is
-// skipped. The result remains authoritative until a newer terminal deployment
-// supersedes it.
-func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDeploymentOutcome, error) {
+// platform-attributable failure, with CountDeploymentOutcomesSince's
+// attribution and account exclusion. A customer-caused failure is not
+// platform health evidence and is skipped. The result remains authoritative
+// until a newer terminal deployment supersedes it.
+func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context, excludedAccounts ...string) (LatestDeploymentOutcome, error) {
 	var out LatestDeploymentOutcome
 	err := s.pool.QueryRow(ctx, `
 		select d.status in ('live', 'superseded') as succeeded,
@@ -8949,7 +9092,9 @@ func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDe
 		         else coalesce(d.rollout_aborted_at, d.created_at)
 		       end as observed_at
 		  from deployments d
+		  left join apps a on a.id = d.app_id
 		 where d.status in ('live', 'superseded', 'failed')
+		   and coalesce(a.account_id::text, '') <> all($6::text[])
 		   and not (
 		     d.status = 'failed' and (
 		       coalesce(d.error_code, '') = any($1::text[])
@@ -8958,10 +9103,28 @@ func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDe
 		          where b.deployment_id = d.id
 		            and b.failure_class = 'user_error'
 		       )
+		       or (d.error_code = $3 and exists (
+		         select 1 from app_tasks t
+		          where t.deployment_id = d.id
+		            and t.kind = 'release'
+		            and (
+		              (t.exit_code is not null and not (t.exit_code = any($2::int[]) and (
+		                coalesce(t.failure_code, '') = any($8::text[])
+		                or btrim(coalesce(t.stderr_tail, '')) = ''
+		                or coalesce(t.stderr_tail, '') ~ $7)))
+		              or t.status = 'timed_out'
+		              or (t.status = 'cancelled' and t.cancel_requested_at is not null)
+		            )
+		       ))
+		       or (d.error_code = $4
+		           and d.api_hosting_receipt #>> '{smoke,error_code}' = $5
+		           and coalesce((d.api_hosting_receipt #>> '{smoke,status_code}')::int, 0) between 400 and 499)
 		     )
 		   )
 		 order by observed_at desc, d.created_at desc
-		 limit 1`, api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.ObservedAt)
+		 limit 1`, api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes,
+		api.CodeReleaseCommandFailed, api.CodeDeploymentSmokeFailed, api.CustomerCausedSmokeErrorCode,
+		nonNilStrings(excludedAccounts), api.PlatformToolMissingPattern, api.PlatformReleaseStartFailureCodes).Scan(&out.Succeeded, &out.ObservedAt)
 	if err != nil {
 		return LatestDeploymentOutcome{}, mapErr(err)
 	}
@@ -16734,6 +16897,9 @@ func (s *PgStore) CountNewErrorFingerprintsSince(ctx context.Context, accountID,
 		  from app_errors e
 		 where account_id = $1
 		   and first_seen_at >= $2
+		   -- A 5xx the app never answered (failed wake, platform refusal) is
+		   -- not a new application error (Observe audit 2026-11-21).
+		   and error_class <> 'wake_failed'
 		   and ($3::uuid is null or app_id = $3::uuid)
 		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = e.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&total)
@@ -17136,7 +17302,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 // regression used returning col = $2; that's always true post-update
 // and silently breaks the entire dedupe gate. The two-return form
 // (old + won) is the load-bearing detail.
-func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error) {
+func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, recipients AlertFireRecipients, err error) {
 	// The bucket-level dedupe primitive is
 	// `alert_deliveries.idempotency_key` UNIQUE: the FIRST claim
 	// inside a cool-down bucket inserts the delivery row with
@@ -17172,22 +17338,31 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 	// pkg-state-usage-monthly-tz-compare.md).
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return "", false, fmt.Errorf("state: begin tx: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
 	if _, err := sqlc.New().LockAlertRollbackFireApp(ctx, tx, mustPgUUID(ruleID)); err != nil {
-		return "", false, fmt.Errorf("state: lock alert rollback app: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: lock alert rollback app: %w", err)
 	}
 
-	var exists bool
-	if err := tx.QueryRow(ctx,
-		`select true from alert_rules where id = $1`, ruleID,
-	).Scan(&exists); err != nil {
+	mode, err := sqlc.New().LockAlertRuleObservationMode(ctx, tx, mustPgUUID(ruleID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", false, ErrNotFound
+			return "", false, AlertFireRecipients{}, ErrNotFound
 		}
-		return "", false, fmt.Errorf("state: claim alert fire lookup %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire lookup %s: %w", ruleID, err)
+	}
+	if mode.ObserveOnly {
+		return "", false, AlertFireRecipients{}, nil
+	}
+	if !alertFireMatchesScope(payload, mode.EnvironmentScope) {
+		return "", false, AlertFireRecipients{}, ErrConflict
+	}
+
+	// Older evaluators cannot defer notifications during an observation handoff.
+	if _, err := tx.Exec(ctx, "SELECT set_config('faas.alert_handoff_claim', 'on', true)"); err != nil {
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: enable alert fire handoff: %w", err)
 	}
 
 	// Insert pending delivery as the dedupe gate. UNIQUE on
@@ -17211,13 +17386,13 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 		// 23505 = unique_violation; the per-bucket dedupe hit.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return "", false, nil
+			return "", false, AlertFireRecipients{}, nil
 		}
-		return "", false, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire insert %s: %w", ruleID, err)
 	}
 
 	if err := s.captureAlertRollbackTx(ctx, tx, ruleID, deliveryID, observed, at); err != nil {
-		return "", false, fmt.Errorf("state: capture alert rollback: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: capture alert rollback: %w", err)
 	}
 
 	// Stamp last_fired_at alongside the INSERT. The stamp is a
@@ -17227,20 +17402,34 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 		`update alert_rules set last_fired_at = $2 where id = $1`,
 		ruleID, at.UTC(),
 	); err != nil {
-		return "", false, fmt.Errorf("state: claim alert fire stamp write %s: %w", ruleID, err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire stamp write %s: %w", ruleID, err)
 	}
-	won = true
+	// The mode edit locks the same row. It either sees this open episode
+	// and queues its terminal events, or it wins before this fire is claimed.
+	var changed int
+	if err := tx.QueryRow(ctx, setAlertRuleStateSQL, ruleID, string(AlertStateFiring), at.UTC(),
+		uuid.NewString(), alertEpisodeKeep, nil).Scan(&changed); err != nil {
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: open claimed alert episode: %w", err)
+	}
+	recipients, err = claimAlertFireRecipients(ctx, tx, ruleID, deliveryID)
+	if err != nil {
+		return "", false, AlertFireRecipients{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return "", false, fmt.Errorf("state: claim alert fire commit: %w", err)
+		return "", false, AlertFireRecipients{}, fmt.Errorf("state: claim alert fire commit: %w", err)
 	}
-	return deliveryID, won, nil
+	return deliveryID, true, recipients, nil
 }
 
 func (s *PgStore) SetAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
+	return s.setAlertRuleState(ctx, ruleID, to, at, nil)
+}
+
+func (s *PgStore) setAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time, confirmedAt *time.Time) (bool, error) {
 	var changed int
 	err := s.pool.QueryRow(ctx, setAlertRuleStateSQL,
-		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep).Scan(&changed)
+		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep, confirmedAt).Scan(&changed)
 	if err != nil {
 		return false, err
 	}
@@ -19690,7 +19879,8 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 		 from instances i
 		 left join compute_nodes n on n.id = i.node_id
 		 where i.state = 'running'
-		   and (n.id is null or i.app_id is null or n.lifecycle not in ('draining', 'force_draining', 'unavailable', 'recovering'))
+		   and (n.id is null or i.app_id is null or n.lifecycle not in ('draining', 'force_draining', 'unavailable', 'recovering')
+		        or n.last_heartbeat_at < clock_timestamp() - make_interval(secs => $3))
 		   and (n.id is null or n.active = false or n.last_heartbeat_at < $1)
 		 -- Tie-break on instance id so a capped query is
 		 -- deterministic when many rows share the same heartbeat
@@ -19700,7 +19890,7 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 		 -- an extra tick between runs of identical input.
 		 order by n.last_heartbeat_at asc nulls first, i.id asc
 		 limit $2`,
-		threshold, limit)
+		threshold, limit, float64(api.DeadNodeRecoveryHandoffMaxSeconds))
 	if err != nil {
 		return nil, fmt.Errorf("state: list running instances on dead nodes: %w", err)
 	}
@@ -22936,8 +23126,11 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 
 // AppendGatewayUsageEvent durably deduplicates one replayable gateway frame
 // and applies its counters in the same transaction. The caller may ACK the
-// frame only after this method returns nil.
-func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
+// frame only after this method returns nil. billedEgress also adds the
+// frame's response bytes to net_tx_bytes, the billed app egress
+// (ADR-20261121210517): meterd sets it while compute nodes deliver public
+// responses outside the instance veth that net_tx_bytes otherwise counts.
+func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, billedEgress bool) error {
 	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
 		return fmt.Errorf("state: invalid gateway usage counters")
 	}
@@ -22973,6 +23166,7 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 			Column3: int32(requests),
 			Column4: txBytes,
 			Column5: coldBoots,
+			Column6: gatewayBilledEgress(txBytes, billedEgress),
 		})
 		if applyErr != nil {
 			return applyErr
@@ -22984,13 +23178,29 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 	return tx.Commit(ctx)
 }
 
+// gatewayBilledEgress is the net_tx_bytes a gateway usage frame adds.
+func gatewayBilledEgress(txBytes int64, billed bool) int64 {
+	if !billed {
+		return 0
+	}
+	return txBytes
+}
+
 // AppendNetworkUsageObservation converts vmmd's cumulative host-interface
 // counters to additive usage deltas. The checkpoint row is locked and advanced
 // in the same transaction as usage_minutes, which makes retry after a meterd
 // crash exactly-once for every observed cumulative value.
 func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
-	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
 	return tx, rx, err
+}
+
+// AppendNodeNetworkUsageObservation implements NodeNetworkObserver.
+func (s *PgStore) AppendNodeNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+	if internal != nil && *internal < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, reading, netTxCumulative, netTxValid, netRxCumulative, netRxValid, internal)
 }
 
 // AppendNetworkUsageObservationExcludingInternal implements
@@ -22999,14 +23209,14 @@ func (s *PgStore) AppendNetworkUsageObservationExcludingInternal(ctx context.Con
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
-	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
 }
 
 // appendNetworkUsageObservation is AppendNetworkUsageObservation; with a
 // non-nil internal reading the egress it adds leaves out the internal bytes
 // (billing review R8-2). Financial usage evidence is append-only, so billed
 // egress is reduced before it is written, never after.
-func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
@@ -23030,15 +23240,27 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	}
 	var previousTx, previousRx, previousInternal, internalPending int64
 	var previousTxValid, previousRxValid, previousInternalValid bool
+	var checkpointNode string
 	err = tx.QueryRow(ctx,
 		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid,
-		        internal_tx_bytes, internal_tx_valid, internal_tx_pending
+		        internal_tx_bytes, internal_tx_valid, internal_tx_pending, node_id
 		   from meter_network_checkpoints
 		  where instance_id = $1
 		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid,
-		&previousInternal, &previousInternalValid, &internalPending)
+		&previousInternal, &previousInternalValid, &internalPending, &checkpointNode)
 	if err != nil {
 		return 0, 0, 0, err
+	}
+	// ADR-20261122090000: a departed reading from a node the checkpoint
+	// already left was applied before the switch; a live reading from another
+	// node is a new counter, all of it new usage.
+	skip, fresh, node := networkReadingStep(checkpointNode, reading)
+	if skip {
+		return 0, 0, 0, tx.Commit(ctx)
+	}
+	if fresh {
+		previousTxValid, previousRxValid, previousInternalValid = false, false, false
+		internalPending = 0
 	}
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
@@ -23092,16 +23314,17 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	}
 
 	_, err = tx.Exec(ctx,
-		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at)
-		 values ($1, $2, $3, $4, $5, $6, now())
+		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at, node_id)
+		 values ($1, $2, $3, $4, $5, $6, now(), $7)
 		 on conflict (instance_id) do update
 		   set net_tx_bytes = excluded.net_tx_bytes,
 		       net_rx_bytes = excluded.net_rx_bytes,
 		       net_tx_valid = excluded.net_tx_valid,
 		       net_rx_valid = excluded.net_rx_valid,
 		       observed_at = excluded.observed_at,
+		       node_id = excluded.node_id,
 		       updated_at = now()`,
-		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
+		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC(), node)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -23122,22 +23345,61 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 // second is billed once; the result is capped to the requested window length.
 // It is intentionally an optional PgStore surface (not part of Store) so older
 // in-memory/custom stores retain the legacy minute-snapshot test seam.
+//
+// An instance whose node has stopped heartbeating (older than
+// api.DeadNodeReconcilerStalenessSeconds when the minute is rolled) is billed
+// only up to that node's last heartbeat. Its row can stay billable for hours
+// after the node dies: the dead-node sweep leaves app rows on a draining or
+// recovering node to the recovery arbiter, and the interval closes only when
+// some path finally moves the row. Without the clamp the customer paid for an
+// outage as resident time (account usage audit 2026-11-21: 6 GB × ~24 h on one
+// app). A node that comes back refreshes its heartbeat, so later rolls bill
+// normally; a clamped minute stays unbilled (customer-favourable).
 func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Time) (map[string]int64, error) {
 	if !start.Before(end) {
 		return map[string]int64{}, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`select instance_id::text,
+		`select b.instance_id::text,
 		        least(ceil(extract(epoch from ($2::timestamptz - $1::timestamptz)))::bigint,
-		              ceil(sum(extract(epoch from
-		                least(coalesce(ended_at, $2::timestamptz), $2::timestamptz)
-		                - greatest(started_at, $1::timestamptz))))::bigint) as resident_seconds
-		   from instance_billing_intervals
-		  where started_at < $2
+		              ceil(sum(greatest(0, extract(epoch from
+		                least(coalesce(b.ended_at, $2::timestamptz), $2::timestamptz,
+		                      coalesce(dead.last_heartbeat_at, 'infinity'::timestamptz))
+		                - greatest(b.started_at, $1::timestamptz,
+		                           coalesce(handoff.until, '-infinity'::timestamptz))))))::bigint) as resident_seconds
+		   from instance_billing_intervals b
+		   left join lateral (
+		        select n.last_heartbeat_at
+		          from instances i
+		          join compute_nodes n on n.id = i.node_id
+		         where i.id = b.instance_id
+		           and n.last_heartbeat_at < clock_timestamp() - make_interval(secs => $3)
+		   ) dead on true
+		   -- A managed Redis resize or upgrade starts the new VM beside the
+		   -- serving one and copies the data over; only the serving VM is
+		   -- billed (ADR-20261116192126 step 1, ADR-20261121231500). The new
+		   -- VM's interval starts billing when the older deployment's VM
+		   -- stops, at most api.ManagedValkeyHandoffWindowS after it started.
+		   left join lateral (
+		        -- least() ignores NULL, so no older VM must stay NULL here.
+		        select case when count(*) = 0 then null
+		                    else least(max(coalesce(o.ended_at, $2::timestamptz)),
+		                               b.started_at + make_interval(secs => $4)) end as until
+		          from instances bi
+		          join managed_valkey_caches c on c.app_id = bi.app_id
+		          join instances oi on oi.app_id = bi.app_id and oi.id <> bi.id
+		                           and oi.deployment_id is distinct from bi.deployment_id
+		          join instance_billing_intervals o on o.instance_id = oi.id
+		         where bi.id = b.instance_id
+		           and o.started_at < b.started_at
+		           and (o.ended_at is null or o.ended_at > b.started_at)
+		   ) handoff on true
+		  where b.started_at < $2
 		    -- coalesce(ended_at, $2) > $1 (start < end is checked above),
 		    -- spelled so instance_billing_intervals_ended_idx serves it.
-		    and (ended_at > $1 or ended_at is null)
-		  group by instance_id`, start.UTC(), end.UTC())
+		    and (b.ended_at > $1 or b.ended_at is null)
+		  group by b.instance_id`, start.UTC(), end.UTC(), float64(api.DeadNodeReconcilerStalenessSeconds),
+		float64(api.ManagedValkeyHandoffWindowS))
 	if err != nil {
 		return nil, err
 	}
@@ -24088,10 +24350,15 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	if err != nil {
 		return 0, err
 	}
-	// Only an account that changed plan this month reads its usage before the
-	// change: the month's total less the usage since, a short indexed range.
+	// Only an account whose plan was activated again this month reads its
+	// usage before the activation's hour. Once that usage is final it is
+	// summed once per process (finalUsageBefore); until then it is the month's
+	// total less the usage since, a range of at most MeterUsageFinalAfter.
 	monthEnd := monthStart.AddDate(0, 1, 0)
 	usageBefore := func(at time.Time) (int64, error) {
+		if usageFinalBefore(at, now) {
+			return s.finalUsageBefore(ctx, accountID, monthStart, at.UTC())
+		}
 		var since int64
 		if err := s.pool.QueryRow(ctx,
 			`select COALESCE(SUM(mb_seconds), 0)::bigint
@@ -24185,17 +24452,23 @@ func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]Usa
 
 // pendingBillingSubjectsSQL lists provider's billing identities whose subject,
 // an account or a company organization, is on a paid plan. A cancelled
-// subject keeps its identity but is Free, and the pusher never delivers a Free
-// subject's hours, so scanning them only grew every pass and let their
-// month-old hours fill the row limit ahead of paying subjects' current ones
-// (ADR-20261031100000).
+// subject keeps its identity but is Free; scanning all its hours only grew
+// every pass and let their month-old hours fill the row limit ahead of paying
+// subjects' current ones (ADR-20261031100000). Only its hours before the
+// plan change that made it Free are listed (paid_until), so a paid hour still
+// undelivered when the subscription ended reaches the pusher, which holds it
+// by the hour's recorded plan (ADR-20261121231500); every other Free subject
+// lists nothing.
 const pendingBillingSubjectsSQL = `paid as (
-		   select bi.account_id, bi.billing_from
+		   select bi.account_id, bi.billing_from,
+		          case when coalesce(a.plan, o.plan, 'free') <> 'free' then null::timestamptz
+		               else coalesce(a.plan_changed_at, o.plan_changed_at) end as paid_until
 		     from billing_identities bi
 		     left join accounts a on a.id = bi.account_id
 		     left join orgs o on o.id = bi.account_id and not o.personal_org
 		    where bi.provider = $1
-		      and coalesce(a.plan, o.plan, 'free') <> 'free'
+		      and (coalesce(a.plan, o.plan, 'free') <> 'free'
+		           or coalesce(a.plan_changed_at, o.plan_changed_at) > bi.billing_from)
 		 )`
 
 // PendingBillingUsageWindows returns bounded positive hourly usage without a
@@ -24213,6 +24486,7 @@ func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider strin
 		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
+		      and (bi.paid_until is null or u.minute < bi.paid_until)
 		    group by u.account_id, window_start
 		   having sum(u.mb_seconds) > 0
 			 ), pending as (
@@ -24278,6 +24552,7 @@ func (s *PgStore) PendingBillingMeterUsageWindows(ctx context.Context, provider 
 		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
+		      and (bi.paid_until is null or u.minute < bi.paid_until)
 		    group by u.account_id, window_start
 		   having sum(u.net_tx_bytes) > 0
 			 ), pending as (
@@ -24516,7 +24791,12 @@ func (s *PgStore) AppendSnapshotStorage(ctx context.Context, accountID, appID st
 func (s *PgStore) LatestSnapshotBytes(ctx context.Context, appID string) (int64, int64, error) {
 	var memBytes, diskBytes int64
 	err := s.pool.QueryRow(ctx,
-		`select coalesce(s.mem_bytes, 0), coalesce(s.disk_bytes, 0)
+		// The view counts what the memory image holds on disk: stored_bytes
+		// is the published mem + vmstate artifacts' allocation, mem_bytes the
+		// guest's nominal RAM (ADR-20261121231500). A legacy row without it
+		// keeps the logical bytes.
+		`select case when s.stored_bytes > 0 then s.stored_bytes else coalesce(s.mem_bytes, 0) end,
+		        coalesce(s.disk_bytes, 0)
 		   from snapshots s
 		   join deployments d on s.deployment_id = d.id
 		  where d.app_id = $1
@@ -27294,7 +27574,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
 	coalesce(environment_workload_runtime::text,''),
-	environment_workload_held, secret_reload_signal, runtime_base, before_checkpoint_hook`
+	environment_workload_held, secret_reload_signal, runtime_base, before_checkpoint_hook, serving_ended_at`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -27355,7 +27635,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
 	coalesce(d.environment_workload_runtime::text,''),
-	d.environment_workload_held, d.secret_reload_signal, d.runtime_base, d.before_checkpoint_hook`
+	d.environment_workload_held, d.secret_reload_signal, d.runtime_base, d.before_checkpoint_hook, d.serving_ended_at`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -27480,6 +27760,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
 		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld, &secretReloadSignal, &d.RuntimeBase, &beforeCheckpointHook,
+		&d.ServingEndedAt,
 	); err != nil {
 		return mapErr(err)
 	}
@@ -28019,6 +28300,10 @@ func mapErr(err error) error {
 	var admission *pgconn.PgError
 	if errors.As(err, &admission) {
 		switch admission.ConstraintName {
+		case "api_sandbox_fixed_egress":
+			return ErrAPISandboxEgressPolicy
+		case "api_sandbox_release_command_requires_admission":
+			return ErrPassingSandboxSuiteRequired
 		case "environment_recovery_budget":
 			observed, _ := strconv.ParseInt(admission.Detail, 10, 64)
 			return &EnvironmentRecoveryQuotaError{Observed: observed}
@@ -28086,6 +28371,8 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "alert_rules_environment_scope_chk", "alert_rules_recovery_confirmation_chk":
+				return ErrInvalidArgument
 			case "release_secret_snapshot_owned", "release_secret_key_retired", "release_secret_version_immutable":
 				return ErrConflict
 			case "application_standards_pending":
@@ -33884,6 +34171,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 		&expiresAt,
 		&lastUsedAt,
 		&revokedAt,
+		&k.EnvironmentID,
 	); err != nil {
 		return ConsumerKey{}, err
 	}
@@ -33900,7 +34188,7 @@ func scanConsumerKeyRow(row pgx.Row) (ConsumerKey, error) {
 // consumerKeySelectCols is the column list every read uses. Keeping
 // the order stable means scanConsumerKeyRow above is the single scan
 // helper, not five copies.
-const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at`
+const consumerKeySelectCols = `id, account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, created_at, expires_at, last_used_at, revoked_at, coalesce(environment_id::text, '')`
 
 func (s *PgStore) CreateConsumerKey(ctx context.Context, accountID, appID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
 	if accountID == "" || appID == "" {
@@ -33960,7 +34248,7 @@ func (s *PgStore) ListConsumerKeysForApp(ctx context.Context, accountID, appID s
 	rows, err := s.pool.Query(ctx,
 		`select `+consumerKeySelectCols+`
 		   from consumer_keys
-		  where account_id = $1::uuid and app_id = $2::uuid
+		  where account_id = $1::uuid and app_id = $2::uuid and environment_id is null
 		  order by created_at desc`,
 		accountID, appID)
 	if err != nil {
@@ -34043,6 +34331,7 @@ func (s *PgStore) ConsumerKeyByAppAndPrefix(ctx context.Context, accountID, appI
 		  where app_id = $1::uuid
 		    and account_id = $2::uuid
 		    and prefix = $3
+		    and environment_id is null
 		    and not exists (
 		        select 1 from api_consumers c
 		        join platform_tenants t on t.id = c.platform_tenant_id

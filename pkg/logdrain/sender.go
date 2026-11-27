@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/loglevel"
 )
 
 // Kind is the wire encoding used by a drain.
@@ -50,23 +51,26 @@ const (
 // Record is one runtime log line. Timestamps are retained as time.Time so
 // both encodings can represent nanosecond precision without reparsing.
 type Record struct {
-	AppID               string    `json:"app_id"`
-	AccountID           string    `json:"account_id"`
-	TenantID            string    `json:"tenant_id,omitempty"`
-	RequestID           string    `json:"request_id,omitempty"`
-	TraceID             string    `json:"trace_id,omitempty"`
-	DeploymentID        string    `json:"deployment_id,omitempty"`
-	InstanceID          string    `json:"instance_id"`
-	NodeID              string    `json:"node_id,omitempty"`
-	Region              string    `json:"region,omitempty"`
-	CommitSHA           string    `json:"commit_sha,omitempty"`
-	DeploymentTag       string    `json:"deployment_tag,omitempty"`
-	DeploymentCreatedAt string    `json:"deployment_created_at,omitempty"`
-	ImageDigest         string    `json:"image_digest,omitempty"`
-	Sequence            uint64    `json:"sequence"`
-	Stream              string    `json:"stream"`
-	Line                string    `json:"line"`
-	WrittenAt           time.Time `json:"written_at"`
+	AppID               string `json:"app_id"`
+	AccountID           string `json:"account_id"`
+	TenantID            string `json:"tenant_id,omitempty"`
+	RequestID           string `json:"request_id,omitempty"`
+	TraceID             string `json:"trace_id,omitempty"`
+	DeploymentID        string `json:"deployment_id,omitempty"`
+	InstanceID          string `json:"instance_id"`
+	NodeID              string `json:"node_id,omitempty"`
+	Region              string `json:"region,omitempty"`
+	CommitSHA           string `json:"commit_sha,omitempty"`
+	DeploymentTag       string `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string `json:"deployment_created_at,omitempty"`
+	ImageDigest         string `json:"image_digest,omitempty"`
+	Sequence            uint64 `json:"sequence"`
+	Stream              string `json:"stream"`
+	// Level is the canonical level (info, warn, error) vmmd parsed from the
+	// line; RecordLevel derives one when it is empty.
+	Level     string    `json:"level,omitempty"`
+	Line      string    `json:"line"`
+	WrittenAt time.Time `json:"written_at"`
 	// Attributes are extra string attributes of a structured line, such as
 	// an AI gateway call's OpenTelemetry GenAI attributes (ADR-1340). OTLP
 	// drains add them to the log record's attributes in key order.
@@ -82,7 +86,8 @@ type Config struct {
 	Kind       Kind
 	TargetURL  string
 	AuthHeader string
-	// Service is the Datadog service tag (the app slug) for KindDatadog.
+	// Service is the app slug: the Datadog service tag for KindDatadog and
+	// the OTLP service.name resource attribute for KindOTLP.
 	Service string
 	// DurableQueue, when set, makes Enqueue synchronous with a local fsync.
 	// The sender then acknowledges records only after a successful 2xx
@@ -662,7 +667,7 @@ func encodeBatch(kind Kind, service string, records []Record) ([]byte, string, e
 	case KindOTLP:
 		payload := otlpLogsPayload{}
 		for _, record := range records {
-			payload.ResourceLogs = append(payload.ResourceLogs, makeOTLPPayload(record).ResourceLogs...)
+			payload.ResourceLogs = append(payload.ResourceLogs, makeOTLPPayload(service, record).ResourceLogs...)
 		}
 		body, err := json.Marshal(payload)
 		return body, "application/json", err
@@ -703,9 +708,72 @@ type otlpScope struct {
 type otlpLogRecord struct {
 	TimeUnixNano         string         `json:"timeUnixNano"`
 	ObservedTimeUnixNano string         `json:"observedTimeUnixNano"`
+	SeverityNumber       int            `json:"severityNumber,omitempty"`
 	SeverityText         string         `json:"severityText,omitempty"`
 	Body                 otlpAnyValue   `json:"body"`
 	Attributes           []otlpKeyValue `json:"attributes"`
+	// TraceID is the W3C trace id in the OTLP/JSON hex form, so backends
+	// correlate the line with the request's trace without custom mapping.
+	TraceID string `json:"traceId,omitempty"`
+}
+
+// OTLP SeverityNumber values (logs data model) for the levels a runtime line
+// maps to.
+const (
+	otlpSeverityInfo  = 9
+	otlpSeverityWarn  = 13
+	otlpSeverityError = 17
+)
+
+// RecordLevel is the line's canonical level (pkg/loglevel): the level vmmd
+// parsed at ring intake, else error for a stderr line, else the line-shape
+// heuristic `gregale logs --level` uses, else info. guest-init merges the
+// app's stderr into stdout before the serial console, so the stream alone
+// labelled every line info and no drain backend saw an error.
+func RecordLevel(r Record) string {
+	switch strings.ToLower(strings.TrimSpace(r.Level)) {
+	case loglevel.Error, "fatal", "critical":
+		return loglevel.Error
+	case loglevel.Warn, "warning":
+		return loglevel.Warn
+	case loglevel.Info, "debug", "trace":
+		return loglevel.Info
+	}
+	if r.Stream == "stderr" {
+		return loglevel.Error
+	}
+	if level := loglevel.Detect(r.Line); level != "" {
+		return level
+	}
+	return loglevel.Info
+}
+
+// otlpSeverity maps a line's level to an OTLP severity the same way the
+// Datadog drain maps it to a status.
+func otlpSeverity(r Record) (int, string) {
+	switch RecordLevel(r) {
+	case loglevel.Error:
+		return otlpSeverityError, "ERROR"
+	case loglevel.Warn:
+		return otlpSeverityWarn, "WARN"
+	}
+	return otlpSeverityInfo, "INFO"
+}
+
+// otlpTraceID returns id when it is a valid, non-zero W3C trace id (32
+// lowercase hex characters), and "" otherwise: OTLP receivers reject a
+// malformed traceId, and a whole export with it.
+func otlpTraceID(id string) string {
+	if len(id) != 32 || strings.Trim(id, "0") == "" {
+		return ""
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return id
 }
 
 type otlpKeyValue struct {
@@ -717,7 +785,10 @@ type otlpAnyValue struct {
 	StringValue string `json:"stringValue,omitempty"`
 }
 
-func makeOTLPPayload(record Record) otlpLogsPayload {
+// makeOTLPPayload encodes one record. service is the app slug for the
+// service.name resource attribute; the faas.* record attributes are kept
+// unchanged for existing queries.
+func makeOTLPPayload(service string, record Record) otlpLogsPayload {
 	nanos := record.WrittenAt.UnixNano()
 	if record.WrittenAt.IsZero() {
 		nanos = time.Now().UnixNano()
@@ -757,15 +828,40 @@ func makeOTLPPayload(record Record) otlpLogsPayload {
 	for _, key := range keys {
 		attrs = append(attrs, otlpKeyValue{Key: key, Value: otlpAnyValue{StringValue: record.Attributes[key]}})
 	}
+	if service == "" {
+		service = record.AppID
+	}
+	if service == "" {
+		service = "gregale"
+	}
+	resource := []otlpKeyValue{{Key: "service.name", Value: otlpAnyValue{StringValue: service}}}
+	resourceOptional := []struct {
+		key   string
+		value string
+	}{
+		{key: "service.instance.id", value: record.InstanceID},
+		{key: "service.version", value: record.CommitSHA},
+		{key: "deployment.environment.name", value: record.Environment},
+		{key: "cloud.region", value: record.Region},
+	}
+	for _, field := range resourceOptional {
+		if field.value != "" {
+			resource = append(resource, otlpKeyValue{Key: field.key, Value: otlpAnyValue{StringValue: field.value}})
+		}
+	}
+	severityNumber, severityText := otlpSeverity(record)
 	return otlpLogsPayload{ResourceLogs: []otlpResourceLogs{{
-		Resource: otlpResource{Attributes: []otlpKeyValue{{Key: "service.name", Value: otlpAnyValue{StringValue: "gregale"}}}},
+		Resource: otlpResource{Attributes: resource},
 		ScopeLogs: []otlpScopeLogs{{
 			Scope: otlpScope{Name: "gregale/log-drain"},
 			LogRecords: []otlpLogRecord{{
 				TimeUnixNano:         fmt.Sprint(nanos),
 				ObservedTimeUnixNano: fmt.Sprint(time.Now().UnixNano()),
+				SeverityNumber:       severityNumber,
+				SeverityText:         severityText,
 				Body:                 otlpAnyValue{StringValue: record.Line},
 				Attributes:           attrs,
+				TraceID:              otlpTraceID(record.TraceID),
 			}},
 		}},
 	}}}

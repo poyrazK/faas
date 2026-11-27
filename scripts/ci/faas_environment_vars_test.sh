@@ -21,6 +21,7 @@ for environment in production production-us; do
   run "$work/$environment.yml" DEPLOY_ENVIRONMENT="$environment" || fail "$environment failed"
   grep -qx 'faas_box_role: control-plane' "$work/$environment.yml" || fail "$environment dropped existing variables"
   grep -qx 'faas_environment: production' "$work/$environment.yml" || fail "$environment staged no environment"
+  grep -qx "am_fleet_name: \"$environment\"" "$work/$environment.yml" || fail "$environment staged no alert fleet"
 done
 
 # Other environments, and none, stage nothing.
@@ -30,9 +31,11 @@ for environment in staging scenario-acceptance ""; do
 done
 
 # An environment's own variable wins.
-printf 'faas_environment: staging\n' > "$work/operator.yml"
+printf 'faas_environment: staging\nam_fleet_name: "operator-fleet"\n' > "$work/operator.yml"
 run "$work/operator.yml" DEPLOY_ENVIRONMENT=production || fail "operator variable failed"
 [[ "$(grep -c '^faas_environment:' "$work/operator.yml")" == 1 ]] || fail "staged a second faas_environment"
+[[ "$(grep -c '^am_fleet_name:' "$work/operator.yml")" == 1 ]] || fail "staged a second am_fleet_name"
+grep -qx 'am_fleet_name: "operator-fleet"' "$work/operator.yml" || fail "overrode the alert fleet"
 
 # Both control-plane converges stage it.
 count=$(grep -c 'bash scripts/ci/faas_environment_vars.sh "\$work/vars.yml"' "$repo_root/.github/workflows/cd-controlplane.yml")

@@ -49,6 +49,9 @@ func (h *Handler) verifyHostingCandidate(ctx context.Context, app state.App, dep
 		return fmt.Errorf("hosting verification interrupted: %w", err)
 	}
 	if code := apihostingreceipt.VerificationRecoveryCode(smokeErr); code != "" {
+		if crash, ok := h.candidateCrashLoop(ctx, app, dep, smoke.RouteChecks); ok {
+			return h.commitHostingFailure(ctx, app, dep, crash, errors.New(crash.Error), started)
+		}
 		return h.retryHostingVerification(ctx, app, dep, progress, started, code, smokeErr, smoke.RouteChecks)
 	}
 	if err := h.completeHostingVerification(ctx, dep, progress); err != nil {
@@ -100,9 +103,16 @@ func (h *Handler) commitHostingFailure(ctx context.Context, app state.App, dep s
 	}
 	code := api.CodeDeploymentSmokeFailed
 	message := "post-readiness smoke failed: " + smokeErr.Error()
-	if smoke.ErrorCode == apihostingreceipt.SmokeErrorVerificationUnavailable {
+	switch smoke.ErrorCode {
+	case apihostingreceipt.SmokeErrorVerificationUnavailable:
 		code = api.CodeDeploymentVerificationUnavailable
 		message = "hosting verification unavailable: " + smokeErr.Error()
+	case apihostingreceipt.SmokeErrorCandidateCrashLoop:
+		code = api.CodeAppStartupCrash
+		message = smokeErr.Error()
+	case apihostingreceipt.SmokeErrorVerificationContractFailed:
+		code = api.CodeDeploymentVerificationContractFailed
+		message = smokeErr.Error()
 	}
 	changed, err := store.FailDeploymentWithHostingReceipt(ctx, dep.ID, raw, code, message)
 	if err != nil {

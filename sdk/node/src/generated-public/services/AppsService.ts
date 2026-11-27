@@ -2,6 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APISandboxLibraryScenario } from '../models/APISandboxLibraryScenario.js';
+import type { APISandboxLibraryScenarioSaveRequest } from '../models/APISandboxLibraryScenarioSaveRequest.js';
+import type { APISandboxScenarioLibraryResponse } from '../models/APISandboxScenarioLibraryResponse.js';
+import type { APISandboxSuiteResponse } from '../models/APISandboxSuiteResponse.js';
+import type { APISandboxSuiteSaveRequest } from '../models/APISandboxSuiteSaveRequest.js';
 import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
@@ -60,6 +65,7 @@ import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusR
 import type { ServiceBindingExplanation } from '../models/ServiceBindingExplanation.js';
 import type { ServiceWakeAheadResponse } from '../models/ServiceWakeAheadResponse.js';
 import type { SetBindingReleasePolicyRequest } from '../models/SetBindingReleasePolicyRequest.js';
+import type { SetObjectStorageBindingReleasePolicyRequest } from '../models/SetObjectStorageBindingReleasePolicyRequest.js';
 import type { SetServiceWakeAheadRequest } from '../models/SetServiceWakeAheadRequest.js';
 import type { SourceReviewRequest } from '../models/SourceReviewRequest.js';
 import type { SourceReviewResponse } from '../models/SourceReviewResponse.js';
@@ -148,6 +154,62 @@ export class AppsService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/bindings/release-policy',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace release policy including required object-storage operations.
+   * Requires deploy:write or admin and completed MFA. Uses the same revision
+   * compare-and-set and traffic fences as release-policy. Explicit
+   * object_storage_requirements is required; an empty object clears it.
+   * Keys are managed environment prefixes in this scope (at most 32), values
+   * are read, write or read_write. Missing bindings, insufficient permissions,
+   * stale evidence, incomplete stages and mismatched operations block traffic.
+   * Read accepts the legacy listing canary; write requires upload and cleanup;
+   * read_write also requires byte-for-byte download. Current application ACKs
+   * are independently required when configured. This call only records policy;
+   * neither policy updates nor promotion initiate storage writes. Old servers
+   * return 404 on this route rather than silently dropping the requirements.
+   *
+   * @returns BindingReleasePolicy Updated object-storage release requirements and the new policy revision.
+   * @throws ApiError
+   */
+  public static setObjectStorageBindingReleasePolicy({
+    slug,
+    requestBody,
+    scope = 'default',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetObjectStorageBindingReleasePolicyRequest,
+    /**
+     * Deployment scope whose object-storage release policy will be replaced. Omit for default.
+     */
+    scope?: string,
+  }): CancelablePromise<BindingReleasePolicy> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/bindings/release-policy-with-object-storage',
       path: {
         'slug': slug,
       },
@@ -3050,6 +3112,237 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the app's saved API regression suite.
+   * @returns APISandboxSuiteResponse Saved suite configuration.
+   * @throws ApiError
+   */
+  public static getApiSandboxSuite({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APISandboxSuiteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-suite',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Save the app's API regression suite.
+   * Choose up to five scenarios from this app's library. Their order controls the run order. An empty list clears the selection.
+   * @returns APISandboxSuiteResponse Updated suite configuration.
+   * @throws ApiError
+   */
+  public static putApiSandboxSuite({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: APISandboxSuiteSaveRequest,
+  }): CancelablePromise<APISandboxSuiteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/api-sandbox-suite',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List reusable sandbox scenarios for this app.
+   * @returns APISandboxScenarioLibraryResponse Names and current revisions of app library scenarios.
+   * @throws ApiError
+   */
+  public static listApiSandboxLibraryScenarios({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APISandboxScenarioLibraryResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a reusable sandbox scenario and its private provenance.
+   * @returns APISandboxLibraryScenario Current scenario definition.
+   * @throws ApiError
+   */
+  public static getApiSandboxLibraryScenario({
+    slug,
+    scenario,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+  }): CancelablePromise<APISandboxLibraryScenario> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Save a reusable sandbox scenario.
+   * Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision to edit. A Debugger source request can be supplied when creating. Names are unique within the app.
+   * @returns APISandboxLibraryScenario Saved scenario and its current revision.
+   * @throws ApiError
+   */
+  public static putApiSandboxLibraryScenario({
+    slug,
+    scenario,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+    requestBody: APISandboxLibraryScenarioSaveRequest,
+  }): CancelablePromise<APISandboxLibraryScenario> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a scenario from the app's library.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteApiSandboxLibraryScenario({
+    slug,
+    scenario,
+    expectedRevision,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+    /**
+     * Latest scenario revision required to delete the saved scenario.
+     */
+    expectedRevision: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      query: {
+        'expected_revision': expectedRevision,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

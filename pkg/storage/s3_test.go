@@ -6,6 +6,7 @@ import (
 	"crypto/md5" // #nosec G501 -- verifies the S3 Content-MD5 wire checksum in a fake server.
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,8 +29,11 @@ type fakeS3 struct {
 	uploads  map[string]map[int][]byte
 	aborted  int
 	failPart int // UploadPart with this number is refused (403)
-	nextID   int
-	requests []string
+	// CompleteMultipartUpload is refused with 409 this many times, as OVH
+	// refuses a complete that races another writer of the same key.
+	conflictCompletes int
+	nextID            int
+	requests          []string
 }
 
 type fakeS3Object struct {
@@ -103,6 +107,11 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", fmt.Sprintf("\"part-%d\"", number))
 	case r.Method == http.MethodPost && q.Has("uploadId"):
 		id := q.Get("uploadId")
+		if f.conflictCompletes > 0 {
+			f.conflictCompletes--
+			s3Error(w, http.StatusConflict, "InvalidRequest")
+			return
+		}
 		var done struct {
 			Parts []struct{ PartNumber int } `xml:"Part"`
 		}
@@ -336,6 +345,37 @@ func TestS3BackendAbortsFailedMultipartUpload(t *testing.T) {
 	}
 }
 
+func TestS3BackendReportsConflictingCompleteAsWriteConflict(t *testing.T) {
+	fake, srv := newFakeS3(t)
+	fake.conflictCompletes = 1
+	backend := newTestS3Backend(t, srv.URL, "")
+	payload := bytes.Repeat([]byte{3}, s3PartSize+1)
+	err := backend.Put(t.Context(), "base/runner-builder-amd64.ext4", bytes.NewReader(payload))
+	if !errors.Is(err, ErrWriteConflict) {
+		t.Fatalf("Put error = %v, want ErrWriteConflict", err)
+	}
+	if fake.aborted != 1 || len(fake.uploads) != 0 {
+		t.Fatalf("aborted=%d open uploads=%d, want the refused upload aborted", fake.aborted, len(fake.uploads))
+	}
+	// The same bytes publish once the other writer is done.
+	if err := backend.Put(t.Context(), "base/runner-builder-amd64.ext4", bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if got := readAllAndClose(t, mustGet(t, backend, "base/runner-builder-amd64.ext4")); !bytes.Equal(got, payload) {
+		t.Fatal("republished object differs")
+	}
+}
+
+func TestS3BackendFailedPartIsNotWriteConflict(t *testing.T) {
+	fake, srv := newFakeS3(t)
+	fake.failPart = 1
+	backend := newTestS3Backend(t, srv.URL, "")
+	err := backend.Put(t.Context(), "layers/denied", bytes.NewReader(bytes.Repeat([]byte{1}, s3PartSize+1)))
+	if err == nil || errors.Is(err, ErrWriteConflict) {
+		t.Fatalf("Put error = %v, want a non-conflict failure", err)
+	}
+}
+
 func TestS3BackendReadsGCSEncodedObject(t *testing.T) {
 	// A bucket copied from GCS with its metadata must read back unchanged:
 	// both backends share one encoding vocabulary.
@@ -377,6 +417,15 @@ func TestS3ConfigValidation(t *testing.T) {
 		if err := c.Validate(); err == nil {
 			t.Errorf("%s: Validate accepted %+v", name, c)
 		}
+	}
+	granted := good
+	granted.Granted, granted.AccessKeyID, granted.SecretAccessKey = true, "", ""
+	if err := granted.Validate(); err != nil {
+		t.Fatalf("granted without a key rejected: %v", err)
+	}
+	granted.AccessKeyID = "a"
+	if err := granted.Validate(); err == nil {
+		t.Fatal("accepted half a key pair")
 	}
 	loopback := good
 	loopback.Endpoint = "http://127.0.0.1:9000"

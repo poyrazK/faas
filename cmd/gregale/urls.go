@@ -83,7 +83,7 @@ func normalizeDocsURL(raw string) string {
 }
 
 // normalizeAPIBase keeps the CLI tolerant of the common shell form
-// `FAAS_API=api.example.com`, while preserving explicit local/dev schemes.
+// `GREGALE_API_URL=api.example.com`, while preserving explicit local/dev schemes.
 // The SDK receives a URL prefix without trailing slashes.
 func normalizeAPIBase(raw string) string {
 	raw = strings.TrimSpace(raw)

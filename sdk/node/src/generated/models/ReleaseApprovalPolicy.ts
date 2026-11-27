@@ -28,6 +28,10 @@ export type ReleaseApprovalPolicy = {
    */
   allow_self_approval: boolean;
   /**
+   * Require current passing sandbox evidence before a production release command that waits for approval.
+   */
+  require_passing_sandbox_suite?: boolean;
+  /**
    * Notification channels told when a release waits, is approved or rejected, or times out.
    */
   notify_channels: Array<string>;

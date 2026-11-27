@@ -3,6 +3,7 @@ package s3gateway
 import (
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -16,5 +17,6 @@ func (h *Handler) doMutationRequest(upstream *http.Request, req requestContext) 
 		return nil, state.ObjectBucketMutation{}, err
 	}
 	response, err := h.client.Do(upstream)
+	objectstorage.NormalizeProviderResponse(req.provider, response)
 	return response, receipt, err
 }

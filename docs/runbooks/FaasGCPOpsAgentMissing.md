@@ -1,7 +1,9 @@
 # FaasGCPOpsAgentMissing
 
-This internal alert fires when a production compute node is reachable through
-node-exporter but does not report an active `google-cloud-ops-agent.service`.
+This internal alert fires when a production compute node on GCE (node-exporter
+`node_dmi_info` vendor `Google`) is reachable through node-exporter but does
+not report an active `google-cloud-ops-agent.service`. Bare-metal hosts, such
+as the OVHcloud fleet since 2026-11-20, run no GCP agent and never fire it.
 The separate Cloud Monitoring policy `Gregale Ops Agent export failures`
 covers an installed collector that cannot deliver logs.
 

@@ -324,3 +324,25 @@ The default changes nobody's bill.
 - **Per-deployment values.** The value belongs to the app, like the rest of the
   scaling policy, and is pinned with it in project-environment workload specs.
   A canary whose server differs from the stable revision gets the app's value.
+
+## Amendment (2026-11-19): functions scale out at their runner's slots
+
+A function that declares no `per_instance_concurrency` is admitted up to the
+plan's `concurrency_per_vm` (80 on Scale), and its generated runner executes
+`api.FunctionRunnerSlots` of them at once (four interpreter workers ×
+`function_concurrency`); the rest wait in the runner's queue. Admission stays
+that way (a gateway limit at the runner's size blocked ordinary bursts).
+Burst scale-out, however, divided in-flight requests by the same 80, so a
+function never asked for a sibling below 80 concurrent requests. A prod
+queue push backlog (2026-11-19: 600 messages, 200 ms handler, app allowed
+20 instances) ran entirely on one instance's four workers at ~18/s.
+
+Burst scale-out now plans with `burstScaleOutConcurrency`: the runner's
+slots when the app declares no `per_instance_concurrency` and the slots are
+fewer than the per-VM bound, else the bound. gatewayd-internal fills
+`gateway.App.FunctionRunnerSlots` from the app's type, runtime and
+`function_concurrency`. Admission, the warm queue, billing and the
+`max_concurrency` ceiling are unchanged; an app that declares
+`per_instance_concurrency` keeps scaling at its declaration.
+
+Rollback: revert; scale-out divides by the per-VM bound again.

@@ -32,7 +32,13 @@ import (
 // 2026-11-13). gregale_search_docs and gregale_get_docs_page added about
 // 2 KB on 2026-11-16: an agent looks up how Gregale works before it acts
 // (ADR-20261116183445). The fully consented hosted catalog is about 49.7 KB.
-const coreCatalogBudget = 52 << 10
+// Raised to 54 KB on 2026-11-25 for tool titles (about 1.2 KB): the Claude
+// Connectors Directory requires a title on every tool, and clients show it
+// instead of the name. The fully consented hosted core is about 52.9 KB.
+// Raised to 56 KB on 2026-11-26 for annotations.title (about 1.2 KB): the
+// directory's submission check reads the title from the annotations, not the
+// top-level field. The fully consented hosted core is about 53.9 KB.
+const coreCatalogBudget = 56 << 10
 
 func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	backend := httptest.NewServer(http.NotFoundHandler())
@@ -43,7 +49,7 @@ func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Tools) != 29 {
+	if len(catalog.Tools) != 30 {
 		t.Fatalf("read-only core count=%d names=%v", len(catalog.Tools), toolNamesOf(catalog.Tools))
 	}
 	for _, tool := range catalog.Tools {

@@ -48,6 +48,16 @@ plain agent_approval_requests.body_sha256
 plain analytics_events.subject_hash
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+# Sandbox invite, report-share and receiver outcome tokens are stored as SHA-256 digests.
+plain api_sandbox_partners.invite_hash
+plain api_sandbox_runs.share_hash
+plain api_sandbox_webhook_partners.invite_hash
+plain api_sandbox_webhook_partners.outcome_token_hash
+# Scenario definitions hold synthetic fixture input and example requests.
+plain api_sandbox_provisioning.scenario
+plain api_sandbox_scenarios.definition
+plain api_sandbox_suite_scenarios.definition
+plain app_api_sandbox_scenarios.definition
 plain app_basic_auth_verifiers.sealed_sha256
 plain app_env_batch_receipts.request_sha256
 plain app_fork_execs.stderr
@@ -69,6 +79,7 @@ plain cli_auth_codes.token_hash
 plain cli_auth_codes.verifier_hash
 plain consumer_keys.hashed_secret
 plain customer_operation_webhook_receipts.body_sha256
+plain data_api_inspection_executions.stdout_sha256
 plain deploy_tokens.token_sha256
 plain deployment_openapi_docs.doc_sha256
 plain deployment_registry_verifications.payload
@@ -84,8 +95,15 @@ plain exclusive_work_operations.equivalence_digest
 plain exclusive_work_operations.idempotency_digest
 plain exclusive_work_operations.request_digest
 plain exclusive_work_submissions.idempotency_digest
+plain execution_admissions.key_hash
+plain execution_admissions.request_digest
+plain execution_admissions.scope_hash
+plain execution_task_invocations.callback_key
+plain execution_task_invocations.request_digest
 plain execution_artifact_grants.token_hash
 plain executions.artifacts
+# ADR-20261119173702 §1: SHA-256 of an end-user subject ID, as analytics_events.subject_hash; not a credential.
+plain flag_experiment_units.subject_hash
 plain github_webhook_deliveries.payload
 plain hosting_automation_credentials.token_hash
 plain idempotency_keys.request_digest
@@ -167,3 +185,5 @@ plain trigger_records.work_fairness_digest
 plain trigger_records.work_key_digest
 plain workflow_runs.create_request_fingerprint
 plain workflow_webhook_receipts.body_hash
+# ADR-20261124080000: SHA-256 of an anonymous deploy claim token; the token itself is never stored.
+plain unclaimed_accounts.claim_token_sha256

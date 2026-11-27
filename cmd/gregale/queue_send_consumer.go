@@ -52,6 +52,12 @@ func unconsumedQueueWarning(ctx context.Context, client queueConsumerClient, slu
 	push := ""
 	if app.Type == "function" {
 		push = " --mode push --workload-class http"
+	} else if app.WorkloadClass == "" || app.WorkloadClass == "http" {
+		// prod 2026-11-20: the bindings suggestion is refused for an HTTP
+		// app (push needs a function, pull needs a worker), so it led to
+		// a dead end while the message sat in the queue.
+		return fmt.Sprintf("nothing reads queue %q on %s, and an HTTP app cannot consume a queue. The message waits, and counts toward the app's queue depth limit, until it expires. Send queue work to a function (gregale add function NAME --trigger queue) or a worker app with a pull binding (docs/queue-pull-leases.md)",
+			queueName, slug)
 	}
 	return fmt.Sprintf("no queue binding or consumer reads queue %q on %s. The message waits, and counts toward the app's queue depth limit, until one exists: gregale queue bindings create %s --name %s --queue-name %s%s",
 		queueName, slug, slug, queueName, queueName, push)

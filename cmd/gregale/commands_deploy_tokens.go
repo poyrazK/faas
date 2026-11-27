@@ -58,6 +58,12 @@ func parseDeployTokenFlags(name, usage string, args []string, minting bool, posi
 	if err := fs.Parse(flags); err != nil {
 		return "", "", "", nil, false
 	}
+	// `app deploy-token delete <slug> <token-id>` reads like list and create
+	// (`app deploy-token list <slug>`), but printed usage (prod hunt r59):
+	// with --app unset, one extra leading positional is the app.
+	if *app == "" && len(positional) == positionals+1 && positionals > 0 {
+		*app, positional = positional[0], positional[1:]
+	}
 	if rejectUnexpectedFlagArgs(fs) || len(positional) != positionals || *app == "" {
 		PrintUsage(os.Stderr, usage, "deploy-tokens")
 		return "", "", "", nil, false
@@ -130,7 +136,15 @@ func cmdDeployTokensAdd(args []string) int {
 	}
 	PrintOK(osStdout, "New deploy token for %s (shown ONCE; store it in your CI secrets):\n  %s", slug, token.Plaintext)
 	PrintProgress(osStdout, "  id:      %s", token.ID)
-	PrintProgress(osStdout, "  expires: %s", deployTokenExpiry(token))
+	// The list's column says "expires <time>"; under an "expires:" label it
+	// read "expires: expires 2027-…" (prod hunt r26).
+	expiresAt := token.ExpiresAt
+	if expiresAt == "" {
+		expiresAt = "never"
+	}
+	PrintProgress(osStdout, "  expires: %s", expiresAt)
+	// The receipt named no variable for CI to put the token in.
+	PrintProgress(osStdout, "In CI, set it as GREGALE_TOKEN; then gregale deploy --name %s deploys this app only.", slug)
 	return 0
 }
 
@@ -161,7 +175,7 @@ func cmdDeployTokensRotate(args []string) int {
 }
 
 func cmdDeployTokensRm(args []string) int {
-	slug, _, _, positional, ok := parseDeployTokenFlags("deploy-tokens rm", "usage: gregale app deploy-token delete <token-id> --app SLUG", args, false, 1)
+	slug, _, _, positional, ok := parseDeployTokenFlags("deploy-tokens rm", "usage: gregale app deploy-token delete [<slug>] <token-id> [--app SLUG]", args, false, 1)
 	if !ok {
 		return 1
 	}

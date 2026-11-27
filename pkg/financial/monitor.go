@@ -18,8 +18,12 @@ type BudgetEvaluation struct {
 	EvidenceThroughID int64     `json:"evidence_through_id"`
 	KnownMillicents   *int64    `json:"known_millicents,omitempty"`
 	CoverageComplete  bool      `json:"coverage_complete"`
-	Fresh             bool      `json:"fresh"`
-	Reasons           []string  `json:"reasons"`
+	// Projectable is true when every selected meter was sampled enough to
+	// forecast: CoverageComplete, or a few unsampled minutes with the last
+	// hour whole (cost-control review 2026-11-19).
+	Projectable bool     `json:"projectable,omitempty"`
+	Fresh       bool     `json:"fresh"`
+	Reasons     []string `json:"reasons"`
 	// ProjectedMillicents is the month-end amount at the current run rate
 	// (ADR-20261019193500). It is nil, with ProjectionReason, when a selected
 	// meter has no forecast or the evidence is incomplete or stale.

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	signdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/signd/v1"
 	"github.com/onebox-faas/faas/pkg/cosign"
@@ -27,6 +30,8 @@ type Client struct {
 	rpc     signdpb.SigndClient
 	objects storage.StorageBackend
 	local   LayerSigner
+	// wait replaces the retry backoff sleep in tests; nil sleeps.
+	wait func(context.Context, time.Duration) error
 }
 
 // NewClient returns a signer over rpc. objects is the artifacts store the
@@ -77,11 +82,42 @@ func (c *Client) sign(ctx context.Context, layerKey, sigKey string, digestOf fun
 	if err != nil {
 		return err
 	}
-	if _, err := c.rpc.SignArtifact(ctx, &signdpb.SignArtifactRequest{DeploymentId: deploymentID,
-		StorageKey: layerKey, Digest: digest, Bytes: n}); err != nil {
-		return fmt.Errorf("signd: sign %q: %w", layerKey, err)
+	req := &signdpb.SignArtifactRequest{DeploymentId: deploymentID, StorageKey: layerKey, Digest: digest, Bytes: n}
+	for attempt := 0; ; attempt++ {
+		_, err = c.rpc.SignArtifact(ctx, req)
+		if err == nil {
+			return nil
+		}
+		// signd answers Unavailable for a store it could not reach and asks
+		// for a retry; gRPC answers it while signd restarts. A release rolls
+		// signd, and a deploy that published its layer then failed terminally
+		// as deploy_failed (prod 2026-11-20 18:18, two acceptance deploys).
+		// Signing the same digest again is idempotent.
+		if status.Code(err) != codes.Unavailable || attempt >= len(signRetryBackoff) {
+			return fmt.Errorf("signd: sign %q: %w", layerKey, err)
+		}
+		if waitErr := c.waitRetry(ctx, signRetryBackoff[attempt]); waitErr != nil {
+			return fmt.Errorf("signd: sign %q: %w", layerKey, errors.Join(err, waitErr))
+		}
 	}
-	return nil
+}
+
+// signRetryBackoff spaces the retries of an Unavailable sign: about 30 s in
+// all, longer than a signd restart.
+var signRetryBackoff = []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second}
+
+func (c *Client) waitRetry(ctx context.Context, d time.Duration) error {
+	if c.wait != nil {
+		return c.wait(ctx, d)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 var errNotAppLayer = errors.New("not an app layer key")

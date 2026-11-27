@@ -102,10 +102,14 @@
       converge again; the postgres role starts it. Nothing was changed.
   when: faas_storage_pg_databases is not skipped
 
+# Running, not active: a finished oneshot such as host_hardening's
+# faas-kernel-lockdown.service (RemainAfterExit) stays "active (exited)" and
+# writes nothing here. On a fresh encrypted host host_hardening runs just
+# before this role, so counting it refused every first converge.
 - name: storage — list the faas services running
   ansible.builtin.shell: |
     set -euo pipefail
-    systemctl list-units --type=service --state=active --no-legend --plain 'faas-*.service' | awk '{print $1}'
+    systemctl list-units --type=service --state=running --no-legend --plain 'faas-*.service' | awk '{print $1}'
   args:
     executable: /bin/bash
   register: faas_storage_active_units

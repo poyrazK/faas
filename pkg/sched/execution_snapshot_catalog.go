@@ -9,13 +9,15 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // CurrentRuntimeSnapshotFormatVersion is part of the immutable catalog key.
 // Bumping it makes old Firecracker state ineligible without mutating an
 // existing entry or silently restoring an incompatible machine shape.
-const CurrentRuntimeSnapshotFormatVersion = 1
+const CurrentRuntimeSnapshotFormatVersion = 2
 
 var (
 	ErrRuntimeSnapshotNotFound    = errors.New("sched: runtime snapshot not found")
@@ -31,6 +33,7 @@ var (
 // Tenant source, input, credentials, environment, and mutable app state are
 // intentionally absent.
 type RuntimeSnapshotIdentity struct {
+	FCVersion           string
 	Profile             api.ExecutionProfile
 	Runtime             api.ExecutionRuntime
 	Architecture        string
@@ -44,6 +47,9 @@ type RuntimeSnapshotIdentity struct {
 
 // Validate rejects ambiguous identities before they can become lookup keys.
 func (i RuntimeSnapshotIdentity) Validate() error {
+	if i.FormatVersion >= 2 && (len(i.FCVersion) > api.ExecutionTemplateFCVersionMaxBytes || !semver.IsValid("v"+i.FCVersion)) {
+		return fmt.Errorf("%w: Firecracker version is required", ErrRuntimeSnapshotInvalid)
+	}
 	if err := i.Profile.Validate(i.Runtime); err != nil {
 		return fmt.Errorf("%w: %w", ErrRuntimeSnapshotInvalid, err)
 	}
@@ -81,13 +87,17 @@ func (i RuntimeSnapshotIdentity) Key() (string, error) {
 	if err := i.Validate(); err != nil {
 		return "", err
 	}
+	fcPath := ""
+	if i.FormatVersion >= 2 {
+		fcPath = "/firecracker-" + i.FCVersion
+	}
 	profilePath := ""
 	if i.Profile.Normalized() != api.ExecutionProfileStandard {
 		profilePath = "/profile-" + string(i.Profile)
 	}
 	return fmt.Sprintf(
-		"execution-snapshots/v%d/%s%s/%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
-		i.FormatVersion, i.Runtime, profilePath, i.Architecture, i.MemoryMB, i.EphemeralDiskMB,
+		"execution-snapshots/v%d/%s%s/%s%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
+		i.FormatVersion, i.Runtime, profilePath, i.Architecture, fcPath, i.MemoryMB, i.EphemeralDiskMB,
 		i.KernelDigest, i.GuestExecutorDigest, i.BaseImageDigest,
 	), nil
 }
@@ -103,9 +113,8 @@ func (i RuntimeSnapshotIdentity) equal(other RuntimeSnapshotIdentity) bool {
 type RuntimeSnapshot struct {
 	Identity   RuntimeSnapshotIdentity
 	StorageKey string
-	// SnapshotDigest is the SHA-256 of the length-delimited memory and
-	// vmstate object pair (see RuntimeSnapshotDigest). A single digest binds
-	// both restore inputs, so either object can fail closed independently.
+	// Format 1 binds the memory/state pair. Format 2 binds the exact identity
+	// and all four native objects, including the frozen drive and backing.
 	SnapshotDigest string
 	MemBytes       int64
 	VMStateBytes   int64
@@ -181,6 +190,7 @@ func validRuntimeSnapshotStorageKey(value string) bool {
 // resolve a snapshot. The caller-controlled portion is the API snapshot shape;
 // digests are supplied by the trusted release/runtime installation.
 type RuntimeSnapshotRequest struct {
+	FCVersion           string
 	Shape               api.ExecutionSnapshotShape
 	Architecture        string
 	KernelDigest        string
@@ -195,7 +205,7 @@ func (r RuntimeSnapshotRequest) Identity() RuntimeSnapshotIdentity {
 		profile = ""
 	}
 	return RuntimeSnapshotIdentity{
-		Profile:             profile,
+		FCVersion: r.FCVersion, Profile: profile,
 		Runtime:             r.Shape.Runtime,
 		Architecture:        r.Architecture,
 		KernelDigest:        r.KernelDigest,
@@ -274,7 +284,7 @@ func (c *RuntimeSnapshotCatalog) Resolve(ctx context.Context, request RuntimeSna
 	if c == nil {
 		return RuntimeSnapshotPlan{Mode: RuntimeSnapshotColdBoot, Identity: identity, FallbackReason: RuntimeSnapshotFallbackUnwired}, nil
 	}
-	if identity.FormatVersion != c.formatVersion {
+	if identity.FormatVersion != c.formatVersion && (c.formatVersion != 2 || identity.FormatVersion != 1) {
 		return RuntimeSnapshotPlan{}, fmt.Errorf("%w: got %d, want %d", ErrRuntimeSnapshotUnsupported, identity.FormatVersion, c.formatVersion)
 	}
 	plan := RuntimeSnapshotPlan{Mode: RuntimeSnapshotColdBoot, Identity: identity}

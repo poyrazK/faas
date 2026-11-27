@@ -196,3 +196,62 @@ func TestHostingUnavailableCannotOverwriteCancellation(t *testing.T) {
 		})
 	}
 }
+
+// A candidate whose process keeps exiting gives the public probe only a bare
+// gateway 502 or a refused connection. Once schedd parks it for liveness
+// exhaustion that is the app's verdict: the deploy fails as an app crash that
+// points at its logs, at once, not as "verification unavailable" when the
+// recovery window ends (agent eval 2026-11-18).
+func TestHostingUnavailableNamesACrashLoopingCandidate(t *testing.T) {
+	for _, parkedBeforeFirstProbe := range []bool{true, false} {
+		t.Run(fmt.Sprintf("parked_before_first_probe=%v", parkedBeforeFirstProbe), func(t *testing.T) {
+			ctx := context.Background()
+			f := hostingReplayFixture(t)
+			now := time.Now().UTC()
+			f.handler.hostingVerificationNow = func() time.Time { return now }
+			probes := 0
+			f.handler.WithHostingSmoke(func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+				probes++
+				return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, StatusCode: 502},
+					&apihostingreceipt.VerificationUnavailableError{Code: apihostingreceipt.SmokeErrorGatewayUnavailable, StatusCode: 502}
+			})
+			park := func() {
+				for range 3 {
+					if err := f.store.MemStore.RecordRestart(ctx, f.candidate.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := f.store.MemStore.SetDeploymentParked(ctx, f.candidate.ID, string(state.ParkReasonLivenessExhausted), now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if parkedBeforeFirstProbe {
+				park()
+			} else {
+				if err := f.handler.HandleNotification(ctx, f.notification); apihostingreceipt.VerificationRecoveryCode(err) == "" {
+					t.Fatalf("an unparked candidate's outage was not replayable: %v", err)
+				}
+				park()
+				now = *hostingProgress(t, f).RetryNotBefore
+			}
+			if err := f.handler.HandleNotification(ctx, f.notification); err == nil {
+				t.Fatal("a crash-looping candidate did not fail")
+			}
+			dep, _ := f.store.MemStore.DeploymentByID(ctx, f.candidate.ID)
+			receipt, err := apihostingreceipt.Decode(dep.APIHostingReceipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantProbes := 1
+			if !parkedBeforeFirstProbe {
+				wantProbes = 2
+			}
+			if dep.Status != state.DeployFailed || dep.ErrorCode != api.CodeAppStartupCrash ||
+				receipt.Smoke.ErrorCode != apihostingreceipt.SmokeErrorCandidateCrashLoop ||
+				!strings.Contains(dep.Error, "exited 3 times") || !strings.Contains(dep.Error, "gregale logs hosting-replay --since ") ||
+				probes != wantProbes || f.notif.failed != 1 {
+				t.Fatalf("wrong verdict: status=%s code=%s smoke=%s error=%q probes=%d events=%d", dep.Status, dep.ErrorCode, receipt.Smoke.ErrorCode, dep.Error, probes, f.notif.failed)
+			}
+		})
+	}
+}

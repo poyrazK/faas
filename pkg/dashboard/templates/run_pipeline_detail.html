@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Data.WorkflowID}} — Run pipelines</title>
+  {{template "run-pipeline-styles" .}}
+</head>
+<body>
+  <header><a href="/dashboard/">Gregale</a> <a href="/dashboard/run-pipelines">Run pipelines</a></header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>{{.Data.WorkflowID}}</h1>
+    <p><span class="status" id="pipeline-state" data-state="{{.Data.Outcome}}">{{.Data.Outcome}}</span> <small>Pipeline <code>{{.Data.ID}}</code></small></p>
+    {{with .Data.Pipeline.Rerun}}<p>Rerun of <a href="/dashboard/run-pipelines/{{.ParentID}}">{{.ParentWorkflowID}}</a></p>{{end}}
+    <p id="live-status" role="status" hidden></p>
+    <h2>Steps</h2>
+    {{if .Data.Progress}}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Step</th><th scope="col">Status</th><th scope="col">Current attempt</th></tr></thead>
+        <tbody>{{range .Data.Pipeline.Progress.Steps}}
+          <tr data-label="{{.Label}}">
+            <th scope="row">{{.Label}}</th>
+            <td><span class="status" data-state="{{.State}}">{{.State}}</span></td>
+            <td data-attempt>{{if .Attempt}}{{.Attempt}}{{else}}—{{end}}</td>
+          </tr>
+        {{end}}</tbody>
+      </table>
+    </div>
+    {{else}}
+    <ul>{{range .Data.Pipeline.Steps}}<li>{{.Label}}</li>{{end}}</ul>
+    {{end}}
+    <section aria-labelledby="pipeline-usage">
+      <h2 id="pipeline-usage">Usage</h2>
+      <dl class="usage-summary">
+        <div><dt>New Runs</dt><dd id="pipeline-new-runs">{{.Data.Usage.NewRuns}}</dd></div>
+        <div><dt>Automatic retries</dt><dd>{{.Data.Usage.RetryRuns}}</dd></div>
+        <div><dt>Reused steps{{if .Data.Poll}} (planned){{end}}</dt><dd id="pipeline-reused-steps">{{.Data.Usage.ReusedSteps}}</dd></div>
+        {{with .Data.PipelineElapsed}}<div><dt>Submission to completion</dt><dd>{{.}}</dd></div>{{end}}
+        {{if .Data.Usage.SettledRuns}}<div><dt>Recorded execution time</dt><dd>{{.Data.Usage.ExecutionTime}}</dd></div>{{end}}
+        {{if .Data.Usage.OutputCount}}<div><dt>Output produced</dt><dd>{{.Data.Usage.OutputBytes}} bytes</dd></div>{{end}}
+      </dl>
+      {{if .Data.UsageError}}<p role="status">Recorded timing is temporarily unavailable.</p>{{end}}
+      {{if .Data.Poll}}<p>The usage totals refresh when the pipeline finishes.</p>{{end}}
+      {{if .Data.Usage.Attempts}}
+      <div class="table-wrap">
+        <table aria-label="Usage by Run attempt">
+          <thead><tr><th scope="col">Step</th><th scope="col">Attempt</th><th scope="col">Wait to start</th><th scope="col">Execution</th><th scope="col">Run output ready (UTC)</th></tr></thead>
+          <tbody>{{range .Data.Usage.Attempts}}
+            <tr>
+              <th scope="row">{{.Step}}</th>
+              <td><a href="/v1/executions/{{.RunID}}">{{.Attempt}}</a></td>
+              <td>{{with .QueueTime}}{{.}}{{else}}—{{end}}</td>
+              <td>{{if eq .LedgerState "Recorded"}}{{.Execution}}{{else}}{{.LedgerState}}{{end}}</td>
+              <td>{{with .OutputAt}}<time datetime="{{.UTC.Format "2006-01-02T15:04:05.999999999Z"}}">{{.UTC.Format "02 Jan 2006, 15:04:05.000"}}</time>{{else}}—{{end}}</td>
+            </tr>
+          {{end}}</tbody>
+        </table>
+      </div>
+      {{end}}
+      <p>Per-pipeline compute and artifact storage charges are unavailable.</p>
+    </section>
+    {{with .Data.Pipeline.Completion}}
+    <h2>Attempts and outputs</h2>
+    <ul>
+      {{range .Steps}}
+      <li>
+        <strong>{{.Label}}</strong> <span class="status" data-state="{{.Outcome}}">{{.Outcome}}</span>
+        {{if .ReusedRunID}}<p>Reused Run <a href="/v1/executions/{{.ReusedRunID}}"><code>{{.ReusedRunID}}</code></a></p>{{end}}
+        {{if .Attempts}}<ul>{{range .Attempts}}
+          <li>
+            Attempt {{.Attempt}} · {{.Status}} · <a href="/v1/executions/{{.RunID}}">Run receipt</a>
+            {{if .FailureCode}}<small>({{.FailureCode}})</small>{{end}}
+            {{if .Artifacts}}{{$run := .RunID}}<ul>{{range .Artifacts}}
+              <li><a href="{{$.Data.ArtifactURL $run .Name}}">{{.Name}}</a> · {{.SizeBytes}} bytes</li>
+            {{end}}</ul>{{end}}
+          </li>
+        {{end}}</ul>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{end}}
+    {{if .Data.RerunUnavailable}}<p role="status">{{.Data.RerunUnavailable}}</p>{{end}}
+    {{if .Data.CSRF}}
+    <section id="pipeline-recovery" data-csrf="{{.Data.CSRF}}" data-workflow="{{.Data.RerunWorkflowID}}">
+      <h2>Rerun affected steps</h2>
+      <label for="original-manifest">Original pipeline manifest (JSON)</label>
+      <input type="file" id="original-manifest" accept=".json,application/json">
+      <button type="button" id="preview-rerun">Review rerun</button>
+      <p id="rerun-error" role="alert" hidden></p>
+      <div id="rerun-plan" hidden>
+        <dl>
+          <dt>Will run</dt><dd id="run-steps"></dd>
+          <dt>Will reuse</dt><dd id="reuse-steps"></dd>
+        </dl>
+        <p>Gregale checks that the reused outputs are still available before starting.</p>
+        <label><input type="checkbox" id="approve-rerun"> <span id="repeat-steps"></span></label>
+        <button type="button" id="submit-rerun" disabled>Start rerun</button>
+      </div>
+    </section>
+    {{end}}
+  </main>
+  <script nonce="{{.Nonce}}">
+    const id = {{.Data.ID}};
+    const base = '/dashboard/run-pipelines/' + id;
+    const byID = id => document.getElementById(id);
+    const text = value => value.replaceAll('_', ' ');
+    function badge(element, state) {
+      element.dataset.state = state;
+      element.textContent = text(state);
+    }
+    async function json(path, options) {
+      const response = await fetch(path, { ...options, signal: AbortSignal.timeout(15000) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'The request could not be completed.');
+      return data;
+    }
+    {{if .Data.Poll}}
+    let cursor = 0;
+    const watch = byID('live-status');
+    const steps = document.querySelectorAll('[data-label]');
+    async function update() {
+      if (!document.hidden) {
+        try {
+          const page = await json('/v1/execution-pipelines/' + id + '/events?after=' + cursor);
+          if (page.terminal) { location.reload(); return; }
+          cursor = page.next_sequence;
+          watch.hidden = true;
+          if (page.progress) {
+            badge(byID('pipeline-state'), page.progress.status);
+            for (const row of steps) {
+              const step = page.progress.steps.find(candidate => candidate.label === row.dataset.label);
+              if (step) {
+                badge(row.querySelector('.status'), step.state);
+                row.querySelector('[data-attempt]').textContent = step.attempt || '—';
+              }
+            }
+          }
+        } catch {
+          watch.textContent = 'Live progress is temporarily unavailable. Retrying.';
+          watch.hidden = false;
+        }
+      }
+      setTimeout(update, 2500);
+    }
+    setTimeout(update, 2500);
+    {{end}}
+    const recovery = byID('pipeline-recovery');
+    if (recovery) {
+      const file = byID('original-manifest');
+      const review = byID('preview-rerun');
+      const submit = byID('submit-rerun');
+      const approval = byID('approve-rerun');
+      const panel = byID('rerun-plan');
+      const error = byID('rerun-error');
+      let intent;
+      let inFlight = false;
+      function showError(message) {
+        error.textContent = message;
+        error.hidden = !message;
+      }
+      function resetReview() {
+        intent = undefined;
+        approval.checked = false;
+        submit.disabled = true;
+        panel.hidden = true;
+      }
+      function send(action, body) {
+        return json(base + action, {
+          method: 'POST', body,
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': recovery.dataset.csrf },
+        });
+      }
+      function lock(busy) {
+        inFlight = busy;
+        file.disabled = busy;
+        review.disabled = busy;
+        approval.disabled = busy;
+        submit.disabled = busy || !approval.checked;
+      }
+      file.addEventListener('change', resetReview);
+      approval.addEventListener('change', () => { submit.disabled = !approval.checked || inFlight; });
+      review.addEventListener('click', async () => {
+        if (inFlight) return;
+        resetReview();
+        if (!file.files.length) { showError('Choose the original JSON manifest.'); return; }
+        showError('');
+        lock(true);
+        try {
+          if (file.files[0].size > {{.Data.ManifestMaxBytes}}) throw new Error('The manifest exceeds the pipeline size limit.');
+          const source = await file.files[0].text();
+          const plan = await send('/rerun-preview', source);
+          intent = { original: source, repeatSteps: plan.repeat_steps };
+          byID('run-steps').textContent = plan.run_steps.join(', ') || 'None';
+          byID('reuse-steps').textContent = plan.reuse_steps.join(', ') || 'None';
+          byID('repeat-steps').textContent = plan.repeat_steps.length
+            ? 'I approve repeating ' + plan.repeat_steps.join(', ') + '.'
+            : 'I approve starting the listed steps.';
+          panel.hidden = false;
+        } catch (err) {
+          showError(err.message);
+        } finally {
+          lock(false);
+        }
+      });
+      submit.addEventListener('click', async () => {
+        if (!intent || inFlight || !approval.checked) return;
+        showError('');
+        lock(true);
+        try {
+          // Preserve the original JSON, including integers larger than a JS number.
+          const body = '{"workflow_id":' + JSON.stringify(recovery.dataset.workflow)
+            + ',"repeat_steps":' + JSON.stringify(intent.repeatSteps) + ',"original":' + intent.original + '}';
+          const child = await send('/reruns', body);
+          location.assign('/dashboard/run-pipelines/' + encodeURIComponent(child.id));
+        } catch (err) {
+          showError(err.message + ' Review the same manifest and retry to recover this request.');
+        } finally {
+          lock(false);
+        }
+      });
+    }
+  </script>
+</body>
+</html>

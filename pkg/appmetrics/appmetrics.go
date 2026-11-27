@@ -60,8 +60,8 @@ func TelemetryDegradedReason(err error) string {
 // hot path. Pair with IsDegradedSource for the idiomatic check.
 const SourceDegraded = "degraded:"
 
-// SourceInsufficientPrefix marks a valid query with too few selected login
-// failures to judge target-signal coverage. It is distinct from an outage.
+// SourceInsufficientPrefix marks a valid query with too few samples to
+// evaluate an alert.
 const SourceInsufficientPrefix = "insufficient: "
 
 // IsInsufficientSource reports whether a valid metric query lacks enough
@@ -110,16 +110,30 @@ func PercentRatioQuery(numerator, denominator string) string {
 	return fmt.Sprintf(`(((%s) or vector(0)) / (%s) * 100) and ((%s) > 0)`, numerator, denominator, denominator)
 }
 
-// ErrorRatePctQuery is the app error rate: 5xx over the eligible 2xx and 5xx
-// responses, as a percentage. Client-caused 3xx/4xx are excluded from the
+// ErrorRatePctQuery is the app error rate: failed requests (5xx and capacity
+// refusals) over the eligible 2xx, 5xx and refused requests, as a percentage. Client-caused 3xx/4xx are excluded from the
 // population, so a window whose traffic is all 4xx (404s, edge-rule 429s) has
 // requests but no eligible denominator. That is a 0% error rate, not missing
 // telemetry: production-us hunt #4 found `gregale canary simulate` and
 // `gregale metrics` reporting such an app as "degraded".
 func ErrorRatePctQuery(appID, rng string) string {
-	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
+	return requestSeriesForScope(appID, "").errorRate(rng)
+}
+
+// FailedRequestsQuery sums an app's failed requests over rng with fn (rate or
+// increase): the 5xx responses plus the 429s the gateway answered because the
+// app had no capacity (gateway_capacity_refusals_total). Those visitors were
+// turned away as surely as by a 5xx, and counting only 5xx kept error rates,
+// SLOs and outage alerts green while an app refused its traffic (Observe audit
+// 2026-11-21, finding 8; ADR-20261121190000).
+func FailedRequestsQuery(fn, appID, rng string) string {
+	return requestSeriesForScope(appID, "").requestsWithRefusals(fn, rng, failedRequestClass)
+}
+
+// EligibleRequestsQuery sums the requests an app's error rate is measured
+// over: 2xx, 5xx and capacity refusals. Client-caused 3xx/4xx stay outside.
+func EligibleRequestsQuery(fn, appID, rng string) string {
+	return requestSeriesForScope(appID, "").requestsWithRefusals(fn, rng, eligibleRequestClasses)
 }
 
 // HistogramQuantileMSQuery builds an idle-safe latency percentile query.
@@ -137,56 +151,46 @@ func HistogramQuantileMSQuery(quantile float64, buckets, count string) string {
 // failures remain degraded so the rule can expose that its own source is
 // unavailable.
 func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string) (float64, string) {
-	return fetchAlertMetric(ctx, fetcher, log, appID, rng, metric, 0)
+	if problem := validateAlertMetricInput(fetcher, appID, rng); problem != "" {
+		return 0, problem
+	}
+	query, normalize := alertMetricQuery(appID, rng, metric)
+	if query == "" {
+		return 0, SourceDegradedPrefix + "unsupported alert metric"
+	}
+	value, err := fetcher.QueryScalar(ctx, query)
+	if err != nil {
+		return 0, alertMetricQueryFailure(log, appID, metric, err)
+	}
+	if metric == "pre_auth_target_signal_gap_pct" && value < 0 {
+		return 0, SourceInsufficientPrefix + "fewer than 20 selected failures on every observed route"
+	}
+	return normalize(value), SourcePrometheus
 }
 
-// FetchAlertMetricDaysAgo evaluates the same alert metric over the same
-// window, shifted back daysAgo whole days with PromQL offset. It feeds the
-// same-time-of-day baselines of ADR-744; daysAgo must be 1..AnomalyBaselineDays.
-func FetchAlertMetricDaysAgo(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string, daysAgo int) (float64, string) {
-	if daysAgo < 1 || daysAgo > api.AnomalyBaselineDays {
-		return 0, SourceDegradedPrefix + "invalid baseline offset"
-	}
-	return fetchAlertMetric(ctx, fetcher, log, appID, rng, metric, daysAgo)
-}
-
-func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string, daysAgo int) (float64, string) {
-	if log == nil {
-		log = slog.Default()
-	}
+func validateAlertMetricInput(fetcher PromQL, appID, rng string) string {
 	if fetcher == nil {
-		return 0, SourceDegradedPrefix + "prometheus not configured"
+		return SourceDegradedPrefix + "prometheus not configured"
 	}
 	if c, ok := fetcher.(*promql.Client); ok && c == nil {
-		return 0, SourceDegradedPrefix + "prometheus not configured"
+		return SourceDegradedPrefix + "prometheus not configured"
 	}
 	if strings.ContainsAny(appID, "\"\n\\") {
-		return 0, SourceDegradedPrefix + "invalid app id"
+		return SourceDegradedPrefix + "invalid app id"
 	}
 	if !IsValidRange(rng) {
-		return 0, SourceDegradedPrefix + "invalid range"
+		return SourceDegradedPrefix + "invalid range"
 	}
+	return ""
+}
 
+func alertMetricQuery(appID, rng, metric string) (string, func(float64) float64) {
 	var query string
-	var normalize = SafeFloat
+	var normalize func(float64) float64
 	switch metric {
-	case "request_count":
-		query = fmt.Sprintf(`sum(increase(gateway_request_duration_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng)
-		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
-	case "error_rate_pct":
-		query = ErrorRatePctQuery(appID, rng)
-		normalize = SafePercent
-	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
-		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
-		query = HistogramQuantileMSQuery(
-			quantile,
-			fmt.Sprintf(`sum by (le) (rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="2xx"}[%s]))`, appID, rng))
-	case "cold_start_pct":
-		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q}[%s]))`, appID, rng)))
-		normalize = SafePercent
+	case "request_count", "error_rate_pct", "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "cold_start_pct":
+		// Production's requests only: a stage's are its own rules'.
+		query, normalize, _ = productionAlertQuery(appID, rng, metric)
 	case "log_error_lines", "log_warn_lines":
 		// ADR-746: vmmd counts classified guest log lines per app on every
 		// node; sum folds the nodes and instances the app ran on.
@@ -235,25 +239,19 @@ func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		query = fmt.Sprintf(`max((((%s) or on(policy) (0 * (%s))) / (%s) * 100) and on(policy) ((%s) >= %d)) or vector(-1)`, bad, total, total, total, PreAuthTargetSignalMinFailures)
 		normalize = SafePercent
 	default:
-		return 0, SourceDegradedPrefix + "unsupported alert metric"
+		return "", nil
 	}
-	if daysAgo > 0 {
-		// Every range selector above is "[<rng>]"; shifting each one keeps
-		// numerator and denominator on the same past window.
-		query = strings.ReplaceAll(query, "["+rng+"]", fmt.Sprintf("[%s] offset %dd", rng, daysAgo))
-	}
+	return query, normalize
+}
 
-	value, err := fetcher.QueryScalar(ctx, query)
-	if err != nil {
-		msg := strings.ReplaceAll(err.Error(), "\r", "")
-		msg = strings.ReplaceAll(msg, "\n", "")
-		log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
-		return 0, SourceDegradedPrefix + TelemetryDegradedReason(err)
+func alertMetricQueryFailure(log *slog.Logger, appID, metric string, err error) string {
+	if log == nil {
+		log = slog.Default()
 	}
-	if metric == "pre_auth_target_signal_gap_pct" && value < 0 {
-		return 0, SourceInsufficientPrefix + "fewer than 20 selected failures on every observed route"
-	}
-	return normalize(value), SourcePrometheus
+	msg := strings.ReplaceAll(err.Error(), "\r", "")
+	msg = strings.ReplaceAll(msg, "\n", "")
+	log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
+	return SourceDegradedPrefix + TelemetryDegradedReason(err)
 }
 
 // Fetch runs the per-app PromQL queries and assembles an
@@ -391,6 +389,14 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		n := int64(math.Round(SafeFloat(q.wakeSamples.v)))
 		resp.WakeSamples = &n
 	}
+	// 7a. The app's own wake p95 (gateway_app_wake_latency_seconds). Best
+	// effort: a gateway release without the series leaves it unset and
+	// clients keep showing the fleet figure.
+	if q.appWakeP95.err == nil && q.appWakeSamples.err == nil {
+		n := int64(math.Round(SafeFloat(q.appWakeSamples.v)))
+		p95 := SafeFloat(q.appWakeP95.v)
+		resp.AppWakeSamples, resp.AppWakeP95MS = &n, &p95
+	}
 
 	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
 	// (gateway_queue_depth{app}). The alert preset
@@ -457,6 +463,7 @@ type fetchQueries struct {
 	count, p50, p95, p99               fetchResult
 	errorRate, cacheHitRate, coldStart fetchResult
 	wakeP95, wakeSamples, queueDepth   fetchResult
+	appWakeP95, appWakeSamples         fetchResult
 	egressBytes, txBytes               fetchResult
 	freshness                          *fetchResult
 }
@@ -506,6 +513,11 @@ func startFetchQueries(ctx context.Context, fetcher PromQL, appID, rng string) f
 		fmt.Sprintf(`sum by (le) (rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
 		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng)), nil)
 	query(&out.wakeSamples, fmt.Sprintf(`sum(increase(gateway_wake_latency_seconds_count[%s]))`, rng), nil)
+	query(&out.appWakeP95, HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le) (rate(gateway_app_wake_latency_seconds_bucket{app=%q}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_app_wake_latency_seconds_count{app=%q}[%s]))`, appID, rng)), nil)
+	query(&out.appWakeSamples, fmt.Sprintf(`sum(increase(gateway_app_wake_latency_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng), nil)
 	query(&out.queueDepth, fmt.Sprintf(`gateway_queue_depth{app=%q, account_id=~".+"}`, appID), nil)
 	query(&out.egressBytes, fmt.Sprintf(`sum(increase(schedd_egress_net_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)
 	query(&out.txBytes, fmt.Sprintf(`sum(increase(gateway_egress_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)

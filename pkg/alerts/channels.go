@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,17 @@ const (
 // SetChannels wires ADR-749 channel delivery after construction, for
 // callers (cmd/meterd) that build the mail transport separately. Call it
 // before the first RunOnce; outcome must be safe for concurrent use.
+// SetDashboardBaseURL sets the dashboard origin ("https://gregale.dev") that
+// channel notifications and stand-downs link to. meterd never passed
+// EvaluatorOptions.DashboardBaseURL, so every Slack, PagerDuty and email alert
+// went out without its dashboard and log-search links.
+func (e *Evaluator) SetDashboardBaseURL(base string) {
+	if e == nil {
+		return
+	}
+	e.dashboardBaseURL = strings.TrimRight(base, "/")
+}
+
 func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome string)) {
 	if e == nil {
 		return
@@ -43,18 +55,21 @@ func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome
 // concurrently and best effort: one failing channel never blocks another,
 // the webhook, or the rule's action. Each outcome is recorded on its
 // channel. It returns how many channels were attempted and delivered.
-func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, event string, observed float64, now time.Time) (attempted, delivered int) {
+func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, event string, observed float64, now time.Time, held map[string]bool, chans []state.NotificationChannel) (attempted, delivered int) {
 	if e.channels == nil || channelsOff(ctx) {
 		return 0, 0
 	}
-	bindings, ok := e.store.(state.AlertRuleChannelStore)
-	if !ok {
-		return 0, 0
-	}
-	chans, err := bindings.ListAlertRuleChannels(ctx, rule.ID)
-	if err != nil {
-		e.log.Warn("alerts: list rule channels", "rule", rule.ID, "err", err)
-		return 0, 0
+	if event != alertchannels.EventFire {
+		bindings, ok := e.store.(state.AlertRuleChannelStore)
+		if !ok {
+			return 0, 0
+		}
+		var err error
+		chans, err = bindings.ListAlertRuleChannels(ctx, rule.ID)
+		if err != nil {
+			e.log.Warn("alerts: list rule channels", "rule", rule.ID, "err", err)
+			return 0, 0
+		}
 	}
 	if len(chans) == 0 {
 		return 0, 0
@@ -63,13 +78,20 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 		// A new incident supersedes a recovery notice a channel never took;
 		// sent now, it would resolve the incident this fire opens.
 		e.clearChannelResolves(ctx, rule.ID)
-		e.clearChannelStandDowns(ctx, rule.ID)
 	}
 	// Any new notice supersedes a fire still waiting for a retry: a newer
 	// fire repeats it, and a late fire after a recovery would reopen the
 	// incident (ADR-20261109153000).
 	e.clearChannelFires(rule.ID)
-	return e.sendToChannels(ctx, chans, e.channelMessage(ctx, rule, event, observed, now), now, func(ch state.NotificationChannel, errMsg string) {
+	fire := event == alertchannels.EventFire
+	ready := chans[:0]
+	for _, ch := range chans {
+		if held[ch.ID] || e.channelStandDownPending(ctx, rule.ID, ch.ID, fire) {
+			continue
+		}
+		ready = append(ready, ch)
+	}
+	return e.sendToChannels(ctx, ready, e.channelMessage(ctx, rule, event, observed, now), now, func(ch state.NotificationChannel, errMsg string) {
 		switch event {
 		case alertchannels.EventResolve:
 			e.trackChannelResolve(ctx, rule, ch, observed, now, errMsg)
@@ -90,6 +112,28 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 // delivered.
 func (e *Evaluator) SendToChannels(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time) (attempted, delivered int) {
 	return e.sendToChannels(ctx, chans, msg, now, nil)
+}
+
+// SendToChannelsFailed sends msg like SendToChannels and returns the IDs of
+// the channels that did not accept it, so a caller can retry only those
+// (ADR-20261125085913). With channels off every channel is returned.
+func (e *Evaluator) SendToChannelsFailed(ctx context.Context, chans []state.NotificationChannel, msg alertchannels.Message, now time.Time) []string {
+	var mu sync.Mutex
+	accepted := map[string]bool{}
+	e.sendToChannels(ctx, chans, msg, now, func(ch state.NotificationChannel, errMsg string) {
+		if errMsg == "" {
+			mu.Lock()
+			accepted[ch.ID] = true
+			mu.Unlock()
+		}
+	})
+	var failed []string
+	for _, ch := range chans {
+		if !accepted[ch.ID] {
+			failed = append(failed, ch.ID)
+		}
+	}
+	return failed
 }
 
 // sendToChannels is SendToChannels with an optional hook run after each
@@ -148,6 +192,7 @@ func (e *Evaluator) channelMessage(ctx context.Context, rule state.AlertRule, ev
 	msg := alertchannels.Message{
 		Event: event, RuleName: rule.Name, Metric: string(rule.Metric), Comparison: string(rule.Comparison),
 		Threshold: rule.Threshold, Observed: observed, Window: string(rule.WindowSpec), OccurredAt: now, DedupKey: rule.ID,
+		EnvironmentScope: rule.EnvironmentScope,
 	}
 	if rule.AppID == "" {
 		return msg

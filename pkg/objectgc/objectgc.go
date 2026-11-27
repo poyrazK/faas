@@ -69,6 +69,9 @@ type Worker struct {
 	now      func() time.Time
 	Interval time.Duration
 	Batch    int
+	// SweepInterval paces the jobs/ and sources/ sweep (WithSweep).
+	SweepInterval time.Duration
+	sweep         SweepStore
 }
 
 // NewWorker returns a worker that deletes through backend, which must hold
@@ -77,12 +80,12 @@ func NewWorker(store state.StorageObjectDeletionStore, backend storage.StorageBa
 	if log == nil {
 		log = slog.Default()
 	}
-	w := &Worker{store: store, backend: backend, log: log, now: time.Now, Interval: DefaultInterval, Batch: DefaultBatch,
+	w := &Worker{store: store, backend: backend, log: log, now: time.Now, Interval: DefaultInterval, Batch: DefaultBatch, SweepInterval: DefaultSweepInterval,
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "faas_object_gc_requests_total",
 			Help: "Object deletion requests the control plane's object GC decided or retried, by key class and outcome (ADR-20261115180000).",
 		}, []string{"class", "outcome"})}
-	for _, class := range []string{state.StorageObjectClassSnapshot, state.StorageObjectClassLayer, state.StorageObjectClassPlatform, state.StorageObjectClassUnclassified} {
+	for _, class := range []string{state.StorageObjectClassSnapshot, state.StorageObjectClassLayer, state.StorageObjectClassSource, state.StorageObjectClassPlatform, state.StorageObjectClassUnclassified} {
 		for _, outcome := range []string{OutcomeDeleted, OutcomeRefused, OutcomeRetried, OutcomeError} {
 			w.requests.WithLabelValues(class, outcome)
 		}
@@ -97,7 +100,12 @@ func NewWorker(store state.StorageObjectDeletionStore, backend storage.StorageBa
 func (w *Worker) Run(ctx context.Context) {
 	t := time.NewTicker(w.Interval)
 	defer t.Stop()
+	var lastSweep time.Time
 	for {
+		if w.sweep != nil && w.now().Sub(lastSweep) >= w.SweepInterval {
+			lastSweep = w.now()
+			w.sweepOnce(ctx)
+		}
 		if err := w.Tick(ctx); err != nil && ctx.Err() == nil {
 			w.log.Warn("objectgc: tick", "err", err)
 		}

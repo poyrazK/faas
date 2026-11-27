@@ -26,6 +26,9 @@ Tasks live in `tasks.json`:
 | `deploy-flask-render` | Deploy Render's Flask example |
 | `migrate-django-heroku` | Move Heroku's Django getting-started app; its `ALLOWED_HOSTS` opens only when Heroku's `DYNO` is set, so Gregale's smoke request gets 400 until the agent fixes it, and it asks for Python 3.15 |
 | `deploy-go-heroku` | Deploy Heroku's Go getting-started app; its Procfile starts `go-getting-started`, a binary only Heroku's buildpack makes |
+| `day2-config-change` | Change a live app's greeting through its `GREETING` variable without editing code (`http` + `file_contains`) |
+| `day2-schedule` | Add `POST /tick` and have Gregale call it every 15 minutes (`cli_output` on `gregale cron list`) |
+| `day2-no-cold-start` | Remove cold starts and state the monthly cost (`app_field` `min_instances` ≥ 1, `answer` names a price) |
 
 The five framework tasks follow the framework and migration guides
 (`docs/frameworks.md`, `docs/deploy-*.md`, `docs/migrate-from-*.md`): each
@@ -51,11 +54,20 @@ measure what a cold agent does with a repository Gregale did not create:
 - Apps and projects that appear in the evaluation account during the run are
   the run's. Checks read them (`apps_created`, `apps_serving`, `app_http`
   on the created app whose slug matches, `no_traps`), and cleanup deletes
-  them. Runs are sequential for that reason.
+  them. `no_traps` grades the end state: an app still parked by this run, or
+  a latest release that failed, not a failed release the agent replaced. Runs are sequential for that reason.
+  `vote_counted` grades the voting app end to end: it votes, as a new voter,
+  for the option with fewer votes on the created `vote` app and waits for the
+  `result` app's Socket.IO `scores` to count it (slugs match `(^|-)vote$` and
+  `(^|-)result$`, each optionally with the 5-character suffix a taken name gets; both must be public). Page GETs alone passed a deployment
+  whose votes all failed (rc.380).
 - `features` lists the Gregale features that apply to the repository. Each is
   a regex over the agent's shell commands (`command`), over files in the
   checkout after the run (`file`), or a fact about what it created
-  (`state: project_created`). `feature_score` is the share used. Until the
+  (`state: project_created`). `feature_score` is the share used. A feature
+  with `"unless": "first_deploy_live"` is a fix the agent needs only when
+  Gregale's detection falls short; it counts as used when every app the run
+  created went live on its first deployment. Until the
   scan reports features itself (ADR-20261112223000 §1), the list is written
   by hand.
 - Every run is graded for anti-patterns in its shell commands: raw calls to
@@ -94,9 +106,16 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
   `gregale.yaml`). Others that appear during the run are listed as
   `not_attributed` and left alone. Cleanup deletes only the run's apps and
   projects that did not exist before the run, never one it redeployed.
-- A task's `follow_up` is sent once (Claude only, by resuming the session) when
-  the agent finished its turn but the task's checks don't pass yet, for
-  example because it stopped to ask before deploying.
+- Cleanup purges each app it deletes (`gregale app purge`), because a deleted
+  app holds its name for seven days and the next run's agent would otherwise
+  find the repository's natural name taken. `left_behind` lists `app:<slug>`
+  for an app it could not delete and `name:<slug>` for one whose name is
+  still held.
+- A task's `follow_up` is sent (Claude and Codex, by resuming the session)
+  when the agent finished its turn but the task's checks don't pass yet, for
+  example because it stopped to ask before deploying. It is sent up to twice:
+  an agent may ask again, such as whether to make a private app public.
+  `follow_ups` records how many were sent.
 - `wrote_outside_run` lists files the agent's file tools wrote outside its run
   directory and adds that anti-pattern. `home_writes` lists files under your
   home directory, two levels down, that changed during the run (agent config
@@ -117,6 +136,9 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
   - Tokens come from `turn.completed`; Codex reports no cost.
   - If your default model isn't available on your account, pass
     `--codex-model`.
+  - A repository task keeps its session (no `--ephemeral`) so the follow-up
+    can run `codex exec resume`. An old Codex CLI may reject every model on a
+    ChatGPT account (`model_not_found`, 0.138 on 2026-11-19); upgrade it.
 - **Gemini CLI**: `gemini -p --output-format stream-json --approval-mode yolo
   --skip-trust`.
   - Needs `GEMINI_API_KEY` (or `GOOGLE_API_KEY`, or Vertex AI): the personal

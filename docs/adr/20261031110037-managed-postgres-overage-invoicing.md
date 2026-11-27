@@ -1,7 +1,7 @@
 # ADR: Managed PostgreSQL overage invoicing
 
 Date: 2026-10-31
-Status: Accepted; price amended by [ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md) ($0.2331 per CU-hour, Neon Scale's price plus 5%)
+Status: Accepted; price amended by [ADR-20261102072425](20261102072425-managed-postgres-overage-at-provider-price-plus-5.md) ($0.2331 per CU-hour, Neon Scale's price plus 5%); release order amended 2026-11-22 (live at the public launch, without a month of shadow); billing from 2026-11-01 (amended 2026-11-22: the launch week is billed)
 Amends: [ADR 20261025094915](20261025094915-managed-postgres-compute-caps-on-running-databases.md) (decision 2: overage was unbilled until invoicing)
 Related: [ADR-1430](1430-plan-entitlements-from-october-2026-cogs-report.md) (plan entitlements, COGS report), [ADR 20261027093220](20261027093220-object-storage-billed-daily.md) (object-storage charge steps), [ADR-1320](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) (spend cap)
 
@@ -191,3 +191,95 @@ egress election also turned on database egress billing outside the cap.
   at the compute ceiling (`CapLimits.SpendCapReached`, API `hold:
   compute_ceiling`) without recording or mailing a compute threshold. A $0
   cap therefore stops them at once, as it parks apps.
+
+## Amendment (2026-11-22): live at the public launch, without a month of shadow
+
+The owner decided on 2026-11-22 that managed PostgreSQL billing goes live
+with the public launch. It does not wait for a month of `shadow`. This
+changes the release order in Consequences.
+
+Done on 2026-11-22:
+
+- The Polar meter `Managed Postgres overage (charge millicents)` sums
+  `charge_millicents` for `faas_managed_postgres_usage`.
+- Every paid product has a $0.00001 per unit price on that meter. The boot
+  preflight passes.
+- `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` is `2026-12-01T00:00:00Z`, so
+  no earlier month is charged.
+- Production ran `shadow` for a few hours, then switched to `live`.
+
+Live delivery alone charges no one. A charge needs both of these:
+
+1. **Compute cap enforcement `on`.** The cap sweep records the
+   `allowance` event only in that mode (`managedpostgres` caps sweep,
+   `recordCapEvents`). Production runs the default, `shadow`. To start
+   with either cap `on`, apid needs internal mail and that cap's
+   qualification approval. Production has neither yet.
+2. **A subject with overage on.** Overage is available only where the
+   `postgres-overage` capability is released. That includes Scale's
+   default-on overage (ADR-20261025094915 amendment 2026-11-11). In
+   production its flag is off by default, and one rule enables it for the
+   owner's account. Database egress past the
+   shared allowance is the exception: it follows the app egress election
+   instead (ADR-20261110160000 slice 3).
+
+The product itself is already open. Since 2026-11-21 the `managed_postgres`
+flag has defaulted to true for every plan that includes databases, and the
+runtime `managed_postgres_policy` approves provisioning. The caps still run
+in `shadow`, so databases are not suspended at the ceiling. On 2026-11-22
+every live database belonged to the owner.
+
+The month of shadow was meant to compare receipts with the ledger. That
+comparison now runs between turning caps `on` and releasing
+`postgres-overage`:
+
+- Compare the month-to-date compute and storage in the ledger with the
+  provider's consumption for the owner's test subject.
+- Check that one live step reaches the Polar meter at the expected amount.
+
+The release order is now:
+
+1. Meter and prices.
+2. `shadow` (hours).
+3. `live` (at launch).
+4. Compute and storage caps `on`.
+5. The comparison above.
+6. The capability.
+
+**Risk.** Without shadow receipts, a ledger defect shows up as a wrong line
+on an opted-in subject's invoice instead of in a shadow row. Three things
+bound it:
+
+- the spend-cap clamp (Amendment 2026-11-13);
+- the ceiling of one extra allowance a month;
+- refunds through the provider.
+
+## Amendment (2026-11-22, evening): billing starts with November
+
+The owner decided on 2026-11-22, the eve of the public launch, that the
+launch week is billed. `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` moves from
+`2026-12-01T00:00:00Z` to `2026-11-01T00:00:00Z` in apid's and meterd's
+environment on the control plane. The boundary must still be a UTC month
+start, so November is the earliest month that includes the launch.
+
+Why: with December, every Scale subject's usage past its allowance from the
+launch to 30 November would go uncharged, because Scale's overage is on by
+default (ADR-20261025094915 amendment 2026-11-11) and the cap lets it run to
+the spend-cap ceiling. Hobby and Pro are unaffected: their overage is opt-in,
+and the caps hold them at the allowance otherwise.
+
+State when it changed:
+
+- Caps `on` since 19:26Z (ADR-20261025094915 amendment: notice waived), and
+  `postgres-overage` released platform-wide at 19:34Z. The receipts-vs-ledger
+  comparison passed earlier that day.
+- The only subject with databases was the owner's Scale account. Its overage
+  was off, and its app egress election had been in force for under a second
+  on 2026-11-16, which makes it a November billing subject for database
+  egress. Before going live with the new boundary, apid ran one sweep in
+  `shadow` (19:49Z, on all November usage collected so far). It recorded no
+  delivery and no pending step. apid and meterd have run `live` on
+  `2026-11-01` since 19:53Z. The previous values are kept in timestamped
+  backups of both environment files on the control plane.
+- November usage from before the launch belongs only to that subject, so
+  moving the boundary bills no customer for usage before overage was offered.

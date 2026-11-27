@@ -55,7 +55,7 @@ func TestMCPCandidatePromotion(t *testing.T) {
 			var output bytes.Buffer
 			osStdout, osStderr, jsonOutput = &output, &output, true
 			t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
-			calls, promotions, updates := 0, 0, 0
+			calls, promotions, updates, discoverCalls := 0, 0, 0, 0
 			candidate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !tc.authorization && r.Header.Get("Authorization") != "" {
 					t.Error("operator key forwarded to candidate")
@@ -108,10 +108,6 @@ func TestMCPCandidatePromotion(t *testing.T) {
 				w.Header().Set("MCP-Protocol-Version", mcphosting.ProtocolVersion)
 				switch req.Method {
 				case "ping":
-					if tc.name == "public readiness failure preserves serving" {
-						w.WriteHeader(503)
-						return
-					}
 					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{}}`, req.ID)
 				case "initialize":
 					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":%q,"capabilities":{"tools":{}}}}`, req.ID, mcphosting.ProtocolVersion)
@@ -125,6 +121,14 @@ func TestMCPCandidatePromotion(t *testing.T) {
 					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"content":[]}}`, req.ID)
 
 				case "server/discover":
+					discoverCalls++
+					// 2026-07-28 has no ping: the public readiness probe's
+					// liveness exchange is its server/discover, which follows
+					// the candidate doctor's.
+					if tc.name == "public readiness failure preserves serving" && discoverCalls > 1 {
+						w.WriteHeader(503)
+						return
+					}
 					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["%s"],"capabilities":{"tools":{}}}}`, req.ID, mcphosting.ProtocolVersion)
 				case "tools/list":
 					_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"add","inputSchema":{"type":"object"}}]}}`, req.ID)
@@ -156,7 +160,7 @@ func TestMCPCandidatePromotion(t *testing.T) {
 						return
 					}
 					source := mcphosting.Config{Auth: mcphosting.AuthConfig{Issuer: "https://identity.example", JWKSURL: "https://identity.example/jwks", Resource: "https://my-mcp.example/mcp", Scopes: []string{"mcp:tools"}}}
-					action := mcpExpectedGatewayAction(source, []string{"RS256", "ES256"})
+					action := mcpExpectedGatewayAction(source, []string{"RS256", "ES256"}, "")
 					if tc.accessAudit == "drift" {
 						action.MCP.ToolScopes = map[string][]string{}
 					}
@@ -401,7 +405,7 @@ func TestMCPReleasePolicyPreflight(t *testing.T) {
 }
 
 func TestMCPTaskDefaultsMatchAPI(t *testing.T) {
-	body, err := os.ReadFile("templates/mcp-node/task-limits.json")
+	body, err := os.ReadFile("templates/mcp-node-tasks/task-limits.json")
 	if err != nil {
 		t.Fatal(err)
 	}

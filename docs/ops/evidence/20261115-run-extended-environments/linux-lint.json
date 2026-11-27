@@ -1,0 +1,35 @@
+{
+  "checks": [
+    {
+      "exit_code": 0,
+      "log": "linux-lint-guest-init.log",
+      "package": "guest/init"
+    },
+    {
+      "exit_code": 0,
+      "log": "linux-lint-guest-executor.log",
+      "package": "guest/executor"
+    },
+    {
+      "exit_code": 0,
+      "log": "linux-lint-pkg-builderd.log",
+      "package": "pkg/builderd"
+    },
+    {
+      "exit_code": 0,
+      "log": "linux-lint-pkg-e2etest-runlifecycle.log",
+      "package": "pkg/e2etest/runlifecycle"
+    }
+  ],
+  "complete": true,
+  "patch_sha256": "afae63ca38c01f1da0306c599bf985742fe87b3ea3c3db440c2574575be81521",
+  "raw_evidence_sha256": {
+    "linux-lint-guest-executor.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-guest-init.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-builderd.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-e2etest-runlifecycle.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-result.json": "8a5d3c775ee4e5bdfd2f5e6992001008aa942b9721bf5ee170bf6e6f31daac9a"
+  },
+  "scope": "Linux amd64, metal tag, selected packages; new issues against the uncommitted source patch",
+  "source_manifest_sha256": "efe3908c5fffca2cba05a2743453d335fc43682680166dce682e65f9d2794daf"
+}

@@ -19,7 +19,7 @@ func TestMCPNativeReleaseAcceptsScaledToZeroPreviousPool(t *testing.T) {
 	t.Setenv("MCP_TASK_NAMESPACE", "review11")
 	t.Setenv("MCP_TASK_RELEASE_INPUT", `{"previousWorkerIDs":[]}`)
 	root := t.TempDir()
-	body, err := os.ReadFile("templates/mcp-node/gregale-mcp.json")
+	body, err := os.ReadFile("templates/mcp-node-tasks/gregale-mcp.json")
 	if err != nil {
 		t.Fatal(err)
 	}

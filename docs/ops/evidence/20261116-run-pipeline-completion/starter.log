@@ -1,0 +1,17 @@
+✔ two turns through one asynchronous tool call (1.621375ms)
+✔ a redelivered message lands once (0.187625ms)
+✔ a redelivery dispatches a tool call the first delivery did not (0.308166ms)
+✔ records that are not inbox messages are refused (0.095958ms)
+✔ named task dispatch carries stable RAP identity and app authority (0.969083ms)
+✔ a named task persists its identity through dispatch retry and resumes the next slice once (0.404292ms)
+✔ platform accepts empty successful task acknowledgements (14.019875ms)
+✔ task result helpers read scoped paths with fresh app identity (0.760458ms)
+✔ pipeline dispatch preserves logical identity (0.160917ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 76.664458

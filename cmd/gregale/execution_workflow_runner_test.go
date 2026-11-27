@@ -373,3 +373,29 @@ func TestRunExecutionWorkflowReturnsSubmittedReceiptWhenWaitIsInterrupted(t *tes
 		t.Fatalf("interrupted workflow result lost its submitted receipt: %+v", result)
 	}
 }
+
+func TestExecutionWorkflowExtendedClassUsesItsCapabilityLimit(t *testing.T) {
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "extended-flow", Version: "v1", Steps: []main.ExecutionWorkflowStep{{Label: "transform", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode24, Source: "export default ()=>42", Limits: &api.ExecutionLimitRequest{Class: api.ExecutionClassExtended, TimeoutMS: 300000}}}}}
+	client := newExecutionWorkflowFakeClient()
+	client.capabilities.ExtendedAdmissions = true
+	if _, err := main.RunExecutionWorkflow(t.Context(), client, plan, time.Millisecond); err == nil || len(client.requests) != 0 {
+		t.Fatal("unavailable class passed preflight", err)
+	}
+	client.capabilities.ExecutionClasses = []api.ExecutionClassCapability{{Class: api.ExecutionClassExtended, AdmissionAvailable: true, MaxConcurrent: 1, MaxTimeoutMS: 300000}}
+	if _, err := main.RunExecutionWorkflow(t.Context(), client, plan, time.Millisecond); err != nil || len(client.requests) != 1 {
+		t.Fatal("available extended class blocked by standard ceiling", err)
+	}
+}
+func TestExecutionWorkflowRefusesUnavailableEnvironmentBeforeFirstStep(t *testing.T) {
+	plan := main.ExecutionWorkflowPlan{WorkflowID: "environment-flow", Version: "v1", Steps: []main.ExecutionWorkflowStep{{Label: "first", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode24, Source: "export default ()=>42"}}, {Label: "transform", Request: api.CreateExecutionRequest{Runtime: api.ExecutionRuntimeNode24, Source: "export default ()=>42", EnvironmentID: "12345678-1234-4234-8234-123456789abc"}}}}
+	client := newExecutionWorkflowFakeClient()
+	client.capabilities.ExtendedAdmissions = true
+	if _, err := main.RunExecutionWorkflow(t.Context(), client, plan, time.Millisecond); err == nil || len(client.requests) != 0 {
+		t.Fatal("environment preflight admitted partial workflow", err)
+	}
+	client.capabilities.CustomEnvironments = true
+	client.capabilities.EnvironmentRuntimes = []api.ExecutionRuntime{api.ExecutionRuntimeNode24}
+	if _, err := main.RunExecutionWorkflow(t.Context(), client, plan, time.Millisecond); err != nil || len(client.requests) != 2 {
+		t.Fatal("available environment blocked", err)
+	}
+}

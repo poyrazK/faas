@@ -230,6 +230,36 @@ multipart session, wait out issued URLs, restore `max_upload_bytes` to at most
 before rolling the schema back; the down migration deliberately refuses to
 discard a larger safety reservation silently.
 
+### General availability rollout
+
+[ADR-20261121230052](../adr/20261121230052-object-storage-ga.md) makes
+`object-storage`, `s3-credentials`, `signed-urls`, `multipart-uploads`,
+`object-storage-compute` and `object-storage-key-scopes` GA. Their platform
+flags keep their stored `default: false` and the account rule for the owner and
+release-acceptance accounts until `TestObjectStorage` passes on production.
+
+1. Before the release reaches production, check that each of the six flags
+   has a stored definition (`gregalectl flags show --key <key>`).
+2. After the release, run the journey:
+   `scripts/e2e-journeys.sh --tier full --run TestObjectStorage`.
+3. After the journey passes, write each default after `gregalectl auth step-up`,
+   with the parent last:
+
+   ```sh
+   for key in s3_credentials signed_urls multipart_uploads object_storage_compute object_storage_key_scopes object_storage; do
+     gregalectl flags default --key "$key" --value true --reason "object storage GA (ADR-20261121230052)" --yes
+   done
+   ```
+
+   Never use `--capability object-storage` for this. It also selects
+   versioning, Object Lock, encryption, lifecycle, CORS and bucket grants,
+   which stay preview.
+
+To roll back, run `gregalectl flags disable --capability object-storage
+--reason "<why>" --yes`. It hides object storage and every sub-feature in
+apid. To also stop the data path on `s3.gregale.dev`, set `s3_enabled` to
+`false` (above).
+
 ## Branded S3 endpoint
 
 Gregale-issued S3 credentials are bucket-scoped and use the stable customer

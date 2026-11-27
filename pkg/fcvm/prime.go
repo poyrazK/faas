@@ -62,7 +62,7 @@ func (m *Manager) Prime(ctx context.Context, instance string, opts PrimeOptions)
 		return PrimeReport{}, fmt.Errorf("prime %s: %w", instance, err)
 	}
 	addr := net.JoinHostPort(inst.Lease.HostIP.String(), "8080")
-	return primeHTTP(operationCtx, addr, opts), nil
+	return primeHTTP(withProbeHost(operationCtx, inst.ProbeHost), addr, opts), nil
 }
 
 func clampPrimeOptions(opts PrimeOptions) (PrimeOptions, error) {

@@ -123,6 +123,31 @@ pass other paths if your `gregale.yaml` names others. Secret rotation keeps its
 own path through `SecretReloadCoordinator`
 ([pool runtime guide](postgres-pool-runtime.md)); do not reload secrets in a hook.
 
+### Node.js outbound HTTP after a wake
+
+Node 20 and later try every address of a host in turn ("Happy Eyeballs",
+`autoSelectFamily`) and give each attempt only 250 ms. The first outbound
+connection from a freshly woken instance can take longer than that. Node then
+gives up on every address at once, and `fetch` or `https.request` fails in
+about 300 ms with an `AggregateError` whose errors are `ETIMEDOUT` and whose
+message is empty. Instances connect out over IPv4 (they have no global IPv6
+address), so give the connection more time, or skip the IPv6 attempts, once at
+startup:
+
+```js
+import net from "node:net";
+net.setDefaultAutoSelectFamilyAttemptTimeout(2000); // or:
+net.setDefaultAutoSelectFamily(false);
+```
+
+The `NODE_OPTIONS=--network-family-autoselection-attempt-timeout=2000`
+environment variable does the same without a code change. Combine it with the
+pool helpers above, so connections inherited from the snapshot are dropped
+rather than reused.
+
+Inbound keep-alive needs no change: Gregale closes its idle connections to your
+app well before Node's 5-second `keepAliveTimeout` (or gunicorn's 2 seconds).
+
 You can detect the wake tier on every routed response:
 
 - `x-faas-wake: hot` means an already-running instance served the request.
@@ -166,14 +191,30 @@ if it fails, the instance is discarded and the request restores from the
 snapshot instead. With session affinity (`session_affinity`) on, a session
 resumes the instance it was pinned to when that one is frozen.
 
-On nodes with early freeze enabled, a `between_requests` workload (every
-function by default, and any app that sets `pause: between_requests`) is
-frozen a few seconds after its last request instead of at its idle timeout,
-so it stops accruing usage almost as soon as it finishes serving. For the app
-this is the same as a pause between requests: its timers stop, and the next
-request thaws it in a few milliseconds. `when_idle` apps keep running through
-their idle timeout as declared. Apps with `--min` instances are not frozen
-early.
+### Paused between requests
+
+An idle instance does not wait for its idle timeout to stop costing you. About
+a second after its last request, with nothing in flight, Gregale pauses its
+VM in memory, and **paused seconds are not billed**. The next request resumes
+it in about a millisecond, with its memory (caches, sessions, connections)
+intact. Any packet addressed to the instance resumes it too, such as a reply
+on a connection your app opened. If it stays idle, it parks to a snapshot
+after 10 minutes, or sooner when the node needs the memory.
+
+Which instances pause depends on what the app declares (below):
+
+- Functions, and apps that set `pause: between_requests`, pause about a second
+  after every request. Their timers stop while paused.
+- Apps that declare no `pause` pause the same way, but only when Gregale sees
+  the app is really idle: in that second it used at most 10 ms of CPU and
+  sent and received at most 512 bytes. An app whose timers, heartbeats or
+  background threads keep it busy keeps running, and is billed, while it
+  works.
+- `when_idle` and `never` apps keep running, and are billed, through their
+  idle timeout, as declared.
+
+Apps with `--min` instances still pay for their minimum. Pausing is enabled
+per node; on a node without it, an instance keeps running between requests.
 
 Functions and request-mode apps can be frozen; workers, services, jobs and
 apps in a private network are not. Your app declares what it tolerates in
@@ -186,8 +227,9 @@ lifecycle:
 
 | `pause` | Between requests | At the idle timeout | Default for |
 |---|---|---|---|
-| `between_requests` | paused after 2 s without a request; timers stop | frozen | functions |
-| `when_idle` | keeps running | frozen | apps |
+| not set | paused about 1 s after a request when the app is idle; unbilled | frozen | apps |
+| `between_requests` | paused about 1 s after a request; timers stop; unbilled | frozen | functions |
+| `when_idle` | keeps running | frozen | |
 | `never` | keeps running | parked, as before | |
 
 Pausing between requests and freezing are each enabled per node, like early
@@ -211,6 +253,12 @@ request after a wake was 0.5–0.8 s faster on Java and within noise on Go, Node
 and Python. These requests reach your app directly, not through the public
 edge, so they are not billed or counted in request analytics. A failed burst
 never fails the deploy: Gregale takes the snapshot unprimed.
+
+The requests run your code, so whatever that path does happens up to 20 times
+per deploy, and what it leaves in memory is in every restore. If `/` (or your
+health check) writes data, sends mail or calls a paid API, declare a harmless
+warm-up path below. Functions are not primed unless they declare one: every
+path of a function is its handler.
 
 A health check that only returns `200` warms the runtime and server but not
 your handlers. To warm the code a real request runs, name a path that does,

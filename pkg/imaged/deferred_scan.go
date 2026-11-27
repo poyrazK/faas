@@ -2,6 +2,8 @@ package imaged
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -83,17 +85,46 @@ func (h *Handler) WithDeferredDeployScans() *Handler {
 // before the snapshot handoff. Enforce mode promotes only on the scan's
 // evidence, and the producer-evidence route (ADR-435) requires complete
 // evidence in every mode, as does a signed image deployed without a
-// producer; any doubt keeps the scan in front. An organization's app also
-// keeps it in front: its instances capture the deployment's scan mirrors
-// at admission (ADR-595), so a scan that lands during the snapshot prime
-// makes the prime instance's inputs stale and fails the deploy.
+// producer; any doubt keeps the scan in front.
+//
+// An organization's app captures the deployment's scan mirrors at
+// admission (ADR-595). The admission checks ignore those mirrors (ADR
+// 20261031190030), so a scan landing during the snapshot prime leaves the
+// prime alone, except under a standard that requires native runtime
+// admission: native captures compare the mirrors, and such an app keeps its
+// scan in front (ADR-075 amendment 2026-11-19).
 func (h *Handler) deployScanGatesHandoff(ctx context.Context, app state.App, dep state.Deployment) bool {
 	if h.deferredScans == nil || h.store == nil || h.log == nil ||
-		app.SecurityPolicy == api.AppSecurityPolicyEnforce || app.RequireSigned || app.OrgID != "" {
+		app.SecurityPolicy == api.AppSecurityPolicyEnforce || app.RequireSigned {
 		return true
+	}
+	if app.OrgID != "" {
+		if native, err := standardRequiresNativeRuntime(ctx, h.store, app); native || err != nil {
+			return true
+		}
 	}
 	present, err := producedRuntimePresent(ctx, h.store, app, dep)
 	return present || err != nil
+}
+
+// standardRequiresNativeRuntime reports whether an organization's app runs
+// under a standard that admits its instances natively. An app with no
+// enrollment row has none.
+func standardRequiresNativeRuntime(ctx context.Context, store state.Store, app state.App) (bool, error) {
+	reader, ok := store.(interface {
+		GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error)
+	})
+	if !ok {
+		return false, errors.New("imaged: application standard enrollment reader unavailable")
+	}
+	enrollment, err := reader.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("imaged: read application standard enrollment: %w", err)
+	}
+	return state.ApplicationStandardEnrollmentRequiresNative(enrollment), nil
 }
 
 // startDeferredDeployScan queues the deployment's scan. It outlives the

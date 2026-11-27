@@ -84,8 +84,21 @@ func newMetalHarnessWith(t *testing.T, extra e2etest.Which, extraEnv ...string) 
 	}
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(registry.Close)
-	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImg))
+	builderImg, _ := e2etest.ImageOnlyBuilderBaseImage("onebox-faas/builder-base")
+	builderRef := registry.AddImage("onebox-faas/builder-base", builderImg)
+	if layerPath := os.Getenv("FAAS_TEST_RUN_MINIMAL_BASE_LAYER"); layerPath != "" {
+		// Operator-provided lifecycle fixture, served as OCI and staged by
+		// imaged. This harness never launches a source builder.
+		layer, err := os.ReadFile(layerPath) //nolint:forbidigo // protected acceptance fixture selected by the operator
+		if err != nil {
+			t.Fatalf("read Run minimal base layer: %v", err)
+		}
+		minimal, _ := e2etest.RootfsLayerImage("onebox-faas/run-minimal-base", layer)
+		e2etest.ConfigureNativeBaseImages(t, builderRef,
+			registry.AddImage("onebox-faas/run-minimal-base", minimal), e2etest.StagedBuilderBasePath())
+	} else {
+		e2etest.OverrideBuilderBase(t, builderRef)
+	}
 
 	// Jobs are an opt-in schedd surface. Shrink meterd's cadences so the
 	// billing assertion observes a row during a single acceptance test rather
@@ -119,6 +132,7 @@ func newMetalHarnessWith(t *testing.T, extra e2etest.Which, extraEnv ...string) 
 		}
 	}
 	env := append([]string{
+		"FAAS_HOST_KEY_PATH=" + hostIdentityPath,
 		"FAAS_HOST_AGE_RECIPIENT_PATH=" + recipientPath,
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + hostIdentityPath,
 	}, extraEnv...)

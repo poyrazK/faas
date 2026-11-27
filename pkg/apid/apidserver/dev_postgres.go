@@ -13,10 +13,27 @@ import (
 
 const devPostgresEnvironmentKey = "DATABASE_URL"
 
+// devPostgresMigrationKey carries a migration credential for the developer
+// database. Only release tasks receive migration credentials, so a dev app's
+// release command can create its schema while the serving app and a
+// --postgres-seed keep DATABASE_URL, whose read_write login cannot.
+const devPostgresMigrationKey = "MIGRATION_DATABASE_URL"
+
+// devPostgresBindings are the bindings a developer database gets, the
+// DATABASE_URL one first: the response and the ownership rule name it.
+var devPostgresBindings = []struct {
+	key    string
+	access managedpostgres.CredentialAccess
+}{
+	{devPostgresEnvironmentKey, managedpostgres.CredentialReadWrite},
+	{devPostgresMigrationKey, managedpostgres.CredentialMigration},
+}
+
 const devPostgresStorageLimitBytes int64 = 1 << 30
 
 // ensureDevPostgres creates or reuses the database whose name matches the
-// stable developer app slug, then binds it to DATABASE_URL. The name is an
+// stable developer app slug, then binds it to DATABASE_URL and
+// MIGRATION_DATABASE_URL (devPostgresBindings). The name is an
 // internal idempotency key; callers only receive safe resource metadata.
 func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app state.App, request *api.DevPostgresRequest) (*api.DevPostgresResponse, error) {
 	if request == nil {
@@ -32,6 +49,9 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	if !limits.DevelopmentAllowed {
 		return nil, managedpostgres.ErrQuotaExceeded
 	}
+	if err := s.devPostgresDatabaseURLFree(ctx, acct, app); err != nil {
+		return nil, err
+	}
 	ctx, err := postgresaccess.PersonalContext(ctx, s.store, acct.ID)
 	if err != nil {
 		return nil, err
@@ -41,9 +61,13 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		return nil, err
 	}
 	wasExisting := false
+	sandbox := state.IsAPISandbox(app)
 	var existing *managedpostgres.Database
 	for _, database := range databases {
 		if database.Name == app.Slug {
+			if sandbox && database.ID != app.ID {
+				return nil, managedpostgres.ErrConflict
+			}
 			wasExisting = true
 			copy := database
 			existing = &copy
@@ -60,7 +84,7 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	}
 	spec := managedpostgres.Spec{
 		Region:               region,
-		PostgresMajor:        16,
+		PostgresMajor:        api.ManagedPostgresDefaultMajor,
 		Class:                managedpostgres.ClassDevelopment,
 		Availability:         managedpostgres.AvailabilitySingleZone,
 		ScaleToZero:          true,
@@ -74,48 +98,117 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		if request.Region == "" {
 			spec = existing.Spec
 		}
+		// A database made when dev databases were PostgreSQL 16 keeps its
+		// major; only new ones take the current default.
+		spec.PostgresMajor = existing.Spec.PostgresMajor
 	}
 	if spec.StorageLimitBytes > limits.StorageLimitBytes {
 		return nil, managedpostgres.ErrQuotaExceeded
 	}
-	database, err := s.managedPostgres.Create(ctx, managedpostgres.CreateRequest{
+	create := managedpostgres.CreateRequest{
 		AccountID: acct.ID,
 		Name:      app.Slug,
 		Spec:      spec,
-	})
+	}
+	var database managedpostgres.Database
+	if sandbox {
+		// The sandbox app ID is allocated before provisioning and survives
+		// retries. A same-named database with another ID belongs to someone else.
+		database, err = s.managedPostgres.CreateWithID(ctx, create, app.ID)
+	} else {
+		database, err = s.managedPostgres.Create(ctx, create)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	binding, bindingCreated, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
-		AccountID:      acct.ID,
-		DatabaseID:     database.ID,
-		AppID:          app.ID,
-		Scope:          api.DefaultEnvScope,
-		EnvironmentKey: devPostgresEnvironmentKey,
-		Access:         managedpostgres.CredentialReadWrite,
-	})
-	if err != nil {
+	var created []string
+	var primary managedpostgres.Binding
+	states := make([]managedpostgres.BindingState, 0, len(devPostgresBindings))
+	for i, want := range devPostgresBindings {
+		binding, bindingCreated, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
+			AccountID:      acct.ID,
+			DatabaseID:     database.ID,
+			AppID:          app.ID,
+			Scope:          api.DefaultEnvScope,
+			EnvironmentKey: want.key,
+			Access:         want.access,
+		})
 		if bindingCreated && binding.ID != "" {
-			if _, deleteErr := s.managedPostgresBindings.Delete(context.WithoutCancel(ctx), acct.ID, binding.ID); deleteErr != nil && s.log != nil {
-				s.log.Warn("dev postgres binding compensation failed", "binding_id", binding.ID, "err", deleteErr)
-			}
+			created = append(created, binding.ID)
 		}
-		if !wasExisting {
-			if _, deleteErr := s.managedPostgres.Delete(context.WithoutCancel(ctx), acct.ID, database.ID); deleteErr != nil && s.log != nil {
-				s.log.Warn("dev postgres database compensation failed", "database_id", database.ID, "err", deleteErr)
+		if err != nil {
+			// Sandbox setup retries under a durable lease and reuses partial
+			// resources. Its janitor owns cleanup after the sandbox closes.
+			if !sandbox {
+				s.compensateDevPostgres(ctx, acct.ID, database.ID, created, !wasExisting)
 			}
+			return nil, err
 		}
-		return nil, err
+		if i == 0 {
+			primary = binding
+		}
+		states = append(states, binding.State)
 	}
 	return &api.DevPostgresResponse{
 		DatabaseID:     database.ID,
 		Name:           database.Name,
 		State:          string(database.State),
-		BindingID:      binding.ID,
-		BindingState:   string(binding.State),
-		EnvironmentKey: binding.EnvironmentKey,
+		BindingID:      primary.ID,
+		BindingState:   devPostgresBindingsState(states),
+		EnvironmentKey: primary.EnvironmentKey,
+		// The CLI counts this key as provided, so a release command that reads
+		// it passes the developer configuration check.
+		MigrationEnvironmentKey: devPostgresMigrationKey,
 	}, nil
+}
+
+// compensateDevPostgres undoes what a failed ensureDevPostgres created: the
+// bindings it made and, when it made the database too, the database.
+func (s *server) compensateDevPostgres(ctx context.Context, accountID, databaseID string, bindingIDs []string, deleteDatabase bool) {
+	ctx = context.WithoutCancel(ctx)
+	for _, id := range bindingIDs {
+		if _, err := s.managedPostgresBindings.Delete(ctx, accountID, id); err != nil && s.log != nil {
+			s.log.Warn("dev postgres binding compensation failed", "binding_id", id, "err", err)
+		}
+	}
+	if !deleteDatabase {
+		return
+	}
+	if _, err := s.managedPostgres.Delete(ctx, accountID, databaseID); err != nil && s.log != nil {
+		s.log.Warn("dev postgres database compensation failed", "database_id", databaseID, "err", err)
+	}
+}
+
+// devPostgresSecretConflict reports a customer secret in the developer app's
+// default scope under a key a developer database binding needs.
+type devPostgresSecretConflict struct{ key string }
+
+func (e devPostgresSecretConflict) Error() string {
+	return "developer app already holds a " + e.key + " secret"
+}
+
+// devPostgresDatabaseURLFree refuses --postgres while the developer app holds
+// a DATABASE_URL or MIGRATION_DATABASE_URL secret that no managed binding
+// owns. A binding's credential write only replaces a row the same binding
+// owns, so it would fail and retry hourly while the app kept the old value,
+// and nothing would tell the developer. A binding's own row (a renewal) is
+// fine.
+func (s *server) devPostgresDatabaseURLFree(ctx context.Context, acct state.Account, app state.App) error {
+	for _, want := range devPostgresBindings {
+		secret, err := s.store.GetAppSecret(ctx, acct.ID, app.ID, want.key)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read developer %s secret: %w", want.key, err)
+		}
+		if secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
+			continue
+		}
+		return devPostgresSecretConflict{key: want.key}
+	}
+	return nil
 }
 
 // describeDevPostgres returns the safe state of the automatically named
@@ -138,28 +231,34 @@ func (s *server) describeDevPostgres(ctx context.Context, app state.App) (*api.D
 		if listErr != nil {
 			return nil, listErr
 		}
+		var out *api.DevPostgresResponse
+		var states []managedpostgres.BindingState
 		for _, binding := range bindings {
-			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || binding.EnvironmentKey != devPostgresEnvironmentKey {
+			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || !isDevPostgresBindingKey(binding.EnvironmentKey) {
 				continue
 			}
-			return &api.DevPostgresResponse{
+			states = append(states, binding.State)
+			if binding.EnvironmentKey != devPostgresEnvironmentKey {
+				continue
+			}
+			out = &api.DevPostgresResponse{
 				DatabaseID:     database.ID,
 				Name:           database.Name,
 				State:          string(database.State),
 				BindingID:      binding.ID,
-				BindingState:   string(binding.State),
 				EnvironmentKey: binding.EnvironmentKey,
-			}, nil
+			}
 		}
-		return nil, nil
+		if out != nil {
+			out.BindingState = devPostgresBindingsState(states)
+		}
+		return out, nil
 	}
 	return nil, nil
 }
 
-// cleanupDevPostgres removes only the automatically named database when its
-// DATABASE_URL binding belongs to this developer app. A database with the
-// same name but no matching binding is never touched, which keeps explicit
-// customer-managed attachments safe.
+// cleanupDevPostgres removes the sandbox's reserved database or the developer
+// database whose automatically named DATABASE_URL binding proves ownership.
 func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 	if app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 || s.managedPostgres == nil || s.managedPostgresBindings == nil {
 		return nil
@@ -168,26 +267,35 @@ func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 	if err != nil {
 		return err
 	}
+	sandbox := state.IsAPISandbox(app)
 	for _, database := range databases {
-		if database.Name != app.Slug {
+		if database.Name != app.Slug || (sandbox && database.ID != app.ID) {
 			continue
 		}
 		bindings, listErr := s.managedPostgresBindings.List(ctx, app.AccountID, database.ID)
 		if listErr != nil {
 			return listErr
 		}
-		owned := false
+		// A sandbox reserves the database ID at app creation, so its
+		// database can be reclaimed even after partial binding setup.
+		owned := sandbox
 		for _, binding := range bindings {
-			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || binding.EnvironmentKey != devPostgresEnvironmentKey {
-				continue
-			}
-			owned = true
-			if _, deleteErr := s.managedPostgresBindings.Delete(ctx, app.AccountID, binding.ID); deleteErr != nil && !errors.Is(deleteErr, managedpostgres.ErrNotFound) {
-				return fmt.Errorf("delete dev postgres binding: %w", deleteErr)
+			if binding.AppID == app.ID && binding.Scope == api.DefaultEnvScope && binding.EnvironmentKey == devPostgresEnvironmentKey {
+				owned = true
 			}
 		}
 		if !owned {
 			return nil
+		}
+		// The database's own bindings (devPostgresBindings) go with it; any
+		// other binding makes the delete below refuse.
+		for _, binding := range bindings {
+			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || !isDevPostgresBindingKey(binding.EnvironmentKey) {
+				continue
+			}
+			if _, deleteErr := s.managedPostgresBindings.Delete(ctx, app.AccountID, binding.ID); deleteErr != nil && !errors.Is(deleteErr, managedpostgres.ErrNotFound) {
+				return fmt.Errorf("delete dev postgres binding: %w", deleteErr)
+			}
 		}
 		remaining, listErr := s.managedPostgresBindings.List(ctx, app.AccountID, database.ID)
 		if listErr != nil {
@@ -202,4 +310,36 @@ func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 		return nil
 	}
 	return nil
+}
+
+// devPostgresBindingsState is the developer database's binding state as one
+// value: ready only when every one of its bindings is, because the first
+// release command needs MIGRATION_DATABASE_URL and the first boot needs
+// DATABASE_URL (a binding writes its secret before it turns ready). A failed
+// binding wins, then any other non-ready state.
+func devPostgresBindingsState(states []managedpostgres.BindingState) string {
+	if len(states) == 0 {
+		return string(managedpostgres.BindingStateProvisioning)
+	}
+	out := managedpostgres.BindingStateReady
+	for _, state := range states {
+		switch {
+		case state == managedpostgres.BindingStateFailed:
+			return string(state)
+		case state != managedpostgres.BindingStateReady && out == managedpostgres.BindingStateReady:
+			out = state
+		}
+	}
+	return string(out)
+}
+
+// isDevPostgresBindingKey reports whether key is one of the developer
+// database's own binding keys.
+func isDevPostgresBindingKey(key string) bool {
+	for _, want := range devPostgresBindings {
+		if want.key == key {
+			return true
+		}
+	}
+	return false
 }

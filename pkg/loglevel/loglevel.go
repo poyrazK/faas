@@ -44,6 +44,9 @@ var patterns = []pattern{
 	{Error, "[fatal]"}, {Error, "[critical]"}, {Error, "[crit]"}, {Error, "[panic]"}, {Error, "[emerg]"},
 	{Error, "level=fatal"}, {Error, "level=critical"}, {Error, "level=crit"}, {Error, "level=panic"},
 	{Warn, "[warn]"}, {Warn, "[warning]"}, {Warn, "level=warn"}, {Warn, `"level":"warn"`}, {Warn, `"level": "warn"`}, {Warn, `"severity":"warn"`},
+	// guest-init's supervisor giving up (guest/init/supervise.go), wherever
+	// the line's prefix puts it (prod hunt r32).
+	{Error, "app crash-looped after "}, {Error, "app restart budget exhausted"},
 	{Info, "[info]"}, {Info, "[notice]"}, {Info, "level=info"}, {Info, `"level":"info"`}, {Info, `"level": "info"`}, {Info, `"severity":"info"`},
 }
 
@@ -51,7 +54,8 @@ var patterns = []pattern{
 // whitespace): the default formats of Python's logging module and uvicorn
 // ("ERROR:    Exception in ASGI application"), Python tracebacks, Go panics
 // and runtime fatal errors, and the first line of a Node uncaught-exception
-// report ("TypeError: …"). Uncaught crashes reach the log as plain stderr in
+// report ("TypeError: …"), and the bare "WARN slow query" shape of
+// hand-written console logging. Uncaught crashes reach the log as plain stderr in
 // these shapes, so without them a crash was no error line at all
 // (ADR-20261109153000). They are anchored to the start of the line and
 // case-sensitive, so prose that mentions an error stays unclassified.
@@ -60,8 +64,14 @@ var prefixes = []pattern{
 	{Error, "Traceback (most recent call last):"},
 	{Error, "panic: "}, {Error, "fatal error: "},
 	{Error, "Uncaught "}, {Error, "UnhandledPromiseRejection"},
-	{Warn, "WARNING:"}, {Warn, "WARN:"},
-	{Info, "INFO:"},
+	{Error, "ERROR "}, {Warn, "WARNING:"}, {Warn, "WARN:"}, {Warn, "WARNING "}, {Warn, "WARN "},
+	// guest-init's own report of a crash, an OOM kill or a failed build. A
+	// Node app that died with process.exit(3) left only these lines, and
+	// `logs --level error` returned nothing (prod hunt r32).
+	{Error, "guest-init: app restart ("}, {Error, "guest-init: main restart ("},
+	{Error, "guest-init: app out of memory"},
+	{Error, "guest-init: build failed"},
+	{Info, "INFO:"}, {Info, "INFO "},
 }
 
 // Detect returns the highest canonical level any pattern matches in line,
@@ -76,7 +86,13 @@ func Detect(line string) string {
 		}
 	}
 	start := strings.TrimLeft(line, " \t")
+	// A policy=always restart after a clean exit ends in ": <nil>": expected,
+	// not an error (code review, prod hunt r32).
+	cleanRestart := strings.HasSuffix(strings.TrimSpace(start), ": <nil>")
 	for _, p := range prefixes {
+		if cleanRestart && strings.HasPrefix(p.hit, "guest-init: ") {
+			continue
+		}
 		if Rank(p.level) > Rank(best) && strings.HasPrefix(start, p.hit) {
 			best = p.level
 		}

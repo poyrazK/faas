@@ -90,8 +90,12 @@ def load(path: str) -> dict | None:
     return record
 
 
+def empty(record: dict | None) -> bool:
+    return record is None or (not record.get("hosts") and not record.get("host_config"))
+
+
 def save(path: str, record: dict | None) -> None:
-    if record is None or not record.get("hosts"):
+    if empty(record):
         with contextlib.suppress(FileNotFoundError):
             os.remove(path)
         return
@@ -161,7 +165,7 @@ def open_host(record: dict | None, *, owner: str, host: str, plan: dict, live: s
         # A converge rerun of a release already watched clean: nothing new.
         record["hosts"].pop(host, None)
         record["order"] = [h for h in record["order"] if h != host]
-        if not record["hosts"]:
+        if empty(record):
             return None
     else:
         record["hosts"][host] = entry
@@ -187,7 +191,41 @@ def revert_host(record: dict | None, *, host: str, live: str) -> dict | None:
         # The host is on a release the record never saw: leave the entry
         # stale (current differs), so the watch leaves the host alone.
         pass
-    return record if record["hosts"] else None
+    return None if empty(record) else record
+
+
+# The control plane's host configuration (docs/adr/20261122170000-continuous-
+# unit-lane.md, "Config rollback"): a unit release's host-config step
+# converges roles at its commit; a breach must put them back, which the
+# binaries' rollback does not. The record keeps the configuration commit the
+# control plane had before the first unwatched convergence (known_good) and
+# the one it converged last (current); the watch judges the platform SLOs for
+# it, and a breach converges the roles back to known_good.
+HOST_CONFIG_GATE = [["--unit", "host-config", "--component", "host-config"]]
+
+
+def set_host_config(record: dict | None, *, owner: str, previous: str, commit: str, now: int) -> dict | None:
+    """Before a host-config step converges commit (the control plane's
+    record named previous): note it in the record and make owner its owner."""
+    for name, value in (("previous", previous), ("commit", commit)):
+        if not SHA.match(value or ""):
+            raise RecordError(f"{name} must be 40 hex: {value!r}")
+    if not RUN.match(owner):
+        raise RecordError(f"bad owner {owner!r}")
+    if record is None:
+        record = {"kind": KIND, "opened_at": now, "hosts": {}, "order": []}
+    hc = record.get("host_config")
+    known = hc["known_good"] if hc else previous
+    if commit == known:
+        # Converging the configuration already watched clean: nothing new.
+        record.pop("host_config", None)
+        return None if empty(record) else record
+    record["host_config"] = {"known_good": known, "current": commit,
+                             "first_activation": hc["first_activation"] if hc else now,
+                             "last_activation": now, "gate": HOST_CONFIG_GATE}
+    record["owner_run"] = owner
+    record["updated_at"] = now
+    return record
 
 
 def adopt(record: dict | None, *, owner: str, now: int) -> dict | None:
@@ -205,13 +243,16 @@ def adopt(record: dict | None, *, owner: str, now: int) -> dict | None:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("open", "revert", "show", "close", "adopt"):
+    for name in ("open", "revert", "show", "close", "adopt", "host-config"):
         p = sub.add_parser(name)
         p.add_argument("--record", required=True)
-        if name in ("open", "close", "adopt"):
+        if name in ("open", "close", "adopt", "host-config"):
             p.add_argument("--owner", required=True)
-        if name == "adopt":
+        if name in ("adopt", "host-config"):
             p.add_argument("--now", type=int, required=True)
+        if name == "host-config":
+            p.add_argument("--previous", required=True)
+            p.add_argument("--commit", required=True)
         if name in ("open", "revert"):
             p.add_argument("--host", required=True)
             p.add_argument("--live", required=True)
@@ -221,7 +262,7 @@ def main(argv: list[str]) -> int:
             p.add_argument("--now", type=int, required=True)
             p.add_argument("--target-file", default="")
             p.add_argument("--commit", default="")
-            p.add_argument("--max-unwatched", type=int, default=2)
+            p.add_argument("--max-unwatched", type=int, default=4)
     args = parser.parse_args(argv)
     try:
         with locked(args.record):
@@ -250,6 +291,10 @@ def main(argv: list[str]) -> int:
                 save(args.record, record)
             elif args.command == "adopt":
                 record = adopt(record, owner=args.owner, now=args.now)
+                save(args.record, record)
+            elif args.command == "host-config":
+                record = set_host_config(record, owner=args.owner, previous=args.previous, commit=args.commit,
+                                         now=args.now)
                 save(args.record, record)
             elif args.command == "close":
                 if record is not None and record.get("owner_run") != args.owner:

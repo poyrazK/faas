@@ -109,6 +109,7 @@ func (h *MetalJobHarness) mustStartImageRun(t *testing.T, req api.CreateImageRun
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		h.RequireDaemonsAlive(t)
 		raw, status, _ := h.request(t, h.defaultKey, http.MethodPost, "/v1/image-runs", req)
 		var resp api.ImageRunResponse
 		if err := json.Unmarshal(raw, &resp); err != nil {

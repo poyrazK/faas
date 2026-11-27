@@ -41,7 +41,14 @@ func (s *projectSecretBuildStore) CreateBuildWithID(ctx context.Context, buildID
 	return s.MemStore.CreateBuildWithID(ctx, buildID, id, kind, n, path)
 }
 
+const projectSecretDefaultCompose = "services:\n  back:\n    build: ./back\n    ports: ['8080:8080']\n  worker:\n    build: ./worker\n    ports: ['8081:8080']\n"
+
 func projectSecretArchive(t *testing.T) []byte {
+	t.Helper()
+	return projectSecretArchiveCompose(t, projectSecretDefaultCompose)
+}
+
+func projectSecretArchiveCompose(t *testing.T, composeYAML string) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	gz := gzip.NewWriter(&b)
@@ -55,7 +62,7 @@ func projectSecretArchive(t *testing.T) []byte {
 			t.Fatal(err)
 		}
 	}
-	compose := []byte("services:\n  back:\n    build: ./back\n    ports: ['8080:8080']\n  worker:\n    build: ./worker\n    ports: ['8081:8080']\n")
+	compose := []byte(composeYAML)
 	if err := tw.WriteHeader(&tar.Header{Name: "repo/docker-compose.yml", Mode: 0600, Size: int64(len(compose))}); err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +110,11 @@ func projectSecretsTestServer(t *testing.T, scopes []string) (*server, *projectS
 
 func projectSecretsRequest(t *testing.T, s *server, key, path string, secrets string, fields map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
+	return projectSecretsRequestCompose(t, s, key, path, secrets, fields, projectSecretDefaultCompose)
+}
+
+func projectSecretsRequestCompose(t *testing.T, s *server, key, path string, secrets string, fields map[string]string, composeYAML string) *httptest.ResponseRecorder {
+	t.Helper()
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := w.WriteField("project_slug", "demo"); err != nil {
@@ -125,7 +137,7 @@ func projectSecretsRequest(t *testing.T, s *server, key, path string, secrets st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Write(projectSecretArchive(t)); err != nil {
+	if _, err := p.Write(projectSecretArchiveCompose(t, composeYAML)); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
@@ -283,6 +295,47 @@ func TestProjectDeploySecretsSelectedEnvironment(t *testing.T) {
 			}
 		}
 	}
+}
+
+// boa multi-service deploy (2026-11-21): with --only, the key-to-service
+// declarations came from the selected services alone, so a key only an
+// unselected service names looked undeclared and went to the selection.
+func TestProjectDeploySecretsOnlyKeepsOtherServicesKeys(t *testing.T) {
+	s, store, acct, key := projectSecretsTestServer(t, api.ScopesAdminOnly)
+	composeYAML := "services:\n" +
+		"  back:\n    build: ./back\n    ports: ['8080:8080']\n    environment:\n      - BACK_TOKEN\n" +
+		"  worker:\n    build: ./worker\n    ports: ['8081:8080']\n    environment:\n      - WORKER_KEY\n"
+	rec := projectSecretsRequestCompose(t, s, key, "/v1/projects", `{"BACK_TOKEN":"b","WORKER_KEY":"w","LOOSE":"l"}`,
+		map[string]string{"only": "back"}, composeYAML)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply: %d %s", rec.Code, rec.Body)
+	}
+	project, err := store.MemStore.ProjectBySlug(t.Context(), acct.ID, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, err := store.MemStore.AppsForProject(t.Context(), acct.ID, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range apps {
+		if app.WorkloadName != "back" {
+			continue
+		}
+		rows, err := store.MemStore.ListAppSecretsInScope(t.Context(), acct.ID, app.ID, api.DefaultEnvScope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]bool{}
+		for _, row := range rows {
+			got[row.Key] = true
+		}
+		if !got["BACK_TOKEN"] || !got["LOOSE"] || got["WORKER_KEY"] {
+			t.Fatalf("back secrets = %v, want BACK_TOKEN and LOOSE but not worker's WORKER_KEY", got)
+		}
+		return
+	}
+	t.Fatalf("no back app in %+v", apps)
 }
 
 func TestProjectDeploySecretsPlanLimits(t *testing.T) {

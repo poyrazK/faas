@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -50,16 +49,16 @@ func TestS3HistoricalReceiptPagination(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/xml")
 			if q.Get("key-marker") == "" {
-				_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>page-1</NextVersionIdMarker>`, url.PathEscape(key))
+				_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>page-1</NextVersionIdMarker>`, s3ListEncode(key))
 				for i := range api.ObjectUploadHistoryPageSize - 3 {
-					_, _ = fmt.Fprintf(w, `<Version><Key>%s</Key><VersionId>foreign-%d</VersionId><Size>3</Size></Version>`, url.PathEscape(key), i)
+					_, _ = fmt.Fprintf(w, `<Version><Key>%s</Key><VersionId>foreign-%d</VersionId><Size>3</Size></Version>`, s3ListEncode(key), i)
 				}
-				_, _ = fmt.Fprintf(w, `<DeleteMarker><Key>%s</Key><VersionId>deleted</VersionId></DeleteMarker><Version><Key>%s</Key><VersionId>null</VersionId><Size>3</Size></Version><Version><Key>%s</Key><VersionId>sibling</VersionId><Size>3</Size></Version></ListVersionsResult>`, url.PathEscape(key), url.PathEscape(key), url.PathEscape(key+"-sibling"))
+				_, _ = fmt.Fprintf(w, `<DeleteMarker><Key>%s</Key><VersionId>deleted</VersionId></DeleteMarker><Version><Key>%s</Key><VersionId>null</VersionId><Size>3</Size></Version><Version><Key>%s</Key><VersionId>sibling</VersionId><Size>3</Size></Version></ListVersionsResult>`, s3ListEncode(key), s3ListEncode(key), s3ListEncode(key+"-sibling"))
 			} else {
 				if q.Get("key-marker") != key || q.Get("version-id-marker") != "page-1" {
 					t.Error("lost paired continuation", q)
 				}
-				_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Version><Key>%s</Key><VersionId>%s</VersionId><Size>3</Size></Version></ListVersionsResult>`, url.PathEscape(key), version)
+				_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Version><Key>%s</Key><VersionId>%s</VersionId><Size>3</Size></Version></ListVersionsResult>`, s3ListEncode(key), version)
 			}
 			return
 		}
@@ -203,7 +202,7 @@ func TestS3HistoryCursorSupportsLongEscapedKeys(t *testing.T) {
 	r := ObjectHistoryProofRequest{Key: strings.Repeat("<", 1024), Receipt: uuid.NewString(), SizeBytes: 3}
 	old := s3HistoryCursor{Binding: historyBinding("bucket", r)}
 	version := strings.Repeat("\\", api.ObjectProviderVersionIDMaxBytes)
-	cursor, err := nextHistoryCursor(old, &s3.ListObjectVersionsOutput{IsTruncated: aws.Bool(true), EncodingType: types.EncodingTypeUrl, NextKeyMarker: aws.String(url.PathEscape(r.Key)), NextVersionIdMarker: aws.String(version)}, r.Key)
+	cursor, err := nextHistoryCursor(old, &s3.ListObjectVersionsOutput{IsTruncated: aws.Bool(true), EncodingType: types.EncodingTypeUrl, NextKeyMarker: aws.String(s3ListEncode(r.Key)), NextVersionIdMarker: aws.String(version)}, r.Key)
 	if err != nil || len(cursor) > api.ObjectUploadHistoryCursorMaxBytes {
 		t.Fatal("valid escaped key exceeded cursor budget", len(cursor), err)
 	}

@@ -71,6 +71,24 @@ type ProductPlanSelection struct {
 	Revision string `json:"revision,omitempty"`
 }
 
+// ProductPlanPricing compares plan fees, excluding usage charges. The next
+// month's fee assumes the proposed plan is still assigned. A nil run price
+// means the plan has no available start for that feature under current usage.
+type ProductPlanPricing struct {
+	ThisMonthBeforeMillicents int64                 `json:"this_month_before_millicents"`
+	ThisMonthAfterMillicents  int64                 `json:"this_month_after_millicents"`
+	NextMonthAfterMillicents  int64                 `json:"next_month_after_millicents"`
+	NextPeriod                string                `json:"next_period"`
+	Runs                      []ProductPlanRunPrice `json:"runs"`
+}
+
+type ProductPlanRunPrice struct {
+	Feature          string `json:"feature"`
+	Starts           int64  `json:"starts"`
+	BeforeMillicents *int64 `json:"before_millicents"`
+	AfterMillicents  *int64 `json:"after_millicents"`
+}
+
 type ProductPlanChangePreview struct {
 	Request        ProductPlanSelection `json:"request"`
 	BeforeCustomer ProductCustomer      `json:"before_customer"`
@@ -80,6 +98,7 @@ type ProductPlanChangePreview struct {
 	Period         string               `json:"period"`
 	HeadRevision   string               `json:"head_revision"`
 	Hash           string               `json:"hash"`
+	Pricing        *ProductPlanPricing  `json:"pricing,omitempty"`
 }
 
 type ProductPlanChangeConfirmation struct {

@@ -55,3 +55,26 @@ are opt-in, so a cloud manifest renders the same ruleset as before.
   configuring as a second layer; this ADR does not depend on it.
 - Not covered here: daemons that bind `0.0.0.0` stay reachable only through
   the rules above. Binding each to its private address is follow-up work.
+
+## Amendment (2026-11-19): the private address comes from the private card
+
+A dry run of the OVH manifest found that every host's private transport
+address resolved to its public address. Ansible took the default route's IPv4
+whenever the inventory had no `faas_private_address`, and an OVH server's
+default route is its public card: the vRack card has no gateway. Bootstrap
+would have mapped the fleet's private names (`schedd.faas`, `vmmd.faas`,
+Postgres), Tang and the exact-peer firewall rules to public addresses.
+
+The private address is now resolved in one place,
+`deploy/ansible/tasks/resolve_private_address.yml`, in this order:
+
+1. `faas_private_address` from the provider inventory;
+2. when the manifest names the private card (`overlay.interface`, rendered as
+   `faas_private_iface`), that card's IPv4;
+3. the default route's IPv4.
+
+A named card without an IPv4 fails the run; it never falls back to the
+default route. Preflight, bootstrap's discovery play, the standby playbook,
+`pki_renew.yml` (the control plane's transport SAN) and `fleet_verify` (when
+no discovery play ran) use it. A manifest without `overlay.interface`, such as
+GCP's, resolves exactly as before.

@@ -125,6 +125,9 @@ type ProjectEnvironmentBranchDataStore interface {
 	// RetryProjectEnvironmentBranchData records an error and releases the
 	// lease until next; failed ends the attempts.
 	RetryProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string, next time.Time, message string, failed bool) error
+	// DeferProjectEnvironmentBranchData releases the lease until next
+	// without counting an attempt: the copy is still in progress.
+	DeferProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string, next time.Time) error
 	// RecordProjectEnvironmentBranchDatabase records (or returns) the copy of
 	// a source database before it is restored.
 	RecordProjectEnvironmentBranchDatabase(ctx context.Context, copy ProjectEnvironmentBranchDatabase) (ProjectEnvironmentBranchDatabase, error)
@@ -251,7 +254,11 @@ type projectEnvironmentBranchDeploymentInput struct {
 	AccountID, ProjectID, Slug string
 	// Seed, when set, seeds a rehearsal member from the branch workload
 	// instead of creating the branch's own deployment (slice 6b).
-	Seed *EnvironmentBranchSeed
+	Seed            *EnvironmentBranchSeed
+	SandboxSourceID string
+	// RouteSplit, when set, seeds a route split's target app from the
+	// source app's live artifact (ADR-20261121170000 amendment 2).
+	RouteSplit *RouteSplitSeed
 }
 
 type projectEnvironmentBranchDeployment struct {
@@ -271,6 +278,12 @@ func branchDeploymentFromArtifact(a projectCloneArtifact, slug string, input *pr
 	d.TrafficPercent, d.TrafficPercentExplicit = 100, false
 	d.MinInstances = 0
 	d.Reason = EnvironmentBranchDeploymentReason
+	// The parent's release already ran: the branch reads the parent's data
+	// as of the branch point, after that release. A copied release command
+	// would also hold the deployment out of prime forever, since nothing
+	// runs a release task for a branch deployment (ADR-20261031193635
+	// amendment 2026-11-19).
+	d.ReleaseCommand, d.ReleaseCommandShell = nil, false
 	d.branchInput = input
 	return d
 }
@@ -501,8 +514,14 @@ func (m *MemStore) CreateDeploymentForEnvironmentBranch(ctx context.Context, acc
 // second call for the same app returns the deployment already created.
 func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Deployment, string, error) {
 	input := d.branchInput
+	if input.RouteSplit != nil {
+		return m.prepareRouteSplitDeploymentLocked(d)
+	}
 	if input.Seed != nil {
 		return m.prepareSeedDeploymentLocked(d)
+	}
+	if input.SandboxSourceID != "" {
+		return m.prepareAPISandboxDeploymentLocked(d)
 	}
 	branch, err := m.projectEnvironmentBranchBySlugLocked(input.AccountID, input.ProjectID, input.Slug)
 	if err != nil {
@@ -533,8 +552,16 @@ func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Dep
 }
 
 func (m *MemStore) attachBranchDeploymentLocked(input projectEnvironmentBranchDeploymentInput, sourceID string, created Deployment) {
+	if input.RouteSplit != nil {
+		m.attachRouteSplitDeploymentLocked(sourceID, created)
+		return
+	}
 	if input.Seed != nil {
 		m.attachSeedDeploymentLocked(input, sourceID, created)
+		return
+	}
+	if input.SandboxSourceID != "" {
+		m.copyBranchDeploymentLayersLocked(sourceID, created.ID)
 		return
 	}
 	branch, err := m.projectEnvironmentBranchBySlugLocked(input.AccountID, input.ProjectID, input.Slug)

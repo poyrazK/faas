@@ -30,6 +30,9 @@ event = {"command": name, "args": args}
 if name == "curl":
     data = args[args.index("--data") + 1]
     event["payload"] = sys.stdin.read() if data == "@-" else data
+    if "--config" in args:
+        config = Path(args[args.index("--config") + 1]).read_text()
+        event["uses_private_config"] = config == f'url = "{os.environ["CANARY_FALLBACK_WEBHOOK_URL"]}"\n'
 elif name == "ssh" and os.environ.get("CAPTURE_SSH_STDIN"):
     event["stdin"] = sys.stdin.read()
 with open(os.environ["STUB_EVENTS"], "a") as output:
@@ -82,6 +85,7 @@ class CanaryTransportTest(unittest.TestCase):
                             SCAN_OUTPUT=f"private-control-plane.invalid {PIN}\n",
                             PRIVATE_DIAGNOSTIC=SECRET,
                             CANARY_FALLBACK_WEBHOOK_URL=f"https://chat.invalid/{SECRET}",
+                            CANARY_FLEET="production-us", ACTIVE_RELEASE="a" * 40,
                             GITHUB_SERVER_URL="https://github.com", GITHUB_REPOSITORY="example/gregale",
                             GITHUB_RUN_ID="42", CANARY_PROBE_OUTCOME="skipped",
                             CANARY_HEARTBEAT_OUTCOME="skipped")
@@ -201,6 +205,15 @@ class CanaryTransportTest(unittest.TestCase):
                 payload = json.loads(self.events("curl")[-1]["payload"])
                 self.assertIn("could not establish customer deploy health", payload["text"])
                 self.assertNotIn("a customer could not deploy", payload["text"])
+                self.assertIn(f"Stage: Control-plane SSH preflight ({expected})", payload["text"])
+                self.assertIn(f"First check: Open the failed SSH preflight step and follow the runbook for {expected}.", payload["text"])
+                self.assertIn("Fleet: production-us", payload["text"])
+                self.assertIn("Customer impact: unknown", payload["text"])
+                self.assertIn("Last successful check: unknown", payload["text"])
+                self.assertIn("Failed run: https://github.com/example/gregale/actions/runs/42", payload["text"])
+                self.assertNotIn(SECRET, payload["text"])
+                self.assertTrue(self.events("curl")[-1]["uses_private_config"])
+                self.assertNotIn(SECRET, " ".join(self.events("curl")[-1]["args"]))
                 self.assertNotIn(SECRET, result.stdout + result.stderr)
 
     def test_missing_setup_also_uses_independent_fallback(self):
@@ -237,6 +250,27 @@ class CanaryTransportTest(unittest.TestCase):
         self.assertIn("fallback_unconfigured", result.stderr)
         self.assertEqual(self.events("curl"), [])
 
+    def test_manual_fallback_is_a_labeled_message_without_ssh(self):
+        result = self.invoke(FAILURE, "--test-fallback", RUNNER_TEMP="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("test_notification_submitted_fallback", result.stdout)
+        self.assertEqual(self.events("ssh"), [])
+        self.assertEqual(self.events("ssh-keyscan"), [])
+        delivery, = self.events("curl")
+        self.assertTrue(delivery["uses_private_config"])
+        self.assertNotIn(SECRET, " ".join(delivery["args"]))
+        payload = json.loads(delivery["payload"])
+        self.assertIn("controlled canary fallback delivery test for production-us", payload["text"])
+        self.assertIn("/actions/runs/42", payload["text"])
+
+    def test_invalid_fallback_url_does_not_make_a_request(self):
+        for url in ("http://chat.invalid", "https://chat.invalid/a b", 'https://chat.invalid/a"b', "https://chat.invalid/a\\b"):
+            with self.subTest(url=url):
+                result = self.invoke(FAILURE, "--test-fallback", CANARY_FALLBACK_WEBHOOK_URL=url)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("fallback_url_invalid", result.stderr)
+                self.assertEqual(self.events("curl"), [])
+
     def test_fallback_transport_errors_and_non_2xx_are_not_submission_success(self):
         for settings in ([{"CURL_EXIT": "28"}] +
                          [{"HTTP_STATUS": status} for status in ("000", "301", "302", "307", "400", "500")]):
@@ -259,6 +293,10 @@ class CanaryTransportTest(unittest.TestCase):
         self.assertEqual(payload["annotations"]["description"], description)
         self.assertEqual(payload["labels"]["severity"], "page")
         self.assertEqual(payload["annotations"]["run_url"], "https://github.com/example/gregale/actions/runs/42")
+        self.assertEqual(payload["annotations"]["fleet"], "production-us")
+        self.assertEqual(payload["annotations"]["active_release"], "a" * 40)
+        self.assertEqual(payload["annotations"]["failure_stage"], "Deploy and invoke")
+        self.assertIn("find the first failing step", payload["annotations"]["first_action"])
 
     def test_heartbeat_failure_does_not_claim_customer_deploy_failed(self):
         self.assert_setup()
@@ -268,15 +306,25 @@ class CanaryTransportTest(unittest.TestCase):
         payload = json.loads(self.events("curl")[-1]["payload"])[0]
         self.assertIn("canary passed", payload["annotations"]["summary"])
         self.assertNotIn("a customer could not deploy", payload["annotations"]["summary"])
+        self.assertEqual(payload["annotations"]["last_successful_check"], "Deploy and invoke passed in this run")
+        self.assertEqual(payload["annotations"]["failure_stage"], "Independent heartbeat")
 
 
 class WorkflowContractTest(unittest.TestCase):
     def test_failure_notification_remains_gated_and_bounded(self):
         workflow = (ROOT / ".github/workflows/synthetic-canary.yml").read_text()
         notification = workflow.split("- name: Page on canary failure\n")[1]
-        self.assertIn("if: failure() && (github.event_name == 'schedule' || inputs.page_on_failure)", notification)
+        self.assertIn("if: failure() && steps.delivery_configuration.outcome != 'failure' && (github.event_name == 'schedule' || inputs.page_on_failure)", notification)
         self.assertIn("timeout-minutes: 3", notification)
-        self.assertIn("run: bash scripts/ops/canary_failure.sh", notification)
+        self.assertIn('run: RUNNER_TEMP="${CANARY_WORK_DIR:-$RUNNER_TEMP}" bash scripts/ops/canary_failure.sh', notification)
+        self.assertIn("if: github.event_name == 'schedule' || !inputs.test_fallback", workflow)
+        self.assertIn("runs-on: [self-hosted, linux, faas-fleet-us]", workflow)
+        self.assertIn("environment: production-us", workflow)
+        self.assertIn('RUNNER_TEMP="$CANARY_WORK_DIR" bash scripts/ops/canary_ssh.sh setup', workflow)
+        self.assertIn("RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}'", workflow)
+        self.assertIn('rm -rf -- "$CANARY_WORK_DIR"', workflow)
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.test_fallback", workflow)
+        self.assertIn("run: bash scripts/ops/canary_failure.sh --test-fallback", workflow)
         self.assertNotIn("$(ssh ", workflow)
         self.assertNotIn("~/.ssh/", workflow)
         for path in ("ci.yml", "ci-light.yml"):

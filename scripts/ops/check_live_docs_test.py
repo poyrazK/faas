@@ -107,14 +107,14 @@ class LiveDocsTest(unittest.TestCase):
                 "[python313](https://gregale.dev/docs/runtime-python.md)."
             ),
         )
-        # plans.md opens with a GENERATED comment; the identity skips it.
+        # The identity never starts with an HTML comment (generated pages carry none).
         self.assertFalse(CHECK.source_identity(ROOT / "docs/plans.md").startswith("<!--"))
 
     def test_unpublished_route_is_not_fetched(self) -> None:
-        # object-storage documents a preview capability; the catalog marks
+        # broker-triggers documents a preview capability; the catalog marks
         # it unpublished, so its 404 here is expected (#5709).
         Handler.homepage_fallback = False
-        self.assertEqual(CHECK.check(self.base, {"object-storage"}), [])
+        self.assertEqual(CHECK.check(self.base, {"broker-triggers"}), [])
 
     def test_preview_url_shape_drift_fails(self) -> None:
         Handler.homepage_fallback = False

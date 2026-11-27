@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -31,11 +32,16 @@ func main() {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	_ = srv.ListenAndServe()
+	// Anything the app writes to stdout or stderr shows in `gregale logs`.
+	// Requests are recorded separately: `gregale logs --source http`.
+	log.Printf("hello-go listening on :%s", port)
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("server stopped: %v", err)
+	}
 }
 
 func handleRoot(w http.ResponseWriter, _ *http.Request) {
-	// This URL is public: do not echo environment variable names here
+	// This URL may be made public (access: public): do not echo env names
 	// (secret names reveal integrations). `gregale secrets list --app
 	// <slug>` shows which keys the app has.
 	w.Header().Set("Content-Type", "application/json")

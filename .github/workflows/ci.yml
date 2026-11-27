@@ -136,6 +136,10 @@ jobs:
     uses: ./.github/workflows/data-api.yml
     permissions:
       contents: read
+  data-pipelines:
+    uses: ./.github/workflows/data-pipelines.yml
+    permissions:
+      contents: read
   durable-entity-developer-workflow:
     uses: ./.github/workflows/durable-entity-developer-workflow.yml
     permissions:
@@ -150,6 +154,10 @@ jobs:
       contents: read
   function-backends:
     uses: ./.github/workflows/function-backends.yml
+    permissions:
+      contents: read
+  commit-acceptance:
+    uses: ./.github/workflows/commit-acceptance.yml
     permissions:
       contents: read
 
@@ -356,10 +364,20 @@ jobs:
       - name: signed component hotfix controller contracts
         run: bash scripts/ops/request_evidence_hotfix_test.sh
 
+      # Gateway converge handlers hand off instead of cutting long requests
+      # when nothing systemd reads changed (ADR-20261123110000).
+      - name: gateway reload-or-restart helper
+        run: bash deploy/ansible/roles/_shared/files/faas-reload-or-restart_test.sh
+
       # cd-compute and cd-controlplane reuse one cached Ansible toolchain per
       # pin on the fleet runner; a stale or half-built cache must never run.
       - name: CD Ansible toolchain cache
         run: bash scripts/ci/ensure-ansible-toolchain_test.sh
+
+      # The OVH key installer handles production secrets; keep the secret
+      # off command lines and output, and the merge from dropping lines.
+      - name: OVH key installer
+        run: bash deploy/ovh/install-s3-key_test.sh
 
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
@@ -973,17 +991,18 @@ jobs:
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
     runs-on: ubuntu-24.04
-    # Eight shards keep each near 10-15 min of tests: with four, shard 3 alone
+    # Ten shards keep each near 10-20 min of tests: with four, shard 3 alone
     # needed ~20 min and hit the 20m go test timeout (runs 39174391154 and
     # 39181126528); with six, shard 5 took 1185 s and then timed out (runs
-    # 40045127593 and 40057341878) as the suite grew. The race+coverage compile of pkg/state adds 3-4 min, and a
+    # 40045127593 and 40057341878) as the suite grew; with eight, shard 4
+    # passed the 30m test timeout (run 45915765307). The race+coverage compile of pkg/state adds 3-4 min, and a
     # slow shared runner has taken 26 min for it alone, so leave room for one
     # without hiding a hung test: the go test -timeout bounds the tests.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     permissions:
       contents: read
       id-token: write
@@ -1045,7 +1064,7 @@ jobs:
         run: |
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
-          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -check -list-file=coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=10 -check -list-file=coverage/state-inventory.txt
       - name: install PostgreSQL 16 recovery runtime
         run: |
           scripts/ci/use-https-ubuntu-mirrors.sh
@@ -1055,7 +1074,7 @@ jobs:
         run: |
           # Recovery with an actual serving receipt requires local database authority.
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
-          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -shard=${{ matrix.shard }})
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=10 -shard=${{ matrix.shard }})
           # 30m: ADR-570's PostgreSQL contracts (#4153) took shards 1 and 4 past
           # 20m on 2026-10-25; the 45-minute job bound still catches a hang.
           go test -race -count=1 -v -p 4 -timeout=30m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
@@ -1091,7 +1110,9 @@ jobs:
             gitops_acceptance: true
             state_coverage: true
             test_timeout: 30m
-            job_timeout_minutes: 45
+            # Tests plus the operation-policy and UDP contract steps took
+            # 31-39 min on the 11-24/25 nightlies and 45 min on a slow runner.
+            job_timeout_minutes: 60
           - id: b
             label: gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
@@ -1129,22 +1150,48 @@ jobs:
             job_timeout_minutes: 60
           # cmd/gregale outgrew shard b: under -race and coverage it passed
           # the 60m package bound on 2026-11-17 and 2026-11-18, and alone on
-          # two CPUs it still passed 60m (run 44367426786). Its ~5,600 tests
-          # split by name into two halves of about equal count.
+          # two CPUs it still passed 60m (run 44367426786). Its ~5,900 tests
+          # split by name. Two halves (A-F, rest) took 2175-3136 s and
+          # 2982-3600+ s on 2026-11-18..24; the second hit the 60m bound on
+          # 2026-11-21 (run 44891844876) and 2026-11-24 (run 45295470659),
+          # so they split into thirds of about equal count (~1,900-2,100).
+          # The D-O third then took 3,370 s and passed 60m on 2026-11-25 (run
+          # 45551154186) while A-C and the rest took ~1,900-2,000 s: D holds
+          # most of the subprocess and multi-second-sleep tests, so D runs
+          # alone and E-O becomes a fourth shard.
+          # The last pattern catches every name the others do not.
           - id: d1
-            label: gregale CLI 1/2
+            label: gregale CLI 1/4
             package_pattern: '/cmd/gregale(/|$)'
-            test_run: '^Test[A-F]'
+            test_run: '^Test[A-C]'
             coverage_file: cover-shard2d1.out
             gitops_acceptance: false
             state_coverage: false
             test_timeout: 60m
             job_timeout_minutes: 90
           - id: d2
-            label: gregale CLI 2/2
+            label: gregale CLI 2/4
             package_pattern: '/cmd/gregale(/|$)'
-            test_run: '^(Test[^A-F]|Example|Fuzz)'
+            test_run: '^TestD'
             coverage_file: cover-shard2d2.out
+            gitops_acceptance: false
+            state_coverage: false
+            test_timeout: 60m
+            job_timeout_minutes: 90
+          - id: d3
+            label: gregale CLI 3/4
+            package_pattern: '/cmd/gregale(/|$)'
+            test_run: '^Test[E-O]'
+            coverage_file: cover-shard2d3.out
+            gitops_acceptance: false
+            state_coverage: false
+            test_timeout: 60m
+            job_timeout_minutes: 90
+          - id: d4
+            label: gregale CLI 4/4
+            package_pattern: '/cmd/gregale(/|$)'
+            test_run: '^(Test[^A-O]|Example|Fuzz)'
+            coverage_file: cover-shard2d4.out
             gitops_acceptance: false
             state_coverage: false
             test_timeout: 60m
@@ -1250,18 +1297,28 @@ jobs:
           sh -n scripts/test-managed-service-native.sh
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
-      - name: scoped PostgreSQL rehearsal fault and recovery (no KVM)
-        if: matrix.gates
-        env:
-          FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
-        run: >-
-          go test -race -p 1 -count=1 -v -timeout=5m
-          ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance
-          -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: matrix.id == 'b' || startsWith(matrix.id, 'd') || matrix.gates
         with:
           node-version: '22'
+      - name: scoped PostgreSQL rehearsal fault, permissions and recovery (no KVM)
+        if: matrix.gates
+        env:
+          FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
+          FAAS_REHEARSAL_TASK_STARTER_DIR: ${{ runner.temp }}/rehearsal-task-starter
+        run: |
+          cp -R cmd/gregale/templates/mcp-node-tasks "$FAAS_REHEARSAL_TASK_STARTER_DIR"
+          npm ci --ignore-scripts --prefix "$FAAS_REHEARSAL_TASK_STARTER_DIR"
+          node -e '
+            const fs = require("node:fs");
+            const path = process.argv[1];
+            const config = JSON.parse(fs.readFileSync(path, "utf8"));
+            config.tasks.enabled = true;
+            fs.writeFileSync(path, JSON.stringify(config));
+          ' "$FAAS_REHEARSAL_TASK_STARTER_DIR/gregale-mcp.json"
+          go test -race -p 1 -count=1 -v -timeout=5m \
+            ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance ./pkg/apid/taskrehearsal \
+            -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass|TestPostgresRealTask'
       - name: queue worker safe completion canary
         if: matrix.gates
         run: go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
@@ -2358,7 +2415,9 @@ jobs:
   sdk-node:
     name: sdk-node (gen-check + smoke + unit)
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # The suite alone takes ~4 min (1,489 unit tests plus packed-SDK installs);
+    # 5 minutes cancelled nightly runs at 314-316 s on 2026-11-23 and -24.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -2580,8 +2639,9 @@ jobs:
     runs-on: ubuntu-24.04
     # Measured 25 min on a green run (2026-10-19) and over 30 min under runner load
     # (run 39345797073): the suite passes but cold compilation of the SDK,
-    # flags and apidserver packages dominates.
-    timeout-minutes: 45
+    # flags and apidserver packages dominates. 37 min green on run 45927419989;
+    # run 45936570897 was still compiling cmd/gregale's tests at 45.
+    timeout-minutes: 60
     permissions:
       contents: read
     services:

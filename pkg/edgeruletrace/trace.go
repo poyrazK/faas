@@ -594,6 +594,21 @@ func PreviewInheritedRules(production []api.EdgeRuleResponse) []api.EdgeRuleResp
 	return out
 }
 
+// CoveringRulesForHost keeps appID's own rules and the sibling apps' covering
+// rules whose host pattern matches the traced host. The other sibling rules
+// can never apply to this request, and listing them buried an app's own rows
+// under every other app's exact-host rules (prod hunt 2026-11-21: 9 of 14
+// rows were other apps' hosts).
+func CoveringRulesForHost(rules []api.EdgeRuleResponse, appID, host string) []api.EdgeRuleResponse {
+	var out []api.EdgeRuleResponse
+	for _, rule := range rules {
+		if rule.AppID == appID || HostMatches(rule.MatchHost, host) {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
 func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 	sorted := append([]api.EdgeRuleResponse(nil), rules...)
 	sort.SliceStable(sorted, func(i, j int) bool {

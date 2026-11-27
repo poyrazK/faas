@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -144,6 +145,49 @@ func TestDevConfigurationUsesAcceptedResourcePlan(t *testing.T) {
 	r, err := main.VerifyDevConfigurationForTest(context.Background(), api.NewClient(server.URL, "token"), session, input)
 	if err != nil || !reflect.DeepEqual(r.Planned, []string{"DATABASE_URL"}) || len(r.Provided) != 0 {
 		t.Fatalf("coverage=%+v err=%v", r, err)
+	}
+}
+
+// --postgres also binds a release-only MIGRATION_DATABASE_URL, which a
+// release command reads. TestDevPostgres failed on prod (2026-11-21) with
+// env_var_missing because the check did not count it. A control plane that
+// reports the key covers it; an older one that binds none leaves it required.
+func TestDevConfigurationCountsTheMigrationCredential(t *testing.T) {
+	root := configurationProject(t, "console.log(process.env.DATABASE_URL, process.env.MIGRATION_DATABASE_URL);")
+	input, err := main.LoadDevConfigurationForTest(root, "", "", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/secrets"):
+			_, _ = w.Write([]byte(`{"secrets":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"env":[]}`))
+		}
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name      string
+		migration string
+		planned   []string
+		missing   bool
+	}{
+		{name: "reported", migration: "MIGRATION_DATABASE_URL", planned: []string{"DATABASE_URL", "MIGRATION_DATABASE_URL"}},
+		{name: "older control plane", planned: []string{"DATABASE_URL"}, missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := api.DevSessionResponse{App: api.AppResponse{Slug: "dev-config-app"}, Postgres: &api.DevPostgresResponse{
+				BindingID: "binding", BindingState: "pending", EnvironmentKey: "DATABASE_URL", MigrationEnvironmentKey: tc.migration}}
+			r, err := main.VerifyDevConfigurationForTest(context.Background(), api.NewClient(server.URL, "token"), session, input)
+			if err != nil || !reflect.DeepEqual(r.Planned, tc.planned) {
+				t.Fatalf("coverage=%+v err=%v", r, err)
+			}
+			if got := slices.Contains(r.Missing, "MIGRATION_DATABASE_URL") || slices.Contains(r.Unverified, "MIGRATION_DATABASE_URL"); got != tc.missing {
+				t.Fatalf("MIGRATION_DATABASE_URL still required = %v, want %v (coverage=%+v)", got, tc.missing, r)
+			}
+		})
 	}
 }
 

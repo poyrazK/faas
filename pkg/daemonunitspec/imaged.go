@@ -174,7 +174,7 @@ func UnitImaged() daemonunit.Unit {
 
 		ReadOnlyPaths: []string{"/etc/faas"},
 		ReadWritePaths: []string{
-			"/srv/fc/snap", "/srv/fc/base", "/srv/fc/base-staging", "/srv/fc/scans", "/srv/fc/sigs",
+			"/srv/fc/snap", "/srv/fc/base", "-/srv/fc/run-environments", "/srv/fc/base-staging", "/srv/fc/scans", "/srv/fc/sigs",
 			"/var/log/faas", "/var/spool/faas", "/var/lib/faas/cache", "/var/lib/faas/grype", "/var/cache/faas/builds/.leases",
 			"/dev/shm/faas-base-staging",
 		},

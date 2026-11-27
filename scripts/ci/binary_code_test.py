@@ -77,6 +77,47 @@ class ElfDigestsTest(unittest.TestCase):
             self.digests(b"\xcf\xfa\xed\xfe" + bytes(60))
 
 
+class NormalisedDigestsTest(unittest.TestCase):
+    """One build (ADR-20261122170000): a release binary with its stamps
+    replaced is the code build."""
+    UNIT, HEAD = "unit-" + "a" * 40, "b" * 40
+
+    def write(self, data):
+        fd, path = tempfile.mkstemp()
+        self.addCleanup(os.remove, path)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def stamped(self, version, git_sha):
+        return program(text=b"\x90" * 8 + version.encode() + b"\x00" + git_sha.encode() + b"\x90" * 8)
+
+    def test_a_stamped_binary_normalises_to_the_code_build(self):
+        release = self.write(self.stamped(self.UNIT, self.HEAD))
+        code = self.write(self.stamped(bc.NEUTRAL_VERSION, bc.NEUTRAL_GIT_SHA))
+        got = bc.normalised_digests(release, bc.release_stamps(self.UNIT, self.HEAD))
+        self.assertEqual(got, bc.elf_digests(code))
+
+    def test_unit_commit_equal_to_the_release_commit(self):
+        sha = "c" * 40
+        release = self.write(self.stamped("unit-" + sha, sha))
+        code = self.write(self.stamped(bc.NEUTRAL_VERSION, bc.NEUTRAL_GIT_SHA))
+        self.assertEqual(bc.normalised_digests(release, bc.release_stamps("unit-" + sha, sha)), bc.elf_digests(code))
+
+    def test_neutral_stamps_are_as_long_as_release_stamps(self):
+        self.assertEqual(len(bc.NEUTRAL_VERSION), len(self.UNIT))
+        self.assertEqual(len(bc.NEUTRAL_GIT_SHA), len(self.HEAD))
+        with self.assertRaises(ValueError):
+            bc.release_stamps("unit-short", self.HEAD)
+        with self.assertRaises(ValueError):
+            bc.release_stamps(self.UNIT, "unknown")
+
+    def test_a_binary_without_the_stamp_is_refused(self):
+        release = self.write(self.stamped(self.UNIT, "d" * 40))
+        with self.assertRaisesRegex(ValueError, "does not carry the stamp"):
+            bc.normalised_digests(release, bc.release_stamps(self.UNIT, self.HEAD))
+
+
 class PromisorRemoteTest(unittest.TestCase):
     def test_outside_a_git_partial_clone(self):
         self.assertIsNone(bc.promisor_remote(tempfile.gettempdir()))

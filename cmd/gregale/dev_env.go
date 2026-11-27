@@ -144,7 +144,7 @@ func readDevEnvFileEntries(path string) ([]secretsPair, [sha256.Size]byte, error
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		pair, parseErr := parseSecretsPair(line)
+		pair, parseErr := parseDotenvLine(line)
 		if parseErr != nil {
 			// Do not return parseErr: it includes the complete input line,
 			// which could expose a secret in a CLI error.

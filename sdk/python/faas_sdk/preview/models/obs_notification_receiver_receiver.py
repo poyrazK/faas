@@ -1,8 +1,9 @@
 from typing import Literal
 
-ObsNotificationReceiverReceiver = Literal["faas-heartbeat", "faas-page", "faas-warn"]
+ObsNotificationReceiverReceiver = Literal["faas-delivery-page", "faas-heartbeat", "faas-page", "faas-warn"]
 
 OBS_NOTIFICATION_RECEIVER_RECEIVER_VALUES: set[ObsNotificationReceiverReceiver] = {
+    "faas-delivery-page",
     "faas-heartbeat",
     "faas-page",
     "faas-warn",

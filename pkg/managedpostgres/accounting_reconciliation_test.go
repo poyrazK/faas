@@ -125,9 +125,9 @@ func TestAccountingReconciliationPreservesLedgerAndRequiresRecovery(t *testing.T
 			if err := service.registry.UsagePolicy().Admit(ctx, store, database.AccountID, now); err != nil {
 				t.Fatalf("complete repair not admitted: %v", err)
 			}
-			policy := service.registry.usage
-			service.registry.usage.Enabled = false
-			service.registry.usage.Window = 24 * time.Hour
+			policy := service.registry.UsagePolicy()
+			service.registry.mutatePolicy(func(e *effectivePolicy) { e.usage.Enabled = false })
+			service.registry.mutatePolicy(func(e *effectivePolicy) { e.usage.Window = 24 * time.Hour })
 			replay, err := service.ReconcileAccounting(ctx, database.AccountID, "operator", request, true)
 			if err != nil || !reflect.DeepEqual(applied, replay) {
 				t.Fatalf("durable replay: %+v %v", replay, err)
@@ -137,7 +137,7 @@ func TestAccountingReconciliationPreservesLedgerAndRequiresRecovery(t *testing.T
 			if err != nil || !reflect.DeepEqual(applied, replay) {
 				t.Fatalf("caller changed retained response: %+v %v", replay, err)
 			}
-			service.registry.usage = policy
+			service.registry.mutatePolicy(func(e *effectivePolicy) { e.usage = policy })
 			if _, err := service.ReconcileAccounting(ctx, database.AccountID, "another-operator", request, true); !errors.Is(err, ErrConflict) {
 				t.Fatalf("actor collision: %v", err)
 			}

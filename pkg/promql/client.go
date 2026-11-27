@@ -176,6 +176,31 @@ type VectorSample struct {
 	Value  float64
 }
 
+const (
+	VectorFailureTransport       = "transport_error"
+	VectorFailureHTTP            = "http_error"
+	VectorFailureInvalidResponse = "invalid_response"
+	VectorFailureOther           = "other"
+)
+
+type vectorQueryError struct {
+	reason string
+	cause  error
+}
+
+func (e *vectorQueryError) Error() string { return e.cause.Error() }
+func (e *vectorQueryError) Unwrap() error { return e.cause }
+
+// VectorQueryFailure returns a fixed reason for a failed instant vector query.
+// Callers can check for cancellation and deadlines through the wrapped error.
+func VectorQueryFailure(err error) string {
+	var failure *vectorQueryError
+	if errors.As(err, &failure) {
+		return failure.reason
+	}
+	return VectorFailureOther
+}
+
 // QueryVector runs an instant query and preserves every series' labels. Rows
 // with malformed values are ignored; a non-vector response is a contract
 // error. This is used by the public-status evaluator for ALERTS{}.
@@ -187,6 +212,12 @@ func (c *Client) QueryVector(ctx context.Context, query string) ([]VectorSample,
 // Use it when omitted rows could make an incomplete health read look quiet.
 func (c *Client) QueryVectorStrict(ctx context.Context, query string) ([]VectorSample, error) {
 	return c.queryVector(ctx, query, true)
+}
+
+// QueryVectorAt is QueryVector evaluated at a fixed time, so related reads
+// describe the same instant.
+func (c *Client) QueryVectorAt(ctx context.Context, query string, at time.Time) ([]VectorSample, error) {
+	return c.queryVectorAt(ctx, query, false, &at)
 }
 
 // QueryVectorStrictAt pins related evidence reads to the same evaluation time.
@@ -216,15 +247,24 @@ func (c *Client) queryVectorAt(ctx context.Context, query string, strict bool, a
 	}
 	resp, err := c.doer.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &vectorQueryError{reason: VectorFailureTransport, cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-		return nil, fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &vectorQueryError{reason: VectorFailureHTTP, cause: err}
 	}
+	rows, err := decodeVectorResponse(resp.Body, query, strict)
+	if err != nil {
+		return nil, &vectorQueryError{reason: VectorFailureInvalidResponse, cause: err}
+	}
+	return rows, nil
+}
+
+func decodeVectorResponse(body io.Reader, query string, strict bool) ([]VectorSample, error) {
 	var payload queryResponse
-	if err := decodePromQLResponse(resp.Body, &payload); err != nil {
+	if err := decodePromQLResponse(body, &payload); err != nil {
 		return nil, err
 	}
 	if err := validatePromQLSeries(len(payload.Data.Result)); err != nil {
@@ -278,6 +318,12 @@ type QueryRangeSample struct {
 	Value     float64
 }
 
+// QueryRangeSeries is one labeled sequence of range samples.
+type QueryRangeSeries = struct {
+	Metric map[string]string
+	Values []QueryRangeSample
+}
+
 // QueryRange runs query against Prometheus's query_range endpoint
 // and returns one slice of samples per series. step controls the
 // bucket size (e.g. "1m" / "5m" / "1h"). start / end are epoch
@@ -301,10 +347,17 @@ type QueryRangeSample struct {
 // Transport / error handling mirrors QueryScalar: 3s default
 // timeout, non-200 → truncated body in the error, non-matrix
 // resultType → error with the offending query.
-func (c *Client) QueryRange(ctx context.Context, query, start, end, step string) ([]struct {
-	Metric map[string]string
-	Values []QueryRangeSample
-}, error) {
+func (c *Client) QueryRange(ctx context.Context, query, start, end, step string) ([]QueryRangeSeries, error) {
+	return c.queryRange(ctx, query, start, end, step, false)
+}
+
+// QueryRangeStrict requires complete, unannotated responses with finite
+// samples at whole-second timestamps for alert evaluation.
+func (c *Client) QueryRangeStrict(ctx context.Context, query, start, end, step string) ([]QueryRangeSeries, error) {
+	return c.queryRange(ctx, query, start, end, step, true)
+}
+
+func (c *Client) queryRange(ctx context.Context, query, start, end, step string, strict bool) ([]QueryRangeSeries, error) {
 	if c == nil || c.baseURL == "" {
 		return nil, fmt.Errorf("promql: client not configured")
 	}
@@ -328,7 +381,10 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 		return nil, fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var pr struct {
-		Data struct {
+		Status   string   `json:"status"`
+		Warnings []string `json:"warnings"`
+		Infos    []string `json:"infos"`
+		Data     struct {
 			ResultType string `json:"resultType"`
 			Result     []struct {
 				Metric map[string]string `json:"metric"`
@@ -338,6 +394,9 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 	}
 	if err := decodePromQLResponse(resp.Body, &pr); err != nil {
 		return nil, err
+	}
+	if strict && (pr.Status != "success" || pr.Data.Result == nil || len(pr.Warnings) > 0 || len(pr.Infos) > 0) {
+		return nil, errors.New("promql: unsuccessful or incomplete range query")
 	}
 	if err := validatePromQLSeries(len(pr.Data.Result)); err != nil {
 		return nil, err
@@ -352,36 +411,38 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 	if pr.Data.ResultType != "matrix" {
 		return nil, fmt.Errorf("expected matrix, got %q for query %q", pr.Data.ResultType, query)
 	}
-	out := make([]struct {
-		Metric map[string]string
-		Values []QueryRangeSample
-	}, 0, len(pr.Data.Result))
+	out := make([]QueryRangeSeries, 0, len(pr.Data.Result))
 	for _, row := range pr.Data.Result {
 		samples := make([]QueryRangeSample, 0, len(row.Values))
 		for _, v := range row.Values {
-			if len(v) != 2 {
-				continue
-			}
-			ts, ok := v[0].(float64)
-			if !ok || math.IsNaN(ts) || math.IsInf(ts, 0) {
-				continue
-			}
-			raw, ok := v[1].(string)
+			sample, ok := parseRangeSample(v, strict)
 			if !ok {
+				if strict {
+					return nil, errors.New("promql: invalid range sample")
+				}
 				continue
 			}
-			f, err := strconv.ParseFloat(raw, 64)
-			if err != nil {
-				continue
-			}
-			samples = append(samples, QueryRangeSample{Timestamp: int64(ts), Value: f})
+			samples = append(samples, sample)
 		}
-		out = append(out, struct {
-			Metric map[string]string
-			Values []QueryRangeSample
-		}{Metric: row.Metric, Values: samples})
+		out = append(out, QueryRangeSeries{Metric: row.Metric, Values: samples})
 	}
 	return out, nil
+}
+
+func parseRangeSample(pair []any, strict bool) (QueryRangeSample, bool) {
+	if len(pair) != 2 {
+		return QueryRangeSample{}, false
+	}
+	ts, timestampOK := pair[0].(float64)
+	raw, valueOK := pair[1].(string)
+	if !timestampOK || !valueOK || math.IsNaN(ts) || math.IsInf(ts, 0) {
+		return QueryRangeSample{}, false
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || (strict && (ts != math.Trunc(ts) || math.IsNaN(value) || math.IsInf(value, 0))) {
+		return QueryRangeSample{}, false
+	}
+	return QueryRangeSample{Timestamp: int64(ts), Value: value}, true
 }
 
 // QueryMap runs query against Prometheus and returns the result as a

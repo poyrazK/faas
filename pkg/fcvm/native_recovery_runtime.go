@@ -177,11 +177,12 @@ func (v *JailerVMM) nativeRecoveryLeases(ctx context.Context) ([]Lease, error) {
 	}
 	byID := make(map[string]nativeLaunchRecord, len(records))
 	var leases []Lease
+	heldSlots := nativeSlotsHeldByUnremoved(records)
 	for _, record := range records {
 		byID[record.Lease.Instance] = record
 		if !record.ResourcesRemoved {
 			leases = append(leases, record.Lease)
-		} else if err := r.resources(record.Lease, nativeLeaseNetwork(record.Lease)); err != nil {
+		} else if err := r.resources(record.Lease, nativeRetiredLeaseNetwork(record.Lease, heldSlots)); err != nil {
 			return nil, fmt.Errorf("native recovery: acknowledged resources reappeared: %w", err)
 		}
 	}
@@ -234,6 +235,9 @@ func (v *JailerVMM) prepareNativeLease(ctx context.Context, lease Lease) error {
 		return nil
 	}
 	if err := r.acquireDaemonOwnership(ctx); err != nil {
+		return err
+	}
+	if err := r.journal.requireExecutionTemplateLaunch(ctx, lease); err != nil {
 		return err
 	}
 	ctx, err := r.repairProducerContext(ctx, lease)
@@ -488,6 +492,34 @@ func (v *JailerVMM) nativeInstanceRoots(instance string) ([]string, error) {
 func nativeCgroupScope(lease Lease) string {
 	parent := vmCgroupParent(lease)
 	return filepath.Join(cgroupRoot, parent, PerInstanceScope(lease.Instance))
+}
+
+// nativeSlotsHeldByUnremoved returns the slots of records whose resources
+// are not yet acknowledged removed. Host interface names derive from the slot
+// (vh<slot>, and the private pair), so a slot one VM retired and the next VM
+// reused carries the newer VM's interfaces.
+func nativeSlotsHeldByUnremoved(records []nativeLaunchRecord) map[int]bool {
+	held := make(map[int]bool, len(records))
+	for _, record := range records {
+		if !record.ResourcesRemoved && !record.Lease.Networkless {
+			held[record.Lease.Slot] = true
+		}
+	}
+	return held
+}
+
+// nativeRetiredLeaseNetwork is the network a retired record must prove gone.
+// When a live record reused its slot, the slot-named host interfaces belong
+// to that VM and are checked under its lease instead; the retired record's
+// own namespace (named per instance) is still required gone (owner_crash,
+// 2026-11-20: a slot-1 VM retired at 02:54:13 and its successor launched in
+// slot 1 at 02:54:20, and the restarted vmmd refused to start on vh1).
+func nativeRetiredLeaseNetwork(lease Lease, heldSlots map[int]bool) netns.Config {
+	nc := nativeLeaseNetwork(lease)
+	if !lease.Networkless && heldSlots[lease.Slot] {
+		nc.VethHost, nc.VethPeer, nc.PrivateVethHost, nc.PrivateVethPeer = "", "", "", ""
+	}
+	return nc
 }
 
 func nativeLeaseNetwork(lease Lease) netns.Config {

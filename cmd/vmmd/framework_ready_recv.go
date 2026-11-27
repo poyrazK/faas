@@ -28,7 +28,7 @@
 // workload_OOM channel: the guest-init cgroup.events listener
 // emits a JSON envelope {peak_mb, plan_mb} when the per-VM
 // cgroup v2 leaf detects an oom_kill event. Type outside the
-// closed set {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09} is dropped with a
+// closed set {0x01 … 0x0C} is dropped with a
 // Warn (forward-compatible with future event classes).
 //
 // Each connection carries one EOF-delimited frame. Lifecycle telemetry is
@@ -47,6 +47,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -114,6 +115,10 @@ const (
 	// 4-byte big-endian body length, the body, and vmmd's reply. Unlike the
 	// other types it is not EOF-delimited.
 	VsockFrameworkReadyHostTypeEventPublishVerdict byte = 0x0B
+	// VsockFrameworkReadyHostTypeResourceSlot carries ten seconds of the
+	// app cgroup's memory and CPU (ADR-20261121170000). Mirrors
+	// guest/init/resource_slots_linux.go.
+	VsockFrameworkReadyHostTypeResourceSlot byte = 0x0C
 )
 
 // memoryPressureWire is the type=0x0A JSON body. Values are MiB. Profiling
@@ -177,6 +182,7 @@ type FrameworkReadyReceiver struct {
 	eventPublisher                      GuestEventPublisher
 	eventCapturer                       GuestEventCapturer
 	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
+	resourceSlots                       atomic.Pointer[resourceMinutes]
 }
 
 // GuestEventPublisher is the host-side persistence seam for the in-guest
@@ -264,6 +270,10 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 		}
 	case parseFWReadyKindDisk:
 		r.dispatchDiskUsage(instance, msg.Disk)
+	case parseFWReadyKindResourceSlot:
+		if slots := r.resourceSlots.Load(); slots != nil {
+			slots.observe(instance, msg.ResourceSlot, time.Now())
+		}
 	case parseFWReadyKindEventPublish:
 		r.dispatchEventPublish(instance, msg.EventPublish)
 	case parseFWReadyKindQualificationConfig:
@@ -654,6 +664,7 @@ const (
 	parseFWReadyKindSidecarHealth
 	parseFWReadyKindQualificationConfig
 	parseFWReadyKindMemoryPressure
+	parseFWReadyKindResourceSlot
 )
 
 // tailEventOutcome (issue #667 / ADR-078) mirrors the
@@ -706,6 +717,7 @@ type parseFWReadyMsg struct {
 	EventPublish        []byte
 	QualificationConfig fcvm.EnvironmentQualificationConfigReceipt
 	MemoryPressure      memoryPressureWire
+	ResourceSlot        resourceSlotWire
 }
 
 type diskUsageWire struct {
@@ -775,6 +787,8 @@ func (m parseFWReadyMsg) TypeLabel() string {
 		return fmt.Sprintf("qualification_config(0x%02x)", VsockFrameworkReadyHostTypeQualificationConfig)
 	case parseFWReadyKindMemoryPressure:
 		return fmt.Sprintf("memory_pressure(0x%02x)", VsockFrameworkReadyHostTypeMemoryPressure)
+	case parseFWReadyKindResourceSlot:
+		return fmt.Sprintf("resource_slot(0x%02x)", VsockFrameworkReadyHostTypeResourceSlot)
 	default:
 		return "unknown"
 	}
@@ -865,6 +879,17 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 		if err := json.Unmarshal(rest, &msg.MemoryPressure); err != nil {
 			return msg, fmt.Errorf("memory_pressure: %w", err)
 		}
+	case VsockFrameworkReadyHostTypeResourceSlot:
+		if len(rest) > api.RouteResourceGuestFrameMaxBytes {
+			return msg, fmt.Errorf("resource_slot: body too large: %d", len(rest))
+		}
+		if err := json.Unmarshal(rest, &msg.ResourceSlot); err != nil {
+			return msg, fmt.Errorf("resource_slot: %w", err)
+		}
+		if !msg.ResourceSlot.valid() {
+			return msg, fmt.Errorf("resource_slot: invalid sample")
+		}
+		msg.Kind = parseFWReadyKindResourceSlot
 	case VsockFrameworkReadyHostTypeWorkloadOOM:
 		// Cluster C / ADR-121: workload OOM signal emitted
 		// by the guest-init cgroup.events listener

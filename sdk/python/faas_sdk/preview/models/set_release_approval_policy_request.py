@@ -31,6 +31,8 @@ class SetReleaseApprovalPolicyRequest:
     """Default admin."""
     allow_self_approval: bool | Unset = UNSET
     """Default false; always true for an app outside an organization."""
+    require_passing_sandbox_suite: bool | Unset = UNSET
+    """Opt in to the sandbox suite requirement. Omit to keep the current setting."""
     notify_channels: list[str] | Unset = UNSET
     """Names of Slack or email notification channels; at least one is needed, so the approvers learn a release
     waits, and PagerDuty channels are refused. Slack messages link to the approval page."""
@@ -48,6 +50,8 @@ class SetReleaseApprovalPolicyRequest:
             approvers = self.approvers
 
         allow_self_approval = self.allow_self_approval
+
+        require_passing_sandbox_suite = self.require_passing_sandbox_suite
 
         notify_channels: list[str] | Unset = UNSET
         if not isinstance(self.notify_channels, Unset):
@@ -68,6 +72,8 @@ class SetReleaseApprovalPolicyRequest:
             field_dict["approvers"] = approvers
         if allow_self_approval is not UNSET:
             field_dict["allow_self_approval"] = allow_self_approval
+        if require_passing_sandbox_suite is not UNSET:
+            field_dict["require_passing_sandbox_suite"] = require_passing_sandbox_suite
         if notify_channels is not UNSET:
             field_dict["notify_channels"] = notify_channels
 
@@ -91,6 +97,8 @@ class SetReleaseApprovalPolicyRequest:
 
         allow_self_approval = d.pop("allow_self_approval", UNSET)
 
+        require_passing_sandbox_suite = d.pop("require_passing_sandbox_suite", UNSET)
+
         notify_channels = cast(list[str], d.pop("notify_channels", UNSET))
 
         set_release_approval_policy_request = cls(
@@ -99,6 +107,7 @@ class SetReleaseApprovalPolicyRequest:
             timeout_minutes=timeout_minutes,
             approvers=approvers,
             allow_self_approval=allow_self_approval,
+            require_passing_sandbox_suite=require_passing_sandbox_suite,
             notify_channels=notify_channels,
         )
 

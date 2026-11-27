@@ -292,7 +292,8 @@ func main() {
 // The scratch promotion fixture supplies this binary as /bin/sh solely for
 // its immutable Procfile command. It cannot evaluate arbitrary shell source.
 func promotionShellCommand(args []string) bool {
-	return len(args) == 3 && args[0] == "/bin/sh" && args[1] == "-lc" && args[2] == "/projectworker migration-promotion"
+	// Guest init runs shell tasks with -c; release N-1 used -lc.
+	return len(args) == 3 && args[0] == "/bin/sh" && (args[1] == "-c" || args[1] == "-lc") && args[2] == "/projectworker migration-promotion"
 }
 
 // Task modes execute inside the native task VM. Output identifies the actual

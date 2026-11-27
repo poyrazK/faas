@@ -58,3 +58,20 @@ SELECT EXISTS (SELECT 1 FROM snapshots s WHERE NOT s.delete_pending
     OR EXISTS (SELECT 1 FROM migration_admissions m WHERE m.expires_at > clock_timestamp()
         AND (m.mem_storage_key IN (sqlc.arg(storage_key)::text, sqlc.arg(mem_key)::text) OR m.vmstate_storage_key = sqlc.arg(storage_key)::text))
     AS referenced;
+
+-- name: JobArtifactReferenced :one
+-- ADR-20261117190000: a jobs/ key is live while its job is not deleted and
+-- either still materializing (a worker may be writing an unpublished
+-- attempt) or publishes exactly this key.
+SELECT EXISTS (
+    SELECT 1 FROM jobs j
+     WHERE j.id = sqlc.arg(job_id)::uuid AND j.status <> 'deleted'
+       AND (j.image_materialization_status NOT IN ('ready', 'failed')
+            OR j.image_storage_key = sqlc.arg(storage_key)::text)
+)::boolean AS referenced;
+
+-- name: BuildSourceReferenced :one
+-- A build's source archive is live while the build is queued or running.
+SELECT EXISTS (
+    SELECT 1 FROM builds WHERE id = sqlc.arg(id)::uuid AND status IN ('queued', 'running')
+)::boolean AS referenced;

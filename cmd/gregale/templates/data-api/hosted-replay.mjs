@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { requestStore } from './dev-requests.mjs'
@@ -30,8 +31,13 @@ export async function prepareHostedReplay(options, env = process.env) {
   const scenarios = options.scenarios.length ? options.scenarios.flatMap(name => collectionScenarios(collection, name)) : collectionScenarios(collection)
   const requests = scenarios.flatMap(scenario => scenario.requests)
   if (!requests.length || new Set(requests.map(request => identities[request.identity].subject)).size < 2) throw new Error('Hosted authorization verification must exercise two distinct subjects with nonempty scenarios.')
+  if (options.read_only) {
+    if (requests.some(request => request.method !== 'GET' || !/^\/rest\/v1\/[A-Za-z_][A-Za-z0-9_]*$/.test(new URL(request.path, 'http://localhost').pathname))) throw new Error('Connection verification accepts GET requests to named relations only.')
+    const successfulSubjects = new Set(requests.filter(request => request.expect.status === 200 && Object.hasOwn(request.expect, 'json')).map(request => identities[request.identity].subject))
+    if (successfulSubjects.size < 2) throw new Error('Both subjects need a successful query with an explicit expected JSON result.')
+  }
   if (options.fingerprint && requests.some(request => request.expectedSchemaFingerprint && request.expectedSchemaFingerprint !== options.fingerprint)) throw new Error('Required authorization scenarios must target the verified candidate fingerprint.')
-  const secrets = [refreshToken, refreshToken ? createHash('sha256').update(refreshToken).digest('hex') : '', ...Object.values(identities).map(identity => identity.token), env.FAAS_TOKEN, env.GREGALE_DATA_API_ACCESS_TOKEN].filter(Boolean)
+  const secrets = [refreshToken, refreshToken ? createHash('sha256').update(refreshToken).digest('hex') : '', ...Object.values(identities).map(identity => identity.token), env.GREGALE_TOKEN, env.FAAS_TOKEN, env.GREGALE_DATA_API_ACCESS_TOKEN].filter(Boolean)
   return { identities, scenarios, refreshToken, secrets }
 }
 
@@ -102,4 +108,6 @@ async function main() {
     else if (event.event === 'replay_summary') process.stdout.write(`${event.passed}/${event.total} checks passed.\n`)
   } })
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { process.stderr.write('Hosted replay failed; check collection/scenario selection, identity JWT environments, app HTTPS access and assertion results.\n'); process.exitCode = 1 })
+let directInvocation = false
+try { directInvocation = Boolean(process.argv[1]) && (import.meta.url === pathToFileURL(process.argv[1]).href || import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) } catch {}
+if (directInvocation) main().catch(() => { process.stderr.write('Hosted replay failed; check collection/scenario selection, identity JWT environments, app HTTPS access and assertion results.\n'); process.exitCode = 1 })

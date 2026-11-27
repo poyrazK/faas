@@ -21,10 +21,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/apid/background"
-	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
-	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
-	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,6 +33,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/background"
+	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
+	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
+	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -57,8 +58,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
+	"github.com/onebox-faas/faas/pkg/apid/postgresexport"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/routeinsights"
+	"github.com/onebox-faas/faas/pkg/apid/runfiles"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -849,15 +852,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPromotionHealthWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runMailOutbox(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runHostingReconciler(ctx) })
+		// ADR-20261122220000: read-only SQL checks imaged queues while it
+		// verifies a candidate.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runVerificationQueryWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runSafeReleaseEmergencyAbort(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runServiceRolloutBindingWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runCheckedRollbackWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectRollbackWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAlertRollbackWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runRollbackOn5xxWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runConfigGuardWorker(ctx) })
 		// ADR 20261110120000: never-verified accounts that hold nothing
 		// are scheduled for deletion 60 days after signup.
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runUnverifiedAccountExpiry(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.claim.RunExpiry(ctx) })
 		// ADR-20261111140000: complimentary accounts return to Free at
 		// their end date.
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runComplimentaryExpiry(ctx) })
@@ -878,8 +886,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.operation.RunChildSettlementSignals(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageRecovery(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageAccounting(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunWorkloadCredentialSweep(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageUsageExports(ctx, os.Getenv) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runAPISandboxProvisioning(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runAPISandboxScenarios(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runAPISandboxSuites(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresBindingReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPreviewDatabaseSweep(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCleanupReconciler(ctx) })
@@ -887,7 +899,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runEnvironmentBranchDataReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runProjectEnvironmentCloneCoordinator(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresUsageCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSuspendTimeouts(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresHealthCollector(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresStorageAlerts(ctx, pool) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresSQLProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runAppHealthCollector(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runEdgeCrawlerRangesRefresher(ctx) })
@@ -915,6 +929,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimePush(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeDrainWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedExecutionWorkflowWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runExecutionFileGC(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunAlarms(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunDurableEntityRegistryCleanup(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunOutbox(ctx) })
@@ -960,6 +975,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 			go func() {
 				if err := watchdog.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					log.Error("deployment watchdog exited", "err", err)
+				}
+			}()
+		}
+		// ADR-20261121170000 amendment 2: move applied route splits along.
+		// Each step is fenced by a compare-and-set on the split's phase, so
+		// replicas may run it concurrently.
+		if splits, ok := srv.routeSplitService(); ok {
+			go func() {
+				if err := splits.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("route split worker exited", "err", err)
 				}
 			}()
 		}
@@ -1013,6 +1038,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerSignup.Start(ctx, log)                // ADR-20261021143000
 		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
+		// Payments already started still settle if API monetization is disabled.
+		srv.consumerBilling.StartCreditPurchaseSync(ctx, log)
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startFeatureFlagLifecycleReconciler(ctx, srv, log)
 		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113
@@ -1628,6 +1655,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithExecutionV2Enabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_V2_ENABLED")) == "1").
+		WithExecutionTasksEnabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_TASKS_ENABLED")) == "1").
+		WithExecutionPipelinesEnabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_PIPELINES_ENABLED")) == "1").
+		WithExtendedExecutionsEnabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_EXTENDED_ENABLED")) == "1").
+		WithExecutionEnvironments(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED")) == "1", executionEnvironmentBases(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
@@ -1794,6 +1826,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	// ADR-20261125105038: opted-in managed Postgres databases start when a
+	// bound app's instance starts waking.
+	if deps.pool != nil {
+		go func() {
+			if err := runManagedPostgresWakeStarter(ctx, deps.pool, srv, log); err != nil && ctx.Err() == nil {
+				log.Error("managed postgres wake starter exited", "err", err)
+			}
+		}()
+	}
 	// ADR-1027 major-upgrade and storage-growth previews: nobody sees them
 	// unless listed.
 	if srv.postgresUpgrades, err = managedpg.ParseRollout("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS", deps.getenv("FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS")); err != nil {
@@ -1837,6 +1878,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1700: report what this apid applies so the console shows
 	// convergence per consumer, not only the database acknowledgement.
 	srv.runtimeConfig.enableReceipts("apid")
+	// The managed PostgreSQL operator policy is hot runtime configuration;
+	// bind it before the durable reconcile so the stored policy, not the
+	// file's, serves the first request.
+	// A stored policy this registry refuses (for example after a backend
+	// change) must not stop apid: it keeps the file's values and says so.
+	if err := srv.runtimeConfig.bindManagedPostgresPolicy(managedPostgresService.Registry()); err != nil {
+		log.Error("managed postgres policy refused; serving the provider registry file's values", "error", err)
+	}
 	// Seed legacy consumers from the same bootstrap snapshot before the
 	// durable reconciliation. The durable operator value must win after a
 	// restart; calling WithDataPlacement after reconcile would overwrite it
@@ -1945,9 +1994,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
 	}
-	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
+	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage).WithExecutionFileStorage(sbomStorage)
 	srv.withAgentOutputFiles(sbomStorage)
 	srv.WithOperationArtifactStorage(sbomStorage)
+	if managedPostgresService != nil {
+		srv.postgresExports = postgresexport.New(deps.pool, sbomStorage, managedPostgresService, cloneSealRecipient, accountIdentities)
+		if srv.postgresExports != nil {
+			go srv.postgresExports.Run(ctx, log)
+		}
+		if srv.postgresExports != nil && objectRegistry != nil {
+			srv.postgresBackupSchedules = postgresexport.NewBackupSchedules(deps.pool, srv.postgresExports, postgresBackupBuckets{srv})
+			go srv.postgresBackupSchedules.Run(ctx, log)
+		}
+	}
 	if signPubPath := strings.TrimSpace(deps.getenv("FAAS_SIGN_PUB")); signPubPath != "" {
 		rollbackVerifier, verifyErr := cosign.NewLocalVerifier(signPubPath, sbomStorage)
 		if verifyErr != nil {
@@ -2453,7 +2512,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// sync-invoke 5 s / 30 s) become children of the budget via
 	// reqbudget.WithCeiling — the budget tightens the cap, never
 	// loosens it.
-	httpSrv := deps.newSrv(listenBind, budgetCfg.Middleware(srv.handler()), cfg)
+	publicHandler, err := runfiles.BudgetedHandler(srv.handler(), budgetCfg)
+	if err != nil {
+		return fmt.Errorf("apid: Run file request budget: %w", err)
+	}
+	httpSrv := deps.newSrv(listenBind, publicHandler, cfg)
 
 	l, err := deps.listen("tcp", listenBind)
 	if err != nil {
@@ -2702,14 +2765,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	spansLimiter := peraccount.NewLimiter()
 	// The tracing capability gates span ingest as it gates trace reads.
 	tracing := receivers.TracingReleased(srv.tracingReleased)
-	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions, agents: srv.agentRequestsForGateways()}
+	spans := spansIngest{limiter: spansLimiter, tracing: tracing, sessions: sessions, agents: srv.agentRequestsForGateways(),
+		consumers: srv.oauthConsumersForGateways(), upgrades: &srv.consumerSignup, links: &srv.consumerSignup,
+		accountTools: &srv.consumerSignup}
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
+	// ADR-20261121170000: route resource peaks, for the accounts the
+	// route_resource_peaks flag releases. Nil (off) with the in-memory store.
+	var routeResources *receivers.RouteResources
+	if rrStore, ok := srv.store.(state.RouteResourceStore); ok {
+		routeResources = receivers.NewRouteResources(rrStore, func(subject platformflags.Subject) bool {
+			return srv.platformFlagFor(platformflags.RouteResourcePeaks, subject)
+		})
+	}
 	var guestSpans *receivers.GuestSpansIngester
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		guestSpans = receivers.NewGuestSpansIngester(srv.store, spansLimiter, log).WithLogs(srv.store).
-			WithMetrics(guestMetricsSink{s: srv}).WithTracingRelease(tracing)
+			WithMetrics(guestMetricsSink{s: srv}).WithTracingRelease(tracing).WithRouteResources(routeResources)
 		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
 		// spans and logs must come from instances on that node.
 		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
@@ -2746,13 +2819,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// A store without rollups (the in-memory dev store) leaves them off.
 	var rollups *receivers.RequestAnalyticsRollups
 	if rollupStore, ok := srv.store.(state.RequestAnalyticsRollupStore); ok {
-		// Amendment 4: a marker under /var/lib/faas tells the next start that
-		// this apid stopped without writing its pending rollups.
-		marker := envOr("FAAS_ANALYTICS_ROLLUP_CRASH_MARKER", "/var/lib/faas/apid-analytics-rollups.running")
+		// Amendment 4: a marker in apid's StateDirectory tells the next start that
+		// this apid stopped without writing its pending rollups. apid runs
+		// as faas-apid, which cannot write /var/lib/faas (faas:faas 0750):
+		// on prod every start logged "crash marker unavailable" there.
+		marker := envOr("FAAS_ANALYTICS_ROLLUP_CRASH_MARKER", "/var/lib/faas-apid/analytics-rollups.running")
 		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log).WithCrashMarker(marker)
 		go rollups.Run(ctx, api.RequestAnalyticsRollupFlushInterval)
 	}
-	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups}
+	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups, routeResources: routeResources}
 	// ADR-20261101085552: gateways that keep the request-ID journal on their
 	// node hold a lookup stream on whichever listener carries their request
 	// telemetry; one hub serves both and the debug request lookup.
@@ -2874,7 +2949,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// key authentication and the OTel handler.
 	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
 		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing, spans.sessions, spans.agents)
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log, spans.tracing, spans.sessions, spans.authOptions()...)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: auth server: %w", err)
@@ -3448,7 +3523,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// credential hash itself (ADR 20261029202403); single-box gateways ask
 	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, receivers.WithAgentRequests(spans.agents))
+		receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, spans.authOptions()...)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
@@ -3461,7 +3536,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// request_telemetry.sock server below, preserving the separate DAC
 	// boundaries for the legacy Unix sockets.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest.gate, ingest.rollups)
+		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest.gate, ingest.rollups, ingest.routeResources)
 	}
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
@@ -3491,12 +3566,12 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest.gate, ingest.rollups)
+	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest.gate, ingest.rollups, ingest.routeResources)
 	// Single-box realtimed reaches apid through this DAC-protected socket,
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
-	receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, receivers.WithAgentRequests(spans.agents))
+	receivers.RegisterAuthReceiver(srv, store, spans.tracing, spans.sessions, spans.authOptions()...)
 	if len(fleetRouter) > 0 {
 		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
 	} else {
@@ -3537,13 +3612,13 @@ func runSpansWriterServer(ctx context.Context, target string, store state.Store,
 // serves; the gateway's OTel handler refuses to start without
 // auth, so a missing auth server == a missing OTel surface,
 // which is the desired fail-closed posture).
-func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased, sessions receivers.SessionOpener, agents receivers.AgentRequests) (*grpc.Server, net.Listener, error) {
+func runAuthServer(ctx context.Context, target string, store state.Store, log *slog.Logger, tracing receivers.TracingReleased, sessions receivers.SessionOpener, opts ...receivers.AuthOption) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterAuthReceiver(srv, store, tracing, sessions, receivers.WithAgentRequests(agents))
+	receivers.RegisterAuthReceiver(srv, store, tracing, sessions, opts...)
 	return srv, lis, nil
 }
 
@@ -3552,6 +3627,8 @@ func runAuthServer(ctx context.Context, target string, store state.Store, log *s
 type telemetryIngest struct {
 	gate    receivers.IngestGate
 	rollups *receivers.RequestAnalyticsRollups
+	// routeResources keeps gateway route minutes (ADR-20261121170000).
+	routeResources *receivers.RouteResources
 }
 
 // spansIngest is the span-ingest wiring every telemetry listener shares:
@@ -3566,4 +3643,16 @@ type spansIngest struct {
 	// agents answers gateways' agent approval and activity calls
 	// (ADR-20261111150000).
 	agents receivers.AgentRequests
+	// consumers enrolls gateways' OAuth callers as API consumers
+	// (ADR-20261124094745).
+	consumers receivers.OAuthConsumers
+	// upgrades mints consumers' upgrade links for gateways' plan-limit
+	// refusals (ADR-20261124094745).
+	upgrades receivers.UpgradeLinks
+	// links links gateways' OAuth callers to key consumers
+	// (ADR-20261124094745).
+	links receivers.OAuthLinks
+	// accountTools answers the MCP account tools gateways add for OAuth
+	// consumers (ADR-20261125194510).
+	accountTools receivers.AccountTools
 }

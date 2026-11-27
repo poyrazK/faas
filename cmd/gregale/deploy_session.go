@@ -84,13 +84,9 @@ func deployConnection(c *Client) string {
 }
 
 func deploySessionDir(c *Client) (string, error) {
-	base := os.Getenv("XDG_STATE_HOME")
-	if base == "" {
-		var err error
-		base, err = os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
+	base, _, err := gregaleStateHome()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(base, "gregale", "deploys", deployConnection(c)), nil
 }
@@ -99,9 +95,15 @@ func deploySessionDir(c *Client) (string, error) {
 // writable before a deploy changes anything remotely. The session was first
 // written after the app was created, so a read-only state directory left a
 // new app behind with "Could not save deploy session" and no word on whether
-// to retry or pick another name (CLI journey 2026-11-05, #6625).
+// to retry or pick another name (CLI journey 2026-11-05, #6625). When the
+// default state directory is read-only (a coding agent's sandbox), the
+// session goes to a temp directory instead and the deploy says where.
 func preflightDeploySessionStorage(c *Client) error {
-	dir, err := deploySessionDir(c)
+	_, fallbackFrom, err := gregaleStateHome()
+	var dir string
+	if err == nil {
+		dir, err = deploySessionDir(c)
+	}
 	if err == nil {
 		err = os.MkdirAll(dir, 0o700)
 	}
@@ -115,6 +117,9 @@ func preflightDeploySessionStorage(c *Client) error {
 	}
 	if err != nil {
 		return fmt.Errorf("the local deploy-session directory is not writable (%w); nothing was created or deployed. Set XDG_STATE_HOME to a writable directory and run the command again", err)
+	}
+	if fallbackFrom != "" {
+		PrintWarn(osStderr, "%s is not writable, so this deploy's session is kept in %s, which a reboot may clear. Set XDG_STATE_HOME to keep it elsewhere.", fallbackFrom, dir)
 	}
 	return nil
 }
@@ -187,11 +192,15 @@ func lockDeploySession(path string) (*flock.Flock, error) {
 }
 
 func (s *savedDeploySession) save() error {
-	data, err := json.MarshalIndent(s.record, "", "  ")
+	return writePrivateDeployState(s.path, s.record)
+}
+
+func writePrivateDeployState(path string, record any) error {
+	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -211,7 +220,7 @@ func (s *savedDeploySession) save() error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(f.Name(), s.path); err != nil {
+	if err := os.Rename(f.Name(), path); err != nil {
 		return err
 	}
 	return api.SyncPrivateDeploymentSessionDirectory(dir)
@@ -304,21 +313,27 @@ func saveSessionUpload(ctx context.Context, c *Client, state resumableUploadStat
 }
 
 func (s *savedDeploySession) resumeCommand() string {
-	return recoveryCLI() + " release resume " + s.record.ID
+	return s.resumeCommandWithTimeout(0)
+}
+
+func (s *savedDeploySession) resumeCommandWithTimeout(timeout time.Duration) string {
+	command := deployRecoveryCLI() + " release resume " + s.record.ID
+	if seconds := int(timeout / time.Second); seconds > 0 && seconds != defaultDeployWaitTimeoutSeconds {
+		command = fmt.Sprintf("%s --timeout %d", command, seconds)
+	}
+	return command
 }
 
 func (s *savedDeploySession) recovery(stage string) *deployRecovery {
 	return s.recoveryWithTimeout(stage, 0)
 }
 
-// recoveryWithTimeout is recovery with the wait deadline the run used, so
-// the `release wait` next step repeats that --timeout instead of the
-// default (CLI audit 2026-10-31). Zero means the default.
+// Keep the same wait budget when the caller resumes. Zero means the default.
 func (s *savedDeploySession) recoveryWithTimeout(stage string, timeout time.Duration) *deployRecovery {
 	r := newDeployRecovery(stage, s.record.AppSlug, s.record.DeploymentID, s.key, timeout, s.record.WaitForRollout)
 	r.SessionID, r.SubmissionOutcome = s.record.ID, s.record.Outcome
 	r.Configuration = s.record.CronConfiguration
-	r.ResumeCommand = s.resumeCommand()
+	r.setResumeCommand(s.resumeCommandWithTimeout(timeout))
 	r.Hint = "The server continues processing an accepted deployment. Resume this saved deploy to reconnect and complete its pending settings. Resume does not submit another deployment."
 	if s.record.Outcome == deploySubmissionUnknown {
 		r.Hint = "Acceptance remains uncertain. Resume checks the saved submission or upload receipt without submitting another build; inspect deployment history if acceptance cannot be confirmed."
@@ -326,12 +341,35 @@ func (s *savedDeploySession) recoveryWithTimeout(stage string, timeout time.Dura
 	if s.record.Outcome == deploySubmissionRejected {
 		// Resume refuses a rejected submission, so offering its command
 		// contradicted this hint (Hunt 14 H14-10).
-		r.ResumeCommand = ""
+		r.setResumeCommand("")
 		r.Hint = "Submission stopped before acceptance. Correct the error and rerun the original deploy."
 	}
 	if s.shouldCleanPolicies() && s.hasStagedSettingsToRestore() {
-		r.ResumeCommand = s.resumeCommand()
+		r.setResumeCommand(s.resumeCommandWithTimeout(timeout))
 		r.Hint = "No deployment needs to be submitted to recover this attempt. Resume the saved deploy to finish saved deployment settings cleanup; concurrent edits are preserved."
+	}
+	return r
+}
+
+type deployRecoveryConflict string
+
+func (e deployRecoveryConflict) Error() string { return string(e) }
+
+func (s *savedDeploySession) recoveryForError(stage string, timeout time.Duration, err error) *deployRecovery {
+	r := s.recoveryWithTimeout(stage, timeout)
+	var conflict deployRecoveryConflict
+	var remote *APIError
+	blocked := errors.As(err, &conflict)
+	if errors.As(err, &remote) {
+		switch remote.Problem.Code {
+		case api.CodeDeploySettingsConflict, api.CodeDeploymentCronConflict, api.CodeDeploymentStagingConflict:
+			blocked = true
+		}
+	}
+	if blocked {
+		r.InspectCommand = deployRecoveryCLI() + " app get " + recoveryArgument(s.record.AppSlug)
+		r.setResumeCommand("")
+		r.Hint = "Recovery stopped because the saved deployment or app state no longer matches. Inspect the current app before taking further action."
 	}
 	return r
 }
@@ -348,7 +386,7 @@ func (s *savedDeploySession) hasStagedSettingsToRestore() bool {
 }
 
 func (s *savedDeploySession) failure(title, stage string, err error) int {
-	return printErr(title, &deployRecoveryError{err: err, recovery: s.recovery(stage)})
+	return printErr(title, &deployRecoveryError{err: err, recovery: s.recoveryForError(stage, 0, err)})
 }
 
 func (s *savedDeploySession) decorate(receipt *DeployReceipt) {
@@ -379,11 +417,7 @@ func (s *savedDeploySession) decorate(receipt *DeployReceipt) {
 	receipt.ResumeCommand = s.resumeCommand()
 	if receipt.Recovery != nil {
 		receipt.Recovery.SessionID = s.record.ID
-		if receipt.Recovery.ResumeCommand != "" {
-			receipt.Recovery.ResumeCommand = receipt.ResumeCommand
-		} else if receipt.WaitStage != "configuration" {
-			receipt.ResumeCommand = ""
-		}
+		receipt.ResumeCommand = receipt.Recovery.ResumeCommand
 	}
 }
 

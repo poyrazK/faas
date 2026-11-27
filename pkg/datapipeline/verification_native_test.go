@@ -171,11 +171,18 @@ func assertNativeLargeVerification(t *testing.T, ctx context.Context, store *Pos
 	if err != nil || dirty < 1 {
 		t.Fatal("native mutations did not invalidate previously checked ranges", dirty, err)
 	}
-	p = tick()
-	resumed := get()
-	if resumed.VerificationProgress == nil || resumed.VerificationProgress.ID != run || resumed.VerificationProgress.Rows <= rows {
-		t.Fatalf("private progress was not resumed: %+v", resumed.VerificationProgress)
-	}
+	// Visible target rows can precede slot acknowledgement of the next
+	// verification fence. The saved run and its cursor must survive each tick.
+	wait(func(v Pipeline) bool {
+		progress := v.VerificationProgress
+		if progress == nil || progress.ID != run || progress.Rows < rows {
+			t.Fatalf("private progress was not resumed: %+v", progress)
+		}
+		if progress.Rows == rows && progress.Reason != "waiting_for_replication" {
+			t.Fatalf("private progress did not advance: %+v", progress)
+		}
+		return progress.Rows > rows
+	})
 
 	wait(func(v Pipeline) bool { return v.Reason == "schema_api_refresh_pending" })
 	if !refreshCalled {

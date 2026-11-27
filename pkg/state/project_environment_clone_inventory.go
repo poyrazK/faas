@@ -38,8 +38,10 @@ type CloneInventoryPolicy struct {
 	// Live names what a row must meet to count as the source's: a deleted
 	// bucket, a retired queue binding or a revoked credential holds nothing a
 	// clone would copy, and a row scoped to another environment is not the
-	// source's. Conditions apply to the table itself, never to a via hop.
+	// source's. Conditions apply to the table itself.
 	Live []CloneInventoryLiveCondition `json:"live,omitempty"`
+	// LiveOnOwner inherits the owning table's live conditions on the final via hop.
+	LiveOnOwner bool `json:"live_on_owner,omitempty"`
 }
 
 // CloneInventoryLiveCondition is exactly one test of Column: Null needs it to
@@ -92,6 +94,10 @@ const (
 	CloneInventoryShared         = "shared"
 	CloneInventoryDerived        = "derived"
 	CloneInventoryTargetIdentity = "target_identity"
+	// CloneInventoryProductionOnly marks app-wide settings that stay with
+	// production: the stage starts without them (ADR-20261104120000
+	// amendment 2026-11-21).
+	CloneInventoryProductionOnly = "production_only"
 )
 
 // Blocker codes for tables a source uses but the clone cannot copy.
@@ -126,7 +132,8 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 		return policy.Clone == nil
 	}
 	c := policy.Clone
-	if c == nil || len(c.Via) > 3 || !validCloneInventoryLive(policy.Columns, c.Live) {
+	if c == nil || len(c.Via) > 3 || !validCloneInventoryLive(policy.Columns, c.Live) ||
+		(c.LiveOnOwner && (len(c.Via) == 0 || len(c.Live) != 0)) {
 		return false
 	}
 	for _, hop := range c.Via {
@@ -143,7 +150,7 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 	}
 	switch c.Strategy {
 	case "":
-	case CloneInventoryShared, CloneInventoryDerived, CloneInventoryTargetIdentity:
+	case CloneInventoryShared, CloneInventoryDerived, CloneInventoryTargetIdentity, CloneInventoryProductionOnly:
 		if c.Unavailable != "" {
 			return false
 		}
@@ -170,25 +177,39 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 
 // cloneInventoryProbe is one table the source inventory must test for rows.
 type cloneInventoryProbe struct {
-	Table      string                        `json:"table"`
-	Owner      string                        `json:"owner"`
-	Column     string                        `json:"column,omitempty"`
-	SlugColumn string                        `json:"slug_column,omitempty"`
-	Via        [][3]string                   `json:"via,omitempty"`
-	Live       []CloneInventoryLiveCondition `json:"live,omitempty"`
+	Table       string                        `json:"table"`
+	Owner       string                        `json:"owner"`
+	Column      string                        `json:"column,omitempty"`
+	SlugColumn  string                        `json:"slug_column,omitempty"`
+	Via         [][3]string                   `json:"via,omitempty"`
+	Live        []CloneInventoryLiveCondition `json:"live,omitempty"`
+	LiveOnOwner bool                          `json:"live_on_owner,omitempty"`
 }
 
 // cloneInventoryProbes lists, in table order, every table whose rows would
 // matter to a clone: tables the clone carries or cannot carry, but not tables
 // it deliberately leaves behind.
 func cloneInventoryProbes(policies []ProjectEnvironmentCloneSchemaPolicy) ([]byte, error) {
+	owners := make(map[string]*CloneInventoryPolicy, len(policies))
+	for _, policy := range policies {
+		owners[policy.TableName] = policy.Clone
+	}
 	probes := []cloneInventoryProbe{}
 	for _, policy := range policies {
 		if policy.Clone == nil || policy.Clone.Strategy != "" {
 			continue
 		}
-		probes = append(probes, cloneInventoryProbe{Table: policy.TableName, Owner: policy.Clone.Owner,
-			Column: policy.Clone.Column, SlugColumn: policy.Clone.SlugColumn, Via: policy.Clone.Via, Live: policy.Clone.Live})
+		inventory := policy.Clone
+		live := inventory.Live
+		if inventory.LiveOnOwner {
+			owner := owners[inventory.Via[len(inventory.Via)-1][1]]
+			if owner == nil || len(owner.Live) == 0 || len(owner.Via) != 0 {
+				return nil, fmt.Errorf("clone inventory for %s needs live conditions on its owner: %w", policy.TableName, ErrConflict)
+			}
+			live = owner.Live
+		}
+		probes = append(probes, cloneInventoryProbe{Table: policy.TableName, Owner: inventory.Owner,
+			Column: inventory.Column, SlugColumn: inventory.SlugColumn, Via: inventory.Via, Live: live, LiveOnOwner: inventory.LiveOnOwner})
 	}
 	sort.Slice(probes, func(i, j int) bool { return probes[i].Table < probes[j].Table })
 	return json.Marshal(probes)

@@ -81,7 +81,11 @@ type request struct {
 // Create handles POST /v1/image-runs.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !h.Enabled || h.Store == nil {
-		httpkit.NotFound(w, "image runs are not enabled")
+		// A switched-off feature is not a missing resource: `sandbox run
+		// --image` answered 404 "Not found" (prod 2026-11-19). 501 makes the
+		// CLI say the installation has not enabled it.
+		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented,
+			"Image runs unavailable", "image runs are not enabled on this Gregale installation"))
 		return
 	}
 	if !acct.Plan.JobsAllowed() {

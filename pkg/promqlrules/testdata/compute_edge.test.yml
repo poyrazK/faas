@@ -44,7 +44,7 @@ tests:
               public_status: internal
             exp_annotations:
               summary: "No compute-node app edge is serving"
-              description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
+              description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
   - name: a connector that is up but holds no tunnel connections warns
@@ -108,7 +108,7 @@ tests:
               public_status: internal
             exp_annotations:
               summary: "No compute-node app edge is serving"
-              description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
+              description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
   # One node's edge and the other node's connector down leave nothing serving.
@@ -134,7 +134,7 @@ tests:
               public_status: internal
             exp_annotations:
               summary: "No compute-node app edge is serving"
-              description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
+              description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
   # ADR-20261031122757: the s3 tunnel's connectors export the same metric
@@ -168,7 +168,7 @@ tests:
               public_status: internal
             exp_annotations:
               summary: "No compute-node app edge is serving"
-              description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
+              description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
       - eval_time: 6m
         alertname: FaasComputeEdgeConnectorDisconnected
@@ -220,4 +220,33 @@ tests:
             exp_annotations:
               summary: "The app edge on cn-1 is receiving non-app hosts"
               description: "The compute edge on cn-1 answered 500m requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+  # ADR-20261102081618 step 6: a cell on entry direct scrapes no connector.
+  # Its edges answering is serving; every edge down still pages.
+  - name: direct entry serves without a connector and pages when every edge is down
+    interval: 1m
+    input_series:
+      - series: up{job="gatewayd-public-edge",node="cn-1"}
+        values: 1 1 1 1 1 0 0 0 0 0 0
+      - series: up{job="gatewayd-public-edge",node="cn-2"}
+        values: 1 1 1 1 1 0 0 0 0 0 0
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasComputeEdgeUnavailable
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FaasComputeEdgeConnectorDisconnected
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasComputeEdgeUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: gatewayd-public
+              family: compute_edge
+              public_status: internal
+            exp_annotations:
+              summary: "No compute-node app edge is serving"
+              description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"

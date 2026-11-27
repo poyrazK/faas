@@ -30,9 +30,13 @@ export function smsSendPath(method, url) {
 // phoneAllowed normalises a number exactly as GoTrue v2.197.0 does
 // (formatPhoneNumber, then ^[1-9][0-9]{1,14}$). A number GoTrue would refuse
 // is left for GoTrue to refuse; it is never texted.
+export function normalizePhone(phone) {
+  return (phone.startsWith('+') ? phone.slice(1) : phone).replaceAll(' ', '')
+}
+
 export function phoneAllowed(phone, countries) {
   if (typeof phone !== 'string') return true
-  const digits = (phone.startsWith('+') ? phone.slice(1) : phone).replaceAll(' ', '')
+  const digits = normalizePhone(phone)
   if (!/^[1-9][0-9]{1,14}$/.test(digits)) return true
   return countries.some(code => digits.startsWith(code))
 }

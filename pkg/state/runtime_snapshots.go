@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -15,6 +17,7 @@ import (
 // platform runtime. It intentionally contains no tenant source, input,
 // credentials, or mutable application state.
 type RuntimeSnapshotRecord struct {
+	FCVersion           string
 	Profile             api.ExecutionProfile
 	ID                  string
 	CatalogKey          string
@@ -55,13 +58,17 @@ type RuntimeSnapshotStore interface {
 }
 
 func (r RuntimeSnapshotRecord) identityKey() string {
+	fcPath := ""
+	if r.FormatVersion >= 2 {
+		fcPath = "/firecracker-" + r.FCVersion
+	}
 	profilePath := ""
 	if r.Profile.Normalized() != api.ExecutionProfileStandard {
 		profilePath = "/profile-" + string(r.Profile)
 	}
 	return fmt.Sprintf(
-		"execution-snapshots/v%d/%s%s/%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
-		r.FormatVersion, r.Runtime, profilePath, r.Architecture, r.MemoryMB, r.EphemeralDiskMB,
+		"execution-snapshots/v%d/%s%s/%s%s/memory-%d/disk-%d/kernel-%s/executor-%s/base-%s",
+		r.FormatVersion, r.Runtime, profilePath, r.Architecture, fcPath, r.MemoryMB, r.EphemeralDiskMB,
 		r.KernelDigest, r.GuestExecutorDigest, r.BaseImageDigest,
 	)
 }
@@ -70,6 +77,9 @@ func (r RuntimeSnapshotRecord) identityKey() string {
 // sync with sched.RuntimeSnapshot.Validate; duplicating the small invariant
 // here avoids an import cycle between state and sched.
 func (r RuntimeSnapshotRecord) Validate() error {
+	if r.FormatVersion >= 2 && (len(r.FCVersion) > api.ExecutionTemplateFCVersionMaxBytes || !semver.IsValid("v"+r.FCVersion)) {
+		return fmt.Errorf("%w: Firecracker version is required", ErrRuntimeSnapshotInvalid)
+	}
 	if err := r.Profile.Validate(r.Runtime); err != nil {
 		return fmt.Errorf("%w: %w", ErrRuntimeSnapshotInvalid, err)
 	}

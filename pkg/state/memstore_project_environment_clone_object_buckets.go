@@ -43,7 +43,11 @@ func (m *MemStore) ReserveProjectEnvironmentCloneObjectBucket(_ context.Context,
 	if err != nil {
 		return ObjectBucket{}, false, err
 	}
-	return reserved, created, validateCloneBucketReservation(want, reserved, source)
+	if err := validateCloneBucketReservation(want, reserved, source); err != nil {
+		return ObjectBucket{}, false, err
+	}
+	m.copyCloneBucketNotificationsLocked(source, reserved.ID)
+	return reserved, created, nil
 }
 
 func (m *MemStore) ProjectEnvironmentCloneObjectBucketForLease(_ context.Context, lease ProjectEnvironmentCloneLease, appID, sourceID, targetID string) (ObjectBucket, error) {

@@ -143,12 +143,18 @@ func capabilityReleaseAll() bool {
 // suggestions use: the account's, read again once it is an hour old, or the
 // tier defaults when logged out or never read.
 func discoveryCapabilityView() capabilityView {
+	return discoveryCapabilityViewContext(context.Background())
+}
+
+// discoveryCapabilityViewContext is discoveryCapabilityView for a caller
+// holding a context, which bounds the account view read.
+func discoveryCapabilityViewContext(ctx context.Context) capabilityView {
 	capabilityViewMemo.Lock()
 	defer capabilityViewMemo.Unlock()
 	if capabilityViewMemo.set {
 		return capabilityViewMemo.view
 	}
-	capabilityViewMemo.view, capabilityViewMemo.set = computeDiscoveryView(), true
+	capabilityViewMemo.view, capabilityViewMemo.set = computeDiscoveryView(ctx), true
 	return capabilityViewMemo.view
 }
 
@@ -174,7 +180,7 @@ func offlineCapabilityView() capabilityView {
 	return capabilityView{tier: true}
 }
 
-func computeDiscoveryView() capabilityView {
+func computeDiscoveryView(ctx context.Context) capabilityView {
 	if capabilityReleaseAll() {
 		return capabilityView{all: true}
 	}
@@ -186,7 +192,7 @@ func computeDiscoveryView() capabilityView {
 	if ok && time.Since(savedAt) < capabilityViewTTL {
 		return accountCapabilityView(hidden)
 	}
-	if fresh, read := readHiddenCapabilities(token); read {
+	if fresh, read := readHiddenCapabilitiesContext(ctx, token); read {
 		return accountCapabilityView(fresh)
 	}
 	if ok {
@@ -249,7 +255,12 @@ func commandCapabilityPath(args []string) string {
 
 // localCommands never call the platform. A hidden capability leaves them out
 // of help like its other commands but does not refuse to run them.
-var localCommands = map[string]bool{"data-api dev": true, "data-api integrate": true}
+var localCommands = map[string]bool{
+	"data-api integrate": true,
+	"data-api dev":       true,
+	"run tasks validate": true,
+	"run tasks generate": true,
+}
 
 // hiddenCommand reports an invocation whose command is hidden, with its
 // path. A help request follows the discovery view. Running a command is
@@ -317,7 +328,7 @@ func hiddenFlagArg(flags []cliFlag, args []string) (string, bool) {
 	return "", false
 }
 
-// discoverableFlags drops flags whose capability the view hides.
+// discoverableFlags filters hidden flags and resolves which visible flags are required.
 func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
 	if flags == nil {
 		return nil
@@ -325,6 +336,7 @@ func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
 	kept := make([]cliFlag, 0, len(flags))
 	for _, flag := range flags {
 		if flag.Capability == "" || !v.hides(flag.Capability) {
+			flag.Req = flag.Req || v.hides(flag.RequiredWithoutCapability)
 			kept = append(kept, flag)
 		}
 	}
@@ -355,7 +367,14 @@ func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []st
 // discoverableCliCommands is the manifest discovery surfaces read: the
 // released commands without those, or the verbs, the capability view hides.
 func discoverableCliCommands() []cliCommand {
-	return discoveryCapabilityView().discoverableCommands(visibleCliCommands())
+	return discoverableCliCommandsContext(context.Background())
+}
+
+// discoverableCliCommandsContext is discoverableCliCommands for a caller
+// with a request context, which bounds the capability read.
+func discoverableCliCommandsContext(ctx context.Context) []cliCommand {
+	view := discoveryCapabilityViewContext(ctx)
+	return view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view)))
 }
 
 // publicReferenceCommands is the manifest the public reference documents:

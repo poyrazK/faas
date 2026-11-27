@@ -100,6 +100,11 @@ type Config struct {
 	// live. ManagedPostgresBillingFrom is an RFC3339 UTC-month boundary.
 	ManagedPostgresBillingMode string `toml:"managed_postgres_billing_mode"`
 	ManagedPostgresBillingFrom string `toml:"managed_postgres_billing_from"`
+	// ManagedPostgresHistoryBillingFrom is the first UTC month (RFC3339)
+	// whose restore history and snapshot storage past the plan's included
+	// history are charged (ADR-20261123062111). Empty charges none; earlier
+	// months only log what they would have charged.
+	ManagedPostgresHistoryBillingFrom string `toml:"managed_postgres_history_billing_from"`
 	// ManagedPostgresUsageEventName and ManagedPostgresMeterID identify a
 	// fourth Polar meter that sums metadata.charge_millicents, priced at
 	// 0.001 cents per unit like the object-storage meter.

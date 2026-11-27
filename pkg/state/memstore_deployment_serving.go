@@ -16,6 +16,10 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 		}
 	}
 	prev, existed := m.deployments[id]
+	if existed {
+		d.ProjectDeployGroupID = prev.ProjectDeployGroupID
+		d.projectDeployProjectID = prev.projectDeployProjectID
+	}
 	if existed && prev.Status != DeployLive && d.Status == DeployLive && IsServiceRollout(d) {
 		now := time.Now().UTC()
 		d.RolloutStartedAt = &now
@@ -27,7 +31,6 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 	m.consumeMCPReadinessOverrideLocked(prev, d)
 	d = m.preserveFailedRollbackTargetLocked(id, d)
 	m.recordAppliedLifecycleLocked(prev, d, existed)
-	m.deployments[id] = d
 	switch {
 	case deploymentServing(d):
 		delete(m.deploymentServingEndedAt, id)
@@ -43,6 +46,11 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 		m.lastServingEndedAt = at
 		m.deploymentServingEndedAt[id] = at
 	}
+	d.ServingEndedAt = nil
+	if at, ok := m.deploymentServingEndedAt[id]; ok {
+		d.ServingEndedAt = &at
+	}
+	m.deployments[id] = d
 }
 
 // preserveFailedRollbackTargetLocked mirrors the rollback failure trigger

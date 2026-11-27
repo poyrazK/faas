@@ -69,10 +69,7 @@ const FleetPausedDetail = "New managed PostgreSQL databases, restores and comput
 
 // Fleet returns the operator's fleet policy.
 func (r *Registry) Fleet() FleetPolicy {
-	if r == nil {
-		return FleetPolicy{}
-	}
-	return r.fleet
+	return r.effective().fleet
 }
 
 // FleetStatus reads the fleet totals for the current UTC month. It fails

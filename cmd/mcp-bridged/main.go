@@ -75,7 +75,7 @@ func registerFlags(fs *flag.FlagSet) *flags {
 		stateBridge:                fs.String("state-bridge", "hosted", "name of the Postgres state lease and rows"),
 		stateKeyFile:               fs.String("state-key-file", "", "independent private file holding the 32-byte state key"),
 		cliPath:                    fs.String("cli", "/opt/faas/current/bin/gregale", "gregale CLI the provisioning and deploy tools run"),
-		uploadDir:                  fs.String("upload-dir", filepath.Join(os.TempDir(), "gregale-mcp-uploads"), "private directory for uploads; emptied on start"),
+		uploadDir:                  fs.String("upload-dir", filepath.Join(os.TempDir(), "gregale-mcp-uploads"), "private directory for staged uploads and approval checkpoints"),
 		tools:                      fs.String("tools", "all", "maximum selectable toolsets, comma-separated; connections default to core and authorization still follows consent"),
 		timeout:                    fs.Duration("timeout", 30*time.Second, "per-tool API timeout (positive, at most 1m)"),
 		metricsListen:              fs.String("metrics-listen", "127.0.0.1:9110", "loopback address for Prometheus metrics; empty disables them"),
@@ -159,7 +159,7 @@ func serve(ctx context.Context, log *slog.Logger, cfg config) error {
 	telemetry := mcpmanagement.NewTelemetry()
 	service, err := mcpmanagement.NewHTTPService(mcpmanagement.HTTPOptions{
 		Lifecycle: lifecycle, Telemetry: telemetry, AuditLogger: log, Onboarding: "browser", APIBase: cfg.apiBase, ResourceURL: cfg.resourceURL,
-		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowToolInvocation: cfg.allowToolInvocation, AllowPrivateToolInvocation: cfg.allowPrivateToolInvocation, AllowToolPublishing: cfg.allowToolPublishing, AllowTaskInspection: cfg.allowTaskInspection, AllowWrites: true, Toolsets: cfg.toolsets,
+		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowToolInvocation: cfg.allowToolInvocation, AllowPrivateToolInvocation: cfg.allowPrivateToolInvocation, AllowToolPublishing: cfg.allowToolPublishing, AllowTaskInspection: cfg.allowTaskInspection, AllowWrites: true, Toolsets: cfg.toolsets, MaxListedTools: mcpmanagement.DefaultMaxListedTools, HideUnavailableCapabilities: true,
 		StateStore: store, Hosted: true, AgentKeys: true, AgentKeyToolsetSelection: true, ClientMetadataDocuments: true, UploadDir: cfg.uploadDir, CLIRunner: mcpmanagement.HostedCLIRunner(cfg.cliPath, cfg.apiBase, cfg.uploadDir),
 	})
 	if err != nil {

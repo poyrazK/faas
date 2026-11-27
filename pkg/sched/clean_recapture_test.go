@@ -131,3 +131,41 @@ func TestCleanRecapture_SettingChecksItsValues(t *testing.T) {
 		t.Fatalf("default = off, want %s", api.DefaultSnapshotCleanRecapture)
 	}
 }
+
+// adr: 20261116192126 — a managed cache's memory is its data. Its park
+// captures the running VM whether or not a reusable init snapshot exists, and
+// never queues a clean recapture.
+func TestManagedCacheParkCapturesMemory(t *testing.T) {
+	for _, withSnapshot := range []bool{true, false} {
+		f := newRefreshFixture(t)
+		var ins state.Instance
+		var app state.App
+		if withSnapshot {
+			app, _ = f.app(t, f.nodeA.ID, time.Hour, state.Snapshot{})
+			deps, err := f.store.LiveDeployments(f.ctx, app.ID)
+			if err != nil || len(deps) != 1 {
+				t.Fatalf("LiveDeployments = %v, %v", deps, err)
+			}
+			ins, err = f.store.CreateInstanceWithMode(f.ctx, app.ID, deps[0].ID, string(state.StateRunning), app.RAMMB, f.nodeA.ID, uuid.NewString(), string(state.InstanceModeNormal))
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			app, _, ins = f.usedInstance(t, f.nodeA.ID)
+		}
+		if _, err := f.store.CreateManagedValkeyCache(f.ctx, state.ManagedValkeyCache{
+			AppID: app.ID, AccountID: app.AccountID, MemoryMB: 128, EvictionPolicy: "allkeys-lru",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.engine.Park(f.ctx, ins.ID); err != nil {
+			t.Fatalf("withSnapshot=%v: Park: %v", withSnapshot, err)
+		}
+		if _, snaps, _ := f.boots.XBootCounts(); snaps != 1 {
+			t.Fatalf("withSnapshot=%v: park snapshots = %d, want the cache's memory captured", withSnapshot, snaps)
+		}
+		if n := f.refresher.PendingCleanRecaptures(); n != 0 {
+			t.Fatalf("withSnapshot=%v: pending recaptures = %d, want none for a cache", withSnapshot, n)
+		}
+	}
+}

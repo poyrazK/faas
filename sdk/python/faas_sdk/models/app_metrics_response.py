@@ -56,6 +56,11 @@ class AppMetricsResponse:
     wake_samples: int | Unset = UNSET
     """Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it
     as unavailable. Omitted when the count is unknown."""
+    app_wake_p95_ms: float | Unset = UNSET
+    """This app's own p95 wake latency over the window. Below 20 wakes (app_wake_samples) it is not meaningful and
+    clients show it as unavailable. Omitted when it is not available."""
+    app_wake_samples: int | Unset = UNSET
+    """Number of this app's wakes app_wake_p95_ms was computed from. Omitted when it is not available."""
     queue_depth: int | Unset = UNSET
     """Current wake-queue depth
     (`gateway_queue_depth{app, account_id}` — `account_id`
@@ -141,6 +146,10 @@ class AppMetricsResponse:
 
         wake_samples = self.wake_samples
 
+        app_wake_p95_ms = self.app_wake_p95_ms
+
+        app_wake_samples = self.app_wake_samples
+
         queue_depth = self.queue_depth
 
         egress_bytes = self.egress_bytes
@@ -179,6 +188,10 @@ class AppMetricsResponse:
         )
         if wake_samples is not UNSET:
             field_dict["wake_samples"] = wake_samples
+        if app_wake_p95_ms is not UNSET:
+            field_dict["app_wake_p95_ms"] = app_wake_p95_ms
+        if app_wake_samples is not UNSET:
+            field_dict["app_wake_samples"] = app_wake_samples
         if queue_depth is not UNSET:
             field_dict["queue_depth"] = queue_depth
         if egress_bytes is not UNSET:
@@ -225,6 +238,10 @@ class AppMetricsResponse:
 
         wake_samples = d.pop("wake_samples", UNSET)
 
+        app_wake_p95_ms = d.pop("app_wake_p95_ms", UNSET)
+
+        app_wake_samples = d.pop("app_wake_samples", UNSET)
+
         queue_depth = d.pop("queue_depth", UNSET)
 
         egress_bytes = d.pop("egress_bytes", UNSET)
@@ -259,6 +276,8 @@ class AppMetricsResponse:
             cold_start_pct=cold_start_pct,
             wake_p95_ms=wake_p95_ms,
             wake_samples=wake_samples,
+            app_wake_p95_ms=app_wake_p95_ms,
+            app_wake_samples=app_wake_samples,
             queue_depth=queue_depth,
             egress_bytes=egress_bytes,
             tx_bytes=tx_bytes,

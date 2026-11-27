@@ -67,3 +67,49 @@ WHERE p.account_id = split_part(sqlc.arg(document_id)::text, '/', 1)::uuid
  AND p.environment_slug = split_part(sqlc.arg(document_id)::text, '/', 3)
  AND p.key = split_part(sqlc.arg(document_id)::text, '/', 4)
  AND release_secret_project_document(p) = sqlc.arg(previous)::jsonb;
+
+-- name: ReadProjectEnvironmentCloneSharedSecrets :many
+-- A full clone captures the source environment's shared secrets as sealed
+-- envelopes (ADR-20261104120000 amendment 2026-11-21).
+SELECT key, ciphertext, kid, value_hash, secret_version
+FROM project_environment_secrets
+WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND environment_slug = sqlc.arg(environment_slug)::text
+ORDER BY key;
+
+-- name: ReadProjectEnvironmentCloneSecretRefs :many
+SELECT r.app_id, r.key, r.secret_name
+FROM app_environment_secret_refs r
+JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id AND a.project_id = r.project_id
+JOIN project_environments e ON e.id = r.environment_id AND e.project_id = r.project_id
+WHERE r.account_id = sqlc.arg(account_id)::uuid AND r.project_id = sqlc.arg(project_id)::uuid
+  AND e.slug = sqlc.arg(environment_slug)::text AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ORDER BY r.app_id, r.key;
+
+-- name: ReadProjectEnvironmentCloneSecretSuppressions :many
+SELECT r.app_id, r.key
+FROM app_environment_secret_ref_suppressions r
+JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id AND a.project_id = r.project_id
+JOIN project_environments e ON e.id = r.environment_id AND e.project_id = r.project_id
+WHERE r.account_id = sqlc.arg(account_id)::uuid AND r.project_id = sqlc.arg(project_id)::uuid
+  AND e.slug = sqlc.arg(environment_slug)::text AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ORDER BY r.app_id, r.key;
+
+-- name: InsertProjectEnvironmentCloneSharedSecret :exec
+INSERT INTO project_environment_secrets (account_id, project_id, environment_slug, key, ciphertext, kid, value_hash, secret_version)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(environment_slug)::text, sqlc.arg(key)::text,
+        sqlc.arg(ciphertext)::bytea, sqlc.arg(kid)::text, sqlc.arg(value_hash)::text, sqlc.arg(secret_version)::bigint);
+
+-- name: InsertProjectEnvironmentCloneSecretRef :execrows
+INSERT INTO app_environment_secret_refs (account_id, project_id, environment_id, app_id, scope, key, secret_name)
+SELECT a.account_id, a.project_id, e.id, a.id, e.slug, sqlc.arg(key)::text, sqlc.arg(secret_name)::text
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid AND a.project_id = sqlc.arg(project_id)::uuid
+  AND a.status <> 'deleted' AND e.slug = sqlc.arg(environment_slug)::text;
+
+-- name: InsertProjectEnvironmentCloneSecretSuppression :execrows
+INSERT INTO app_environment_secret_ref_suppressions (account_id, project_id, environment_id, app_id, scope, key)
+SELECT a.account_id, a.project_id, e.id, a.id, e.slug, sqlc.arg(key)::text
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid AND a.project_id = sqlc.arg(project_id)::uuid
+  AND a.status <> 'deleted' AND e.slug = sqlc.arg(environment_slug)::text;

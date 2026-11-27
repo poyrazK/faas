@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/textproto"
 	"strings"
 	"unicode/utf8"
 )
@@ -37,9 +38,22 @@ const (
 	// application fallback for them before consulting their cached bundle
 	// (ADR 20261114150000 §3). Clients cannot author it.
 	FlagKillsHeader = "X-Faas-Flag-Kills"
+	// FlagCohortsHeader lists, comma-separated and sorted, the analytics
+	// cohorts of the request's deployment environment that contain the
+	// verified customer, or "-" for none. SDKs read it as the gregale.cohort
+	// attribute (ADR 20261119102741 §4). Clients cannot author it.
+	FlagCohortsHeader = "X-Faas-Flag-Cohorts"
+	// FlagSDKCohortCapability advertises an SDK that reads gregale.cohort.
+	FlagSDKCohortCapability = "cohort-targeting-v1"
 	// FlagSDKKillCapability advertises an SDK that understands killed flags;
 	// older SDKs get bundles without them, so they fall back as flag_missing.
 	FlagSDKKillCapability = "kill-v1"
+	// FlagSDKExperimentLayersCapability advertises an SDK that applies a
+	// rule experiment's layer slice and the environment holdout;
+	// FlagSDKSubjectExposuresCapability one that reports subject exposures
+	// (ADR 20261119173702).
+	FlagSDKExperimentLayersCapability = "experiment-layers-v1"
+	FlagSDKSubjectExposuresCapability = "subject-exposures-v1"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.
@@ -128,7 +142,8 @@ const (
 	// RevisionHeader is an app-scoped, exact deployment pin for public API
 	// clients. It is only honored on apps with a revision pin window enabled.
 	// The edge also returns the selected immutable deployment ID under this
-	// name so clients can store and replay it across deploys.
+	// name so clients can store and replay it across deploys. API sandbox
+	// responses use it as evidence of which deployment served the request.
 	RevisionHeader = "X-Gregale-Revision"
 	// ReleaseHeader identifies an immutable project deployment graph.
 	ReleaseHeader = "X-Gregale-Release"
@@ -168,6 +183,9 @@ type PlatformIdentity struct {
 	// FlagKills is the sorted, comma-separated kill list of the target
 	// deployment's environment (ADR 20261114150000 §3).
 	FlagKills string
+	// FlagCohorts is the cohorts of the verified customer in the target
+	// deployment's environment (ADR 20261119102741 §4).
+	FlagCohorts string
 }
 
 // ApplyGuestHeaders clears any inbound platform claims and stamps the
@@ -179,29 +197,46 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 		return
 	}
 	ClearGuestIdentityHeaders(h)
-	set := func(name, value string) {
-		if value != "" {
-			h.Set(name, value)
+	stamps := [...]struct{ name, value string }{
+		{RequestIDHeader, i.RequestID},
+		{AppIDHeader, i.AppID},
+		{DeploymentIDHeader, i.DeploymentID},
+		{TenantIDHeader, i.TenantID},
+		{PlatformTenantIDHeader, i.PlatformTenantID},
+		{InstanceIDHeader, i.InstanceID},
+		{NodeIDHeader, i.NodeID},
+		{RegionHeader, i.Region},
+		{CommitSHAHeader, i.CommitSHA},
+		{DeploymentTagHeader, i.DeploymentTag},
+		{DeploymentCreatedAtHeader, i.DeploymentCreatedAt},
+		{ImageDigestHeader, i.ImageDigest},
+		{ClientCountryHeader, i.ClientCountry},
+		{ClientUAFamilyHeader, i.ClientUAFamily},
+		{FlagKillsHeader, i.FlagKills},
+		{FlagCohortsHeader, i.FlagCohorts},
+		{"X-Faas-App", i.AppID},
+		{"X-Faas-Instance", i.InstanceID},
+		{"X-Faas-Node", i.NodeID},
+	}
+	n := 0
+	for _, s := range stamps {
+		if s.value != "" {
+			n++
 		}
 	}
-	set(RequestIDHeader, i.RequestID)
-	set(AppIDHeader, i.AppID)
-	set(DeploymentIDHeader, i.DeploymentID)
-	set(TenantIDHeader, i.TenantID)
-	set(PlatformTenantIDHeader, i.PlatformTenantID)
-	set(InstanceIDHeader, i.InstanceID)
-	set(NodeIDHeader, i.NodeID)
-	set(RegionHeader, i.Region)
-	set(CommitSHAHeader, i.CommitSHA)
-	set(DeploymentTagHeader, i.DeploymentTag)
-	set(DeploymentCreatedAtHeader, i.DeploymentCreatedAt)
-	set(ImageDigestHeader, i.ImageDigest)
-	set(ClientCountryHeader, i.ClientCountry)
-	set(ClientUAFamilyHeader, i.ClientUAFamily)
-	set(FlagKillsHeader, i.FlagKills)
-	set("X-Faas-App", i.AppID)
-	set("X-Faas-Instance", i.InstanceID)
-	set("X-Faas-Node", i.NodeID)
+	// h.Set allocates a one-element slice per header; every request is
+	// stamped with most of these. One backing array serves them all, and each
+	// header gets its own capacity-1 window of it, so a later Add copies
+	// instead of writing into a neighbour (net/textproto's reader does the
+	// same). The result is exactly what h.Set would leave.
+	vals := make([]string, 0, n)
+	for _, s := range stamps {
+		if s.value == "" {
+			continue
+		}
+		vals = append(vals, s.value)
+		h[textproto.CanonicalMIMEHeaderKey(s.name)] = vals[len(vals)-1 : len(vals) : len(vals)]
+	}
 }
 
 // ClearGuestIdentityHeaders removes every reserved identity header before a
@@ -213,15 +248,23 @@ func ClearGuestIdentityHeaders(h http.Header) {
 		return
 	}
 	for name := range h {
-		if IsGuestIdentityHeader(name) {
-			h.Del(name)
+		// The exact-service selector is guest-authored on a managed service
+		// call, never inherited from a public client that an app might
+		// blindly forward, so it goes too.
+		if IsGuestIdentityHeader(name) || isServiceSelectorHeader(name) {
+			// Delete the key as stored. h.Del canonicalizes its argument, so
+			// a key stored in another case (a direct map write) would survive
+			// it and sit beside the canonical value stamped later.
+			delete(h, name)
 		}
 	}
-	// The exact-service selector is guest-authored on a managed service call,
-	// never inherited from a public client that an app might blindly forward.
-	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader} {
-		h.Del(name)
-	}
+}
+
+// isServiceSelectorHeader reports one of the exact-service selector headers,
+// in any case.
+func isServiceSelectorHeader(name string) bool {
+	return strings.EqualFold(name, "X-Faas-App") || strings.EqualFold(name, "X-Faas-Instance") ||
+		strings.EqualFold(name, "X-Faas-Node") || strings.EqualFold(name, TargetDeploymentHeader)
 }
 
 // IsGuestIdentityHeader reports whether a platform-authored identity header
@@ -293,7 +336,7 @@ var guestIdentityHeaderNames = map[string]struct{}{
 	"x-faas-tenant-id": {}, "x-faas-platform-tenant-id": {}, "x-faas-instance-id": {}, "x-faas-node-id": {},
 	"x-faas-region": {}, "x-faas-commit-sha": {}, "x-faas-deployment-tag": {},
 	"x-faas-deployment-created-at": {}, "x-faas-image-digest": {}, "x-faas-flag-context": {},
-	"x-faas-client-country": {}, "x-faas-client-ua-family": {}, "x-faas-flag-kills": {},
+	"x-faas-client-country": {}, "x-faas-client-ua-family": {}, "x-faas-flag-kills": {}, "x-faas-flag-cohorts": {},
 	"x-gregale-operation-id": {}, "x-gregale-operation-generation": {}, "x-gregale-operation-result-version": {},
 	"x-gregale-customer-operation-id": {}, "x-gregale-operation-attempt": {}, "x-gregale-operation-capability": {},
 }

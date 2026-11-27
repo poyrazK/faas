@@ -1364,7 +1364,11 @@ jobs:
           # roles whose content hash differs from the node's record, and the
           # node records this release's hashes after it converged. A release
           # cut before that, a node without a record, or any failure to read
-          # it converges every role, as before.
+          # it converges every role, as before. The role hashes cover
+          # repository content only: gregalectl deploy join folds the
+          # manifest-rendered inventory and operator vars into the contract
+          # and the record, so a manifest change converges every role even
+          # when no role's content changed.
           if [[ "$ROLLOUT_PHASE" != prepare ]] && grep -q faas_join_converge_roles deploy/ansible/bootstrap.yml; then
             role_work="$RUNNER_TEMP/compute-roles"
             rm -rf -- "$role_work"
@@ -1377,7 +1381,7 @@ jobs:
               if jq -e '(.all | not) and (.roles | length > 0)' "$role_work/changed.json" >/dev/null; then
                 JOIN_ARGS+=(--roles "$(jq -r '.roles | join(",")' "$role_work/changed.json")")
               fi
-              echo "Compute roles for ${NODE}: $(jq -r 'if .all then "every role (no usable record or globals changed)" elif (.roles | length) == 0 then "none changed (the contract decides)" else (.roles | join(", ")) end' "$role_work/changed.json")." >> "$GITHUB_STEP_SUMMARY"
+              echo "Compute roles for ${NODE}: $(jq -r 'if .all then "every role (no usable record or globals changed)" elif (.roles | length) == 0 then "none changed (the contract, which covers the manifest and operator vars, decides)" else (.roles | join(", ")) end' "$role_work/changed.json")." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "Compute roles for ${NODE}: every role (no role record on the node)." >> "$GITHUB_STEP_SUMMARY"
             fi

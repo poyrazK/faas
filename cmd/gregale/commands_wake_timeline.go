@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -89,12 +90,21 @@ func cmdWakeTimeline(args []string) int {
 	}
 	slug := ""
 	wakeID := pos[0]
+	latestWake := false
 	if len(pos) == 2 {
 		slug = pos[0]
 		wakeID = pos[1]
 	} else {
 		var resolveErr error
 		slug, resolveErr = resolveRequiredAppSlug("")
+		if _, uuidErr := uuid.Parse(pos[0]); uuidErr != nil && api.ValidAppSlug(pos[0]) {
+			// `app wake-timeline APP`: the slug was read as a wake ID and
+			// the command failed on the project link (prod hunt r27), or,
+			// in a linked checkout, asked the server for wake "APP" ("no
+			// events row with that wake_id", r59). Wake IDs are UUIDs, so
+			// show the app's most recent wake.
+			slug, wakeID, latestWake, resolveErr = pos[0], "", true, nil
+		}
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
 				PrintUsage(os.Stderr, "usage: gregale app wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose] (or run `gregale link <project-slug>`)", "wake-timeline")
@@ -108,6 +118,15 @@ func cmdWakeTimeline(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+	if latestWake {
+		instances, listErr := client.ListInstancesWithHistory(ctx, slug, true)
+		if listErr != nil {
+			return printErr("Could not list instances", listErr)
+		}
+		if wakeID = latestWakeID(instances); wakeID == "" {
+			return printErr("No wake recorded", fmt.Errorf("%s has no recorded wake yet; send it a request, then run %s app wake-timeline %s", slug, recoveryCLI(), slug))
+		}
+	}
 	if *all {
 		return cmdWakeTimelineAll(ctx, client, slug, wakeID, *limit, *verbose)
 	}

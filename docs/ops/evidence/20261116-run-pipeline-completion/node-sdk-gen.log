@@ -1,0 +1,8 @@
+
+> @gregale/sdk-node@0.1.0 gen
+> node scripts/gen.mjs
+
+sdk/node: generated clients from /Users/poyrazk/dev/Cloud/gregale/gregale-run-reliability-20261112/api/openapi.yaml -> /Users/poyrazk/dev/Cloud/gregale/gregale-run-reliability-20261112/sdk/node/src/generated
+sdk/node: generated the public client from /Users/poyrazk/dev/Cloud/gregale/gregale-run-reliability-20261112/sdk/openapi.yaml -> /Users/poyrazk/dev/Cloud/gregale/gregale-run-reliability-20261112/sdk/node/src/generated-public (1351 models)
+sdk/node: post-processed 1575 files with extensionless imports
+sdk/node: wrote models barrel (3388 entries)

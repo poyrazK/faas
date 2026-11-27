@@ -221,6 +221,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return err
 		}
 		handler.AgentRunAuthorizer, handler.AgentRunSpend = agentRuns, agentRuns
+		capabilityMetrics, err := outbound.NewCapabilityMetrics(ops.Registry())
+		if err != nil {
+			return fmt.Errorf("outboundd: register capability metrics: %w", err)
+		}
+		capabilities, err := outbound.NewCapabilityGateway(agentRuns, capabilityTools(log), capabilityMetrics)
+		if err != nil {
+			return err
+		}
+		handler.Capabilities = capabilities
 	}
 	if cfg.WorkflowOutboundEnabled || os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
 		authorizer, err := outbound.NewPostgresWorkflowAuthorizer(pool)

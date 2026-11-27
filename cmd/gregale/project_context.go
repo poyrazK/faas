@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/projectconfig"
 )
@@ -214,6 +216,22 @@ func linkedProjectContext(start string) (localProjectContext, string, error) {
 	return findProjectContext(start)
 }
 
+// otherAppLinkedAbove reports whether dir's nearest saved context is an
+// ancestor directory's standalone link to an app other than slug. That link
+// is not dir's own: the nearest context wins, so a link saved in dir itself
+// targets slug without rewriting the ancestor's, which the directories
+// beside dir still use. On prod (hunt r50) `deploy --name` under such a
+// directory saved no link, so later commands there targeted the other app,
+// and `link --app` overwrote the ancestor's link.
+func otherAppLinkedAbove(dir, slug string) bool {
+	link, path, err := findProjectContext(dir)
+	if err != nil || link.Version != standaloneContextVersion || link.App == slug {
+		return false
+	}
+	abs, err := filepath.Abs(dir)
+	return err == nil && filepath.Dir(filepath.Dir(path)) != abs
+}
+
 // targetProjectContext is the checkout's CLI target for commands that only
 // read it (ADR-20261107180000 slice 3). The local .gregale/project.json wins;
 // without one, the committed gregale.yaml `project:` block's name and app
@@ -310,7 +328,9 @@ func linkedAppSlug(start string) (string, error) {
 		return "", err
 	}
 	if context.App == "" {
-		return "", fmt.Errorf("project %q has multiple or no workloads; link again with --app <slug>", context.Project)
+		// The fix is usually one flag on this command; "link again" read as
+		// the only way out in a Compose checkout (prod hunt r27).
+		return "", fmt.Errorf("this checkout is linked to project %q, which has multiple or no workloads; name one app: pass --app <slug>, or link one with %s link %s --app <slug>", context.Project, recoveryCLI(), context.Project)
 	}
 	return context.App, nil
 }
@@ -400,6 +420,63 @@ func mergeAppFlag(positional []string, app string, maxPositionals int) ([]string
 	return append([]string{app}, positional...), nil
 }
 
+// withLinkedApp puts the linked app in front of a command's positionals when
+// exactly its leading <slug> is missing: the command takes n positionals and
+// got n-1. Commands whose --app says "defaults to linked context" call it
+// after mergeAppFlag; mergeAppFlag alone never read the link, so `queue send`
+// and `dlq list` in a linked checkout printed their usage (prod hunt r34).
+// With no link the positionals are returned as they are.
+//
+// The positionals after <slug> are ids (a queue row): a lone non-id may be
+// the slug itself with the id forgotten (`queue ack billing`, or `--app
+// billing` merged in), and filling the link in front of it targeted the
+// wrong app, so the command prints its usage instead.
+func withLinkedApp(positional []string, n int) []string {
+	if len(positional) != n-1 {
+		return positional
+	}
+	for _, p := range positional {
+		if uuid.Validate(p) != nil {
+			return positional
+		}
+	}
+	app := linkedAppForMissingSlug()
+	if app == "" {
+		return positional
+	}
+	return append([]string{app}, positional...)
+}
+
+// linkedAppAndEnvironment is the linked app a command (domain add/setup, cron
+// create) targets when --app is missing, with the linked environment unless
+// --environment names one: a checkout linked to staging bound its domain to
+// production otherwise.
+func linkedAppAndEnvironment(environment string) (string, string) {
+	app := linkedAppForMissingSlug()
+	if app == "" || environment != "" {
+		return app, environment
+	}
+	if linked, err := resolveEnvironmentFlagOrContext(""); err == nil {
+		environment = linked
+	}
+	return app, environment
+}
+
+// linkedAppForMissingSlug is the linked app for a command whose <slug> is
+// missing, or "" without one. A link that names no single app (a project
+// with several workloads, an unreadable gregale.yaml) says so on stderr: the
+// usage line that follows does not explain why the link was not used.
+func linkedAppForMissingSlug() string {
+	app, err := resolveAppFlagOrContext("")
+	if err != nil {
+		if !errors.Is(err, errProjectContextNotFound) {
+			_, _ = fmt.Fprintf(osStderr, "Linked app unavailable: %v\n", err)
+		}
+		return ""
+	}
+	return app
+}
+
 // resolveRequiredAppSlug gives app-scoped read commands a consistent
 // context fallback. Callers own their usage text so each PrintUsage call
 // keeps a statically discoverable docs topic. Explicit slugs still win
@@ -467,4 +544,18 @@ func fillLinkedApp(slug *string) {
 	if linked, err := resolveAppFlagOrContext(""); err == nil {
 		*slug = linked
 	}
+}
+
+// linkedProjectOnly reports whether start's checkout is linked to a project
+// without naming one of its apps, the link a project deploy writes.
+func linkedProjectOnly(start string) bool {
+	context, _, err := targetProjectContext(start)
+	return err == nil && context.Project != "" && context.App == ""
+}
+
+// linkedProjectOnlyHere reports whether the working directory's checkout is
+// linked to a project without naming one app.
+func linkedProjectOnlyHere() bool {
+	cwd, err := os.Getwd()
+	return err == nil && linkedProjectOnly(cwd)
 }

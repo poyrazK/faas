@@ -124,10 +124,29 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 	if err := artifacts.validate(claim.Runtime, shape); err != nil {
 		return ExecutionRestoreRequest{}, err
 	}
+	if claim.EnvironmentID != "" {
+		environments, ok := r.accounts.(interface {
+			ExecutionEnvironmentByID(context.Context, string, string) (state.ExecutionEnvironment, error)
+		})
+		if !ok {
+			return ExecutionRestoreRequest{}, ErrExecutionRuntimeArtifactsUnavailable
+		}
+		env, err := environments.ExecutionEnvironmentByID(ctx, claim.AccountID, claim.EnvironmentID)
+		if err != nil || env.Runtime != claim.Runtime || env.Status != "ready" && env.Status != "retiring" || env.ImageDigest == "" || env.BaseKey == "" {
+			return ExecutionRestoreRequest{}, ErrExecutionRuntimeArtifactsUnavailable
+		}
+		artifacts.BaseImageDigest = env.ImageDigest
+		artifacts.BaseKey = env.BaseKey
+		artifacts.LayerKey = state.ExecutionEnvironmentLayerKey(env)
+		artifacts.GuestExecutorDigest = env.GuestExecutorDigest
+		if err := artifacts.validate(claim.Runtime, shape); err != nil {
+			return ExecutionRestoreRequest{}, err
+		}
+	}
 	if claim.RuntimeImageDigest != "" && claim.RuntimeImageDigest != "sha256:"+artifacts.BaseImageDigest {
 		return ExecutionRestoreRequest{}, ErrExecutionRuntimeArtifactsUnavailable
 	}
-	if shape.Profile != api.ExecutionProfileStandard {
+	if claim.EnvironmentID != "" || shape.Profile != api.ExecutionProfileStandard {
 		pins, ok := r.accounts.(state.ExecutionRuntimeSelectionStore)
 		if !ok || claim.LeaseToken == nil {
 			return ExecutionRestoreRequest{}, state.ErrExecutionRuntimeUnpinned
@@ -137,7 +156,7 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 		}
 	}
 	plan, err := r.catalog.Resolve(ctx, RuntimeSnapshotRequest{
-		Shape: shape, Architecture: artifacts.Architecture,
+		FCVersion: artifacts.FCVersion, Shape: shape, Architecture: artifacts.Architecture,
 		KernelDigest: artifacts.KernelDigest, GuestExecutorDigest: artifacts.GuestExecutorDigest,
 		BaseImageDigest: artifacts.BaseImageDigest, FormatVersion: CurrentRuntimeSnapshotFormatVersion,
 	})
@@ -150,8 +169,9 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 		return ExecutionRestoreRequest{}, fmt.Errorf("%w: outbound integration intent is invalid", ErrExecutionClaimInvalid)
 	}
 	request := ExecutionRestoreRequest{
-		Profile: shape.Profile,
-		ID:      claim.ID, AccountID: claim.AccountID, NodeID: r.nodeID,
+		EnvironmentID: claim.EnvironmentID,
+		Profile:       shape.Profile,
+		ID:            claim.ID, AccountID: claim.AccountID, NodeID: r.nodeID,
 		Plan: account.Plan, Runtime: claim.Runtime, NetworkMode: claim.NetworkMode,
 		Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
 		OutboundIntegrationIDs: outboundIntegrationIDs,
@@ -165,7 +185,8 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 	if plan.Mode == RuntimeSnapshotRestore && plan.Snapshot != nil {
 		request.Snapshot = SnapshotRef{
 			DeploymentID:      claim.ID,
-			FCVersion:         artifacts.FCVersion,
+			MemBytes:          plan.Snapshot.MemBytes,
+			FCVersion:         plan.Snapshot.Identity.FCVersion,
 			StorageKey:        plan.Snapshot.StorageKey,
 			VMStateStorageKey: runtimeSnapshotVMStateStorageKey(plan.Snapshot.StorageKey),
 			Networkless:       true,
@@ -200,14 +221,15 @@ func validateExecutionClaimEnvelope(claim state.ExecutionClaim) error {
 }
 
 func validateExecutionClaimLimits(limits api.ResolvedExecutionLimits, plan api.ExecutionPlanLimits) error {
-	if limits.TimeoutMS < api.ExecutionTimeoutMinMS || limits.TimeoutMS > api.ExecutionTimeoutHardMaxMS ||
+	if !limits.Class.ValidTimeout(limits.TimeoutMS) ||
 		!api.ValidExecutionMemoryMB(limits.MemoryMB) || !api.ValidAppCPUMillicores(limits.CPUMillicores) ||
 		!api.ValidExecutionEphemeralDiskMB(limits.EphemeralDiskMB) ||
 		limits.MaxOutputBytes < api.ExecutionOutputMinBytes || limits.MaxOutputBytes > api.ExecutionOutputHardMaxBytes ||
 		limits.PIDsMax != api.ExecutionPIDsMax {
 		return fmt.Errorf("%w: resource envelope is outside hard bounds", ErrExecutionClaimInvalid)
 	}
-	if limits.TimeoutMS > plan.MaxTimeoutMS || limits.MemoryMB > plan.MaxMemoryMB ||
+	plan = plan.ForClass(limits.Class)
+	if !plan.Allowed || limits.TimeoutMS > plan.MaxTimeoutMS || limits.MemoryMB > plan.MaxMemoryMB ||
 		limits.CPUMillicores > plan.MaxCPUMillicores || limits.EphemeralDiskMB > plan.MaxEphemeralDiskMB ||
 		limits.MaxOutputBytes > plan.MaxOutputBytes {
 		return fmt.Errorf("%w: resource envelope exceeds account plan", ErrExecutionClaimInvalid)
@@ -229,7 +251,8 @@ func (a ExecutionRuntimeArtifacts) validate(runtime api.ExecutionRuntime, shape 
 		return fmt.Errorf("%w: python-data-v1 image requires amd64", ErrExecutionRuntimeArtifactsUnavailable)
 	}
 	identity := RuntimeSnapshotRequest{
-		Shape: shape, Architecture: a.Architecture, KernelDigest: a.KernelDigest,
+		FCVersion: a.FCVersion,
+		Shape:     shape, Architecture: a.Architecture, KernelDigest: a.KernelDigest,
 		GuestExecutorDigest: a.GuestExecutorDigest, BaseImageDigest: a.BaseImageDigest,
 		FormatVersion: CurrentRuntimeSnapshotFormatVersion,
 	}.Identity()

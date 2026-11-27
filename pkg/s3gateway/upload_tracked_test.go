@@ -53,6 +53,8 @@ type gatewayReceiptProvider struct {
 	sourceErr  error
 	copySource objectstorage.CopySourceSnapshot
 	copyFn     func(context.Context, string, objectstorage.CopyObjectRequest, objectstorage.CopySourceSnapshot) (objectstorage.CopyObjectResult, error)
+	// versionless makes the provider an objectstorage.VersionlessProvider.
+	versionless bool
 }
 
 func (p *gatewayReceiptProvider) PresignTrackedPut(ctx context.Context, bucket string, r objectstorage.SignRequest, c objectstorage.ObjectWriteConditions, id string) (objectstorage.SignedRequest, error) {
@@ -68,6 +70,10 @@ func (p *gatewayReceiptProvider) PresignTrackedPut(ctx context.Context, bucket s
 	signed.Headers["X-Amz-Meta-"+objectstorage.ReservedUploadReceiptMetadataKey] = id
 	return signed, err
 }
+
+// Versionless reports the test backend as BackendVersioningUnsupported.
+func (p *gatewayReceiptProvider) Versionless() bool { return p.versionless }
+
 func (*gatewayReceiptProvider) ConfirmTrackedObject(context.Context, string, string, string, int64) (objectstorage.UploadResult, error) {
 	return objectstorage.UploadResult{}, objectstorage.ErrNotFound
 }
@@ -200,6 +206,48 @@ func TestGatewayTrackedPutOutcomes(t *testing.T) {
 			usage, err := st.ObjectUsage(t.Context(), st.bucket.AccountID, time.Now())
 			if err != nil || usage.Authorizations != 1 || usage.Buckets[0].GrantedBytes != 4 {
 				t.Fatal(usage, err)
+			}
+		})
+	}
+}
+
+// A gateway PUT reads the provider's acknowledgment from its own dispatch,
+// not through the SDK. On a versionless backend (OVH returns version IDs on
+// unversioned buckets) that version must neither reach the client nor latch
+// recovery_versions_observed, or every later delete of the bucket is refused
+// (rc.364 production smoke, 2026-11-21).
+//
+// adr: 20261121150000
+func TestGatewayTrackedPutOnVersionlessBackend(t *testing.T) {
+	const ovhVersionID = "1795265333.741474"
+	for _, tc := range []struct {
+		name         string
+		versionless  bool
+		wantObserved bool
+	}{
+		{"versionless backend", true, false},
+		{"versioned backend", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, st, p := newGatewayReceiptHandler(t, func(r *http.Request) (*http.Response, error) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				return &http.Response{StatusCode: 200, Header: http.Header{"Etag": {`"etag"`}, "X-Amz-Version-Id": {ovhVersionID}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+			})
+			p.versionless = tc.versionless
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, signedGatewayRequest(t, "PUT", "http://s3.gregale.dev/assets/key", []byte("data"), "UNSIGNED-PAYLOAD"))
+			if rr.Code != http.StatusOK {
+				t.Fatal(rr.Code, rr.Body.String())
+			}
+			c, err := st.GetObjectUploadReceipt(t.Context(), st.bucket.AccountID, st.bucket.AppID, "", st.credential.ID, rr.Header().Get("X-Gregale-Upload-ID"))
+			if err != nil || c.Status != "completed" {
+				t.Fatal(c, err)
+			}
+			if c.RecoveryVersionsObserved != tc.wantObserved {
+				t.Fatalf("receipt recovery_versions_observed = %v, want %v", c.RecoveryVersionsObserved, tc.wantObserved)
+			}
+			if tc.versionless && rr.Header().Get("X-Amz-Version-Id") != "" {
+				t.Fatalf("client saw X-Amz-Version-Id %q from a versionless backend", rr.Header().Get("X-Amz-Version-Id"))
 			}
 		})
 	}

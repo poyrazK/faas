@@ -242,7 +242,8 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"eventBatch": api.AuthEventBatch, "eventLeaseSeconds": api.AuthEventLeaseSeconds, "eventMaxBackoffSeconds": api.AuthEventMaxBackoffSeconds, "eventRetentionSeconds": api.AuthEventRetentionSeconds, "smsCodeSeconds": api.AuthSMSCodeSeconds,
 		"ssoMetadataBytes": api.AuthSSOMetadataBytes, "ssoDomains": api.AuthSSOMaxDomains, "smsCountries": api.AuthSMSMaxCountries,
 		"scimPageSize": api.AuthSCIMPageSize, "scimBodyBytes": api.AuthSCIMBodyBytes, "oauthClients": api.AuthOAuthMaxClients, "anonymousRetentionMaxDays": api.AuthAnonymousRetentionMaxDays,
-		"serviceAccountsPerOrg": api.AuthServiceAccountsPerOrg, "serviceAccountSecrets": api.AuthServiceAccountSecrets, "serviceAccountSecretMaxDays": api.AuthServiceAccountSecretMaxDays, "serviceAccountTokensPerMinute": api.AuthServiceAccountTokensPerMinute} {
+		"serviceAccountsPerOrg": api.AuthServiceAccountsPerOrg, "serviceAccountSecrets": api.AuthServiceAccountSecrets, "serviceAccountSecretMaxDays": api.AuthServiceAccountSecretMaxDays, "serviceAccountTokensPerMinute": api.AuthServiceAccountTokensPerMinute, "passwordMinLength": api.AuthPasswordMinLengthFloor,
+		"passwordFailuresPerAddress": api.AuthPasswordFailuresPerAddress, "passwordFailuresPerAccount": api.AuthPasswordFailuresPerAccount, "secondStepFailuresPerUser": api.AuthSecondStepFailuresPerUser, "attemptWindowSeconds": api.AuthAttemptWindowSeconds, "storageUploadDefaultBytes": api.AuthStorageUploadDefaultBytes, "storageUploadMaxBytes": int(api.AuthStorageUploadMaxBytes)} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}

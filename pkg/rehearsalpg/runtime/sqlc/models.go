@@ -8,6 +8,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type GregaleMcpTask struct {
+	Namespace         pgtype.Text
+	TaskID            pgtype.UUID
+	ToolName          pgtype.Text
+	HandlerVersion    pgtype.Text
+	Status            pgtype.Text
+	AttemptCount      pgtype.Int4
+	LeaseExpiresAt    pgtype.Timestamptz
+	LeaseToken        pgtype.UUID
+	ExpiresAt         pgtype.Timestamptz
+	CancelRequestedAt pgtype.Timestamptz
+	ResultEncrypted   []byte
+}
+
+type GregaleMcpTaskWorker struct {
+	Namespace pgtype.Text
+	WorkerID  pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+	Draining  pgtype.Bool
+}
+
+type GregaleMcpTaskWorkerHandler struct {
+	Namespace      pgtype.Text
+	WorkerID       pgtype.UUID
+	ToolName       pgtype.Text
+	HandlerVersion pgtype.Text
+	DeploymentID   pgtype.Text
+}
+
 type PgAttribute struct {
 	Attrelid     pgtype.Uint32
 	Attnum       pgtype.Int2

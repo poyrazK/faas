@@ -34,7 +34,7 @@ func (s *server) configureSales(getenv func(string) string) error {
 
 // WithSales is also the integration-test seam; production uses configureSales.
 func (s *server) WithSales(cfg sales.Config, store referrals.Store) *server {
-	s.sales = sales.Service{Config: cfg, Store: store, Account: s.store.AccountByID, Audit: s.audit.Emit, Key: func() []byte {
+	s.sales = sales.Service{Config: cfg, Store: store, Account: s.store.AccountByID, Audit: s.audit.Emit, Last: &sales.LastRoster{}, Key: func() []byte {
 		if s.sessions == nil {
 			return nil
 		}
@@ -81,6 +81,16 @@ func (s *server) salesRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/sales/tasks", s.authLimited(s.requireSessionPrincipal(s.sales.Tasks)))
 	mux.HandleFunc("POST /v1/sales/tasks", s.authLimited(s.requireSessionPrincipal(s.sales.SaveTask)))
 	mux.HandleFunc("PUT /v1/sales/tasks/{task}", s.authLimited(s.requireSessionPrincipal(s.sales.SaveTask)))
+	mux.HandleFunc("GET /v1/sales/admin/team", s.authLimited(s.requireSessionPrincipal(s.sales.AdminTeam)))
+	mux.HandleFunc("POST /v1/sales/admin/team", s.authLimited(s.requireSessionPrincipal(s.sales.AddMember)))
+	mux.HandleFunc("PUT /v1/sales/admin/team/{member}", s.authLimited(s.requireSessionPrincipal(s.sales.UpdateMember)))
+	mux.HandleFunc("GET /v1/sales/admin/team/{member}/agreements", s.authLimited(s.requireSessionPrincipal(s.sales.Agreements)))
+	mux.HandleFunc("POST /v1/sales/admin/team/{member}/agreements", s.authLimited(s.requireSessionPrincipal(s.sales.AddAgreement)))
+	mux.HandleFunc("GET /v1/sales/customers/{account}/credit", s.authLimited(s.requireSessionPrincipal(s.sales.CreditHistory)))
+	mux.HandleFunc("PUT /v1/sales/customers/{account}/credit", s.authLimited(s.requireSessionPrincipal(s.sales.MoveCredit)))
+	mux.HandleFunc("POST /v1/sales/customers/{account}/payouts", s.authLimited(s.requireSessionPrincipal(s.sales.RecordPayout)))
+	mux.HandleFunc("GET /v1/sales/payouts", s.authLimited(s.requireSessionPrincipal(s.sales.Payouts)))
+	mux.HandleFunc("POST /v1/sales/payouts/{payout}/void", s.authLimited(s.requireSessionPrincipal(s.sales.VoidPayout)))
 	mux.HandleFunc("GET /v1/sales/me", s.authLimited(s.requireSessionPrincipal(s.sales.SalesData)))
 	mux.HandleFunc("POST /v1/sales/codes", s.authLimited(s.requireSessionPrincipal(s.sales.SalesLink)))
 	mux.HandleFunc("PATCH /v1/sales/codes/{code}", s.authLimited(s.requireSessionPrincipal(s.sales.SetLinkActive)))
@@ -92,9 +102,5 @@ func (s *server) salesRoutes(mux *http.ServeMux) {
 }
 
 func (s *server) isSalesMember(acct state.Account) bool {
-	if !s.sales.Enabled() {
-		return false
-	}
-	_, member := s.sales.Config.Member(acct.Email)
-	return member
+	return s.sales.CachedMember(acct.Email)
 }

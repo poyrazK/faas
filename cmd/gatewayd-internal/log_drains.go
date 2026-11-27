@@ -95,7 +95,7 @@ type appLogDrainProvenance struct {
 }
 
 // appLogDrainAppLookupStore resolves the app slug a datadog drain reports as
-// its Datadog service tag (ADR-752).
+// its Datadog service tag (ADR-752) and an otlp drain as service.name.
 type appLogDrainAppLookupStore interface {
 	AppByID(context.Context, string) (state.App, error)
 }
@@ -130,13 +130,16 @@ type appLogDrainManager struct {
 	// app's behalf. Nil meters nothing.
 	edgeEgress func(appID string, n int64)
 
-	mu                      sync.Mutex
-	shutdownMu              sync.Mutex
-	stopping                bool
-	workers                 map[string]*appLogDrainWorker
-	active                  map[string]int
-	healthMu                sync.Mutex
-	health                  map[string]state.AppLogDrainHealth
+	mu         sync.Mutex
+	shutdownMu sync.Mutex
+	stopping   bool
+	workers    map[string]*appLogDrainWorker
+	active     map[string]int
+	healthMu   sync.Mutex
+	health     map[string]state.AppLogDrainHealth
+	// handingOff names drains whose worker is flushing its spool after the
+	// drain moved to another node: their health is the new owner's to write.
+	handingOff              map[string]struct{}
 	lastAnalyticsPrune      time.Time
 	spoolLease              *flock.Flock
 	standardNode            *localNodeID
@@ -158,6 +161,11 @@ type appLogDrainWorker struct {
 	// queue is the drain's durable outbox; its bytes leave the node spool
 	// budget once the worker has stopped.
 	queue *logdrain.Queue
+	// stopStream ends the source stream (and AI log export) without stopping
+	// the sender, so a worker handing its drain to another node still
+	// delivers what it already spooled. handingOff marks that state.
+	stopStream context.CancelFunc
+	handingOff bool
 }
 
 func newAppLogDrainManager(store appLogDrainStore, resolver logStreamerResolver, unseal func([]byte) (string, error), metrics *gateway.Metrics, log *slog.Logger) *appLogDrainManager {
@@ -254,6 +262,9 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 	}
 	desired := make(map[string]state.AppLogDrain, len(snapshot.Drains))
 	undecided := make(map[string]struct{})
+	// movedAway are enabled drains another node now owns: this node's worker
+	// flushes its spool there rather than dropping it.
+	movedAway := make(map[string]struct{})
 	for _, row := range snapshot.Drains {
 		if m.capabilityAllowed != nil && !m.capabilityAllowed(capabilityLogDrains, row.AccountID) {
 			continue
@@ -266,6 +277,7 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 				m.log.WarnContext(ctx, "resolve app log drain owner", slog.String("drain_id", row.ID), slog.String("app_id", row.AppID), slog.String("err", err.Error()))
 				undecided[row.ID] = struct{}{}
 			} else if !owned {
+				movedAway[row.ID] = struct{}{}
 				continue
 			}
 		}
@@ -285,7 +297,18 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 	}
 	for id, worker := range m.workers {
 		spec, ok := desired[id]
+		if worker.handingOff {
+			// Flushing its spool for the new owner; it retires itself.
+			if worker.stopping && m.retireLogDrainWorkerLocked(worker) {
+				delete(m.workers, id)
+			}
+			continue
+		}
 		if !worker.stopping && ok && sameAppLogDrainSpec(worker.spec, spec) {
+			continue
+		}
+		if _, moved := movedAway[id]; moved && !ok && !worker.stopping && worker.stopStream != nil {
+			m.handOffLogDrainWorkerLocked(ctx, worker)
 			continue
 		}
 		if m.retireLogDrainWorkerLocked(worker) {
@@ -493,6 +516,17 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 
 func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLogDrain, sender *logdrain.Sender, standardHealth *appLogDrainStandardHealthObserver) {
 	lastSeq := sender.LastSequences()
+	// A node with no delivery cursors for this drain (it just took the drain
+	// over from another node) resumes shortly before the drain's last
+	// delivery instead of replaying every instance's whole retained ring,
+	// which sent each line again (Observe audit 2026-11-21, finding 13). The
+	// previous owner flushes what it had spooled.
+	since := spec.CreatedAt
+	if len(lastSeq) == 0 {
+		if resume := m.drainResumeAfter(spec.ID); resume.After(since) {
+			since = resume
+		}
+	}
 	provenanceCache := make(map[string]appLogDrainProvenance)
 	backoff := time.Second
 	streamEstablished := false
@@ -515,7 +549,7 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 			// restart, stream error) silently lost the lines written while
 			// the drain was detached. Lines older than the drain are not
 			// forwarded.
-			stream, streamErr := streamer.StreamAppLogs(ctx, spec.AppID, 1, spec.CreatedAt, true, "", "", "")
+			stream, streamErr := streamer.StreamAppLogs(ctx, spec.AppID, 1, since, true, "", "", "")
 			if streamErr == nil {
 				if streamEstablished {
 					m.metrics.ObserveLogDrainStreamReconnect(spec.AppID, string(spec.Kind))
@@ -561,7 +595,7 @@ func (m *appLogDrainManager) streamWorker(ctx context.Context, spec state.AppLog
 						CommitSHA: provenance.CommitSHA, DeploymentTag: provenance.DeploymentTag,
 						DeploymentCreatedAt: provenance.DeploymentCreatedAt, ImageDigest: provenance.ImageDigest,
 						Environment: provenance.Environment,
-						Sequence:    uint64(frame.Seq), Stream: frame.Stream, Line: frame.Line, WrittenAt: frame.WrittenAt,
+						Sequence:    uint64(frame.Seq), Stream: frame.Stream, Level: frame.Level, Line: frame.Line, WrittenAt: frame.WrittenAt,
 					}) {
 						// Keep the source cursor unchanged and reconnect rather than
 						// consuming later frames. A later stream replays this record
@@ -656,10 +690,11 @@ func (m *appLogDrainManager) provenanceForFrame(ctx context.Context, frame sched
 	return resolved
 }
 
-// drainServiceName is the app slug for datadog drains; other kinds do not
-// use it. A failed lookup falls back to the app ID so logs still arrive.
+// drainServiceName is the app slug for datadog drains (the service tag) and
+// otlp drains (the service.name resource attribute); http_json does not use
+// it. A failed lookup falls back to the app ID so logs still arrive.
 func (m *appLogDrainManager) drainServiceName(ctx context.Context, spec state.AppLogDrain) string {
-	if spec.Kind != state.AppLogDrainKindDatadog {
+	if spec.Kind != state.AppLogDrainKindDatadog && spec.Kind != state.AppLogDrainKindOTLP {
 		return ""
 	}
 	if lookup, ok := m.store.(appLogDrainAppLookupStore); ok {
@@ -735,6 +770,9 @@ func (m *appLogDrainManager) markHealthStartFailure(spec state.AppLogDrain, err 
 func (m *appLogDrainManager) updateHealth(drainID string, update func(*state.AppLogDrainHealth)) {
 	m.healthMu.Lock()
 	defer m.healthMu.Unlock()
+	if _, handing := m.handingOff[drainID]; handing {
+		return
+	}
 	health := m.health[drainID]
 	if health.DrainID == "" {
 		health.DrainID = drainID
@@ -855,4 +893,72 @@ func newAppLogDrainUnsealer(identities []*age.X25519Identity) func([]byte) (stri
 		}
 		return string(plaintext), nil
 	}
+}
+
+// appLogDrainHandoffOverlap is how far before the drain's last delivery a new
+// owner resumes, so lines in flight at the handover are sent at least once.
+const appLogDrainHandoffOverlap = 30 * time.Second
+
+// appLogDrainHandoffFlush bounds how long a node keeps delivering a moved
+// drain's spool; what is left after it stays on disk until the orphan sweep.
+const appLogDrainHandoffFlush = 2 * time.Minute
+
+// drainResumeAfter is when a drain new to this node resumes its source
+// stream: appLogDrainHandoffOverlap before its last successful delivery, or
+// zero when it never delivered.
+func (m *appLogDrainManager) drainResumeAfter(drainID string) time.Time {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	last := m.health[drainID].LastSuccessAt
+	if last.IsZero() {
+		return time.Time{}
+	}
+	return last.Add(-appLogDrainHandoffOverlap)
+}
+
+// handOffLogDrainWorkerLocked stops a moved drain's source stream and keeps
+// its sender delivering the spooled records until the queue is empty or
+// appLogDrainHandoffFlush passes. Before, losing ownership cancelled the
+// worker at once and the spooled lines were never sent. Its health stops
+// being written: the new owner's row is authoritative. m.mu is held.
+func (m *appLogDrainManager) handOffLogDrainWorkerLocked(ctx context.Context, w *appLogDrainWorker) {
+	w.handingOff = true
+	w.stopStream()
+	m.setActiveLocked(w.spec, -1)
+	m.healthMu.Lock()
+	if m.handingOff == nil {
+		m.handingOff = make(map[string]struct{})
+	}
+	m.handingOff[w.spec.ID] = struct{}{}
+	delete(m.health, w.spec.ID)
+	m.healthMu.Unlock()
+	m.log.InfoContext(ctx, "app log drain moved to another node; flushing its spool",
+		slog.String("drain_id", w.spec.ID), slog.String("app_id", w.spec.AppID))
+	go func() {
+		deadline := time.NewTimer(appLogDrainHandoffFlush)
+		defer deadline.Stop()
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+	wait:
+		for w.queue != nil && w.queue.Stats().PendingRecords > 0 {
+			select {
+			case <-deadline.C:
+				break wait
+			case <-tick.C:
+			case <-ctx.Done():
+				break wait
+			}
+		}
+		m.mu.Lock()
+		w.stopping = true
+		w.cancel()
+		m.mu.Unlock()
+		if w.done != nil {
+			<-w.done
+		}
+		m.healthMu.Lock()
+		delete(m.handingOff, w.spec.ID)
+		delete(m.health, w.spec.ID)
+		m.healthMu.Unlock()
+	}()
 }

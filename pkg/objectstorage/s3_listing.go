@@ -72,7 +72,10 @@ func multipartPartsPage(out *s3.ListPartsOutput, bucket string, r MultipartListP
 			return MultipartPartsPage{}, ErrUnavailable
 		}
 		page.NextPartNumberMarker = last
-	} else if next := aws.ToString(out.NextPartNumberMarker); next != "" && next != "0" {
+	} else if next := aws.ToString(out.NextPartNumberMarker); next != "" && next != "0" && next != strconv.FormatInt(int64(last), 10) {
+		// A final page may name its last part as the next marker, as AWS
+		// documents and OVH returns; a marker past it would claim parts this
+		// page did not return.
 		return MultipartPartsPage{}, ErrUnavailable
 	}
 	return page, nil

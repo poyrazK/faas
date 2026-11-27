@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -171,6 +172,65 @@ func mcpServingDeployment(ctx context.Context, c *Client, slug, candidate string
 	return serving, nil
 }
 
+// mcpPreferredRequestTimeoutS is the request budget a first MCP release asks
+// for when the app has none: agent tool calls (fetches, reports, LLM calls)
+// routinely outlive the platform's 30 s HTTP default, which answered them
+// with 503 request_budget_exceeded. Capped at the plan's ceiling.
+const mcpPreferredRequestTimeoutS = 300
+
+// mcpDefaultRequestTimeout returns the timeout to set on a first MCP release,
+// or 0 to keep the app's own (explicitly configured or already at the cap).
+func mcpDefaultRequestTimeout(app api.AppResponse) int {
+	if app.RequestTimeoutS > 0 {
+		return 0
+	}
+	timeout := mcpPreferredRequestTimeoutS
+	if ceiling := int(app.EffectiveLimits.RequestBudgetMaxMS / 1000); ceiling > 0 && ceiling < timeout {
+		timeout = ceiling
+	}
+	if current := int(app.EffectiveLimits.RequestBudgetMS / 1000); current >= timeout {
+		return 0
+	}
+	return timeout
+}
+
+// mcpServingIngressReady refuses to replace a serving app whose ingress would
+// hide an MCP server from its clients. Opening a protected app stays an
+// explicit owner decision, so the error names the exact commands.
+func mcpServingIngressReady(slug string, app api.AppResponse) error {
+	var fixes []string
+	if app.RequireAuthn {
+		fixes = append(fixes, "gregale app "+slug+" --no-require-authn")
+	}
+	if app.PublicAuth.Mode != api.AppPublicAuthModeOpen {
+		fixes = append(fixes, "gregale app "+slug+" --public-auth open")
+	}
+	if !app.StreamingEnabled {
+		fixes = append(fixes, "gregale app "+slug+" --streaming-enabled")
+	}
+	if len(fixes) == 0 {
+		return nil
+	}
+	return fmt.Errorf("app %s already serves traffic behind ingress MCP clients cannot pass (a Gregale API key or public-auth gate, or streaming off); MCP access is controlled by gregale-mcp.json instead. To serve it as an MCP server, run: %s", slug, strings.Join(fixes, "; "))
+}
+
+// precheckMCPServingIngress fails before any upload or build when the target
+// app already serves behind ingress the release would later refuse.
+func precheckMCPServingIngress(ctx context.Context, c *Client, slug string) error {
+	app, err := c.GetApp(ctx, slug)
+	if err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	serving, err := mcpServingDeployment(ctx, c, slug, "")
+	if err != nil || serving == "" {
+		return err
+	}
+	return mcpServingIngressReady(slug, app)
+}
+
 func mcpCandidatePreview(ctx context.Context, c *Client, id string, cfg mcphosting.Config) (string, error) {
 	preview, err := c.GetDeploymentURL(ctx, id)
 	if err != nil {
@@ -198,7 +258,7 @@ func prepareMCPCandidate(ctx context.Context, c *Client, slug, id string, cfg mc
 	if err != nil {
 		return "", "", "", err
 	}
-	if cfg.Auth.Mode == "external-oauth" && cfg.Auth.Resource != endpoint {
+	if cfg.Auth.Mode != mcphosting.AuthOpen && cfg.Auth.Resource != endpoint {
 		return "", "", "", fmt.Errorf("auth.resource must match the canonical endpoint %s", endpoint)
 	}
 	if app.MaintenanceMode {
@@ -208,12 +268,18 @@ func prepareMCPCandidate(ctx context.Context, c *Client, slug, id string, cfg mc
 	if err != nil {
 		return "", "", "", err
 	}
-	if serving != "" && (app.RequireAuthn || app.PublicAuth.Mode != api.AppPublicAuthModeOpen || !app.StreamingEnabled) {
-		return "", "", "", errors.New("configure MCP streaming and client ingress explicitly before replacing an existing serving app")
+	if serving != "" {
+		if err := mcpServingIngressReady(slug, app); err != nil {
+			return "", "", "", err
+		}
 	}
 	if serving == "" {
 		enabled, require := true, false
-		if _, err = c.UpdateApp(ctx, slug, api.UpdateAppRequest{StreamingEnabled: &enabled, RequireAuthn: &require, PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); err != nil {
+		update := api.UpdateAppRequest{StreamingEnabled: &enabled, RequireAuthn: &require, PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}
+		if timeout := mcpDefaultRequestTimeout(app); timeout > 0 {
+			update.RequestTimeoutS = &timeout
+		}
+		if _, err = c.UpdateApp(ctx, slug, update); err != nil {
 			return "", "", "", err
 		}
 	}
@@ -404,13 +470,24 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 						return 1
 					}
 				}
-				if smoke != nil {
+				if smoke != nil && len(smoke.suite.Cases) > 0 {
 					smokeCtx, smokeCancel := context.WithTimeout(ctx, 30*time.Second)
 					smokeReport := runMCPSmokeGate(smokeCtx, candidate, token, smoke)
 					smokeCancel()
 					receipt["smoke_tests"] = smokeReport
 					if !smokeReport.OK {
 						receipt["promotion_error"] = "MCP smoke fixtures failed; candidate remains unpromoted"
+						if code := jsonOut(writeJSON(receipt)); code != 0 {
+							return code
+						}
+						return 1
+					}
+				}
+				if smoke != nil && smoke.replay {
+					replay, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, token, smoke)
+					receipt["replay"] = replay
+					if !ok {
+						receipt["promotion_error"] = mcpReplayGateError(replay)
 						if code := jsonOut(writeJSON(receipt)); code != 0 {
 							return code
 						}

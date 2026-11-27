@@ -295,6 +295,9 @@ func ApplyBillingEnvOverlay(cfg *RootBillingConfig, env func(string) string) *Ro
 	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM"); v != "" {
 		cfg.Polar.ManagedPostgresBillingFrom = v
 	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_HISTORY_BILLING_FROM"); v != "" {
+		cfg.Polar.ManagedPostgresHistoryBillingFrom = v
+	}
 	if v := env("FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME"); v != "" {
 		cfg.Polar.ManagedPostgresUsageEventName = v
 	}

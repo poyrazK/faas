@@ -48,6 +48,7 @@ func (s *server) databaseSwitchWorker() *databaseswitch.Worker {
 	}
 	return &databaseswitch.Worker{
 		Store: switches, Drain: drain, Databases: s.managedPostgres, Cutovers: s.managedPostgresCutovers, Releases: s.store,
+		MigrationTargets: s.managedPostgres,
 		InvalidateSnapshots: func(ctx context.Context, appID string) error {
 			_, err := state.InvalidateAppSnapshots(ctx, s.store, appID)
 			return err
@@ -366,19 +367,43 @@ func (s *server) databaseSwitchView(ctx context.Context, sw state.DatabaseSwitch
 	return view
 }
 
-func (s *server) listDatabaseSwitches(w http.ResponseWriter, r *http.Request, acct state.Account) {
+func (s *server) migrationDatabaseSwitchView(ctx context.Context, sw state.DatabaseSwitch) api.MigrationDatabaseSwitch {
+	return api.MigrationDatabaseSwitch{DatabaseSwitch: s.databaseSwitchView(ctx, sw), MigrationOperationID: sw.MigrationOperationID}
+}
+
+func (s *server) writeDatabaseSwitch(w http.ResponseWriter, r *http.Request, status int, sw state.DatabaseSwitch) {
+	if sw.MigrationOperationID != "" {
+		writeJSON(w, status, s.migrationDatabaseSwitchView(r.Context(), sw))
+		return
+	}
+	writeJSON(w, status, s.databaseSwitchView(r.Context(), sw))
+}
+
+func (s *server) listDatabaseSwitches(w http.ResponseWriter, r *http.Request, acct state.Account, migration bool) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
-	switches, ok := s.databaseSwitchStore()
-	if !ok {
-		writeJSON(w, http.StatusOK, api.DatabaseSwitchList{Items: []api.DatabaseSwitch{}})
+	if migration && !s.capabilityEnabledFor("database-rollbacks", acct, app) {
+		writeMissingRoute(w, r)
 		return
 	}
-	rows, err := switches.ListDatabaseSwitches(r.Context(), acct.ID, app.ID, api.DatabaseSwitchListMax)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list database switches"))
+	switches, ok := s.databaseSwitchStore()
+	var rows []state.DatabaseSwitch
+	if ok {
+		var err error
+		rows, err = switches.ListDatabaseSwitches(r.Context(), acct.ID, app.ID, migration, api.DatabaseSwitchListMax)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not list database switches"))
+			return
+		}
+	}
+	if migration {
+		out := api.MigrationDatabaseSwitchList{Items: make([]api.MigrationDatabaseSwitch, 0, len(rows))}
+		for _, sw := range rows {
+			out.Items = append(out.Items, s.migrationDatabaseSwitchView(r.Context(), sw))
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	out := api.DatabaseSwitchList{Items: make([]api.DatabaseSwitch, 0, len(rows))}
@@ -388,9 +413,13 @@ func (s *server) listDatabaseSwitches(w http.ResponseWriter, r *http.Request, ac
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *server) loadDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.DatabaseSwitch, bool) {
+func (s *server) loadDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct state.Account, migration bool) (state.App, state.DatabaseSwitch, bool) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return state.App{}, state.DatabaseSwitch{}, false
+	}
+	if migration && !s.capabilityEnabledFor("database-rollbacks", acct, app) {
+		writeMissingRoute(w, r)
 		return state.App{}, state.DatabaseSwitch{}, false
 	}
 	switches, ok := s.databaseSwitchStore()
@@ -399,7 +428,7 @@ func (s *server) loadDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct
 		return state.App{}, state.DatabaseSwitch{}, false
 	}
 	sw, err := switches.DatabaseSwitch(r.Context(), acct.ID, r.PathValue("id"))
-	if errors.Is(err, state.ErrNotFound) || (err == nil && sw.AppID != app.ID) {
+	if errors.Is(err, state.ErrNotFound) || (err == nil && (sw.AppID != app.ID || (sw.MigrationOperationID != "") != migration)) {
 		s.notFound(w, "no such database switch")
 		return state.App{}, state.DatabaseSwitch{}, false
 	}
@@ -410,19 +439,19 @@ func (s *server) loadDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct
 	return app, sw, true
 }
 
-func (s *server) getDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	_, sw, ok := s.loadDatabaseSwitch(w, r, acct)
+func (s *server) getDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct state.Account, migration bool) {
+	_, sw, ok := s.loadDatabaseSwitch(w, r, acct, migration)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.databaseSwitchView(r.Context(), sw))
+	s.writeDatabaseSwitch(w, r, http.StatusOK, sw)
 }
 
 // cancelDatabaseSwitch records a cancellation request; the worker unwinds the
 // switch on its next step. A switch that started switching cannot be
 // cancelled.
-func (s *server) cancelDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, sw, ok := s.loadDatabaseSwitch(w, r, acct)
+func (s *server) cancelDatabaseSwitch(w http.ResponseWriter, r *http.Request, acct state.Account, migration bool) {
+	app, sw, ok := s.loadDatabaseSwitch(w, r, acct, migration)
 	if !ok {
 		return
 	}
@@ -445,7 +474,7 @@ func (s *server) cancelDatabaseSwitch(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	s.audit.Emit(r.Context(), "app.database_switch_cancel_requested", &acct.ID, map[string]any{"app_id": app.ID, "switch_id": sw.ID})
-	writeJSON(w, http.StatusAccepted, s.databaseSwitchView(r.Context(), updated))
+	s.writeDatabaseSwitch(w, r, http.StatusAccepted, updated)
 }
 
 func (s *server) recordDatabaseSwitchRequested(ctx context.Context, r *http.Request, acct state.Account, app state.App, plan rollbackPlan, sw state.DatabaseSwitch) {

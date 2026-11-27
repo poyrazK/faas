@@ -36,6 +36,13 @@ type AppParkTransitionStore interface {
 	DrainDrainedAppParkTransitions(context.Context, int) (int, error)
 }
 
+// AppParkTransitionReader reports the customer park transition behind an
+// app's current park ("" when the park came from elsewhere, such as a
+// liveness park). Optional: PgStore and MemStore implement it.
+type AppParkTransitionReader interface {
+	CurrentAppParkTransitionID(context.Context, string) (string, error)
+}
+
 type AppParkTransition struct {
 	ID    string
 	AppID string
@@ -100,6 +107,7 @@ func usageStatementFinalizedWebhookPayload(statement APIConsumerUsageStatement) 
 			WindowStart: bucket.WindowStart.UTC(), BillableUnits: bucket.BillableUnits,
 			RateCardID: bucket.RateCardID, Currency: bucket.Currency,
 			PriceMillicentsPerUnit: bucket.PriceMillicentsPerUnit, AmountMillicents: bucket.AmountMillicents,
+			WaivedUnits: bucket.WaivedUnits, ChargedUnits: bucket.Charged(), TierUnits: bucket.TierUnits, Trial: bucket.Trial, Unit: bucket.Unit, Model: bucket.Model,
 		})
 	}
 	return json.Marshal(payload)

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
-import { adminKeyHashes, createAdminHandler, deleteOwnAccount, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
+import { adminKeyHashes, adminKeySummary, createAdminHandler, deleteOwnAccount, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { createHookServer, createMailer, hookAddress, hookEnv, loadEmailTemplates, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
@@ -11,7 +11,8 @@ import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAnonymousPruner, createAuditPruner, createOrgAuditPruner } from './retention.mjs'
+import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner } from './retention.mjs'
+import { budgetKey, budgets, createAttempts, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
 import { signupRefusal } from './signups.mjs'
@@ -124,7 +125,7 @@ function tokenReply(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload))
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null } = {}) {
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
     const bearer = bearerClaims(req.headers.authorization)
@@ -179,6 +180,10 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
         })
       })
     }
+    // Password sign-ins and second-step codes spend failed-attempt budgets
+    // the instances share (attempts.mjs).
+    const guarded = attempts ? guardedPath(req.method, path) : null
+    if (guarded) return readBody(req, res, bodyBytes, body => guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind: guarded, bearer }))
     // A request that may text a number is read whole, checked against the
     // country allowlist and forwarded as read.
     if (smsCountries && smsSendPath(req.method, req.url)) {
@@ -193,12 +198,57 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
   })
 }
 
+// clientAddress is the verified client address the public gateway puts in
+// X-Real-IP.
+function clientAddress(req) {
+  return String(req.headers['x-real-ip'] ?? req.socket.remoteAddress)
+}
+
+// guardAttempt counts a password sign-in or second-step code against its
+// budgets, refuses it when that overspends one, and otherwise forwards it
+// and settles the count from GoTrue's answer before relaying it.
+async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind, bearer }) {
+  let entries
+  if (kind === 'password') {
+    let subject
+    try { subject = signInSubject(body) } catch (err) { return problem(res, 400, err.message === 'ambiguous' ? 'ambiguous_sign_in' : 'bad_json') }
+    entries = subject ? passwordEntries(subject, clientAddress(req)) : []
+  } else {
+    entries = secondStepEntries(bearer)
+  }
+  try {
+    const wait = entries.length ? await attempts.reserve(entries) : 0
+    if (wait > 0) {
+      if (res.headersSent) return res.destroy()
+      res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
+      return res.end(JSON.stringify({ status: 429, code: 'too_many_attempts', error_code: 'too_many_attempts', retry_after: wait }))
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', event: 'attempt_budget_failed', sqlstate: err?.code ?? null }))
+    return problem(res, 503, 'auth_unavailable')
+  }
+  const headers = forwardHeaders(req.headers)
+  delete headers['content-length']
+  const observe = entries.length ? async (status, answer) => {
+    const result = outcome(kind, status, answer)
+    try {
+      if (result === 'success') await attempts.clear(entries)
+      else if (result !== 'failure') await attempts.release(entries)
+    } catch (err) {
+      console.error(JSON.stringify({ level: 'error', event: 'attempt_budget_failed', sqlstate: err?.code ?? null }))
+    }
+  } : null
+  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, oauth, observe).end(body)
+}
+
 // upstreamRequest opens the request to GoTrue and relays its answer, with
-// the OAuth server's consent redirect and an authorization's resource.
-function upstreamRequest(req, res, path, upstreamPort, headers, oauth) {
+// the OAuth server's consent redirect and an authorization's resource. With
+// observe, the answer is read whole and shown to it before it is relayed.
+function upstreamRequest(req, res, path, upstreamPort, headers, oauth, observe = null) {
   const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
     const responseHeaders = forwardHeaders(response.headers)
     if (oauth && responseHeaders.location) responseHeaders.location = oauth.location(responseHeaders.location)
+    if (observe) return observed(response, res, responseHeaders, observe)
     const details = oauth && req.method === 'GET' && response.statusCode === 200 ? authorizationDetails.exec(path.split('?')[0]) : null
     if (details) return withResource(response, res, responseHeaders, oauth, details[1])
     if (oauth?.clientCredentials && req.method === 'GET' && response.statusCode === 200 && /^\/\.well-known\/(oauth-authorization-server|openid-configuration)$/.test(path)) return withClientCredentials(response, res, responseHeaders)
@@ -222,6 +272,24 @@ function proxy(req, res, path, upstreamPort, bodyBytes, oauth) {
     }
   })
   req.pipe(upstream)
+}
+
+// observed reads GoTrue's answer, bounded by the request body bound, lets
+// observe see its status and JSON, and relays it unchanged.
+function observed(response, res, headers, observe) {
+  const chunks = []
+  let size = 0
+  response.on('data', chunk => { size += chunk.length; if (size <= limits.bodyBytes) chunks.push(chunk) })
+  response.on('end', async () => {
+    if (size > limits.bodyBytes) return problem(res, 502, 'auth_unavailable')
+    const payload = Buffer.concat(chunks)
+    let answer = null
+    try { answer = JSON.parse(payload.toString('utf8')) } catch { /* not JSON: neither a failure nor a success to count */ }
+    await observe(response.statusCode, answer)
+    delete headers['content-length']
+    res.writeHead(response.statusCode, { ...headers, 'content-length': payload.length })
+    res.end(payload)
+  })
 }
 
 // withResource adds the resource a client asked for to GoTrue's small view
@@ -296,14 +364,19 @@ export function start(env = process.env) {
   // Service accounts' tokens are signed and checked here, with the app's keys.
   const jwtKeys = config.gotrueEnv.GOTRUE_JWT_KEYS
   const authenticate = config.serviceAccounts ? createAuthenticator(goTrueAuthenticator(), token => verifyToken(token, { keys: verificationKeys(jwtKeys), issuer: config.api })) : goTrueAuthenticator()
-  const tokenLimits = { limiter: createRateLimiter(), failures: createRateLimiter() }
+  // Failed secrets count per client address in the database, so instances
+  // and wakes share the count; tokens per account stay per instance.
+  const attempts = createAttempts(pool)
+  const secretFailures = address => [{ key: budgetKey('service-account-client', address), budget: budgets.serviceAccountClient }]
+  const tokenLimits = { limiter: createRateLimiter(), failures: { check: address => attempts.check(secretFailures(address)), take: address => attempts.fail(secretFailures(address)) } }
   const serviceAccounts = config.serviceAccounts ? { issue: request => issueToken({ pool, signer: signingKey(jwtKeys), issuer: config.api, ...tokenLimits }, request) } : null
   const authz = createAuthzHandler({ pool, authenticate, origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, orgDomains: config.orgDomains, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims, sessions: config.sessions, serviceAccounts: config.serviceAccounts })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app },
+  const adminKeys = adminKeyHashes(env)
+  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeys, origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app },
     impersonation: config.impersonation ? { siteURL: config.gotrueEnv.GOTRUE_SITE_URL } : null, serviceAccounts: config.serviceAccounts })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
@@ -312,7 +385,7 @@ export function start(env = process.env) {
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
-  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries, scim, oauth, serviceAccounts })
+  const server = createServer({ authz, ui, realtime, admin, settings: { ...config.settings, admin_keys: adminKeySummary(adminKeys) }, smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
@@ -327,7 +400,7 @@ export function start(env = process.env) {
     console.error(JSON.stringify({ level: 'error', event: 'domain_join_setup_failed', sqlstate: err?.code ?? null }))
   })
   // Activity retention prunes on the same request-driven schedule.
-  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays })]
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool })]
   for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {
     if (publishesAfter(req)) res.on('finish', () => { events?.poke(); for (const pruner of pruners) pruner.poke() })

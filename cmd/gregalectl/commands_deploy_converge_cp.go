@@ -309,7 +309,9 @@ func requireControlPlaneRoles(ansibleDir string, roles []string) error {
 
 // controlPlaneEnvironmentHash covers the convergence inputs that are not
 // repository content: the manifest-rendered inventory and the operator vars
-// file. The host-configuration lane records it with the role hashes.
+// file. The host-configuration lane records it with the role hashes, and
+// the compute join folds it into the compute bootstrap contract. An empty
+// varsFile (a join without operator vars) hashes as empty vars.
 func controlPlaneEnvironmentHash(inventoryRoot string, inventory []manifestAnsibleFile, varsFile string) (string, error) {
 	hash := sha256.New()
 	writeField := func(name string, body []byte) {
@@ -327,9 +329,12 @@ func controlPlaneEnvironmentHash(inventoryRoot string, inventory []manifestAnsib
 		}
 		writeField("rendered/"+filepath.ToSlash(rel), file.Body)
 	}
-	vars, err := operatorVarsForHash(varsFile)
-	if err != nil {
-		return "", err
+	var vars []byte
+	if varsFile != "" {
+		var err error
+		if vars, err = operatorVarsForHash(varsFile); err != nil {
+			return "", err
+		}
 	}
 	writeField("operator-vars", vars)
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
@@ -353,11 +358,11 @@ const operatorVarsPlaceholder = "${operator_vars_dir}/"
 func operatorVarsForHash(varsFile string) ([]byte, error) {
 	vars, err := os.ReadFile(varsFile)
 	if err != nil {
-		return nil, fmt.Errorf("read control-plane Ansible variables: %w", err)
+		return nil, fmt.Errorf("read Ansible variables: %w", err)
 	}
 	dir, err := filepath.Abs(filepath.Dir(varsFile))
 	if err != nil {
-		return nil, fmt.Errorf("resolve control-plane Ansible variables directory: %w", err)
+		return nil, fmt.Errorf("resolve Ansible variables directory: %w", err)
 	}
 	prefix := filepath.ToSlash(filepath.Clean(dir))
 	if prefix == "/" {

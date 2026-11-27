@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // ErrInstanceSlotsSettling marks an admission schedd answered at capacity
@@ -32,11 +33,15 @@ const (
 // app_concurrency_reached with a true count). Otherwise it re-reads the app's
 // live targets and waits briefly for one to become routable. Past the wait it
 // is ErrInstanceSlotsSettling (#5709: "max_concurrency is 1; 0 already live").
-func (h *Handler) settleAtCapacity(ctx context.Context, app App, limits api.Limits, effectiveMax int, pick func() PickResult) (PickResult, error) {
+//
+// deploymentID names the requesting lane (empty for production): only that
+// lane's instances count against its limit, so a warm stage instance does not
+// turn production's requests into 429s (prod 2026-11-19).
+func (h *Handler) settleAtCapacity(ctx context.Context, app App, deploymentID string, limits api.Limits, effectiveMax int, pick func() PickResult) (PickResult, error) {
 	if picked := pick(); picked.OK {
 		return picked, nil
 	}
-	if observed := backendCapacityCount(h.backend, app.ID); observed >= effectiveMax {
+	if observed := backendLaneCapacityCount(h.backend, app.ID, deploymentID); observed >= effectiveMax {
 		return PickResult{}, api.ErrAppConcurrencyReachedAt(limits, effectiveMax, observed)
 	}
 	if reconciler, ok := h.backend.(liveTargetReconciler); ok {
@@ -74,4 +79,18 @@ func (h *Handler) settleAtCapacity(ctx context.Context, app App, limits api.Limi
 // reached another state yet.
 type bootInProgressReader interface {
 	BootInProgress(appID string) bool
+}
+
+// skipsAdmitFastPath reports whether an admission must reach schedd even when
+// the gateway's cached targets already fill the app's concurrency budget.
+//
+// A deployment's post-readiness smoke must: the cached targets can belong to
+// an older release at 0% traffic, and only schedd can park that idle sibling
+// to free the slot (parkZeroTrafficSibling). Answering at capacity locally
+// meant schedd never saw the smoke; it was refused until the old instance
+// idled out, past the verification window, and the deploy failed as
+// deployment_verification_unavailable (prod 2026-11-23: 1 in 4 back-to-back
+// redeploys of a max_concurrency=1 MCP app; ADR-20261123120000).
+func skipsAdmitFastPath(trigger string) bool {
+	return trigger == sched.TriggerDeploymentSmoke
 }

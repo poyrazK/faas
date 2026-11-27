@@ -894,6 +894,63 @@ func TestCmdEnvPush_StrictMode_PropagatesLine(t *testing.T) {
 	}
 }
 
+// TestCmdEnvPush_DefaultScan_PointsAtEnvSet pins where the default scan
+// sends detected secrets: `gregale env set`, not --secret-scan=off. The
+// override-only message taught a coding agent to turn the scan off for a
+// real credential (agent eval rc.357, Django task).
+func TestCmdEnvPush_DefaultScan_PointsAtEnvSet(t *testing.T) {
+	stripeKey := "STRIPE_SECRET_KEY=" + "sk_live_" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ" + "_XXXX" + "\n"
+	for _, tc := range []struct {
+		name     string
+		body     string
+		wantCode int
+		wantPuts []string
+	}{
+		{name: "all secrets", body: stripeKey, wantCode: 1},
+		{name: "mixed", body: "PORT=8080\n" + stripeKey, wantCode: 0, wantPuts: []string{"PORT"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envFile := filepath.Join(t.TempDir(), ".env")
+			if err := os.WriteFile(envFile, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var puts []string
+			sink := &multiSink{onSecrets: func(method, path string) (int, any) {
+				if method == "GET" {
+					return http.StatusOK, api.AppSecretListResponse{Quota: 25}
+				}
+				if method == "PUT" {
+					parts := strings.Split(path, "/")
+					puts = append(puts, parts[len(parts)-1])
+					return http.StatusOK, nil
+				}
+				return http.StatusBadRequest, nil
+			}}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			var stderr bytes.Buffer
+			origStderr := osStderr
+			osStderr = &stderr
+			defer func() { osStderr = origStderr }()
+
+			if code := envPush([]string{"--app", "hello", "-f", envFile}); code != tc.wantCode {
+				t.Fatalf("envPush = %d, want %d; stderr: %s", code, tc.wantCode, stderr.String())
+			}
+			if strings.Join(puts, ",") != strings.Join(tc.wantPuts, ",") {
+				t.Errorf("PUT keys = %v, want %v", puts, tc.wantPuts)
+			}
+			if want := "gregale env set --app hello --file " + envFile; !strings.Contains(stderr.String(), want) {
+				t.Errorf("stderr should point at %q; got: %q", want, stderr.String())
+			}
+			if strings.Contains(stderr.String(), "Use --secret-scan=off to override") {
+				t.Errorf("stderr still offers the scan override as the fix: %q", stderr.String())
+			}
+		})
+	}
+}
+
 // --- app scale / rename ---------------------------------------------------
 
 // TestCmdAppScale_RequiresLogin pins the no-token exit code (#72).
@@ -2041,7 +2098,7 @@ func TestMCPGoTarGzContainsMaterializedSourcesAndModule(t *testing.T) {
 	want := map[string]bool{
 		"mcp-go/main.go":      false,
 		"mcp-go/auth.go":      false,
-		"mcp-go/tasks.go":     false,
+		"mcp-go/tasks_off.go": false,
 		"mcp-go/main_test.go": false,
 		"mcp-go/go.mod":       false,
 		"mcp-go/go.sum":       false,
@@ -2081,8 +2138,10 @@ func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 		"function-node24":          {"handler.js", "package.json", "README.md"},
 		"function-python313":       {"handler.py", "requirements.txt", "README.md"},
 		"function-rust":            {"Dockerfile", "Cargo.toml", "Cargo.lock", "src/main.rs", "gregale.yaml", "README.md"},
-		"mcp-go":                   {"main.go", "auth.go", "tasks.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"mcp-go":                   {"main.go", "auth.go", "tasks_off.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"mcp-go-tasks":             {"main.go", "auth.go", "tasks.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
 		"mcp-python":               {"server.py", "auth.py", "tasks.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"mcp-python-tasks":         {"server.py", "auth.py", "tasks.py", "task_execution.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
 		"rest-api-postgres-python": {"handler.py", "database.py", "app.py", "migrate.py", "schema.sql", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/async_secret_reload_runtime.py", "runtime/async_postgres_pool_runtime.py", "README.md"},
 		"object-storage-python":    {"handler.py", "storage.py", "app.py", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/_async_binding_client_runtime.py", "runtime/async_secret_reload_runtime.py", "runtime/async_object_storage_runtime.py", "README.md"},
 		"object-storage-node":      {"app.mjs", "server.mjs", "gregale.yaml", "Dockerfile", "package.json", "package-lock.json", "runtime/binding-client-runtime.js", "runtime/object-storage-runtime.js", "runtime/secret-reload-runtime.js", "README.md"},

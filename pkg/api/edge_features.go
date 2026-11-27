@@ -12,4 +12,9 @@ const (
 	EdgeFeaturePenaltyBox  = "penalty_box"
 	EdgeFeatureAICrawlers  = "ai_crawlers"
 	EdgeFeatureAttackMode  = "attack_mode"
+	// EdgeFeatureMCPGatewayAuth is an MCP policy with a consumer-key
+	// credential or tool limits (ADR-20261122194324). Unlike the features
+	// above, the gateway keeps enforcing a stored policy after the flag is
+	// withdrawn: relaxing an access policy would open the server.
+	EdgeFeatureMCPGatewayAuth = "mcp_gateway_auth"
 )

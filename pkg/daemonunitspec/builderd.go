@@ -79,7 +79,7 @@ func UnitBuilderd() daemonunit.Unit {
 		ProtectControlGroups:  true,
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
-		ReadWritePaths: []string{"/srv/fc/builder", "/srv/fc/base", "/var/log/faas", "/var/spool/faas", "/var/lib/faas/cache", "/var/cache/faas/builds"},
+		ReadWritePaths: []string{"/srv/fc/builder", "/srv/fc/base", "-/srv/fc/run-environments", "/var/log/faas", "/var/spool/faas", "/var/lib/faas/cache", "/var/cache/faas/builds"},
 
 		WantedBy: "multi-user.target",
 	}

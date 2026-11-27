@@ -1607,6 +1607,11 @@ type Manifest struct {
 	// Protection is on or off: a deploy turns the app's production
 	// protection on or off (ADR-20261116120000 §5). Empty leaves it as it is.
 	Protection string `yaml:"protection,omitempty"`
+	// Access is who may call the app's public URL: "public" (no Gregale
+	// API key) or "key". Every production deploy applies it, and removing
+	// it returns the app to the plan default (ADR-20261124090000
+	// amendment 1). Empty means not declared.
+	Access string `yaml:"access,omitempty"`
 	// Project holds the repository's project-wide service settings
 	// (ADR-20261107180000). It is meaningful in the repository's root
 	// gregale.yaml, where the scanner applies it; it replaces the
@@ -2162,6 +2167,10 @@ func humanizeYAMLLine(raw string) string {
 		msg := fmt.Sprintf("line %s: unknown key %q%s", m[1], m[2], where)
 		if near := nearestKey(m[2], keys); near != "" {
 			msg += fmt.Sprintf("; did you mean %q?", near)
+		} else if where == "" && (m[2] == "name" || m[2] == "app" || m[2] == "slug") {
+			// Prod hunt r57: `name: my-worker` was refused with no way
+			// forward; the app name is not a gregale.yaml key.
+			msg += "; the app name is not set in gregale.yaml: deploy with --name SLUG, or `gregale link --app SLUG` once in this directory"
 		}
 		return msg
 	}
@@ -2260,6 +2269,7 @@ type tomlManifest struct {
 	Extensions          []ExtensionSpec            `toml:"extensions"`
 	Labels              map[string]string          `toml:"labels"`
 	Protection          string                     `toml:"protection"`
+	Access              string                     `toml:"access"`
 }
 
 type tomlTriggers struct {
@@ -2292,6 +2302,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		Extensions:          raw.Extensions,
 		Labels:              raw.Labels,
 		Protection:          raw.Protection,
+		Access:              raw.Access,
 	}, nil
 }
 
@@ -2331,6 +2342,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if m.Protection != "" && m.Protection != api.AppProtectionStateOn && m.Protection != api.AppProtectionStateOff {
 		return fmt.Errorf("protection: %q is not on or off", m.Protection)
+	}
+	if m.Access != "" && m.Access != api.ServiceAccessPublic && m.Access != api.ServiceAccessKey {
+		return fmt.Errorf("access: %q is not public or key", m.Access)
 	}
 	if m.Project != nil {
 		if err := m.Project.Validate(); err != nil {
@@ -2678,9 +2692,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("database[%d]: env: %w", i, problem)
 		}
 		access := dependency.EffectiveAccess()
-		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" && access != "session" {
+		if access != "read_write" && access != "read_only" && access != "migration" && access != "data_api" && access != "auth" && access != "session" && access != "replica_only" {
 			// auth (application Auth, ADR-1190) is accepted but not yet listed.
-			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session}", i, access)
+			return fmt.Errorf("database[%d]: access %q not in {read_write, read_only, migration, data_api, session, replica_only}", i, access)
 		}
 		// A database dependency targets one environment variable on one
 		// workload. Different databases must not silently compete for the

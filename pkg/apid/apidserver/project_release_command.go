@@ -28,7 +28,13 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 		}
 		// The same per-service resolution as the apply that runs the
 		// command (ADR-20261019120007 amendment 1).
-		resolved, problem := projectWorkloadReleaseCommand(source, scan.Workloads, workload, app, manifest)
+		// The apply stages a Compose build context on its own; resolve the
+		// same context here so both find one command.
+		var buildContext composeReleaseContext
+		if composeDockerBuildContext(req.ScanDir, workload, app) && !s.releasePhaseOff {
+			buildContext = composeReleaseContext{root: app.RootDir}
+		}
+		resolved, problem := projectWorkloadReleaseCommand(source, scan.Workloads, workload, app, buildContext, manifest)
 		if problem != nil {
 			return problem
 		}

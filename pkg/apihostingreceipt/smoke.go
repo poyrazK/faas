@@ -36,6 +36,15 @@ const (
 	// SmokeErrorInternalApp explains a skipped smoke: an internal app has no
 	// public route, so in-guest readiness is the candidate's only proof.
 	SmokeErrorInternalApp = "smoke_internal_app"
+	// SmokeErrorCandidateCrashLoop ends a verification the public route
+	// could not prove because the candidate itself kept exiting: schedd
+	// parked it for liveness exhaustion while the probe retried. It is the
+	// app's verdict, not an outage.
+	SmokeErrorCandidateCrashLoop = "smoke_candidate_crash_loop"
+	// SmokeErrorVerificationContractFailed means a required check of the
+	// app's gregale.verify.yaml failed against the candidate
+	// (ADR-20261122220000). The receipt carries the full report.
+	SmokeErrorVerificationContractFailed = "smoke_verification_contract_failed"
 )
 
 const (
@@ -83,7 +92,14 @@ func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID
 // VerifyDeploymentRoute checks candidate reachability for TCP-ready images
 // that declare no HTTP health endpoint. It never establishes endpoint health.
 func (v Verifier) VerifyDeploymentRoute(ctx context.Context, slug, deploymentID string) (SmokeResult, error) {
-	return v.verifyWithContract(ctx, slug, "/", deploymentID, VerificationRouteConnectivity)
+	return v.VerifyDeploymentRouteAt(ctx, slug, "/", deploymentID)
+}
+
+// VerifyDeploymentRouteAt is VerifyDeploymentRoute on a chosen path: a
+// function's route check uses its runner's /healthz, because every other
+// path of a function runs its handler.
+func (v Verifier) VerifyDeploymentRouteAt(ctx context.Context, slug, path, deploymentID string) (SmokeResult, error) {
+	return v.verifyWithContract(ctx, slug, path, deploymentID, VerificationRouteConnectivity)
 }
 
 // VerifyDeploymentAPIRoute checks one explicitly selected, read-only API
@@ -347,11 +363,16 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	case VerificationRouteConnectivity:
 		// 415 is how a gRPC server answers a non-gRPC request (the gRPC
 		// HTTP/2 spec), and 405 how a Go workflow function's
-		// ServeWorkflows answers a GET (ADR-20261113120824 amendment 1);
-		// like 401/403/404 they prove the candidate answered.
-		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
-			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
-			resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusUnsupportedMediaType
+		// ServeWorkflows answers a GET (ADR-20261113120824 amendment 1).
+		// Any proven 4xx shows the candidate is up and routed: the app
+		// never promised this path, so a framework's 400/422 for a GET it
+		// does not expect (prod 2026-11-22: an Express worker answered the
+		// platform's default /healthz with 422) is an answer, not a fault.
+		// A 5xx still fails the check, and so do 408 and 429: a candidate
+		// that times out or sheds the request is not ready for traffic, and
+		// retryableSmoke retries a 429.
+		acceptable = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError &&
+			resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests
 	case VerificationAPIRouteContract:
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden

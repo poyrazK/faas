@@ -1,0 +1,5 @@
+# group_vars/compute_nodes/release_commands.yml — release commands on compute
+# nodes: schedd dispatches release tasks and imaged runs them (node_join.yml).
+# Keep it equal to group_vars/control_plane/release_commands.yml: apid admits
+# them only from the control plane's switch.
+faas_release_commands: true

@@ -42,14 +42,89 @@ type FlagExperiment struct {
 	StopReason         string
 	Breach             map[string]any
 	ValueThroughDay    *time.Time
+	// MetricDefinition holds a funnel or retention metric, Cuped whether
+	// CUPED is on, and MinCupedPValues the running minimum adjusted
+	// p-values (ADR 20261119102741).
+	MetricDefinition flags.MetricDefinition
+	Cuped            bool
+	MinCupedPValues  map[string]float64
+	// Unit is customer or subject; Layer and Traffic the layer it joins and
+	// the share it asks for, LayerFrom and LayerTo the slice it holds while
+	// running; Allocation fixed or bandit, with the bandit's last posterior
+	// and re-weight time; DenominatorEvent a ratio metric's denominator and
+	// Percentile a percentile metric's percentile (ADR 20261119173702).
+	Unit               string
+	Layer              string
+	Traffic            int
+	LayerFrom, LayerTo int
+	Allocation         string
+	Bandit             []flags.BanditArm
+	BanditWeightedAt   *time.Time
+	DenominatorEvent   string
+	Percentile         int
+	// NotifyChannelIDs are the notification channels the experiment's
+	// decisions and problems go to; empty uses the environment's
+	// (ADR-20261125085913).
+	NotifyChannelIDs []string
+}
+
+// SubjectUnits reports whether the experiment counts subjects; its units
+// come from SDK exposures and its metrics from product analytics.
+func (x FlagExperiment) SubjectUnits() bool { return x.Unit == flags.ExperimentUnitSubject }
+
+// UsesAnalyticsConversions reports whether the reconciler marks the
+// experiment's conversions from analytics events.
+func (x FlagExperiment) UsesAnalyticsConversions() bool {
+	return flags.AnalyticsMetric(x.MetricKind) || x.SubjectUnits()
+}
+
+// FlagExperimentUnitRef is one unit awaiting a funnel or retention check.
+// CustomerID is the unit key; for a subject unit Customer and SubjectHash
+// are its customer and subject.
+type FlagExperimentUnitRef struct {
+	CustomerID     string
+	FirstExposedAt time.Time
+	Customer       string
+	SubjectHash    []byte
+}
+
+// FlagExperimentAnalyticsStore keeps funnel and retention conversions and
+// CUPED values (ADR 20261119102741 §1–2).
+type FlagExperimentAnalyticsStore interface {
+	// FlagExperimentConversionCandidates lists unconverted units whose
+	// window opened by now and whose deadline is after notBefore, in
+	// customer order after afterCustomer.
+	FlagExperimentConversionCandidates(ctx context.Context, x FlagExperiment, afterCustomer string, now, notBefore time.Time, limit int) ([]FlagExperimentUnitRef, error)
+	// MarkFlagExperimentUnitConversions sets converted_at, by customer.
+	MarkFlagExperimentUnitConversions(ctx context.Context, experimentID string, conversions map[string]time.Time) error
+	// FlagExperimentUnitsWithoutPreValue lists units without a CUPED value.
+	FlagExperimentUnitsWithoutPreValue(ctx context.Context, experimentID string, limit int) ([]FlagExperimentUnitRef, error)
+	// SetFlagExperimentPreValues sets each listed unit's CUPED value.
+	SetFlagExperimentPreValues(ctx context.Context, experimentID string, values map[string]float64) error
+	// FlagExperimentCupedArms returns per-variant CUPED sums over the
+	// counted units and how many counted units still lack a value.
+	FlagExperimentCupedArms(ctx context.Context, x FlagExperiment, minUnits int64) ([]flags.CupedArm, int64, error)
 }
 
 // FlagExperimentStore keeps experiments and their per-customer units.
+// FlagExperimentStartCursor is a started experiment's first telemetry
+// cursor: just before the start's minute. Gateways collapse request telemetry
+// into rows stamped at the start of their minute
+// (FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE), and the reconciler reads rows
+// after the cursor, so a cursor at the start instant would skip every exposure
+// in the start minute. The few requests of that minute before the start count
+// too: they were served by the same weighted rule.
+func FlagExperimentStartCursor(start time.Time) time.Time {
+	return start.UTC().Truncate(time.Minute).Add(-time.Microsecond)
+}
+
 type FlagExperimentStore interface {
 	CreateFlagExperiment(ctx context.Context, x FlagExperiment, maxExperiments int) (FlagExperiment, error)
 	GetFlagExperiment(ctx context.Context, environmentID, key string) (FlagExperiment, error)
 	ListFlagExperiments(ctx context.Context, environmentID string) ([]FlagExperiment, error)
-	StartFlagExperiment(ctx context.Context, environmentID, key string, weights map[string]int, now time.Time, maxRunning int) (FlagExperiment, error)
+	// StartFlagExperiment starts a draft with its weights and the layer
+	// slice it holds ([0, 0] without a layer).
+	StartFlagExperiment(ctx context.Context, environmentID, key string, weights map[string]int, slice [2]int, now time.Time, maxRunning int) (FlagExperiment, error)
 	// StopFlagExperiment stops a running experiment, recording why and, for
 	// a guardrail, the breach.
 	StopFlagExperiment(ctx context.Context, environmentID, key string, now time.Time, reason string, breach map[string]any) (FlagExperiment, error)
@@ -75,7 +150,7 @@ type FlagExperimentStore interface {
 	// telemetry received in (from, until] and marks conversions; it returns
 	// the number of exposure rows read.
 	AdvanceFlagExperimentUnits(ctx context.Context, x FlagExperiment, from, until time.Time, maxRows int) (int, error)
-	SaveFlagExperimentProgress(ctx context.Context, experimentID string, cursor time.Time, minPValues map[string]float64) error
+	SaveFlagExperimentProgress(ctx context.Context, experimentID string, cursor time.Time, minPValues, minCupedPValues map[string]float64) error
 }
 
 func flagExperimentFromRow(r sqlc.FlagExperiment) FlagExperiment {
@@ -83,15 +158,25 @@ func flagExperimentFromRow(r sqlc.FlagExperiment) FlagExperiment {
 		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), ProjectID: pgUUIDString(r.ProjectID), EnvironmentID: pgUUIDString(r.EnvironmentID),
 		Key: r.Key, FlagKey: r.FlagKey, RuleID: r.RuleID, Control: r.Control, MetricEvent: r.MetricEvent, MetricKind: r.MetricKind,
 		Status: r.Status, MixingLift: r.MixingLift, CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt.Time,
-		Weights: map[string]int{}, MinPValues: map[string]float64{},
+		Weights: map[string]int{}, MinPValues: map[string]float64{}, MinCupedPValues: map[string]float64{}, Cuped: r.Cuped,
 	}
 	_ = json.Unmarshal(r.Weights, &x.Weights)
 	_ = json.Unmarshal(r.MinPValues, &x.MinPValues)
+	_ = json.Unmarshal(r.MinCupedPValues, &x.MinCupedPValues)
+	_ = json.Unmarshal(r.MetricDefinition, &x.MetricDefinition)
 	_ = json.Unmarshal(r.Guardrails, &x.Guardrails)
 	if len(r.Breach) > 0 {
 		_ = json.Unmarshal(r.Breach, &x.Breach)
 	}
 	x.StopReason = r.StopReason
+	x.Unit, x.Layer, x.Traffic, x.LayerFrom, x.LayerTo = r.Unit, r.Layer, int(r.Traffic), int(r.LayerFrom), int(r.LayerTo)
+	x.Allocation, x.DenominatorEvent, x.Percentile = r.Allocation, r.DenominatorEvent, int(r.Percentile)
+	x.NotifyChannelIDs = pgUUIDStrings(r.NotifyChannelIds)
+	_ = json.Unmarshal(r.Bandit, &x.Bandit)
+	if r.BanditWeightedAt.Valid {
+		t := r.BanditWeightedAt.Time
+		x.BanditWeightedAt = &t
+	}
 	if r.LatencyThresholdMs.Valid {
 		ms := int(r.LatencyThresholdMs.Int32)
 		x.LatencyThresholdMS = &ms
@@ -140,11 +225,18 @@ func (s *PgStore) CreateFlagExperiment(ctx context.Context, x FlagExperiment, ma
 	if kind == "" {
 		kind = flags.ExperimentMetricConversion
 	}
+	definition, err := json.Marshal(x.MetricDefinition)
+	if err != nil {
+		return FlagExperiment{}, fmt.Errorf("flag experiment create: %w", err)
+	}
 	row, err := sqlc.New().CreateFlagExperiment(ctx, s.pool, sqlc.CreateFlagExperimentParams{
 		ID: uuidToPgtype(uuid.NewString()), AccountID: uuidToPgtype(x.AccountID), ProjectID: uuidToPgtype(x.ProjectID),
 		EnvironmentID: uuidToPgtype(x.EnvironmentID), Key: x.Key, FlagKey: x.FlagKey, RuleID: x.RuleID, Control: x.Control,
 		MetricEvent: x.MetricEvent, MetricKind: kind, MixingLift: x.MixingLift, Weights: weights, Guardrails: guardrails,
-		CreatedBy: x.CreatedBy, MaxExperiments: int64(maxExperiments),
+		CreatedBy: x.CreatedBy, MaxExperiments: int64(maxExperiments), MetricDefinition: definition, Cuped: x.Cuped,
+		Unit: orDefault(x.Unit, flags.ExperimentUnitCustomer), Layer: x.Layer, Traffic: int32(x.Traffic),
+		Allocation: orDefault(x.Allocation, flags.ExperimentAllocationFixed), DenominatorEvent: x.DenominatorEvent, Percentile: int32(x.Percentile),
+		NotifyChannelIds: pgUUIDList(x.NotifyChannelIDs),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FlagExperiment{}, ErrFlagExperimentLimit
@@ -180,13 +272,14 @@ func (s *PgStore) ListFlagExperiments(ctx context.Context, environmentID string)
 // StartFlagExperiment implements FlagExperimentStore. It is ErrNotFound when
 // no draft has the key, ErrFlagExperimentLimit at maxRunning, and ErrConflict
 // when another experiment already runs on the same rule.
-func (s *PgStore) StartFlagExperiment(ctx context.Context, environmentID, key string, weights map[string]int, now time.Time, maxRunning int) (FlagExperiment, error) {
+func (s *PgStore) StartFlagExperiment(ctx context.Context, environmentID, key string, weights map[string]int, slice [2]int, now time.Time, maxRunning int) (FlagExperiment, error) {
 	raw, err := jsonObject(weights)
 	if err != nil {
 		return FlagExperiment{}, fmt.Errorf("flag experiment start: %w", err)
 	}
 	row, err := sqlc.New().StartFlagExperiment(ctx, s.pool, sqlc.StartFlagExperimentParams{
-		EnvironmentID: uuidToPgtype(environmentID), Key: key, Now: pgTimestamptzUTC(now), Weights: raw, MaxRunning: int64(maxRunning)})
+		EnvironmentID: uuidToPgtype(environmentID), Key: key, Now: pgTimestamptzUTC(now), Weights: raw, MaxRunning: int64(maxRunning),
+		LayerFrom: int32(slice[0]), LayerTo: int32(slice[1])})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, getErr := s.GetFlagExperiment(ctx, environmentID, key); getErr != nil {
 			return FlagExperiment{}, getErr
@@ -246,6 +339,18 @@ func (s *PgStore) FlagExperimentArms(ctx context.Context, x FlagExperiment, minU
 		arms := make([]flags.Arm, 0, len(rows))
 		for _, r := range rows {
 			arms = append(arms, flags.Arm{Variant: r.Variant, Exposed: r.Exposed, Converted: r.Nonzero, Sum: r.Total, SumSq: r.TotalSq})
+		}
+		return arms, crossed, nil
+	}
+	if flags.AnalyticsMetric(x.MetricKind) {
+		rows, err := q.FlagExperimentHorizonArms(ctx, s.pool, sqlc.FlagExperimentHorizonArmsParams{ExperimentID: id,
+			HorizonSeconds: x.MetricDefinition.Horizon(x.MetricKind).Seconds(), Until: pgTimestamptzUTC(x.TelemetryCursor)})
+		if err != nil {
+			return nil, 0, flagExperimentErr("arms", err)
+		}
+		arms := make([]flags.Arm, 0, len(rows))
+		for _, r := range rows {
+			arms = append(arms, flags.Arm{Variant: r.Variant, Exposed: r.Exposed, Converted: r.Converted})
 		}
 		return arms, crossed, nil
 	}
@@ -329,6 +434,13 @@ func (s *PgStore) FoldFlagExperimentValues(ctx context.Context, x FlagExperiment
 			FromDay: pgtype.Date{Time: from, Valid: true}, ThroughDay: pgtype.Date{Time: through, Valid: true}}); err != nil {
 			return fmt.Errorf("flag experiment fold values: %w", err)
 		}
+		if x.MetricKind == flags.ExperimentMetricRatio {
+			if _, err := q.FoldFlagExperimentDenominators(ctx, tx, sqlc.FoldFlagExperimentDenominatorsParams{
+				ExperimentID: uuidToPgtype(x.ID), EnvironmentID: uuidToPgtype(x.EnvironmentID), EventName: x.DenominatorEvent,
+				FromDay: pgtype.Date{Time: from, Valid: true}, ThroughDay: pgtype.Date{Time: through, Valid: true}}); err != nil {
+				return fmt.Errorf("flag experiment fold denominators: %w", err)
+			}
+		}
 		if err := q.SetFlagExperimentValueThrough(ctx, tx, sqlc.SetFlagExperimentValueThroughParams{
 			ID: uuidToPgtype(x.ID), ThroughDay: pgtype.Date{Time: through, Valid: true}}); err != nil {
 			return fmt.Errorf("flag experiment fold values: %w", err)
@@ -354,7 +466,10 @@ func (s *PgStore) ListRunningFlagExperiments(ctx context.Context, afterID string
 			MixingLift: r.MixingLift, Weights: r.Weights, MinPValues: r.MinPValues, TelemetryCursor: r.TelemetryCursor,
 			CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt, StartedAt: r.StartedAt, StoppedAt: r.StoppedAt,
 			Guardrails: r.Guardrails, LatencyThresholdMs: r.LatencyThresholdMs, StopReason: r.StopReason, Breach: r.Breach,
-			ValueThroughDay: r.ValueThroughDay,
+			ValueThroughDay: r.ValueThroughDay, MetricDefinition: r.MetricDefinition, Cuped: r.Cuped, MinCupedPValues: r.MinCupedPValues,
+			Unit: r.Unit, Layer: r.Layer, Traffic: r.Traffic, LayerFrom: r.LayerFrom, LayerTo: r.LayerTo, Allocation: r.Allocation,
+			Bandit: r.Bandit, BanditWeightedAt: r.BanditWeightedAt, DenominatorEvent: r.DenominatorEvent, Percentile: r.Percentile,
+			NotifyChannelIds: r.NotifyChannelIds,
 		})
 		x.EnvironmentSlug, x.Plan = r.EnvironmentSlug, r.Plan
 		out = append(out, x)
@@ -388,6 +503,11 @@ func (s *PgStore) AdvanceFlagExperimentUnits(ctx context.Context, x FlagExperime
 		read = len(rows)
 		if err := addFlagExperimentUnits(ctx, q, tx, x.ID, rows); err != nil {
 			return err
+		}
+		if flags.AnalyticsMetric(x.MetricKind) {
+			// Funnel and retention conversions come from analytics
+			// events, marked by the reconciler (ADR 20261119102741 §1).
+			return nil
 		}
 		since := from
 		if x.StartedAt != nil {
@@ -465,14 +585,124 @@ func jsonObject[V any](m map[string]V) ([]byte, error) {
 }
 
 // SaveFlagExperimentProgress implements FlagExperimentStore.
-func (s *PgStore) SaveFlagExperimentProgress(ctx context.Context, experimentID string, cursor time.Time, minPValues map[string]float64) error {
+func (s *PgStore) SaveFlagExperimentProgress(ctx context.Context, experimentID string, cursor time.Time, minPValues, minCupedPValues map[string]float64) error {
 	raw, err := jsonObject(minPValues)
 	if err != nil {
 		return fmt.Errorf("flag experiment progress: %w", err)
 	}
+	rawCuped, err := jsonObject(minCupedPValues)
+	if err != nil {
+		return fmt.Errorf("flag experiment progress: %w", err)
+	}
 	if err := sqlc.New().AdvanceFlagExperiment(ctx, s.pool, sqlc.AdvanceFlagExperimentParams{
-		ID: uuidToPgtype(experimentID), TelemetryCursor: pgTimestamptzUTC(cursor), MinPValues: raw}); err != nil {
+		ID: uuidToPgtype(experimentID), TelemetryCursor: pgTimestamptzUTC(cursor), MinPValues: raw, MinCupedPValues: rawCuped}); err != nil {
 		return fmt.Errorf("flag experiment progress: %w", err)
 	}
 	return nil
+}
+
+// FlagExperimentConversionCandidates implements FlagExperimentAnalyticsStore.
+func (s *PgStore) FlagExperimentConversionCandidates(ctx context.Context, x FlagExperiment, afterCustomer string, now, notBefore time.Time, limit int) ([]FlagExperimentUnitRef, error) {
+	if afterCustomer == "" {
+		afterCustomer = uuid.Nil.String()
+	}
+	rows, err := sqlc.New().FlagExperimentConversionCandidates(ctx, s.pool, sqlc.FlagExperimentConversionCandidatesParams{
+		ExperimentID: uuidToPgtype(x.ID), AfterCustomer: uuidToPgtype(afterCustomer),
+		StartSeconds: x.MetricDefinition.StartOffset(x.MetricKind).Seconds(), Now: pgTimestamptzUTC(now),
+		HorizonSeconds: conversionHorizon(x).Seconds(), NotBefore: pgTimestamptzUTC(notBefore), MaxRows: int32(limit)})
+	if err != nil {
+		return nil, flagExperimentErr("conversion candidates", err)
+	}
+	out := make([]FlagExperimentUnitRef, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, unitRef(r.CustomerID, r.UnitCustomerID, r.SubjectHash, r.FirstExposedAt.Time))
+	}
+	return out, nil
+}
+
+// MarkFlagExperimentUnitConversions implements FlagExperimentAnalyticsStore.
+func (s *PgStore) MarkFlagExperimentUnitConversions(ctx context.Context, experimentID string, conversions map[string]time.Time) error {
+	if len(conversions) == 0 {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(conversions))
+	ats := make([]pgtype.Timestamptz, 0, len(conversions))
+	for id, at := range conversions {
+		ids = append(ids, uuidToPgtype(id))
+		ats = append(ats, pgTimestamptzUTC(at))
+	}
+	if _, err := sqlc.New().MarkFlagExperimentUnitConversions(ctx, s.pool, sqlc.MarkFlagExperimentUnitConversionsParams{
+		ExperimentID: uuidToPgtype(experimentID), CustomerIds: ids, Ats: ats}); err != nil {
+		return fmt.Errorf("flag experiment mark conversions: %w", err)
+	}
+	return nil
+}
+
+// FlagExperimentUnitsWithoutPreValue implements FlagExperimentAnalyticsStore.
+func (s *PgStore) FlagExperimentUnitsWithoutPreValue(ctx context.Context, experimentID string, limit int) ([]FlagExperimentUnitRef, error) {
+	rows, err := sqlc.New().FlagExperimentUnitsWithoutPreValue(ctx, s.pool, sqlc.FlagExperimentUnitsWithoutPreValueParams{
+		ExperimentID: uuidToPgtype(experimentID), MaxRows: int32(limit)})
+	if err != nil {
+		return nil, flagExperimentErr("units without pre value", err)
+	}
+	out := make([]FlagExperimentUnitRef, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, unitRef(r.CustomerID, r.UnitCustomerID, r.SubjectHash, time.Time{}))
+	}
+	return out, nil
+}
+
+// SetFlagExperimentPreValues implements FlagExperimentAnalyticsStore.
+func (s *PgStore) SetFlagExperimentPreValues(ctx context.Context, experimentID string, values map[string]float64) error {
+	if len(values) == 0 {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(values))
+	vals := make([]float64, 0, len(values))
+	for id, v := range values {
+		ids = append(ids, uuidToPgtype(id))
+		vals = append(vals, v)
+	}
+	if _, err := sqlc.New().SetFlagExperimentPreValues(ctx, s.pool, sqlc.SetFlagExperimentPreValuesParams{
+		ExperimentID: uuidToPgtype(experimentID), CustomerIds: ids, PreValues: vals}); err != nil {
+		return fmt.Errorf("flag experiment pre values: %w", err)
+	}
+	return nil
+}
+
+// FlagExperimentCupedArms implements FlagExperimentAnalyticsStore.
+func (s *PgStore) FlagExperimentCupedArms(ctx context.Context, x FlagExperiment, minUnits int64) ([]flags.CupedArm, int64, error) {
+	q := sqlc.New()
+	var arms []flags.CupedArm
+	var pending int64
+	if x.MetricKind == flags.ExperimentMetricMean {
+		rows, err := q.FlagExperimentMeanCupedArms(ctx, s.pool, sqlc.FlagExperimentMeanCupedArmsParams{
+			EnvironmentID: uuidToPgtype(x.EnvironmentID), EventName: x.MetricEvent,
+			OpenFromDay: pgtype.Date{Time: flagExperimentOpenFromDay(x), Valid: true}, ExperimentID: uuidToPgtype(x.ID), MinUnits: minUnits})
+		if err != nil {
+			return nil, 0, flagExperimentErr("cuped arms", err)
+		}
+		for _, r := range rows {
+			arms = append(arms, flags.CupedArm{Variant: r.Variant, N: r.N, SumY: r.SumY, SumY2: r.SumY2, SumX: r.SumX, SumX2: r.SumX2, SumXY: r.SumXy})
+			pending += r.Pending
+		}
+		return arms, pending, nil
+	}
+	until := x.TelemetryCursor
+	horizon := x.MetricDefinition.Horizon(x.MetricKind)
+	if horizon == 0 {
+		// Conversion counts every unit: no deadline.
+		until = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	rows, err := q.FlagExperimentBinaryCupedArms(ctx, s.pool, sqlc.FlagExperimentBinaryCupedArmsParams{
+		ExperimentID: uuidToPgtype(x.ID), HorizonSeconds: horizon.Seconds(), Until: pgTimestamptzUTC(until)})
+	if err != nil {
+		return nil, 0, flagExperimentErr("cuped arms", err)
+	}
+	for _, r := range rows {
+		// Y is 0 or 1, so the sum of squares is the sum.
+		arms = append(arms, flags.CupedArm{Variant: r.Variant, N: r.N, SumY: r.SumY, SumY2: r.SumY, SumX: r.SumX, SumX2: r.SumX2, SumXY: r.SumXy})
+		pending += r.Pending
+	}
+	return arms, pending, nil
 }

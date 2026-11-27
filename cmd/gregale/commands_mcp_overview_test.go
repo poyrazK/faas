@@ -180,6 +180,11 @@ func (fixture *overviewFixture) serve(t *testing.T, w http.ResponseWriter, r *ht
 			writeJSONTest(w, api.MCPInstanceHealthProbeResponse{AppID: "web-id", DeploymentID: overviewWebDeployment, InstanceID: id, HTTPStatus: 200, HealthBody: body})
 			return
 		}
+		if strings.HasPrefix(path, "/v1/apps/") && strings.HasSuffix(path, "/env") {
+			// Runtime variables; the fixture keeps its settings in the manifest.
+			writeJSONTest(w, api.AppEnvListResponse{Env: []api.AppEnvResponse{}})
+			return
+		}
 		t.Errorf("unexpected read %s", path)
 		http.NotFound(w, r)
 	}

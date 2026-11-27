@@ -47,6 +47,11 @@ class DeadLetterEvent:
     """Invocation source or trigger kind."""
     trigger_id: str | Unset = UNSET
     replayed_at: datetime.datetime | None | Unset = UNSET
+    replay_count: int | Unset = UNSET
+    """Earlier replays of an invocation entry that failed again (single-entry read only; omitted when never
+    replayed)."""
+    last_replayed_at: datetime.datetime | Unset = UNSET
+    """When the entry was last replayed (single-entry read only)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,6 +93,12 @@ class DeadLetterEvent:
         else:
             replayed_at = self.replayed_at
 
+        replay_count = self.replay_count
+
+        last_replayed_at: str | Unset = UNSET
+        if not isinstance(self.last_replayed_at, Unset):
+            last_replayed_at = self.last_replayed_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -115,6 +126,10 @@ class DeadLetterEvent:
             field_dict["trigger_id"] = trigger_id
         if replayed_at is not UNSET:
             field_dict["replayed_at"] = replayed_at
+        if replay_count is not UNSET:
+            field_dict["replay_count"] = replay_count
+        if last_replayed_at is not UNSET:
+            field_dict["last_replayed_at"] = last_replayed_at
 
         return field_dict
 
@@ -172,6 +187,15 @@ class DeadLetterEvent:
 
         replayed_at = _parse_replayed_at(d.pop("replayed_at", UNSET))
 
+        replay_count = d.pop("replay_count", UNSET)
+
+        _last_replayed_at = d.pop("last_replayed_at", UNSET)
+        last_replayed_at: datetime.datetime | Unset
+        if isinstance(_last_replayed_at, Unset):
+            last_replayed_at = UNSET
+        else:
+            last_replayed_at = datetime.datetime.fromisoformat(_last_replayed_at)
+
         dead_letter_event = cls(
             id=id,
             source=source,
@@ -189,6 +213,8 @@ class DeadLetterEvent:
             origin=origin,
             trigger_id=trigger_id,
             replayed_at=replayed_at,
+            replay_count=replay_count,
+            last_replayed_at=last_replayed_at,
         )
 
         dead_letter_event.additional_properties = d

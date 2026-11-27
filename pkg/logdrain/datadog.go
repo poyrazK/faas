@@ -27,10 +27,8 @@ type datadogLog struct {
 const datadogSource = "gregale"
 
 func makeDatadogLog(service string, r Record) datadogLog {
-	status := "info"
-	if r.Stream == "stderr" {
-		status = "error"
-	}
+	// Datadog's status names match the canonical levels (info, warn, error).
+	status := RecordLevel(r)
 	var tags []string
 	if env := datadogTagValue(r.Environment); env != "" {
 		tags = append(tags, "env:"+env)

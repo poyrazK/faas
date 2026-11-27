@@ -218,3 +218,17 @@ WHERE financial_object_storage_estimates.observed_at <= EXCLUDED.observed_at;
 -- name: FinancialObjectStorageEstimateGet :one
 SELECT * FROM financial_object_storage_estimates
 WHERE account_id = sqlc.arg(account_id)::uuid AND period_start = sqlc.arg(period_start)::timestamptz;
+
+-- name: AppTasksInBillingWindow :many
+-- App task VMs are billed like instances (cost-control review 2026-11-19,
+-- N16). A task overlaps the window from started_at until finished_at; the
+-- caller bounds an unfinished task by its lease and timeout. started_at is
+-- bounded below by the longest a task can run so the index stays selective.
+SELECT task.id, task.app_id, task.status, task.started_at, task.finished_at,
+       task.lease_expires_at, task.updated_at, task.timeout_seconds
+FROM app_tasks task
+WHERE task.started_at IS NOT NULL
+  AND task.started_at < sqlc.arg(window_end)::timestamptz
+  AND task.started_at >= sqlc.arg(earliest_start)::timestamptz
+  AND (task.finished_at IS NULL OR task.finished_at > sqlc.arg(window_start)::timestamptz)
+ORDER BY task.app_id, task.id;

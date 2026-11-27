@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/runpipeline"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/executioncontract"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/executionworkflow"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -35,6 +37,20 @@ func (s *server) createManagedExecutionWorkflow(w http.ResponseWriter, r *http.R
 		}
 		api.WriteProblem(w, api.ErrValidation("invalid managed workflow request body"))
 		return
+	}
+	if runpipeline.Requested(request) {
+		s.createExecutionPipeline(w, r, acct, access, request)
+		return
+	}
+	for _, step := range request.Steps {
+		if err := s.requireExecutionRequestFeatures(step.Request); err != nil {
+			s.writeExecutionCreateError(w, acct, err)
+			return
+		}
+		if step.Request.UsesExtendedExecution() && (r.URL.Path != "/v2/execution-workflows" || !s.executionV2Enabled) {
+			api.WriteProblem(w, api.ErrValidation("extended workflow steps require enabled POST /v2/execution-workflows"))
+			return
+		}
 	}
 	if err := api.ValidateCreateManagedExecutionWorkflow(request); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid managed workflow", err.Error()))
@@ -118,6 +134,16 @@ func validateManagedExecutionWorkflowRequests(request api.CreateManagedExecution
 			return fmt.Errorf("step %q: %w", step.Label, err)
 		}
 		stepRequest := step.Request
+		for _, schema := range []json.RawMessage{stepRequest.InputSchema, stepRequest.ResultSchema} {
+			if _, err := executioncontract.Compile(schema); err != nil {
+				return fmt.Errorf("step %q has an invalid standalone contract", step.Label)
+			}
+		}
+		if !step.InputFromPreviousResult && !step.IncludeDependencyResults {
+			if err := executioncontract.CheckRequest(stepRequest); err != nil {
+				return fmt.Errorf("step %q: %s", step.Label, err.Error())
+			}
+		}
 		if len(step.ArtifactInputs) > api.ExecutionArtifactInputMaxFiles {
 			return fmt.Errorf("step %q has %d artifact inputs; limit is %d", step.Label, len(step.ArtifactInputs), api.ExecutionArtifactInputMaxFiles)
 		}

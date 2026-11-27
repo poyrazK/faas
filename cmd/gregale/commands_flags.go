@@ -21,6 +21,9 @@ func cmdFlags(args []string) int {
 	if args[0] == "experiments" {
 		return cmdFlagsExperiments(args[1:])
 	}
+	if args[0] == "notifications" {
+		return cmdFlagsNotifications(args[1:])
+	}
 	if _, ok := flagsEditVerbs[args[0]]; ok {
 		return cmdFlagsEdit(args[0], args[1:])
 	}
@@ -54,7 +57,17 @@ func cmdFlags(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || *project == "" || *environment == "" {
+	if fs.NArg() != 0 {
+		// `flag get --project p newui` reported "--project is required"
+		// (prod 2026-11-19): the extra argument was the problem.
+		message := fmt.Sprintf("unexpected argument %q", fs.Arg(0))
+		if args[0] == "get" {
+			message += "; flag get reads the whole configuration (use `--key` with inspect, requests or outcomes)"
+		}
+		PrintUsage(os.Stderr, message, "flags")
+		return 1
+	}
+	if *project == "" || *environment == "" {
 		PrintUsage(os.Stderr, "--project is required", "flags")
 		return 1
 	}

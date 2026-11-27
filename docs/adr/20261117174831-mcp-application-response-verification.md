@@ -56,11 +56,34 @@ plan after approval can commit the original upload. The checkpoint stays
 outside the source tree and expires with the staged files. Each CLI invocation
 still gets a fresh home and git configuration.
 
+Amendment 2026-11-19. A native approval of a body-bound resumable upload
+commit extends the original 15-minute MCP plan to the expiry already shown on
+the approval review page. The bridge reads the approval and the complete
+upload using the same credential. It pins the app identity and reviewed
+release state and retains the existing staging reservation. The approval
+deadline remains fixed while the agent polls or retries. Other deployment
+approval paths retain their current behavior.
+
+Before applying, the bridge checks the original decision, upload and release
+state. The CLI requires the same resumable upload checkpoint on this retry.
+A missing or incompatible checkpoint stops the retry. A committed original
+upload can recover its exact release after a lost reply.
+
+Amendment 2026-11-22. Before returning the review link, the bridge commits the
+reviewed plan, original approval and upload IDs, and staging reservation to its
+encrypted journal. At startup it restores unexpired approval-bound source and
+CLI checkpoints from the same private upload directory. The original grant
+or agent key can retry the plan under current authorization. Plans without a
+resumable commit approval and one-time upload URLs expire with the bridge process.
+
 ## Validation
 
 A bridge regression test exercises an approval response and a retry of the
 same plan through fresh CLI homes with a shared plan checkpoint. It also
-checks cleanup and receipt reuse.
+checks cleanup and receipt reuse. The restart regression reopens the encrypted
+journal and staging directory while the approval is pending, then verifies the
+exact response from the one accepted deployment. It also covers a lost commit
+reply, the approval deadline, changed source, and credential isolation.
 
 MCP tests cover both supported protocol versions, private-app 2xx and non-2xx
 evidence, named environment consent, late revocation and identity replacement,

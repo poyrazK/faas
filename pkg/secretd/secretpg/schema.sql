@@ -107,7 +107,9 @@ CREATE TABLE deployment_image_preparations (
 CREATE TABLE deployments (
     id                   uuid NOT NULL PRIMARY KEY,
     app_id               uuid NOT NULL,
-    build_registry_scope text[]
+    build_registry_scope text[],
+    status               text NOT NULL,
+    scope                text NOT NULL
 );
 
 -- Projections of job_registry_credentials and jobs: a job's registry
@@ -157,4 +159,56 @@ CREATE TABLE secret_verification_audit (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  account_id uuid NOT NULL, app_id uuid NOT NULL, cutover_id uuid NOT NULL,
  credential_id uuid NOT NULL, verified_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Projections for storage grants (ADR-20261117190000 slice 2): where an
+-- app's or a job's instances run, and which node runs an account's sandbox
+-- sessions.
+CREATE TABLE instances (
+    id            uuid NOT NULL PRIMARY KEY,
+    app_id        uuid,
+    job_id        uuid,
+    node_id       uuid NOT NULL,
+    state         text NOT NULL
+);
+
+CREATE TABLE sandbox_sessions (
+    id         uuid NOT NULL PRIMARY KEY,
+    account_id uuid NOT NULL,
+    node_id    text,
+    placed_node_id text,
+    state      text NOT NULL,
+    template_id  uuid,
+    image_job_id uuid
+);
+
+CREATE TABLE sandbox_templates (
+    id     uuid NOT NULL PRIMARY KEY,
+    app_id uuid NOT NULL
+);
+
+CREATE TABLE storage_grant_audit (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    node_id       uuid        NOT NULL,
+    subject_class text        NOT NULL,
+    subject_id    uuid        NOT NULL,
+    app_id        uuid,
+    access        text        NOT NULL,
+    objects       integer     NOT NULL,
+    granted_at    timestamptz NOT NULL DEFAULT now()
+);
+
+-- Projections of deployment_verification_leases and app_verification_contracts:
+-- the node verifying a deployment and the contract whose header secret
+-- references OpenVerificationSecrets opens (ADR-20261122220000 amendment 2).
+CREATE TABLE deployment_verification_leases (
+    deployment_id uuid        NOT NULL PRIMARY KEY,
+    app_id        uuid        NOT NULL,
+    node_name     text        NOT NULL,
+    expires_at    timestamptz NOT NULL
+);
+
+CREATE TABLE app_verification_contracts (
+    app_id   uuid  NOT NULL PRIMARY KEY,
+    contract jsonb NOT NULL
 );

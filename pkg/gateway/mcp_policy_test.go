@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -35,7 +36,7 @@ func TestMCPGatewayResourceAuthentication(t *testing.T) {
 				exp = time.Now().Add(-time.Second)
 			}
 			h := &Handler{jwtVerifier: &countingJWTVerifier{onVerify: func(_ context.Context, _ string, rule *EdgeRuleJWTResolved) (*JWTClaims, error) {
-				if len(rule.ExtractClaims) != 1 || rule.ExtractClaims[0] != "scope" {
+				if strings.Join(rule.ExtractClaims, ",") != "scope,email" {
 					t.Fatalf("scope not extracted: %+v", rule)
 				}
 				if tc.invalid {
@@ -105,7 +106,7 @@ func TestMCPPolicyUsesJSONRPCBody(t *testing.T) {
 		r := httptest.NewRequest("POST", "/mcp", strings.NewReader(tc.body))
 		r.Header.Set("MCP-Method", "tools/list")
 		r.Header.Set("MCP-Name", "read")
-		status, _ := mcpPolicyRequest(r, p, tc.scope)
+		status, _, _ := mcpPolicyRequest(r, p, tc.scope)
 		if status != tc.status {
 			t.Fatalf("%s status=%d want=%d", tc.body, status, tc.status)
 		}
@@ -113,6 +114,30 @@ func TestMCPPolicyUsesJSONRPCBody(t *testing.T) {
 		if string(body) != tc.body {
 			t.Fatal("proxy body changed")
 		}
+	}
+}
+
+func TestMCPPolicyBoundSubmissionUsesToolScopesAndAccounting(t *testing.T) {
+	const body = `{"method":"gregale/tasks/submit-bound","params":{"name":"report"}}`
+	policy := &api.MCPResourcePolicy{ToolScopes: map[string][]string{"report": {"report:write"}}}
+	request := func(body string) *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	}
+	if status, _, _ := mcpPolicyRequest(request(body), policy, nil); status != http.StatusForbidden {
+		t.Fatalf("bound submission without the tool scope returned HTTP %d", status)
+	}
+	ambiguous := request(`{"method":"gregale/tasks/submit-bound","params":{"name":"report","Name":"other"}}`)
+	if status, _, _ := mcpPolicyRequest(ambiguous, policy, []string{"report:write"}); status != http.StatusBadRequest {
+		t.Fatalf("bound submission with ambiguous tool name returned HTTP %d", status)
+	}
+	r := request(body)
+	status, _, call := mcpPolicyRequest(r, policy, []string{"report:write"})
+	if status != 0 || call.tool() != "report" || mcpBillingLabel(policy, call) != "MCP /tools/report" {
+		t.Fatalf("bound submission did not get normal tool accounting: status=%d call=%+v", status, call)
+	}
+	forwarded, err := io.ReadAll(r.Body)
+	if err != nil || string(forwarded) != body {
+		t.Fatal("the guest needs the original bound submission envelope")
 	}
 }
 

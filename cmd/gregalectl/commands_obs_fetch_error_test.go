@@ -58,6 +58,33 @@ func TestObsFetchFailureHTTPReasonsAndRedaction(t *testing.T) {
 	}
 }
 
+func TestObsFetchFailureRuntimeBusyRequiresReviewedHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, section, reason string
+		status                int
+		codes                 []string
+	}{
+		{"runtime busy", "runtime-builds", "runtime_busy", 429, []string{api.CodeObsRuntimeBusy}},
+		{"missing header", "runtime-builds", "rate_limited", 429, nil},
+		{"unreviewed header", "runtime-builds", "rate_limited", 429, []string{"private-error-code"}},
+		{"ambiguous headers", "runtime-builds", "rate_limited", 429, []string{api.CodeObsRuntimeBusy, api.CodeAPIRateLimited}},
+		{"other endpoint", "serving-health", "rate_limited", 429, []string{api.CodeObsRuntimeBusy}},
+		{"other status", "runtime-builds", "server_error", 503, []string{api.CodeObsRuntimeBusy}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: tc.status, Header: make(http.Header)}
+			for _, code := range tc.codes {
+				resp.Header.Add(api.ErrorCodeHeader, code)
+			}
+			err := obsFetchResponseFailure(tc.section, resp)
+			reason, status := obsFetchFailureDetails(err)
+			if reason != tc.reason || status == nil || *status != tc.status || strings.Contains(err.Error(), "private-error-code") {
+				t.Fatalf("classification %q, status %v, error %q", reason, status, err)
+			}
+		})
+	}
+}
+
 func TestObsFetchFailureBodyAndTransportReasons(t *testing.T) {
 	for _, tc := range []struct {
 		name, reason   string

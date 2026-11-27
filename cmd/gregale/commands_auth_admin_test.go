@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,13 +57,35 @@ func TestAuthAdminKeyCreateStoresOnlyTheHash(t *testing.T) {
 		t.Fatalf("key=%q sealed=%v restarts=%d\n%s", key, sealed, restarts, out.String())
 	}
 	sum := sha256.Sum256([]byte(key))
+	// A new key holds every scope and expires in a year unless told otherwise.
+	yearOn := time.Now().Add(365 * 24 * time.Hour).Unix()
 	for name, value := range sealed {
-		if !(*main.AuthAdminKeyName).MatchString(name) || value != hex.EncodeToString(sum[:]) || strings.Contains(value, key) {
-			t.Fatalf("sealed %s=%s, want the key's SHA-256 only", name, value)
+		digest, expires, found := strings.Cut(value, ";expires=")
+		at, _ := strconv.ParseInt(expires, 10, 64)
+		if !(*main.AuthAdminKeyName).MatchString(name) || !found || digest != hex.EncodeToString(sum[:]) || at < yearOn-60 || at > yearOn+60 || strings.Contains(value, key) {
+			t.Fatalf("sealed %s=%s, want the key's SHA-256 and a one-year expiry", name, value)
 		}
 	}
-	if !strings.Contains(out.String(), "/dashboard/apps/shop-auth/auth") {
-		t.Fatalf("no dashboard link:\n%s", out.String())
+	if !strings.Contains(out.String(), "/dashboard/apps/shop-auth/auth") || !strings.Contains(out.String(), "scopes:    all") {
+		t.Fatalf("no dashboard link or scopes:\n%s", out.String())
+	}
+	clear(sealed)
+	out.Reset()
+	if code := main.CmdAuth([]string{"admin-key", "create", "shop-auth", "--scopes", "users:read,sso,users:read", "--no-expiry"}); code != 0 {
+		t.Fatalf("scoped create = %d", code)
+	}
+	for _, value := range sealed {
+		if !strings.HasSuffix(value, ";scopes=sso,users:read") || strings.Contains(value, "expires") {
+			t.Fatalf("scoped key sealed as %s", value)
+		}
+	}
+	for _, bad := range [][]string{{"--scopes", "root"}, {"--expires-in", "0"}, {"--expires-in", "30", "--no-expiry"}} {
+		if code := main.CmdAuth(append([]string{"admin-key", "create", "shop-auth"}, bad...)); code == 0 {
+			t.Fatalf("create %v accepted", bad)
+		}
+	}
+	if code := main.CmdAuth([]string{"admin-key", "list", "shop-auth", "--scopes", "sso"}); code == 0 {
+		t.Fatal("list accepted --scopes")
 	}
 }
 

@@ -40,6 +40,19 @@ func (v *StorageRuntimeSnapshotVerifier) VerifyRuntimeSnapshot(ctx context.Conte
 	if err := snapshot.Validate(); err != nil {
 		return fmt.Errorf("%w: metadata: %w", ErrRuntimeSnapshotCorrupt, err)
 	}
+	if snapshot.Identity.FormatVersion == 2 {
+		digest, err := RuntimeSnapshotBundleDigest(ctx, v.backend, snapshot)
+		if err != nil {
+			return err
+		}
+		if digest != snapshot.SnapshotDigest {
+			return ErrRuntimeSnapshotCorrupt
+		}
+		return nil
+	}
+	if snapshot.Identity.FormatVersion != 1 {
+		return ErrRuntimeSnapshotUnsupported
+	}
 	vmstateKey := runtimeSnapshotVMStateStorageKey(snapshot.StorageKey)
 	h := sha256.New()
 	_, _ = io.WriteString(h, runtimeSnapshotDigestDomain)

@@ -59,6 +59,7 @@ type deployJoinOptions struct {
 	ComputeDBRolesSource    string
 	StorageEnvSource        string
 	ImagedStorageEnvSource  string
+	StorageGrants           bool
 	RuntimeBasesEnvSource   string
 	StorageDevice           string
 	FormatStorage           bool
@@ -195,6 +196,7 @@ func cmdDeployJoinNode(args []string) int {
 	computeDBRoles := fs.String("compute-db-roles", "", "optional per-daemon compute database logins, <unit>=<dsn> lines (artifact-dir convention: compute-db-roles.env)")
 	storageEnv := fs.String("storage-env", "", "shared remote storage.env source (required for multi-box apply)")
 	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only migration lifecycle credential source (required for multi-box apply)")
+	storageGrants := fs.Bool("storage-grants", false, "the node reaches the shared store through secretd grants (ADR-20261117190000): accept S3 storage env files without an access key and set faas_storage_grants")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs (required for apply)")
 	storageDevice := fs.String("storage-device", "", "optional fast-root block device (must be an absolute path; manifest host value is used when omitted)")
 	formatStorage := fs.Bool("format-storage", false, "format an explicitly supplied blank storage device as XFS with reflink support")
@@ -258,6 +260,7 @@ func cmdDeployJoinNode(args []string) int {
 		ComputeDBRolesSource:    *computeDBRoles,
 		StorageEnvSource:        *storageEnv,
 		ImagedStorageEnvSource:  *imagedStorageEnv,
+		StorageGrants:           *storageGrants,
 		RuntimeBasesEnvSource:   *runtimeBasesEnv,
 		StorageDevice:           *storageDevice,
 		FormatStorage:           *formatStorage,
@@ -653,10 +656,18 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 			return report, fmt.Errorf("--%s must be a regular file", name)
 		}
 	}
-	if err := validateSharedStorageEnv(opts.StorageEnvSource); err != nil {
+	grants, grantsErr := joinStorageGrants(opts)
+	if grantsErr != nil {
+		return report, grantsErr
+	}
+	if err := validateSharedStorageEnv(opts.StorageEnvSource, grants); err != nil {
 		return report, fmt.Errorf("--storage-env: %w", err)
 	}
-	if err := validateImagedStorageEnv(opts.ImagedStorageEnvSource); err != nil {
+	imagedGrants, grantsErr := grantableStorageEnv(opts.StorageEnvSource, grants)
+	if grantsErr != nil {
+		return report, fmt.Errorf("--storage-env: %w", grantsErr)
+	}
+	if err := validateImagedStorageEnv(opts.ImagedStorageEnvSource, imagedGrants); err != nil {
 		return report, fmt.Errorf("--imaged-storage-env: %w", err)
 	}
 	for name, path := range map[string]string{
@@ -881,6 +892,18 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		}
 		seedJoinPrivateAddressFacts(files, privateAddresses)
 	}
+	// The manifest-rendered inventory and the operator vars are convergence
+	// inputs too: hash them before the per-run connection overrides below
+	// (temporary known_hosts and key paths) so they move the contract only
+	// when the configuration they render moves.
+	environmentSHA256, err := controlPlaneEnvironmentHash(tempRoot, files, opts.AnsibleVarsFile)
+	if err != nil {
+		return 3, err
+	}
+	bootstrapContractSHA256 = joinContractWithEnvironment(bootstrapContractSHA256, environmentSHA256)
+	if roleRecord, err = withJoinRecordEnvironment(roleRecord, environmentSHA256); err != nil {
+		return 3, err
+	}
 	for i := range files {
 		base := filepath.Base(files[i].Path)
 		if base == opts.Node+".yml" {
@@ -946,6 +969,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_builder_base_ref":           builderBaseRef,
 		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
 		"faas_join_peer_contract_sha256":       peerContractSHA256,
+		"faas_join_environment_sha256":         environmentSHA256,
 		"faas_join_rollout_phase":              rolloutPhase,
 		"faas_join_converge_roles_requested":   joinRolesVar(opts.ConvergeRoles),
 		"faas_join_role_record":                roleRecord,
@@ -956,6 +980,11 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		// and readiness verification until node_join.yml has installed and
 		// rendered both; its final play restarts and verifies every daemon.
 		"faas_join_defer_service_handlers": true,
+	}
+	if opts.StorageGrants {
+		// Set only when asked, so a faas_storage_grants value from
+		// --ansible-vars-file or the inventory stands when the flag is absent.
+		vars["faas_storage_grants"] = true
 	}
 	varsPath := filepath.Join(tempRoot, "join-vars.json")
 	body, err := json.Marshal(vars)
@@ -1964,7 +1993,9 @@ func isDigestPinnedRuntimeRef(value string) bool {
 // provider-neutral join boundary. The file is still copied verbatim to both
 // hosts; parsing here only prevents a join that would silently run with
 // host-local snapshots, stale-cache fallback, or without a shared registry.
-func validateSharedStorageEnv(path string) error {
+// With grants (ADR-20261117190000) the node reaches S3 through secretd, so an
+// S3 file may carry no access key at all.
+func validateSharedStorageEnv(path string, grants bool) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -2002,6 +2033,13 @@ func validateSharedStorageEnv(path string) error {
 		}
 	}
 	if backend == "s3" {
+		// The Ansible gates refuse any key line under grants, so an empty
+		// assignment is refused here too rather than read as "no key".
+		for _, key := range []string{"FAAS_S3_ACCESS_KEY_ID", "FAAS_S3_SECRET_ACCESS_KEY"} {
+			if seen[key] && strings.TrimSpace(values[key]) == "" {
+				return fmt.Errorf("%s is set but empty; set the key or remove the line", key)
+			}
+		}
 		pathStyle, _ := strconv.ParseBool(values["FAAS_S3_PATH_STYLE"])
 		if err := (storage.S3Config{
 			Bucket:          values["FAAS_S3_BUCKET"],
@@ -2010,6 +2048,7 @@ func validateSharedStorageEnv(path string) error {
 			AccessKeyID:     values["FAAS_S3_ACCESS_KEY_ID"],
 			SecretAccessKey: values["FAAS_S3_SECRET_ACCESS_KEY"],
 			PathStyle:       pathStyle,
+			Granted:         grants,
 		}).Validate(); err != nil {
 			return err
 		}
@@ -2052,6 +2091,63 @@ func validateSharedStorageEnv(path string) error {
 	return nil
 }
 
+// joinStorageGrants reports whether the node reaches the shared store
+// through secretd grants: --storage-grants, or faas_storage_grants true in
+// --ansible-vars-file (what cd-compute and join-fleet pass), so the local
+// checks agree with the Ansible gates that read the same variable.
+func joinStorageGrants(opts deployJoinOptions) (bool, error) {
+	if opts.StorageGrants || opts.AnsibleVarsFile == "" {
+		return opts.StorageGrants, nil
+	}
+	return ansibleVarsStorageGrants(opts.AnsibleVarsFile)
+}
+
+func ansibleVarsStorageGrants(path string) (bool, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("--ansible-vars-file: %w", err)
+	}
+	var vars map[string]any
+	if err := yaml.Unmarshal(body, &vars); err != nil {
+		return false, fmt.Errorf("--ansible-vars-file: %w", err)
+	}
+	switch v := vars["faas_storage_grants"].(type) {
+	case nil:
+		return false, nil
+	case bool:
+		return v, nil
+	case string:
+		on, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return false, fmt.Errorf("--ansible-vars-file: faas_storage_grants=%q is not a boolean", v)
+		}
+		return on, nil
+	default:
+		return false, fmt.Errorf("--ansible-vars-file: faas_storage_grants must be a boolean")
+	}
+}
+
+// grantableStorageEnv reports whether imaged can run on grants with the
+// storage.env at path: grants are on and the backend is one secretd signs
+// for (S3 or GCS). An OCI node keeps its imaged lifecycle login.
+func grantableStorageEnv(path string, grants bool) (bool, error) {
+	if !grants {
+		return false, nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.TrimSpace(key) == "FAAS_STORAGE_BACKEND" {
+			backend := strings.ToLower(strings.Trim(strings.TrimSpace(value), "\"'"))
+			return backend == "s3" || backend == "gcs", nil
+		}
+	}
+	return false, nil
+}
+
 // validateImagedStorageEnv keeps package lifecycle authority in a narrow
 // override file. Loading this file after storage.env changes only the OCI
 // identity used by imaged; it cannot silently alter registry routing, cache,
@@ -2059,8 +2155,9 @@ func validateSharedStorageEnv(path string) error {
 // validateImagedStorageEnv checks imaged's lifecycle credential file. It holds
 // exactly one credential pair that overrides the shared read/write identity for
 // imaged alone: the OCI registry login, or an S3 access key pair. Storage
-// topology stays in the shared storage.env.
-func validateImagedStorageEnv(path string) error {
+// topology stays in the shared storage.env. Under grants the file may be
+// empty: imaged then publishes through secretd grants with no key.
+func validateImagedStorageEnv(path string, grants bool) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -2085,6 +2182,9 @@ func validateImagedStorageEnv(path string) error {
 			return fmt.Errorf("duplicate %s assignment", key)
 		}
 		values[key] = strings.Trim(strings.TrimSpace(value), "\"'")
+	}
+	if grants && len(values) == 0 {
+		return nil
 	}
 	pair := []string{"FAAS_OCI_USERNAME", "FAAS_OCI_PASSWORD"}
 	_, s3Key := values["FAAS_S3_ACCESS_KEY_ID"]

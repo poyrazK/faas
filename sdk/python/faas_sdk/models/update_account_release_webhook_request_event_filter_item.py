@@ -7,6 +7,9 @@ UpdateAccountReleaseWebhookRequestEventFilterItem = Literal[
     "deployment.failed",
     "deployment.live",
     "environment.gitops.changed",
+    "execution.budget.threshold",
+    "execution.finished",
+    "execution.pipeline.finished",
     "rollout.aborted",
     "rollout.completed",
 ]
@@ -20,6 +23,9 @@ UPDATE_ACCOUNT_RELEASE_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[
     "deployment.failed",
     "deployment.live",
     "environment.gitops.changed",
+    "execution.budget.threshold",
+    "execution.finished",
+    "execution.pipeline.finished",
     "rollout.aborted",
     "rollout.completed",
 }

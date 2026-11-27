@@ -63,6 +63,9 @@ type config struct {
 	buildRegistryScope secretd.BuildRegistryScopeMode
 	// controlIdentityPath opens the cluster signing key (slice 3k).
 	controlIdentityPath string
+	// storageGrants (ADR-20261117190000): the store secretd signs
+	// per-object grants for; off refuses GrantStorageObjects.
+	storageGrants storageGrantsConfig
 }
 
 func configFromEnv(getenv func(string) string) (config, error) {
@@ -116,6 +119,9 @@ func configFromEnv(getenv func(string) string) (config, error) {
 	}
 	if cfg.buildRegistryScope, err = secretd.ParseBuildRegistryScopeMode(getenv("FAAS_SECRETD_BUILD_REGISTRY_SCOPE")); err != nil {
 		return config{}, fmt.Errorf("FAAS_SECRETD_BUILD_REGISTRY_SCOPE: %w", err)
+	}
+	if cfg.storageGrants, err = storageGrantsFromEnv(getenv); err != nil {
+		return config{}, err
 	}
 	return cfg, nil
 }
@@ -215,8 +221,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		stopMetrics := serveMetrics(ctx, cfg.metricsAddr, ops.Handler(), log)
 		defer stopMetrics()
 	}
+	signer, closeSigner, err := cfg.storageGrants.signer(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeSigner()
 	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
 	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).
+		WithStorageGrants(storageGrantStore(store, signer), signer).
 		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities).
 		WithDeliveryIdentities(deliveryIdentities).WithBuildIdentities(buildIdentities).
 		WithBuildRegistryScope(cfg.buildRegistryScope).
@@ -227,7 +239,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.GracefulStop()
 	}()
 	log.Info("secretd: serving", "listen", cfg.listen, "identities", len(identities), "edge_identities", len(edgeIdentities),
-		"delivery_identities", len(deliveryIdentities), "build_identities", len(buildIdentities))
+		"delivery_identities", len(deliveryIdentities), "build_identities", len(buildIdentities),
+		"storage_grants", cfg.storageGrants.backend)
 	if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("secretd: serve: %w", err)
 	}

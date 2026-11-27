@@ -5,13 +5,17 @@ project's manifest, picks a framework, and infers how to start it. This page
 is what every framework has in common. The guides cover each one:
 
 - [Express, Fastify, Hono and NestJS](deploy-express.md) (Node)
+- [Next.js](deploy-nextjs.md) (Node)
+- [Bun](deploy-bun.md)
 - [FastAPI](deploy-fastapi.md) (Python)
 - [Django](deploy-django.md) (Python)
 - [Flask](deploy-flask.md) (Python)
 - [Go](deploy-go.md) (`net/http`, Gin)
 
-Moving an existing app? See [Migrate from Heroku](migrate-from-heroku.md) and
-[Migrate from Render](migrate-from-render.md).
+Moving an existing app? See [Migrate from Heroku](migrate-from-heroku.md),
+[Migrate from Render](migrate-from-render.md),
+[Migrate from Railway](migrate-from-railway.md) and
+[Migrate from Fly.io](migrate-from-fly.md).
 
 ## What Gregale detects
 
@@ -93,6 +97,11 @@ Keep it cheap and free of side effects. A running app must keep answering
 its health path; see [Deployment overrides](deploy-overrides.md) for how
 Gregale restarts an instance that stops answering.
 
+The check calls the app from inside the instance with the instance's
+internal address as the `Host` header. An app that rejects unknown hosts,
+such as Django with `ALLOWED_HOSTS`, must answer its health path before that
+host check; see [Deploy a Django app](deploy-django.md#health-check).
+
 Do not use `/` as the health path. Gregale can answer an app's public health
 path at its edge without running the app, so with `/` visitors get
 `{"status":"ok","source":"edge"}` instead of your page. Add a small route
@@ -143,9 +152,9 @@ public.
 ## Configuration, secrets and databases
 
 - Set configuration and secrets with `gregale env set --app my-api KEY=value`;
-  they arrive as environment variables. See [Delivered secrets](secrets.md).
+  they arrive as environment variables. See [Secrets](secrets.md).
 - Add a managed database with
-  `gregale add postgres --app my-api --region <region>`. Its URL arrives as
+  `gregale add postgres --app my-api`. Its URL arrives as
   `DATABASE_URL`. See [Managed PostgreSQL](postgres.md).
 - Run migrations as a release command: `release:` in the `Procfile` or
   `release.command` in `gregale.yaml`. It runs before the new version takes

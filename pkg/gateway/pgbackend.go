@@ -274,12 +274,20 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
-	publicRoutingView  atomic.Pointer[publicrouting.Registry]
-	workloadAdmissions workloadAdmissionCache
+	projectRollbackWatches sync.Map // app ID -> *projectRollbackWatch
+	trafficRevocations     atomic.Pointer[trafficrevocation.Registry]
+	publicRoutingView      atomic.Pointer[publicrouting.Registry]
+	workloadAdmissions     workloadAdmissionCache
 	// flagKills caches each deployment's X-Faas-Flag-Kills value
 	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
 	flagKills *FlagKillCache
+	// edgeFlags caches each app environment's edge-routed flags
+	// (ADR-20261124212701); nil until WithEdgeFlagLoader.
+	edgeFlags *EdgeFlagCache
+	// flagCohorts caches each deployment and customer's
+	// X-Faas-Flag-Cohorts value (ADR 20261119102741 §4); nil until
+	// WithFlagCohortLoader.
+	flagCohorts *FlagCohortCache
 	// boots tracks other gateways' boots in progress (at-capacity waits).
 	boots   bootTracker
 	router  Router
@@ -845,6 +853,13 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 		return "", WakeMethodUnspecified, false, err
 	}
 	markWakeAdmissionStarted(ctx)
+	if b.log != nil {
+		rpcStart := time.Now()
+		b.log.Debug("gateway: ensure wake rpc start", "app_id", appID, "trigger", trigger)
+		defer func() {
+			b.log.Debug("gateway: ensure wake rpc end", "app_id", appID, "took", time.Since(rpcStart).String(), "err", err)
+		}()
+	}
 	var identity api.PlatformIdentity
 	var instanceID, nodeID, deploymentID, wakeID string
 	var rawMethod int32
@@ -1934,6 +1949,37 @@ func (b *PGBackend) CapacityCount(appID string) int {
 	return n
 }
 
+// LaneCapacityCount counts the live cached instances of one serving lane of
+// the app. An exact deployment outside the production weights (a stage or
+// preview environment) is its own lane; otherwise the lane is the production
+// traffic set. Environments carry their own max_concurrency, so a warm stage
+// instance must not count against production's ceiling (prod 2026-11-19).
+func (b *PGBackend) LaneCapacityCount(appID, deploymentID string) int {
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return 0
+	}
+	production := make(map[string]bool, len(picker.weights))
+	for _, weight := range picker.weights {
+		production[weight.DeploymentID] = true
+	}
+	if deploymentID != "" && !production[deploymentID] {
+		if set := picker.sets[deploymentID]; set != nil {
+			return len(set.entries)
+		}
+		return 0
+	}
+	n := 0
+	for id, set := range picker.sets {
+		if production[id] {
+			n += len(set.entries)
+		}
+	}
+	return n
+}
+
 func (b *PGBackend) routableTargetCountLocked(appID string) int {
 	picker := b.appsPicker[appID]
 	if picker == nil {
@@ -2344,9 +2390,10 @@ func (b *PGBackend) admitSynchronous(ctx context.Context, appID, deploymentID, s
 	b.recordScope(appID, scope)
 	// Cheap fast path: refuse before we spend a gRPC round-trip.
 	// Σ over all per-deployment targetSets (issue #556 acceptance #3).
+	// A deployment smoke always asks schedd (skipsAdmitFastPath).
 	b.tgtMu.Lock()
 	picker := b.appsPicker[appID]
-	if picker != nil {
+	if picker != nil && !skipsAdmitFastPath(trigger) {
 		total := 0
 		for _, set := range picker.sets {
 			total += len(set.entries)
@@ -3504,7 +3551,12 @@ func (b *PGBackend) resolveSched(ctx context.Context, appID string) (Scheduler, 
 			b.putApp(app)
 		}
 		if app.NodeID == "" {
-			return nil, fmt.Errorf("gatewayd-internal: app %s has empty NodeID (pre-migration row; legacy single-box fallback removed in PR-7)", appID)
+			if !app.HasLiveDeployment {
+				return nil, fmt.Errorf("gatewayd-internal: app %s: %w", appID, ErrAppNotPlaced)
+			}
+			// Deployed but unplaced: the claim failed (capacity, no schedd
+			// claiming). A platform fault; the SLO counts its 503.
+			return nil, fmt.Errorf("gatewayd-internal: app %s has a live deployment but no compute node (placement claim pending or failing)", appID)
 		}
 		cli, ok, err := b.clientForApp(ctx, app)
 		if err != nil {

@@ -47,6 +47,15 @@
       "effective_until": "2026-11-08",
       "removal_reason": "List correction: off-host backups are stored with the production hosting providers, not a Hetzner Storage Box.",
       "archived_at": "2026-11-08"
+    },
+    {
+      "id": "hosting-google-cloud",
+      "vendor": "Google Cloud",
+      "service": "Compute Engine virtual machines and Cloud Storage",
+      "effective_from": "2026-08-08",
+      "effective_until": "2026-11-20",
+      "removal_reason": "List correction: production moved from Google Cloud to OVHcloud on 2026-11-20, before the public release. No customer of the public release has data at Google Cloud.",
+      "archived_at": "2026-11-22"
     }
   ],
   "_comment": "Each removed sub-processor becomes one object here. Shape: {\"id\": \"...\", \"vendor\": \"...\", \"service\": \"...\", \"effective_from\": \"YYYY-MM-DD\", \"effective_until\": \"YYYY-MM-DD\", \"removal_reason\": \"...\", \"archived_at\": \"YYYY-MM-DD\"}. The id MUST NOT be reused in subprocessors.json — once archived, the id is dead."

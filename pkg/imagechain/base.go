@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ociref"
+	"github.com/onebox-faas/faas/pkg/runenv"
 )
 
 // BaseLayoutVersion changes whenever the shared base boot layout changes.
@@ -25,6 +26,9 @@ func (a BaseArtifact) Valid() bool {
 }
 
 func ValidBaseKey(key string) bool {
+	if runenv.ValidBaseKey(key) {
+		return true
+	}
 	return len(key) <= api.ApplicationStandardBaseMaxStorageKeyBytes && strings.HasPrefix(key, "base/") && strings.HasSuffix(key, ".ext4") && path.Clean(key) == key && !strings.ContainsAny(key, "\r\n\x00\\") && !strings.Contains(strings.TrimPrefix(key, "base/"), "/") && len(strings.TrimPrefix(key, "base/")) > len(".ext4")
 }
 

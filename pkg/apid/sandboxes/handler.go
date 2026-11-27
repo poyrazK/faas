@@ -10,6 +10,7 @@ package sandboxes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -33,6 +34,9 @@ type Store interface {
 	Sandboxes(ctx context.Context, accountID string, f agentstore.SandboxFilter) ([]agentstore.Sandbox, error)
 	UpdateSandboxTimeouts(ctx context.Context, accountID, id string, idleTimeoutSec int, expiresAt time.Time) (agentstore.Sandbox, error)
 	CloseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
+	PauseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
+	ResumeSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
+	GrowPausedSandboxVolume(ctx context.Context, accountID, id string, volumeGB int) (bool, error)
 	SandboxSnapshot(ctx context.Context, accountID, id string) (agentstore.SandboxSnapshot, error)
 	SandboxSnapshots(ctx context.Context, accountID string, f agentstore.SandboxSnapshotFilter) ([]agentstore.SandboxSnapshot, error)
 	RequestSandboxSnapshotDelete(ctx context.Context, accountID, id string) error
@@ -65,6 +69,14 @@ type Handler struct {
 	// WebNetwork is FAAS_SANDBOX_WEB_NETWORK: it admits network.mode web
 	// (ADR-20261112121456 §6). Off, web is sandbox_unsupported.
 	WebNetwork bool
+	// Persistent is FAAS_SANDBOX_PERSISTENT: it admits kind persistent and
+	// the pause and resume routes (ADR-20261122132055), once agentd, schedd
+	// and vmmd serve them. Off, they are sandbox_unsupported.
+	Persistent bool
+	// CodeInterpreterImage is FAAS_SANDBOX_CODE_INTERPRETER_IMAGE: the
+	// image preset code-interpreter boots (ADR-20261027090013 step 14).
+	// Empty, the preset is sandbox_unsupported.
+	CodeInterpreterImage string
 	// Files is the artifact store gregale_browser's screenshots are kept in
 	// (ADR-20261117065818 §5); nil: they cannot be read from this host.
 	Files storage.StorageBackend
@@ -72,6 +84,23 @@ type Handler struct {
 	// policies (ADR-20261117091026 §3). Off, a non-empty one is
 	// sandbox_unsupported.
 	EgressPolicy bool
+}
+
+// codeInterpreter turns preset code-interpreter into an image session of
+// the platform's code-interpreter image, which carries the driver guest-init
+// runs code with (ADR-20261027090013 step 14).
+func (h *Handler) codeInterpreter(body *createBody) *api.Problem {
+	if body.Preset != api.SandboxPresetCodeInterpreter {
+		return nil
+	}
+	switch {
+	case h.CodeInterpreterImage == "":
+		return api.ErrSandboxUnsupported("preset", "the code interpreter is not available on this platform yet")
+	case body.Image != "" || body.Template != "" || body.Pull != "" || body.RegistryAuth != nil || body.Browser:
+		return api.ErrValidation("preset code-interpreter takes no image, template, pull, registry_auth or browser")
+	}
+	body.Preset, body.Image = "", h.CodeInterpreterImage
+	return nil
 }
 
 // requestMaxBytes bounds a create or change request.
@@ -84,6 +113,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	var body createBody
 	if !httpkit.DecodeJSONLimit(w, r, &body, requestMaxBytes) {
+		return
+	}
+	if prob := h.codeInterpreter(&body); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	admission, prob := h.admission(r.Context(), acct, body)
@@ -186,7 +219,8 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 }
 
 // Update handles PATCH /v1/sandboxes/{id}: a live session's idle timeout
-// or lifetime, within the plan's limits.
+// or lifetime, within the plan's limits, or a paused persistent session's
+// volume size (ADR-20261122132055 §4).
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !h.configured(w) {
 		return
@@ -195,8 +229,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !httpkit.DecodeJSONLimit(w, r, &body, requestMaxBytes) {
 		return
 	}
-	if body.IdleTimeoutS == nil && body.LifetimeS == nil {
-		api.WriteProblem(w, api.ErrValidation("give idle_timeout_s, lifetime_s or both"))
+	if body.IdleTimeoutS == nil && body.LifetimeS == nil && body.VolumeGB == nil {
+		api.WriteProblem(w, api.ErrValidation("give idle_timeout_s, lifetime_s or volume_gb"))
 		return
 	}
 	sb, err := h.Store.Sandbox(r.Context(), acct.ID, r.PathValue("id"))
@@ -204,16 +238,60 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
 		return
 	}
-	idle, expires, prob := h.timeouts(acct, sb, body)
-	if prob != nil {
-		api.WriteProblem(w, prob)
-		return
+	// The timeouts are checked before the volume grows, so a refused
+	// request changes nothing.
+	timed := body.IdleTimeoutS != nil || body.LifetimeS != nil
+	var idle int
+	var expires time.Time
+	if timed {
+		var prob *api.Problem
+		if idle, expires, prob = h.timeouts(acct, sb, body); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
+	if body.VolumeGB != nil {
+		if sb, err = h.growVolume(r.Context(), acct, sb, *body.VolumeGB); err != nil {
+			api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
+			return
+		}
+		if !timed {
+			httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
+			return
+		}
 	}
 	if sb, err = h.Store.UpdateSandboxTimeouts(r.Context(), acct.ID, sb.ID, idle, expires); err != nil {
 		api.WriteProblem(w, h.problem(acct, "sandbox.update", err))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
+}
+
+// growVolume sets a paused persistent session's volume size: never
+// smaller, within the plan. The session then resumes cold (resumed_cold):
+// its files are kept, its processes start again.
+func (h *Handler) growVolume(ctx context.Context, acct state.Account, sb agentstore.Sandbox, gb int) (agentstore.Sandbox, error) {
+	idx := acct.Plan.PlanIndex()
+	switch {
+	case sb.Kind != api.SandboxKindPersistent:
+		return sb, api.ErrValidation("volume_gb sizes persistent sessions only")
+	case gb < sb.VolumeGB:
+		return sb, api.ErrValidation(fmt.Sprintf("volume_gb never shrinks: the volume is %d GB; got %d", sb.VolumeGB, gb))
+	case gb > api.SandboxVolumeMaxGB[idx]:
+		return sb, api.ErrAgentLimit(acct.Plan, "SandboxVolumeMaxGB", api.SandboxVolumeMaxGB[idx], gb)
+	case gb == sb.VolumeGB:
+		return sb, nil
+	}
+	grown, err := h.Store.GrowPausedSandboxVolume(ctx, acct.ID, sb.ID, gb)
+	if err != nil {
+		return sb, err
+	}
+	if !grown {
+		return sb, api.NewProblem(http.StatusConflict, api.CodeSandboxNotPausable, "Pause the session first",
+			"a volume grows only while its session is paused; pause it, set volume_gb, then resume it")
+	}
+	h.audit(ctx, "sandbox.volume_grown", sb)
+	return h.Store.Sandbox(ctx, acct.ID, sb.ID)
 }
 
 // Close handles DELETE /v1/sandboxes/{id}. A queued session closes at once;
@@ -230,6 +308,42 @@ func (h *Handler) Close(w http.ResponseWriter, r *http.Request, acct state.Accou
 	}
 	h.audit(r.Context(), "sandbox.closed", sb)
 	httpkit.WriteJSON(w, http.StatusOK, h.view(acct, sb, false))
+}
+
+// Pause handles POST /v1/sandboxes/{id}/pause: agentd captures the
+// persistent session's memory and stops its VM (ADR-20261122132055 §1). It
+// answers 202 with the session, whose state moves to pausing, then paused.
+func (h *Handler) Pause(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	h.pauseOrResume(w, r, acct, true)
+}
+
+// Resume handles POST /v1/sandboxes/{id}/resume: agentd restores the
+// paused session's capture with a new identity, or cold-boots it when the
+// capture cannot be restored. Until workspace volumes (ADR-20261122132055
+// step 5), a cold resume starts from a fresh workspace (resumed_cold).
+func (h *Handler) Resume(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	h.pauseOrResume(w, r, acct, false)
+}
+
+func (h *Handler) pauseOrResume(w http.ResponseWriter, r *http.Request, acct state.Account, pause bool) {
+	if !h.configured(w) {
+		return
+	}
+	if !h.Persistent {
+		api.WriteProblem(w, api.ErrSandboxUnsupported("pause", "persistent sessions are not available on this platform yet"))
+		return
+	}
+	call, action, op := h.Store.ResumeSandbox, "sandbox.resume_requested", "sandbox.resume"
+	if pause {
+		call, action, op = h.Store.PauseSandbox, "sandbox.pause_requested", "sandbox.pause"
+	}
+	sb, err := call(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		api.WriteProblem(w, h.problem(acct, op, err))
+		return
+	}
+	h.audit(r.Context(), action, sb)
+	httpkit.WriteJSON(w, http.StatusAccepted, h.view(acct, sb, false))
 }
 
 func (h *Handler) configured(w http.ResponseWriter) bool {
@@ -269,7 +383,8 @@ func (h *Handler) filter(r *http.Request, acct state.Account) (agentstore.Sandbo
 }
 
 var sandboxStates = map[string]bool{agentstore.SandboxQueued: true, agentstore.SandboxStarting: true, agentstore.SandboxReady: true,
-	agentstore.SandboxFrozen: true, agentstore.SandboxClosed: true, agentstore.SandboxExpired: true, agentstore.SandboxFailed: true}
+	agentstore.SandboxFrozen: true, agentstore.SandboxPausing: true, agentstore.SandboxPaused: true, agentstore.SandboxResuming: true,
+	agentstore.SandboxClosed: true, agentstore.SandboxExpired: true, agentstore.SandboxFailed: true}
 
 // view is a session as the API shows it. withToken mints a token for a
 // live session; it ends with the session at the latest. A placed session's
@@ -278,7 +393,9 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode, Allow: sb.EgressAllow, Deny: sb.EgressDeny}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser}
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser,
+		VCPU: sb.VCPU, VolumeGB: sb.VolumeGB, PauseRequestedAt: sb.PauseRequestedAt, ResumeRequestedAt: sb.ResumeRequestedAt,
+		PausedAt: sb.PausedAt, Durability: sb.Durability, ResumedCold: sb.ResumedCold, ForkedFrom: sb.ForkedFrom}
 	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {
 		out.Template = name
 	} else {
@@ -316,7 +433,10 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 // problem maps a store error to the customer's problem.
 func (h *Handler) problem(acct state.Account, operation string, err error) *api.Problem {
 	var limit *agentstore.LimitError
+	var problem *api.Problem
 	switch {
+	case errors.As(err, &problem):
+		return problem
 	case errors.As(err, &limit):
 		return api.ErrAgentLimit(acct.Plan, limit.Limit, limit.Max, limit.Observed)
 	case errors.Is(err, agentstore.ErrNotFound):
@@ -330,6 +450,9 @@ func (h *Handler) problem(acct state.Account, operation string, err error) *api.
 			"the account has no such snapshot ready to start from; it may have expired or been deleted")
 	case errors.Is(err, agentstore.ErrTenantInactive):
 		return api.NewProblem(http.StatusConflict, api.CodeAgentTenantInactive, "Tenant not active", "the tenant is suspended")
+	case errors.Is(err, agentstore.ErrSandboxNotPausable):
+		return api.NewProblem(http.StatusConflict, api.CodeSandboxNotPausable, "Sandbox cannot be paused or resumed",
+			"only a running persistent session pauses, and only a paused one resumes")
 	}
 	return httpkit.CustomerInternalProblem(h.Log, operation, "the sandbox request could not be completed", "retry the request", err)
 }

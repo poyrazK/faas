@@ -19,7 +19,7 @@ var cliTreeVerbs = []string{
 	"replay", "recover", "scale", "park", "wake", "wake-ahead", "restart", "rename", "restore",
 	"exec", "cp", "port-forward", "run", "publish", "send", "deliver", "receive", "peek", "ack",
 	"apply", "check", "verify", "setup", "sync", "connect", "disconnect", "link", "advance",
-	"simulate", "hide", "prune", "reorder", "serve", "call", "complete", "read", "render",
+	"simulate", "hide", "prune", "reorder", "serve", "call", "complete", "read", "render", "respond",
 	"resolve", "audit", "accept", "deploy", "suppress",
 	// Plain verbs today's commands already use with one meaning.
 	"abandon", "activate", "deactivate", "adopt", "allow", "assign", "attach", "detach",
@@ -34,11 +34,17 @@ var cliTreeVerbs = []string{
 	"open", "fail", "move",
 	// `bucket sign` mints a signed URL (ADR-20261106114500).
 	"sign",
+	// `postgres query` runs one SQL query (alias `postgres sql`).
+	"query",
 	// branch: a lazy copy of a project environment (ADR-20261031193635 and the
 	// ADR-20261026145832 glossary); a --branch flag still names a Git branch.
 	"branch",
 	// undo: reverse what an agent changed (ADR-20261112080601).
 	"undo",
+	// deny: refuse a hosted agent run's call (ADR-20261027090016 amendment 2).
+	"deny",
+	// `mcp client group submit` sends the planned calls in a recoverable Task group.
+	"submit",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -49,7 +55,7 @@ var cliTreeReadNouns = []string{
 	"capabilities", "captures", "catalog", "channels", "codeowners", "completeness", "connections",
 	"controls", "costs", "coverage", "credits", "daily", "declarations", "deliveries",
 	"dependencies", "deployments", "diagnostics", "events", "evidence", "feedback", "forecast",
-	"guardrails", "impact", "incidents", "insights", "keys", "links", "me", "metrics",
+	"guardrails", "impact", "inbox", "incidents", "insights", "keys", "links", "me", "metrics",
 	"occurrences", "outcomes", "overview", "parts", "pending", "policies", "prices", "priority",
 	"profiles", "progress", "provenance", "readiness", "receipt", "records", "releases", "report",
 	"results", "retention", "routes", "runs", "running", "sbom", "stats", "steps", "storage",
@@ -69,6 +75,7 @@ var cliTreeCompoundWords = []string{
 	"grace-window", "payment-method", "server-key", "egress-overage",
 	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "request-policy", "legal-hold",
 	"event-hold", "impact-alert", "lifecycle-alert", "ownership-rule", "compound-alert", "source-map",
+	"suspend-timeout", "app-wake",
 }
 
 // cliTreeValueWord matches a word that is a value, not a verb: today's
@@ -102,7 +109,8 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 	enableEveryCLIFeature(t)
 	nouns := map[string]bool{}
 	for _, noun := range *main.CliTreeNouns {
-		if strings.HasSuffix(noun.Name, "s") && noun.Name != "postgres" {
+		// postgres and redis are product names, not plurals.
+		if strings.HasSuffix(noun.Name, "s") && noun.Name != "postgres" && noun.Name != "redis" {
 			t.Errorf("noun %q must be singular", noun.Name)
 		}
 		nouns[noun.Name] = true
@@ -183,6 +191,9 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"app list", "apps"},
 		{"app delete api --yes", "apps rm api --yes"},
 		{"app get api", "app api"},
+		// Prod hunt r26: `app show APP` reads like other nouns' show.
+		{"app show api --json", "app api --json"},
+		{"app show", "app show"},
 		{"app update api --ram 512", "app api --ram 512"},
 		{"app scale api --ram 512", "app api scale --ram 512"},
 		{"app api scale --ram 512", "app api scale --ram 512"},
@@ -299,7 +310,7 @@ func TestCliTreeHelpForTodaysCommands(t *testing.T) {
 		{[]string{"env", "--help"}, []string{"set", "unset", "pull", "rollback"}, []string{"create", "clone-status"}},
 		{[]string{"help", "env"}, []string{"set", "push"}, nil},
 		{[]string{"mcp", "--help"}, []string{"serve", "connection", "server", "client"}, []string{"call", "task-get"}},
-		{[]string{"mcp", "client"}, []string{"tools", "call", "status"}, []string{"task-get"}},
+		{[]string{"mcp", "client"}, []string{"tools", "call", "status", "inbox"}, []string{"task-get"}},
 		{[]string{"release", "attempt", "--help"}, []string{"get", "cancel", "retry"}, nil},
 		{[]string{"app", "--help"}, []string{"list", "get", "update", "scale", "health", "listener"}, []string{"tcp", "udp"}},
 		{[]string{"bucket", "--help"}, []string{"multipart", "version", "inventory"}, []string{"uploads", "versions", "reconcile"}},

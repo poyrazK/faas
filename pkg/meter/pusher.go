@@ -43,6 +43,9 @@ type Pusher struct {
 	// source is what billed hours are quantified from (ADR-20261107105126);
 	// empty bills usage_minutes and compares nothing.
 	source UsageSource
+	// unbillableAt is when meterd_billing_paid_subjects_without_identity was
+	// last refreshed; PushPending refreshes it at most hourly.
+	unbillableAt time.Time
 }
 
 // NewPusher wires the pusher. now defaults to time.Now if nil so callers
@@ -247,6 +250,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		lookback = 30 * 24 * time.Hour
 	}
 	now := p.now()
+	p.reportPaidWithoutIdentity(ctx, now)
 	start, end := billing.CompletedUsageWindow(now, lookback)
 	// ADR-1162: deliver an hour only once every minute up to its end is final;
 	// a late catch-up row can never land in an hour already delivered.
@@ -304,7 +308,20 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			held.add(state.BillingMeterCompute, UsageHeldUnknownSubject, window.Hour)
 			continue
 		}
-		if acct.Plan == "free" {
+		if acct.Plan == api.PlanFree {
+			// The hour's own plan decides, not the current one: a paid hour
+			// not yet delivered when the subscription ended is not Free usage
+			// (ADR-20261121231500).
+			paid, err := p.paidHourOfFreeSubject(ctx, grants, acct, window.Hour)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			if paid {
+				held.add(state.BillingMeterCompute, UsageHeldSubscriptionEnded, window.Hour)
+			}
 			continue
 		}
 		if _, comp := comps[acct.ID]; comp {
@@ -463,6 +480,16 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			continue
 		}
 		if acct.Plan == api.PlanFree {
+			paid, err := p.paidHourOfFreeSubject(ctx, grants, acct, window.Hour)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			if paid {
+				held.add(meter, UsageHeldSubscriptionEnded, window.Hour)
+			}
 			continue
 		}
 		if !usageDeliverable(acct, window.Hour) {
@@ -674,6 +701,32 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			"hour", window.Hour, "code", code, "raw_quantity", window.Quantity, "billable_quantity", billable)
 	}
 	return pushed, firstErr
+}
+
+// paidHourOfFreeSubject reports whether hour was used on a paid plan by a
+// subject that is on Free now: its subscription ended before the hour was
+// delivered (ADR-20261121231500).
+//
+// The plan history must already show the return to Free after the hour: until
+// meterd has recorded that activation the hour is skipped as before, without
+// a receipt, and reconsidered on the next pass.
+func (p *Pusher) paidHourOfFreeSubject(ctx context.Context, grants *monthGrants, acct state.Account, hour time.Time) (bool, error) {
+	plan, err := grants.planAt(ctx, acct, hour)
+	if err != nil || plan == api.PlanFree {
+		return false, err
+	}
+	for _, at := range []time.Time{hour, p.now()} {
+		snapshots, err := grants.snapshots(ctx, acct, at)
+		if err != nil {
+			return false, err
+		}
+		for _, s := range snapshots {
+			if s.Price.Meter == string(state.BillingMeterCompute) && s.Plan == api.PlanFree && s.EffectiveFrom.After(hour) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func validateMeterUsagePolicy(policy billing.MeterUsagePolicy) error {

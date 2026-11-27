@@ -225,14 +225,16 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, ope
 		return cloneSourceRefusal("source.workloads", "a live deployment for every workload", "not_deployed")
 	case errors.Is(err, state.ErrReleaseConfigurationTransferUnsupported):
 		return cloneSourceRefusal("source.release_configuration", "deployments without a release configuration snapshot", "release_pinned")
-	case errors.Is(err, state.ErrProjectSecretCloneTransferUnsupported):
-		return cloneSourceRefusal("source.project_secrets", "no shared environment secrets", "shared_secrets")
 	case errors.Is(err, state.ErrProjectEnvironmentQueueCollectionUnavailable):
 		return cloneSourceRefusal("source.queue_bindings", "environment-owned queue bindings", "legacy_stage_bindings")
 	case errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable):
 		return cloneSourceRefusal("source.work_policies", "work policies scoped to the source environment", "isolation_unavailable")
 	case errors.Is(err, state.ErrProjectEnvironmentCloneCronCaptureUnavailable):
 		return cloneSourceRefusal("source.crons", "crons only on workloads deployed in the source environment", "workload_not_deployed")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneEventSubscriptionCaptureUnavailable):
+		return cloneSourceRefusal("source.event_subscriptions", "event subscriptions only on workloads deployed in the source environment", "workload_not_deployed")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable):
+		return cloneSourceRefusal("source.bucket_notifications", "bucket notification destinations among the copied workloads and their queues", "object_notification_destination_unavailable")
 	case errors.Is(err, state.ErrNotFound):
 		return projectEnvironmentNotFound(projectSlug, source)
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):

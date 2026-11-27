@@ -1,6 +1,6 @@
 # ADR 20261029234500 · Standalone app default RAM is capped at 1024 MB
 
-- **Status:** proposed
+- **Status:** accepted; amended by ADR-20261122180000 (cap lowered to 512 MB)
 - **Date:** 2026-10-29
 - **Amends:** Hunt 14 H14-36 (a standalone app created without a size gets
   the plan's RAM)

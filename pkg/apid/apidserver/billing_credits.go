@@ -87,13 +87,20 @@ func (s *server) consumeAndRefundInvoiceCredits(ctx context.Context, inv state.I
 	if result == nil || result.ProviderRefundID == "" {
 		return consumed, inv, fmt.Errorf("refund invoice credits: provider returned no refund id")
 	}
+	refundedCents := result.AmountCents
+	if refundedCents <= 0 {
+		refundedCents = consumed.ConsumedCents
+	}
 	if err := s.store.RecordInvoiceRefund(ctx, state.InvoiceRefund{
 		InvoiceID:        inv.ID,
 		ProviderRefundID: result.ProviderRefundID,
 		IdempotencyKey:   idempotencyKey,
-		AmountCents:      consumed.ConsumedCents,
-		Source:           "credit",
-		Status:           result.Status,
+		// The provider's tax-inclusive figure, not the requested one: the
+		// refund webhook records that figure for the same refund ID, and
+		// a mismatch is a conflict. They differ by at most a rounding cent.
+		AmountCents: refundedCents,
+		Source:      "credit",
+		Status:      result.Status,
 	}); err != nil {
 		return consumed, inv, fmt.Errorf("record invoice credit refund: %w", err)
 	}

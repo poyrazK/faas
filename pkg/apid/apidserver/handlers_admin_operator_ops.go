@@ -455,6 +455,7 @@ func projectObsInvocations(rows []state.Invocation, appSlugs map[string]string, 
 			LastError:   truncateObsText(row.LastError, 512),
 			CreatedAt:   row.CreatedAt,
 			CompletedAt: row.CompletedAt,
+			InstanceID:  row.InstanceID,
 		}
 		if row.Outcome != nil {
 			item.Outcome = string(*row.Outcome)

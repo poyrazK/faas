@@ -142,6 +142,7 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	if metrics != nil {
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
+		usageOptions.ObserveIdleTail = metrics.ObserveIdleTail
 	}
 	overage, released := hooks.overage(), hooks.released()
 	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, hooks, registerers...)
@@ -165,6 +166,9 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	production := managedpostgres.ProductionEnvironmentActive(getenv)
 	if production {
 		logManagedPostgresProductionReadiness(registry, getenv, metrics, log)
+		// A live policy (managed_postgres_policy) can change the approval
+		// or the switches readiness reads: report again on each one.
+		registry.OnPolicyChange(func() { logManagedPostgresProductionReadiness(registry, getenv, metrics, log) })
 	}
 	provisioningGate := func() bool {
 		enabled := baseProvisioningGate()
@@ -203,8 +207,8 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 				return 0, managedpostgres.ErrQuotaExceeded
 			}
 			limit := limits.DatabasesMax
-			if registry.MaxDatabasesPerAccount < limit {
-				limit = registry.MaxDatabasesPerAccount
+			if registry.MaxDatabasesPerAccount() < limit {
+				limit = registry.MaxDatabasesPerAccount()
 			}
 			return limit, nil
 		},
@@ -223,6 +227,17 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 				return false, err
 			}
 			return api.Plan(account.Plan) == api.PlanFree, nil
+		},
+		AutoGrowAllowance: func(ctx context.Context, subject string) (int64, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
+			if err != nil {
+				return 0, err
+			}
+			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			if !ok || !account.Active() {
+				return 0, managedpostgres.ErrNotInPlan
+			}
+			return limits.StorageLimitBytes, nil
 		},
 		AdmitResize: func(ctx context.Context, accountID string, target managedpostgres.Spec) error {
 			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
@@ -279,6 +294,9 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	// Opt-in start with a waking app (ADR-20261125105038); runs from
+	// runManagedPostgresWakeStarter.
+	service.NewWakeStarter(log, metrics.ObserveWakeStart)
 	fleet = service
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
 		IncludeProvisioning: operationsGate,
@@ -416,12 +434,19 @@ func hostCredentialIdentities() []*age.X25519Identity {
 // warning (bug hunt H88). The notice goes through the internal mail
 // producer outbox behind its own opt-in.
 func managedPostgresCapNoticeReady(getenv func(string) string) error {
-	if internalmail.ManagedPostgresCapOutboxEnabled(getenv) {
+	if internalmail.ManagedPostgresCapOutboxEnabled(getenv) || managedPostgresCapNoticeWaived(getenv) {
 		return nil
 	}
 	return fmt.Errorf("%s=on suspends databases at their ceiling, and customers are warned only by the cap notice email: "+
-		"set %s=1 with the internal mail producer outbox enabled, or keep enforcement at shadow",
-		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
+		"set %s=1 with the internal mail producer outbox enabled, set %s=1 to enforce without the email, or keep enforcement at shadow",
+		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv, managedpostgres.CapNoticeWaiverEnv)
+}
+
+// managedPostgresCapNoticeWaived reports that the owner waived the cap notice
+// email (ADR-20261025094915 amendment 2026-11-22): enforcement runs although
+// no email can be sent. Only an exact 1 counts. A working notice path wins.
+func managedPostgresCapNoticeWaived(getenv func(string) string) bool {
+	return getenv(managedpostgres.CapNoticeWaiverEnv) == "1" && !internalmail.ManagedPostgresCapOutboxEnabled(getenv)
 }
 
 // managedPostgresPlanExcessDeleteReady refuses deleting databases past their
@@ -462,6 +487,10 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err := managedPostgresPlanExcessDeleteReady(planExcessDeleteMode, getenv); err != nil {
 		return nil, err
 	}
+	historyMode, err := managedpostgres.ParseHistoryLimitMode(getenv(managedpostgres.HistoryLimitEnv))
+	if err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
 		Mode:                 mode,
 		StorageMode:          storageMode,
@@ -475,10 +504,15 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		// The egress overage election moves the databases' hold only while
 		// their egress past the allowance is billed live (slice 3).
 		EgressBillingLive: managedPostgresChargesLive(hooks.charges()),
+		HistoryMode:       historyMode,
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		if err := managedPostgresCapNoticeReady(getenv); err != nil {
 			return nil, err
+		}
+		if managedPostgresCapNoticeWaived(getenv) {
+			log.Warn("managed postgres compute caps are enforced without the cap notice email: a database reaching its ceiling is held without warning",
+				"waiver", managedpostgres.CapNoticeWaiverEnv)
 		}
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
 		if err != nil {
@@ -632,7 +666,8 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 	if !ok {
 		return
 	}
-	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, Allowance: limits, PlanSpans: spans, Egress: egress, CapRoom: capRoom, Logger: log}
+	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, HistoryFrom: policy.HistoryFrom,
+		Allowance: limits, PlanSpans: spans, Egress: egress, CapRoom: capRoom, Logger: log}
 	if policy.Live {
 		options.Publish = func(ctx context.Context, step managedpostgres.OverageChargeStep) error {
 			return sink.PublishManagedPostgresCharge(ctx, billing.ManagedPostgresChargeStep(step))
@@ -703,6 +738,7 @@ func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
 	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 	planExcess, _ := managedpostgres.ParsePlanExcessEnforcementMode(getenv(managedpostgres.PlanExcessEnforcementEnv))
 	s.managedPostgresPlanExcessOn = s.managedPostgresCapMode == managedpostgres.CapEnforcementOn && planExcess == managedpostgres.CapEnforcementOn
+	s.managedPostgresHistoryMode, _ = managedpostgres.ParseHistoryLimitMode(getenv(managedpostgres.HistoryLimitEnv))
 }
 
 // managedPostgresPlanExcess maps the databases the caller's plan no longer
@@ -810,6 +846,17 @@ func (s *server) runManagedPostgresUsageCollector(ctx context.Context) {
 	}
 	if err := s.managedPostgresUsageCollector.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		s.log.Error("managed postgres usage collector exited", "error", err)
+	}
+}
+
+// runManagedPostgresSuspendTimeouts moves scale-to-zero databases onto their
+// suspend timeout on its own loop, whether or not usage metering runs.
+func (s *server) runManagedPostgresSuspendTimeouts(ctx context.Context) {
+	if s.managedPostgres == nil {
+		return
+	}
+	if err := s.managedPostgres.RunSuspendTimeoutSweeper(ctx, s.log); err != nil && !errors.Is(err, context.Canceled) {
+		s.log.Error("managed postgres suspend timeout sweeper exited", "error", err)
 	}
 }
 

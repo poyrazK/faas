@@ -226,6 +226,9 @@ func TestExecutionWorkflowSummariesRespectKeyFamilyBoundaries(t *testing.T) {
 
 func enableExecutionAPIForTest(t *testing.T, e *testEnv) *age.X25519Identity {
 	t.Helper()
+	previousHMAC := hostHMACKey
+	hostHMACKey = func() []byte { return []byte("execution-admission-test-host-key") }
+	t.Cleanup(func() { hostHMACKey = previousHMAC })
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)

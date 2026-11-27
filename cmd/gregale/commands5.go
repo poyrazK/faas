@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -292,16 +293,16 @@ func cmdStatus(args []string) int {
 func cmdEnv(args []string) int {
 	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() ||
 		args[0] == "resume-automation" && !fullEnvironmentCloneCLI() && !environmentBranchCLI() {
-		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
+		usage := "usage: gregale env <set|unset|list|create|pull|push|diff|history|rollback>"
 		switch {
 		case fullEnvironmentCloneCLI():
-			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <set|unset|list|create|clone-status|resume-automation|pull|push|diff|history|rollback>"
 		case environmentBranchCLI():
 			// Branches copy their parent's automation paused too
 			// (ADR-20261031193635 amendment 2026-11-17).
-			usage = "usage: gregale env <create|resume-automation|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <set|unset|list|create|resume-automation|pull|push|diff|history|rollback>"
 		}
-		PrintUsage(os.Stderr, usage, "env")
+		PrintUsage(osStderr, usage, "env")
 		return 1
 	}
 	switch args[0] {
@@ -461,9 +462,14 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			startLine := lineNo
+			line, err := joinDotenvQuotedLines(scanner, line, &lineNo)
 			if err != nil {
-				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
+				return printErr("Bad stdin line", err)
+			}
+			p, err := parseDotenvLine(line)
+			if err != nil {
+				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", startLine, err))
 			}
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
@@ -487,9 +493,14 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			startLine := lineNo
+			line, err := joinDotenvQuotedLines(scanner, line, &lineNo)
 			if err != nil {
-				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
+				return printErr("Bad .env line", err)
+			}
+			p, err := parseDotenvLine(line)
+			if err != nil {
+				return printErr("Bad .env line", fmt.Errorf("line %d: %w", startLine, err))
 			}
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
@@ -526,10 +537,7 @@ func envPush(args []string) int {
 	// input path or "<stdin>" so the warning says `File: <stdin>` for
 	// pipe input (matches how envPush surfaces other parse errors).
 	if secretScanMode.isScanEnabled() {
-		origin := *in
-		if *fromStdin {
-			origin = "<stdin>"
-		}
+		origin := envPushOrigin(*in, *fromStdin)
 		scanPairs := make([]secretscan.Pair, len(pairs))
 		for i, p := range pairs {
 			scanPairs[i] = secretscan.Pair{Key: p.k, Value: p.v}
@@ -561,6 +569,7 @@ func envPush(args []string) int {
 		}
 		if len(findings) > 0 {
 			renderEnvPushScanWarnings(findings, osStderr)
+			PrintWarn(osStderr, "%s", envPushSecretHint(*app, origin))
 			// Build a drop set keyed by (key, value) so a duplicate
 			// KEY with a different VALUE pair is treated distinctly —
 			// the pair table is small (handful of entries per .env
@@ -581,9 +590,25 @@ func envPush(args []string) int {
 		}
 	}
 	if len(pairs) == 0 {
-		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. Use --secret-scan=off to override")
+		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. %s", envPushSecretHint(*app, envPushOrigin(*in, *fromStdin)))
 		return 1
 	}
+	// prod 2026-11-20: an `EMPTY=` line was refused by the API after the
+	// keys before it were saved, so the push half-applied and --restart
+	// never ran. Empty values are skipped up front instead.
+	nonEmpty := make([]pair, 0, len(pairs))
+	for _, p := range pairs {
+		if p.v == "" {
+			PrintWarn(osStderr, "%s has no value and was not pushed; to remove it, run `gregale env unset %s %s`", p.k, *app, p.k)
+			continue
+		}
+		nonEmpty = append(nonEmpty, p)
+	}
+	if len(nonEmpty) == 0 {
+		PrintFail(os.Stderr, "every KEY=VALUE pair has an empty value; nothing was pushed")
+		return 1
+	}
+	pairs = nonEmpty
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -641,6 +666,35 @@ func envPush(args []string) int {
 	return 0
 }
 
+// envPushOrigin names the push input the way scan findings and hints show it.
+func envPushOrigin(path string, fromStdin bool) string {
+	if fromStdin {
+		return "<stdin>"
+	}
+	return path
+}
+
+// envPushSecretHint tells the caller where detected secrets belong. env push
+// drops them; `gregale env set` seals a value deliberately and does not scan
+// it, which is the path the strict-mode rejection already names. Pointing
+// only at --secret-scan=off taught coding agents to turn the scan off for
+// real credentials (agent eval rc.357, Django task).
+func envPushSecretHint(app, origin string) string {
+	appFlag := ""
+	if app != "" {
+		appFlag = " --app " + app
+	}
+	input := " KEY=VALUE"
+	switch {
+	case origin == "<stdin>":
+		input = " --from-stdin"
+	case origin != "":
+		input = " --file " + origin
+	}
+	return "Set detected secrets deliberately with `gregale env set" + appFlag + input +
+		"`; use --secret-scan=off only for test keys the scan misreads"
+}
+
 // renderEnvPushScanWarnings is the envPush-side twin of
 // renderSecretScanWarnings in commands2.go. Same two-line shape per
 // finding, but the summary line ends with "pushed." rather than
@@ -684,34 +738,16 @@ func renderEnvPushScanWarnings(findings []secretscan.Finding, w io.Writer) {
 // symlink points at gets streamed verbatim into the multipart source
 // part and ends up in the build artefact the builder microVM ingests.
 //
-// Two checks:
-//  1. Lstat the FINAL component. If it's a symlink, the kernel would
-//     follow it on Open — refuse before opening.
-//  2. After Open, Lstat again on the resolved path. If a symlink was
-//     swapped in between (TOCTOU race), the second Lstat catches it.
-//     Also confirms the file is a regular file, not a device or FIFO.
-//
-// Note 1: we intentionally don't EvalSymlinks the whole path and
-// compare strings. On macOS, /var is itself a symlink to /private/var
-// (a system-level layout quirk), so EvalSymlinks("/var/folders/...")
-// returns "/private/var/folders/..." even for plain files. Comparing
-// strings there would reject every legitimate customer file on macOS
-// dev boxes. Lstat-on-the-final-component catches the actual attack
-// (a symlink AT the path the customer named) without false-positives.
-// The same reasoning applies to the tarball call site — a customer
-// may legitimately point `--tarball` at /var/folders/.../foo.tar.gz.
-//
-// Note 2: both call sites — cmdEnvPush (env push) and
-// Client.DeployTarball (deploy --tarball) — now share this helper.
-// If you add a third caller that ships customer bytes over the wire,
-// route it through here too; duplicating the Lstat discipline is
-// what causes TOCTOU drift.
+// Validate the final component before opening so a non-regular path cannot
+// block the CLI. Open with no-follow and nonblocking flags to protect the
+// same boundary if a path is replaced before open. Match the opened file
+// and the path to the file that passed the pre-open check. Parent directory
+// symlinks are supported, including macOS's /var alias.
 func openCustomerFile(path string) (*os.File, error) {
 	absIn, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not absolutize %q: %w", path, err)
 	}
-	// Pre-open: refuse if the final component is a symlink.
 	preInfo, err := os.Lstat(absIn)
 	if err != nil {
 		return nil, err
@@ -719,32 +755,26 @@ func openCustomerFile(path string) (*os.File, error) {
 	if preInfo.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("refusing to follow symlink at %q", path)
 	}
-	// The Lstat guards above (pre-open + post-open) ARE the security
-	// boundary that the .golangci.yml forbidigo rule exists to enforce.
-	// This call site is the documented escape hatch: any other os.Open
-	// in this repo is a tripwire and must route through a vetted
-	// helper. The pre-open + post-open Lstat discipline below is the
-	// security boundary; the bare Open on the next line is necessary.
-	//nolint:forbidigo // openCustomerFile IS the security boundary — pre-open + post-open Lstat discipline above is what makes os.Open safe here.
-	f, err := os.Open(absIn)
+	if !preInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("refusing non-regular file %q (mode %s)", path, preInfo.Mode())
+	}
+	f, err := os.OpenFile(absIn, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
-	// Post-open: confirm the path is still a regular file. Catches
-	// TOCTOU swaps (someone `ln -sf`'ing the path between our preInfo
-	// check and the Open) and refuses devices / FIFOs / directories.
+	opened, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
 	postInfo, err := os.Lstat(absIn)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	if postInfo.Mode()&os.ModeSymlink != 0 {
+	if !opened.Mode().IsRegular() || !os.SameFile(preInfo, opened) || !os.SameFile(opened, postInfo) {
 		_ = f.Close()
-		return nil, fmt.Errorf("refusing to follow symlink at %q (raced after open)", path)
-	}
-	if !postInfo.Mode().IsRegular() {
-		_ = f.Close()
-		return nil, fmt.Errorf("refusing non-regular file %q (mode %s)", path, postInfo.Mode())
+		return nil, fmt.Errorf("refusing changed or non-regular file %q", path)
 	}
 	return f, nil
 }
@@ -756,6 +786,11 @@ const appScaleUsage = "usage: gregale app scale <slug> [--interactive | --plan [
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
 func cmdAppScale(slug string, args []string) int {
+	for _, arg := range args {
+		if isAppScaleSplitArg(arg) {
+			return cmdAppScaleSuggest(slug, args)
+		}
+	}
 	if hasHelpFlag(args) {
 		command, _ := lookupCliCommand("app")
 		printManifestHelp(osStdout, command, append([]string{slug, "scale"}, args...))
@@ -787,7 +822,7 @@ func cmdAppScale(slug string, args []string) int {
 	// out of help, completions, man pages and the generated reference until
 	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
 	// answers an unlisted account as for an unknown field.
-	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = the platform default)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
@@ -1099,7 +1134,39 @@ func cmdAppRename(slug, newSlug string) int {
 	// "old" from "new". The leading glyph goes through PrintOK so the
 	// §3.2 NO_COLOR rule still applies to the status-indicator half.
 	PrintOK(osStdout, "Renamed %s → %s", slug, updated.Slug)
+	// The old hostname answers 404 at once (prod hunt r58); help said so,
+	// the result did not, so clients kept the dead URL.
+	if newURL := canonicalAppURL(updated); strings.Contains(newURL, "://"+updated.Slug+".") {
+		oldURL := strings.Replace(newURL, "://"+updated.Slug+".", "://"+slug+".", 1)
+		_, _ = fmt.Fprintf(osStdout, "Now serving at %s; %s no longer routes.\n", newURL, oldURL)
+	}
+	if path, ok := followRenameInSavedContext(".", slug, updated.Slug); ok {
+		PrintOK(osStdout, "Updated %s to the new name", path)
+	}
 	return 0
+}
+
+// followRenameInSavedContext points the saved context that covers dir at the
+// renamed app. A context still naming the old slug made the next plain
+// `gregale deploy` create a new app under the old name, without the renamed
+// app's database, bucket or crons (prod 2026-11-19). A committed gregale.yaml
+// is the customer's file and is left alone.
+func followRenameInSavedContext(dir, oldSlug, newSlug string) (string, bool) {
+	link, path, err := findProjectContext(dir)
+	if err != nil || link.App != oldSlug || newSlug == "" {
+		return "", false
+	}
+	link.App = newSlug
+	root := filepath.Dir(filepath.Dir(path))
+	if projectContextPath(root) != path {
+		return "", false
+	}
+	saved, err := saveProjectContext(root, link)
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "warning: renamed %s but could not update %s: %v; run `gregale link --app %s` there\n", oldSlug, path, err, newSlug)
+		return "", false
+	}
+	return saved, true
 }
 
 // cmdAppRestart requests a fresh snapshot restart for an app. The server
@@ -1109,6 +1176,27 @@ func cmdAppRename(slug, newSlug string) int {
 // subcommand form (scale / rename / exec / security / routes / tcp) or the legacy
 // flag-form (`gregale app <slug> --ram N`, `gregale app <slug>`).
 // Pulled out of main.go so the switch stays small.
+// linkedAppBeforeSettingsFlags puts the linked app in front of a settings
+// change that names none: `gregale app --min 1` in a linked checkout took
+// --min as the slug and refused "1" as a stray argument (prod hunt r40).
+func linkedAppBeforeSettingsFlags(args []string) []string {
+	if len(args) == 0 || !strings.HasPrefix(args[0], "-") || hasHelpFlag(args) {
+		return args
+	}
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--app" || strings.HasPrefix(arg, "--app=") || arg == "-app" || strings.HasPrefix(arg, "-app=") {
+			return args
+		}
+	}
+	if linked := linkedAppForMissingSlug(); linked != "" {
+		return append([]string{linked}, args...)
+	}
+	return args
+}
+
 func cmdAppDispatch(args []string) int {
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
@@ -1120,6 +1208,7 @@ func cmdAppDispatch(args []string) int {
 	if isAppProjectCommand(args) {
 		return cmdAppProject(args)
 	}
+	args = linkedAppBeforeSettingsFlags(args)
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
 		return code
@@ -1346,18 +1435,7 @@ func cmdDashboard(args []string) int {
 func cmdQueueDispatch(args []string) int {
 	parent, _ := lookupCliCommand("queue")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
-			"  tail <slug>            long-poll the unified event stream (queue drain signals)\n"+
-			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         wait for the next delivered row (blocks)\n"+
-			"  state <slug>            depth + cap (no lease)\n"+
-			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
-			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
-			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
-			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
-			"  bindings <verb> <slug> manage queue bindings\n",
-			"queue")
+		PrintUsage(os.Stderr, queueDispatchUsage, "queue")
 		return 1
 	}
 	switch args[0] {
@@ -1375,6 +1453,11 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueuePeek(args[1:])
 	case "dead-letter":
 		return cmdQueueDeadLetter(args[1:])
+	case "dlq":
+		// `queue dlq list <slug>` is rewritten to dead-letter before this
+		// switch. list is dlq's only verb, so `queue dlq <slug>` lists too;
+		// it printed the pre-rename usage on prod (hunt 2026-11-21).
+		return cmdQueueDeadLetter(args[1:])
 	case "ack":
 		return cmdQueueAck(args[1:])
 	case "setup":
@@ -1383,22 +1466,24 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueueBindings(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
-			"  tail <slug>            long-poll the unified event stream\n"+
-			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         wait for the next delivered row\n"+
-			"  state <slug>            depth + cap\n"+
-			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
-			"  peek <slug> [--limit N] inspect without draining\n"+
-			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
-			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
-			"  bindings <verb> <slug> manage queue bindings\n",
-			"queue")
+		PrintUsage(os.Stderr, queueDispatchUsage, "queue")
 		maybeSuggestSub(sug)
 		return 1
 	}
 }
+
+// queueDispatchUsage names queue's verbs as `gregale queue --help` does.
+const queueDispatchUsage = "usage: gregale queue <subcommand> <slug> [args]\n\n" +
+	"  watch <slug>           long-poll the unified event stream (queue drain signals)\n" +
+	"  send <slug> --payload J [--queue-name Q] enqueue one row\n" +
+	"  receive <slug>         wait for the next delivered row (blocks)\n" +
+	"  state <slug>           depth + cap (no lease)\n" +
+	"  status <slug>          queue depth, scaling, bindings, and liveness\n" +
+	"  peek <slug> [--limit N] inspect up to N rows without draining\n" +
+	"  dlq list <slug>        rows that exhausted attempts\n" +
+	"  ack <slug> <row-id>    acknowledge a processed message's result\n" +
+	"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n" +
+	"  bindings <verb> <slug> manage queue bindings\n"
 
 func cmdQueueBindings(args []string) int {
 	if len(args) == 0 {
@@ -1524,6 +1609,9 @@ func cmdQueueSend(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1562,6 +1650,10 @@ func cmdQueueSend(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Enqueued row %s on %s.", resp.ID, slug)
+	// A push delivery can finish before `queue receive` starts, and receive
+	// waits for the next one: on prod it reported nothing while this row had
+	// already completed with its result (hunt 2026-11-21).
+	_, _ = fmt.Fprintf(osStdout, "Check its result: %s invocation get %s\n", recoveryCLI(), recoveryArgument(resp.ID))
 	return 0
 }
 
@@ -1602,6 +1694,9 @@ func cmdQueueReceive(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1665,6 +1760,9 @@ func cmdQueueState(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1709,6 +1807,9 @@ func cmdQueuePeek(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1767,6 +1868,9 @@ func cmdQueueDeadLetter(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -1808,6 +1912,9 @@ func cmdQueueDeadLetter(args []string) int {
 	if next != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", next)
 	}
+	if len(resp.Messages) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Replay one: gregale dlq replay %s ID (all: gregale dlq replay %s --all)\n", slug, slug)
+	}
 	return 0
 }
 
@@ -1822,6 +1929,9 @@ func cmdQueueAck(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 2)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 2)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -2251,6 +2361,9 @@ func cmdQueueTail(args []string) int {
 		return 1
 	}
 	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr == nil {
+		pos = withLinkedApp(pos, 1)
+	}
 	if mergeErr != nil {
 		return printErr("Invalid arguments", mergeErr)
 	}
@@ -2359,6 +2472,71 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// dotenvValue reads a .env value the way dotenv and Docker Compose do: a
+// value wrapped in double quotes loses them and has \n, \" and \\ unescaped;
+// one in single quotes loses them and stays literal. prod 2026-11-20:
+// API_URL="https://…" reached the app with the quotes, so every quoted URL
+// or token in a pushed .env was wrong. A ` # comment` after a quoted value,
+// or after an unquoted one, is dropped as those tools drop it:
+// `PORT=3000 # web` reached the app as "3000 # web" and `URL="x" # c` kept
+// its quotes (prod hunt r48). A # with no space before it is part of the
+// value. Other values are unchanged.
+func dotenvValue(v string) string {
+	if len(v) > 0 && (v[0] == '\'' || v[0] == '"') {
+		unquote := func(inner string) string {
+			if v[0] == '"' {
+				return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(inner)
+			}
+			return inner
+		}
+		// The quote that closes the opening one ends the value when only a
+		// comment follows it; checked first so a comment that itself ends in
+		// a quote (`"x" # see "docs"`) is not read as part of the value.
+		if end := dotenvClosingQuote(v); end > 0 {
+			if rest := strings.TrimSpace(v[end+1:]); rest == "" || strings.HasPrefix(rest, "#") {
+				return unquote(v[1:end])
+			}
+		}
+		if len(v) >= 2 && v[len(v)-1] == v[0] {
+			return unquote(v[1 : len(v)-1])
+		}
+		return v
+	}
+	for i := 1; i < len(v); i++ {
+		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
+			return strings.TrimRight(v[:i], " \t")
+		}
+	}
+	return v
+}
+
+// dotenvClosingQuote returns the index of the quote that closes v's opening
+// quote, or -1. Inside double quotes a backslash escapes the next byte.
+func dotenvClosingQuote(v string) int {
+	for i := 1; i < len(v); i++ {
+		switch {
+		case v[0] == '"' && v[i] == '\\':
+			i++
+		case v[i] == v[0]:
+			return i
+		}
+	}
+	return -1
+}
+
+// parseDotenvLine parses one line of a .env file or KEY=VALUE stdin: an
+// optional `export ` prefix, then KEY=VALUE with dotenv quoting. Every file and
+// stdin input reads values this way, so a .env pushes, deploys and runs under
+// `gregale dev` alike; KEY=VALUE arguments are left as the shell passed them.
+func parseDotenvLine(line string) (secretsPair, error) {
+	p, err := parseSecretsPair(stripDotenvExport(line))
+	if err != nil {
+		return p, err
+	}
+	p.Value = dotenvValue(p.Value)
+	return p, nil
 }
 
 // stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can

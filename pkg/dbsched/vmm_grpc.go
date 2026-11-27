@@ -16,7 +16,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
+	"github.com/onebox-faas/faas/pkg/dbguest/diagnosticspb"
+	"github.com/onebox-faas/faas/pkg/dbguest/extensionpb"
+	"github.com/onebox-faas/faas/pkg/dbmigration"
 	"github.com/onebox-faas/faas/pkg/overlay"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -234,13 +238,16 @@ func (g *GRPCVMM) Start(ctx context.Context, node Node, vm VM) error {
 	}
 	req := &vmmdpb.StartDatabaseRequest{
 		DatabaseId: vm.DatabaseID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemSizeMib: int32(vm.MemMiB),
-		RestoreWindowSeconds: vm.RestoreWindowSeconds,
+		RestoreWindowSeconds: vm.RestoreWindowSeconds, QueryInsights: vm.QueryInsights,
 	}
 	// Only the first boot of a restored database recovers; once
 	// bootstrapped it boots from its own volume.
 	if vm.RestoreSource != "" && !vm.Bootstrapped {
 		req.RestoreSource, req.RestoreTarget = vm.RestoreSource, timestamppb.New(vm.RestoreTarget)
-		req.RestoreUntilEnd = vm.RestoreUntilEnd
+		req.RestoreUntilEnd, req.RestoreTimeline = vm.RestoreUntilEnd, vm.RestoreTimeline
+		if vm.RestoreFromRecovery {
+			req.RestoreSource = dbarchive.RecoverySource(vm.RestoreSource)
+		}
 	}
 	req.Promote = vm.PromotePending
 	req.UpgradeFromMajor = int32(vm.UpgradeFrom) //nolint:gosec // majors are 14-18
@@ -279,7 +286,10 @@ func (g *GRPCVMM) Replication(ctx context.Context, node Node, id string, mode db
 		return dbguest.ReplicationStatus{}, fmt.Errorf("guest error %s", resp.GetErrorCode())
 	}
 	r := resp.GetReplication()
-	return dbguest.ReplicationStatus{Mode: dbguest.ReplicationMode(r.GetMode()), Streaming: r.GetStreaming(), Synchronous: r.GetSynchronous(), LagBytes: r.GetLagBytes()}, nil
+	if r == nil {
+		return dbguest.ReplicationStatus{}, nil
+	}
+	return dbguest.ReplicationStatus{Mode: dbguest.ReplicationMode(r.GetMode()), Streaming: r.GetStreaming(), Synchronous: r.GetSynchronous(), LagBytes: r.GetLagBytes(), ReplayLagBytes: r.ReplayLagBytes}, nil
 }
 
 // Stop parks the VM; a VM that is not running counts as stopped.
@@ -297,7 +307,8 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 	if err != nil {
 		return dbguest.Response{}, err
 	}
-	in := &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(req.Op), Sql: req.SQL, Drill: req.Drill}
+	in := &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(req.Op), Sql: req.SQL, Drill: req.Drill, DiagnosticDatabase: req.DiagnosticDatabase, EnableExtension: req.EnableExtension, TableHealthOptions: diagnosticspb.EncodeTableHealthOptions(req.TableHealthOptions),
+		AutovacuumProfile: string(req.AutovacuumProfile), AutovacuumRevision: req.AutovacuumRevision}
 	if !req.After.IsZero() {
 		in.After = timestamppb.New(req.After)
 	}
@@ -308,8 +319,12 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 	if err != nil {
 		return dbguest.Response{}, err
 	}
-	out := dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate(), Backup: resp.GetBackup(),
-		Stale: resp.GetStale()}
+	out := dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate(), Backup: resp.GetBackup(), MigrationRunning: resp.GetMigrationRunning(),
+		Stale: resp.GetStale(), RunningImage: resp.GetRunningImage(), DesiredImage: resp.GetDesiredImage(), Activity: diagnosticspb.Decode(resp.GetActivity()),
+		TableHealth: diagnosticspb.DecodeTableHealth(resp.GetTableHealth()), Autovacuum: diagnosticspb.DecodeAutovacuum(resp.GetAutovacuum()), Sessions: diagnosticspb.DecodeSessions(resp.GetSessions()),
+		QueryInsightsSupported: resp.GetQueryInsightsSupported(), QueryInsightsConfigured: resp.GetQueryInsightsConfigured(), QuerySample: diagnosticspb.DecodeQuerySample(resp.GetQuerySample()),
+		Extensions: extensionpb.Decode(resp.GetExtensions())}
+	out.RestoreTimeline = resp.GetRestoreTimeline()
 	if resp.GetRecoveredTo() != nil {
 		out.RecoveredTo = resp.GetRecoveredTo().AsTime()
 	}
@@ -329,28 +344,162 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 // Import starts the database's import through its node's vmmd, which keeps
 // the endpoint and forwards the login to the guest.
 func (g *GRPCVMM) Import(ctx context.Context, node Node, id string, spec ImportSpec) (dbguest.ImportStatus, error) {
+	return g.controlImport(ctx, node, id, spec, dbguest.OpImport)
+}
+
+func (g *GRPCVMM) CustomerImport(ctx context.Context, node Node, id string, spec ImportSpec, checkOnly bool) (dbguest.ImportStatus, error) {
+	op := dbguest.OpCustomerImport
+	if checkOnly {
+		op = dbguest.OpImportCheck
+	}
+	return g.controlImport(ctx, node, id, spec, op)
+}
+
+func (g *GRPCVMM) controlImport(ctx context.Context, node Node, id string, spec ImportSpec, op dbguest.Op) (dbguest.ImportStatus, error) {
+	resp, err := g.sourceControl(ctx, node, id, spec, op)
+	return importStatus(resp.GetImport()), err
+}
+
+func (g *GRPCVMM) CheckMigration(ctx context.Context, node Node, id string, spec ImportSpec) (*vmmdpb.DatabaseMigrationCheck, error) {
+	resp, err := g.sourceControl(ctx, node, id, spec, dbguest.OpMigrationCheck)
+	if err != nil {
+		return nil, err
+	}
+	if resp.GetMigration() == nil {
+		return nil, ErrImportUnsupported
+	}
+	return resp.GetMigration(), nil
+}
+
+func (g *GRPCVMM) LiveMigration(ctx context.Context, node Node, id string, spec ImportSpec, stop bool) (*vmmdpb.DatabaseMigrationProgress, error) {
+	op := dbguest.OpMigrationStart
+	if stop {
+		op = dbguest.OpMigrationStop
+	}
+	return g.controlLiveMigration(ctx, node, id, spec, op)
+}
+
+func (g *GRPCVMM) PrepareMigration(ctx context.Context, node Node, id string, spec ImportSpec) (*vmmdpb.DatabaseMigrationProgress, error) {
+	return g.controlLiveMigration(ctx, node, id, spec, dbguest.OpMigrationPrepare)
+}
+
+func (g *GRPCVMM) controlLiveMigration(ctx context.Context, node Node, id string, spec ImportSpec, op dbguest.Op) (*vmmdpb.DatabaseMigrationProgress, error) {
+	resp, err := g.sourceControl(ctx, node, id, spec, op)
+	if err != nil {
+		return nil, err
+	}
+	if resp.GetMigrationProgress() == nil {
+		return nil, ErrImportUnsupported
+	}
+	return resp.GetMigrationProgress(), nil
+}
+
+func (g *GRPCVMM) VerifyMigration(ctx context.Context, node Node, id string, spec ImportSpec, verification string) (*vmmdpb.DatabaseMigrationProgress, error) {
+	resp, err := g.sourceControlRequest(ctx, node, id, spec, dbguest.Request{
+		Op: dbguest.OpMigrationVerify, VerificationID: verification, SourceWritesPaused: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.GetMigrationProgress().GetVerification() == nil {
+		return nil, ErrImportUnsupported
+	}
+	return resp.GetMigrationProgress(), nil
+}
+
+func (g *GRPCVMM) ControlMigrationActivation(ctx context.Context, node Node, id string, op dbguest.Op, a dbmigration.Activation) error {
 	c, err := g.client(ctx, node)
 	if err != nil {
-		return noImport, err
+		return err
 	}
-	src := spec.Source
-	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(dbguest.OpImport), Import: &vmmdpb.DatabaseImport{
-		Host: spec.Host, Port: int32(spec.Port), Database: src.Database, User: src.User, Password: src.Password, //nolint:gosec // port validated
-		TargetDatabase: src.TargetDatabase, Owner: src.Owner, SkipExtensions: src.SkipExtensions, OperationId: src.OperationID,
-	}})
-	if status.Code(err) == codes.FailedPrecondition {
-		return noImport, fmt.Errorf("%w: %w", ErrVMNotRunning, err)
+	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(op),
+		Activation: &vmmdpb.DatabaseMigrationActivation{SwitchId: a.SwitchID, OperationId: a.OperationID,
+			SourcePin: a.SourcePin, SourceDatabase: a.SourceDatabase, Roles: a.Roles},
+	})
+	if status.Code(err) == codes.Unimplemented || status.Code(err) == codes.InvalidArgument || resp.GetErrorCode() == dbguest.ErrCodeInvalidRequest {
+		return ErrImportUnsupported
 	}
 	if err != nil {
-		return noImport, err
+		return err
+	}
+	switch resp.GetErrorCode() {
+	case "":
+		return nil
+	case dbguest.ErrCodeImportOperationMismatch:
+		return ErrConflict
+	default:
+		return ErrNodeUnavailable
+	}
+}
+
+func (g *GRPCVMM) MigrationStatus(ctx context.Context, node Node, id string) (*vmmdpb.DatabaseMigrationProgress, error) {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(dbguest.OpMigrationStatus)})
+	switch status.Code(err) {
+	case codes.InvalidArgument, codes.Unimplemented:
+		return nil, ErrImportUnsupported
+	case codes.FailedPrecondition:
+		return nil, ErrVMNotRunning
+	}
+	if err != nil {
+		return nil, err
+	}
+	if resp.GetErrorCode() == dbguest.ErrCodeNotReady {
+		return nil, ErrNodeUnavailable
+	}
+	if resp.GetMigrationProgress() == nil {
+		return nil, ErrImportUnsupported
+	}
+	return resp.GetMigrationProgress(), nil
+}
+
+func (g *GRPCVMM) sourceControl(ctx context.Context, node Node, id string, spec ImportSpec, op dbguest.Op) (*vmmdpb.DatabaseControlResponse, error) {
+	return g.sourceControlRequest(ctx, node, id, spec, dbguest.Request{Op: op})
+}
+
+func (g *GRPCVMM) sourceControlRequest(ctx context.Context, node Node, id string, spec ImportSpec, request dbguest.Request) (*vmmdpb.DatabaseControlResponse, error) {
+	op := request.Op
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	src := spec.Source
+	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(op),
+		VerificationId: request.VerificationID, SourceWritesPaused: request.SourceWritesPaused,
+		Import: &vmmdpb.DatabaseImport{
+			Host: spec.Host, Port: int32(spec.Port), Database: src.Database, User: src.User, Password: src.Password, //nolint:gosec // port validated
+			TargetDatabase: src.TargetDatabase, Owner: src.Owner, SkipExtensions: src.SkipExtensions, OperationId: src.OperationID,
+		}})
+	if op != dbguest.OpImport && (status.Code(err) == codes.InvalidArgument || status.Code(err) == codes.Unimplemented ||
+		resp.GetErrorCode() == dbguest.ErrCodeInvalidRequest) {
+		return nil, ErrImportUnsupported
+	}
+	if status.Code(err) == codes.Aborted {
+		return nil, ErrConflict
+	}
+	if status.Code(err) == codes.FailedPrecondition {
+		return nil, fmt.Errorf("%w: %w", ErrVMNotRunning, err)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if resp.GetErrorCode() == dbguest.ErrCodeImportOperationMismatch {
-		return importStatus(resp.GetImport()), fmt.Errorf("%w: another import is running or done in this database", ErrConflict)
+		if op.IsMigrationMutation() {
+			return resp, fmt.Errorf("%w: the migration operation or source does not match the target binding", ErrConflict)
+		}
+		return resp, fmt.Errorf("%w: another import is running or done in this database", ErrConflict)
+	}
+	if op.IsMigrationMutation() &&
+		(resp.GetErrorCode() == dbguest.ErrCodeSourceDown || resp.GetErrorCode() == dbguest.ErrCodeNotReady) {
+		return nil, ErrNodeUnavailable
 	}
 	if resp.GetErrorCode() != "" {
-		return noImport, fmt.Errorf("guest error %s", resp.GetErrorCode())
+		return nil, fmt.Errorf("guest error %s", resp.GetErrorCode())
 	}
-	return importStatus(resp.GetImport()), nil
+	return resp, nil
 }
 
 func importStatus(in *vmmdpb.DatabaseImportStatus) dbguest.ImportStatus {
@@ -358,7 +507,8 @@ func importStatus(in *vmmdpb.DatabaseImportStatus) dbguest.ImportStatus {
 		return noImport
 	}
 	out := dbguest.ImportStatus{State: dbguest.ImportState(in.GetState()), Error: in.GetErrorCode(), SourceMajor: int(in.GetSourceMajor()), OperationID: in.GetOperationId(),
-		MissingExtensions: dbguest.ReportableExtensions(in.GetMissingExtensions()), RequiredVolumeBytes: max(in.GetRequiredVolumeBytes(), 0)}
+		MissingExtensions: dbguest.ReportableExtensions(in.GetMissingExtensions()), RequiredVolumeBytes: max(in.GetRequiredVolumeBytes(), 0),
+		IncompatibleExtensions: extensionpb.DecodeInstalled(in.GetIncompatibleExtensions())}
 	if in.GetStartedAt() != nil {
 		out.StartedAt = in.GetStartedAt().AsTime()
 	}

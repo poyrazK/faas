@@ -62,7 +62,10 @@ type livenessRequestBody struct {
 	GRPC        bool   `json:"grpc,omitempty"`
 	GRPCService string `json:"grpc_service,omitempty"`
 	Port        int    `json:"port,omitempty"`
-	TimeoutMs   int    `json:"timeout_ms"`
+	// Host (ADR-20261119140000): the Host header the guest's HTTP probe
+	// sends. An older guest-init ignores it and probes as before.
+	Host      string `json:"host,omitempty"`
+	TimeoutMs int    `json:"timeout_ms"`
 }
 
 // livenessResponseBody is the JSON body the guest ships back.
@@ -497,6 +500,7 @@ func (l *livenessProbeLoop) dialAndProbe(ctx context.Context, timeoutMs int) str
 		GRPC:        l.cfg.GRPC,
 		GRPCService: l.cfg.GRPCService,
 		Port:        l.cfg.Port,
+		Host:        l.cfg.Host,
 		TimeoutMs:   timeoutMs,
 	})
 	if err != nil {

@@ -23,7 +23,7 @@ func TestUsageAndDomainsNameAppsBySlug(t *testing.T) {
 			main.WriteJSONTest(w, []api.AppResponse{{ID: appID, Slug: "billing-api"}})
 		case "/v1/usage":
 			main.WriteJSONTest(w, []api.UsageResponse{
-				{AppID: appID, Requests: 3, MBSeconds: 3_600_000, IncludedGBHours: 1500},
+				{AppID: appID, Requests: 3, MBSeconds: 3_686_400, IncludedGBHours: 1500},
 				{AppID: "deleted-app-id", Requests: 1, MBSeconds: 1, IncludedGBHours: 1500},
 			})
 		case "/v1/domains":

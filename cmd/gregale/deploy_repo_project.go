@@ -132,9 +132,9 @@ func deployConnectedRepoProject(ctx context.Context, d connectedRepoProjectDeplo
 	if d.wait && len(apply.Builds) > 0 {
 		apply, timeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply, d.waitTimeout)
 	}
-	exit := renderProjectDeployReceiptAfterWait(plan, apply, session, timeouts)
+	exit := renderProjectDeployReceiptAfterWait(plan, apply, session, timeouts, d.waitTimeout)
 	if !jsonOutput {
-		renderProjectEndpoints(ctx, osStdout, client, apply)
+		renderProjectEndpointsFor(ctx, osStdout, client, apply, d.scan.projectSlug, d.scan.environment)
 	}
 	return exit
 }

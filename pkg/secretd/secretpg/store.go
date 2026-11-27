@@ -359,3 +359,136 @@ func (s *Store) TriggerConfig(ctx context.Context, appID, triggerID string) (str
 func (s *Store) DeleteExpiredGrants(ctx context.Context, before time.Time) (int64, error) {
 	return s.q.DeleteExpiredSecretGrants(ctx, s.db, pgTime(before))
 }
+
+var _ secretd.StorageGrantStore = (*Store)(nil)
+
+// DeploymentApp implements secretd.StorageGrantStore.
+func (s *Store) DeploymentApp(ctx context.Context, deploymentID string) (string, error) {
+	dep, err := pgUUID(deploymentID)
+	if err != nil {
+		return "", secretd.ErrUnknownDeployment
+	}
+	app, err := s.q.DeploymentAppID(ctx, s.db, dep)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", secretd.ErrUnknownDeployment
+	}
+	if err != nil {
+		return "", fmt.Errorf("secretpg: deployment app: %w", err)
+	}
+	return uuid.UUID(app.Bytes).String(), nil
+}
+
+// NodeRunsApp implements secretd.StorageGrantStore.
+func (s *Store) NodeRunsApp(ctx context.Context, appID, nodeID string) (bool, error) {
+	app, aerr := pgUUID(appID)
+	node, nerr := pgUUID(nodeID)
+	if aerr != nil || nerr != nil {
+		return false, nil //nolint:nilerr // a malformed id runs nothing
+	}
+	ok, err := s.q.NodeRunsApp(ctx, s.db, sqlc.NodeRunsAppParams{AppID: app, NodeID: node})
+	if err != nil {
+		return false, fmt.Errorf("secretpg: node runs app: %w", err)
+	}
+	return ok, nil
+}
+
+// NodeRunsJob implements secretd.StorageGrantStore.
+func (s *Store) NodeRunsJob(ctx context.Context, jobID, nodeID string) (bool, error) {
+	job, jerr := pgUUID(jobID)
+	node, nerr := pgUUID(nodeID)
+	if jerr != nil || nerr != nil {
+		return false, nil //nolint:nilerr // a malformed id runs nothing
+	}
+	ok, err := s.q.NodeRunsJob(ctx, s.db, sqlc.NodeRunsJobParams{JobID: job, NodeID: node})
+	if err != nil {
+		return false, fmt.Errorf("secretpg: node runs job: %w", err)
+	}
+	return ok, nil
+}
+
+// NodeRunsSandboxTemplateOf implements secretd.StorageGrantStore.
+func (s *Store) NodeRunsSandboxTemplateOf(ctx context.Context, appID, nodeID string) (bool, error) {
+	app, err := pgUUID(appID)
+	if err != nil || nodeID == "" {
+		return false, nil //nolint:nilerr // a malformed id runs nothing
+	}
+	ok, err := s.q.NodeRunsSandboxTemplateOf(ctx, s.db, sqlc.NodeRunsSandboxTemplateOfParams{AppID: app, NodeID: nodeID})
+	if err != nil {
+		return false, fmt.Errorf("secretpg: node runs sandbox template: %w", err)
+	}
+	return ok, nil
+}
+
+// NodeBuildsDeployment implements secretd.StorageGrantStore.
+func (s *Store) NodeBuildsDeployment(ctx context.Context, deploymentID, nodeName string, since time.Time) (bool, error) {
+	dep, err := pgUUID(deploymentID)
+	if err != nil || nodeName == "" {
+		return false, nil //nolint:nilerr // a malformed id builds nothing
+	}
+	ok, err := s.q.NodeBuildsDeployment(ctx, s.db, sqlc.NodeBuildsDeploymentParams{DeploymentID: dep, NodeName: nodeName, Since: pgTime(since)})
+	if err != nil {
+		return false, fmt.Errorf("secretpg: node builds deployment: %w", err)
+	}
+	return ok, nil
+}
+
+// NodeRunsSandboxOf implements secretd.StorageGrantStore.
+func (s *Store) NodeRunsSandboxOf(ctx context.Context, accountID, nodeID string) (bool, error) {
+	account, err := pgUUID(accountID)
+	if err != nil || nodeID == "" {
+		return false, nil //nolint:nilerr // a malformed id runs nothing
+	}
+	ok, err := s.q.NodeRunsSandboxOf(ctx, s.db, sqlc.NodeRunsSandboxOfParams{AccountID: account, NodeID: nodeID})
+	if err != nil {
+		return false, fmt.Errorf("secretpg: node runs sandbox: %w", err)
+	}
+	return ok, nil
+}
+
+// RecordStorageGrant implements secretd.StorageGrantStore.
+func (s *Store) RecordStorageGrant(ctx context.Context, r secretd.StorageGrantRecord) error {
+	node, err := pgUUID(r.NodeID)
+	if err != nil {
+		return err
+	}
+	subject, err := pgUUID(r.SubjectID)
+	if err != nil {
+		return err
+	}
+	var app pgtype.UUID
+	if r.AppID != "" {
+		if app, err = pgUUID(r.AppID); err != nil {
+			return err
+		}
+	}
+	if err := s.q.InsertStorageGrantAudit(ctx, s.db, sqlc.InsertStorageGrantAuditParams{NodeID: node, SubjectClass: r.Class,
+		SubjectID: subject, AppID: app, Access: r.Access, Objects: int32(r.Objects)}); err != nil { //nolint:gosec // bounded by MaxKeysPerRequest
+		return fmt.Errorf("secretpg: record storage grant: %w", err)
+	}
+	return nil
+}
+
+// VerificationLease implements secretd.VerificationLeaseStore.
+func (s *Store) VerificationLease(ctx context.Context, deploymentID string) (secretd.VerificationLease, error) {
+	dep, err := pgUUID(deploymentID)
+	if err != nil {
+		return secretd.VerificationLease{}, secretd.ErrUnknownVerificationLease
+	}
+	row, err := s.q.VerificationLease(ctx, s.db, dep)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return secretd.VerificationLease{}, secretd.ErrUnknownVerificationLease
+	}
+	if err != nil {
+		return secretd.VerificationLease{}, fmt.Errorf("secretpg: verification lease: %w", err)
+	}
+	return secretd.VerificationLease{
+		AppID:     uuid.UUID(row.AppID.Bytes).String(),
+		NodeName:  row.NodeName,
+		ExpiresAt: row.ExpiresAt.Time,
+		Status:    row.Status,
+		Scope:     row.Scope,
+		Contract:  row.Contract,
+	}, nil
+}
+
+var _ secretd.VerificationLeaseStore = (*Store)(nil)

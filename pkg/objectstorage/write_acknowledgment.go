@@ -8,6 +8,10 @@ func VerifyProviderObjectWriteAcknowledgment(p Provider, headers http.Header) (U
 	if gcs, ok := p.(*GCS); ok {
 		return gcs.verifyWriteAcknowledgment(headers)
 	}
+	if v, ok := p.(VersionlessProvider); ok && v.Versionless() {
+		headers = headers.Clone()
+		dropProviderVersionHeaders(headers)
+	}
 	return VerifyObjectWriteAcknowledgment(headers)
 }
 

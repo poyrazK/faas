@@ -58,7 +58,7 @@ func (p *S3) ListObjectVersionPage(ctx context.Context, bucket string, r ObjectV
 	if r.Limit < 1 || r.Limit > api.MaxObjectS3ListItems || !validVersionListText(r.Prefix) || !validVersionListText(r.KeyMarker) || !validVersionDelimiter(r.Delimiter) || r.ProviderVersionMarker != "" && (r.KeyMarker == "" || !validNativeVersionID(r.ProviderVersionMarker)) {
 		return page, ErrInvalid
 	}
-	in := &s3.ListObjectVersionsInput{Bucket: aws.String(bucket), Prefix: stringPtrOrNil(r.Prefix), Delimiter: stringPtrOrNil(r.Delimiter), KeyMarker: stringPtrOrNil(r.KeyMarker), VersionIdMarker: stringPtrOrNil(r.ProviderVersionMarker), MaxKeys: aws.Int32(r.Limit), EncodingType: types.EncodingTypeUrl}
+	in := &s3.ListObjectVersionsInput{Bucket: aws.String(bucket), Prefix: stringPtrOrNil(r.Prefix), Delimiter: stringPtrOrNil(r.Delimiter), KeyMarker: stringPtrOrNil(r.KeyMarker), VersionIdMarker: p.listVersionMarker(r.ProviderVersionMarker), MaxKeys: aws.Int32(r.Limit), EncodingType: types.EncodingTypeUrl}
 	out, err := p.client.ListObjectVersions(ctx, in, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return page, normalizeVersionHistoryError(err)
@@ -87,7 +87,7 @@ func (p *S3) ListObjectVersionPage(ctx context.Context, bucket string, r ObjectV
 		if !slices.Contains(types.StorageClassStandard.Values(), types.StorageClass(class)) {
 			return ObjectVersionListPage{}, ErrUnavailable
 		}
-		if err = appendVersion(aws.ToString(v.Key), aws.ToString(v.VersionId), aws.ToString(v.ETag), *v.Size, v.LastModified, v.IsLatest, false); err != nil {
+		if err = appendVersion(aws.ToString(v.Key), p.listedVersionID(aws.ToString(v.VersionId)), aws.ToString(v.ETag), *v.Size, v.LastModified, v.IsLatest, false); err != nil {
 			return ObjectVersionListPage{}, err
 		}
 		page.Items[len(page.Items)-1].StorageClass = class
@@ -108,6 +108,9 @@ func (p *S3) ListObjectVersionPage(ctx context.Context, bucket string, r ObjectV
 	if aws.ToBool(out.IsTruncated) {
 		key, e := historyResponseKey(aws.ToString(out.NextKeyMarker), out.EncodingType)
 		id := aws.ToString(out.NextVersionIdMarker)
+		if p.unversioned && id != "" {
+			id = "null"
+		}
 		if e != nil || !strings.HasPrefix(key, r.Prefix) || id != "" && !validNativeVersionID(id) || key == r.KeyMarker && id == r.ProviderVersionMarker || len(page.Items)+len(page.CommonPrefixes) == 0 {
 			return ObjectVersionListPage{}, ErrUnavailable
 		}

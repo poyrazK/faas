@@ -536,10 +536,15 @@ func cmdDev(args []string) int {
 		return printErr("Invalid flags", fmt.Errorf("--postgres cannot be combined with DATABASE_URL in --service-override-file"))
 	}
 	if *withPostgres && envFilePath != "" {
-		// The env file is synced as a secret of the same name as the managed
-		// binding, so the two would race for DATABASE_URL.
-		if envPairs, _, readErr := readDevEnvFileEntries(envFilePath); readErr == nil && serviceOverrideContainsKey(envPairs, "DATABASE_URL") {
-			return printErr("Invalid flags", fmt.Errorf("--postgres provides DATABASE_URL; remove it from --env-file %s, or drop --postgres to use your own database", filepath.Base(envFilePath)))
+		// The env file is synced as secrets of the same names as the managed
+		// bindings, so the two would race for DATABASE_URL and
+		// MIGRATION_DATABASE_URL.
+		if envPairs, _, readErr := readDevEnvFileEntries(envFilePath); readErr == nil {
+			for _, key := range []string{"DATABASE_URL", "MIGRATION_DATABASE_URL"} {
+				if serviceOverrideContainsKey(envPairs, key) {
+					return printErr("Invalid flags", fmt.Errorf("--postgres provides %s; remove it from --env-file %s, or drop --postgres to use your own database", key, filepath.Base(envFilePath)))
+				}
+			}
 		}
 	}
 	project, targetErr := selectDevProject(*name, sourceDir, linkedContext, linkedErr)
@@ -680,6 +685,22 @@ func cmdDev(args []string) int {
 			_, err := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...), *goCommand))
 			return err
 		})
+	}
+	if session.Postgres != nil {
+		waited, waitErr := waitForDevPostgres(ctx, session, devPostgresReadyWait, devPostgresReadyPoll, func(ctx context.Context) (api.DevSessionResponse, error) {
+			return client.GetDevSession(ctx, project, workspaceID)
+		}, func(name string) {
+			if !jsonOutput {
+				PrintProgress(osStdout, "Waiting for PostgreSQL %s before the first sync", name)
+			}
+		})
+		if waitErr != nil {
+			return printErr("Developer PostgreSQL is not ready", waitErr)
+		}
+		session.Postgres = waited.Postgres
+		if session.Postgres != nil && session.Postgres.BindingState != "ready" {
+			PrintWarn(osStderr, "PostgreSQL %s is still %s; a release command that runs before it is ready fails, and the next sync retries it", session.Postgres.Name, session.Postgres.BindingState)
+		}
 	}
 	stopRuntimeLogs := func() {}
 	defer func() { stopRuntimeLogs() }()

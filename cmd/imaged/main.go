@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -352,6 +353,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	} else if deferred {
 		log.Info("imaged: shared-store deletes deferred to the control plane")
 	}
+	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
+	// store credential; each object is reached through a secretd grant.
+	if _, closeGrants, err := secretdgrant.FromEnv(ctx, getenv, storageBackend, "imaged", log); err != nil {
+		return err
+	} else {
+		defer closeGrants()
+	}
 	indexedSnapshots, err := reconcileSnapshotRepositoryIndex(ctx, store, storageBackend)
 	if err != nil {
 		return fmt.Errorf("imaged: reconcile snapshot repository index: %w", err)
@@ -563,6 +571,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithPostgresPoolSizingRelease(releases.postgresPoolSizing).
 		WithContinuousProfiling(getenv("FAAS_PROFILING_ENABLED") == "1").
 		WithStorage(storageBackend).
+		WithExecutionEnvironments(os.Getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED") == "1").
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
 		WithDeferredDeployScans().
@@ -686,8 +695,23 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 				return notifier.Notify(ctx, db.NotifyDeploymentSmokeChallenge, string(payload))
 			},
 		}
+		// ADR-20261122220000 amendment 2: contract headers' ${secret:NAME}
+		// references open through secretd for this node's verification lease.
+		verificationSecrets, closeVerificationSecrets, err := verificationSecretsFromEnv(ctx, getenv, log)
+		if err != nil {
+			return err
+		}
+		defer closeVerificationSecrets()
+		contracts := imaged.ContractVerification{Verifier: verifier, Store: store, Released: releases.verificationContracts,
+			Secrets: verificationSecrets, NodeName: getenv("FAAS_NODE_NAME")}
 		h.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-			return imaged.VerifyHostingDeploymentWithContract(ctx, verifier, store, app, dep)
+			smoke, err := imaged.VerifyHostingDeploymentWithContract(ctx, verifier, store, app, dep)
+			if err != nil {
+				return smoke, err
+			}
+			// ADR-20261122220000: the app's gregale.verify.yaml runs only
+			// after the candidate's own health and route checks pass.
+			return imaged.ApplyVerificationContract(ctx, contracts, app, dep, smoke)
 		})
 		if smokeURL == "" {
 			log.Warn("imaged: API hosting readiness smoke required but public origin is unset; deployments will fail closed")

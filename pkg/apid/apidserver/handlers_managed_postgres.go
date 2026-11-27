@@ -71,6 +71,11 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	// Without a server hint the CLI fell back to its generic 403 advice to
 	// check credentials, which cannot help with a plan entitlement or quota.
 	switch {
+	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
+		// Without a hint the CLI's *_not_enabled fallback said "ask its
+		// operator to enable it", beside a detail saying "retry later or
+		// contact support" (prod hunt 2026-11-21).
+		problem = problem.WithHint("Existing databases keep working. Provisioning is opened per account; contact support to ask for it, and `gregale postgres capabilities` shows provisioning_enabled once it is open.")
 	case errors.Is(err, managedpostgres.ErrNotInPlan):
 		problem = problem.WithHint("Choose what your plan includes (gregale postgres capabilities) or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
 	case errors.Is(err, managedpostgres.ErrBranchLimit):
@@ -114,6 +119,21 @@ func managedPostgresSpecWithinPlan(limits api.ManagedPostgresPlanLimits, spec ma
 
 func managedPostgresPlanAllows(limits api.ManagedPostgresPlanLimits, spec managedpostgres.Spec) bool {
 	return managedpg.PlanAllowsClass(limits, spec.Class)
+}
+
+// decodeManagedPostgresCreate reads a create request. Placement is the
+// operator's choice: a create without a region lands in the platform
+// default, as dev sessions and manifests do.
+func (s *server) decodeManagedPostgresCreate(w http.ResponseWriter, r *http.Request) (api.CreateManagedPostgresDatabaseRequest, bool) {
+	var req api.CreateManagedPostgresDatabaseRequest
+	if err := decodeJSON(r, &req); err != nil {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return req, false
+	}
+	if strings.TrimSpace(req.Region) == "" {
+		req.Region = s.managedPostgres.DefaultRegion()
+	}
+	return req, true
 }
 
 func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest, limits api.ManagedPostgresPlanLimits) (managedpostgres.Spec, error) {
@@ -165,7 +185,7 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 		ID: database.ID, Name: database.Name, Region: database.Spec.Region, PostgresMajor: database.Spec.PostgresMajor,
 		ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability), ScaleToZero: database.Spec.ScaleToZero,
 		StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
-		RestoreSourceDatabaseID: database.RestoreSourceDatabaseID, State: string(database.State), LastErrorCode: database.LastErrorCode,
+		RestoreSourceDatabaseID: database.RestoreSourceDatabaseID, MaskedBranch: database.IsMaskedBranch(), State: string(database.State), LastErrorCode: database.LastErrorCode,
 		CreatedAt: database.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: database.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if !database.RestorePointInTime.IsZero() {
@@ -256,6 +276,8 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 	}
 	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
+	timeouts := s.managedPostgresSuspendTimeoutsOrLog(r.Context(), databases)
+	wakeWithApp := s.managedPostgresWakeWithAppOrLog(r.Context(), databases)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
@@ -263,6 +285,8 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 			view.Labels = filter.labelsOf(database.ID)
 			view.PlanExcess = excess[database.ID]
 			s.withManagedPostgresHold(&view, database, in, holdOK)
+			managedpg.ApplySuspendTimeout(&view, timeouts)
+			managedpg.ApplyWakeWithApp(&view, wakeWithApp)
 			items = append(items, view)
 		}
 	}
@@ -272,7 +296,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 // managedPostgresUsageView projects the internal normalized usage summary to
 // the customer-safe API shape. In particular, it never serializes policy
 // rates, provider cost, backend IDs, or credential material.
-func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
+func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode, historyMode managedpostgres.CapEnforcementMode, overage bool) api.ManagedPostgresUsageResponse {
 	storageLimit := managedPostgresUsageCeilings(limits, false).MaxMonthlyStorageByteSeconds
 	remaining := int64(0)
 	if storageLimit > summary.Snapshot.StorageByteSeconds {
@@ -298,6 +322,9 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 		StorageByteSeconds:      summary.Snapshot.StorageByteSeconds,
 		StorageByteSecondsLimit: storageLimit, StorageByteSecondsRemaining: remaining,
 		HistoryByteSeconds: summary.Snapshot.HistoryByteSeconds, EgressBytes: summary.Snapshot.EgressBytes,
+		SnapshotByteSeconds:  summary.Snapshot.SnapshotByteSeconds,
+		IncludedHistoryBytes: api.ManagedPostgresIncludedHistoryBytes(limits.StorageLimitBytes),
+		HistoryState:         managedPostgresHistoryState(summary.Snapshot, limits, historyMode, overage),
 	}
 	if limits.MonthlyComputeUnitSeconds > 0 {
 		view.ComputeAllowanceUnitSeconds = limits.MonthlyComputeUnitSeconds
@@ -312,6 +339,20 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 		view.ObservedAt = &observed
 	}
 	return view
+}
+
+// managedPostgresHistoryState (ADR-20261123062111 D2) is judged from the
+// ledger the history pass reads, and reported only while the pass is on, so
+// shadow mode never tells a customer their restore window shrank.
+func managedPostgresHistoryState(snapshot managedpostgres.UsageSnapshot, limits api.ManagedPostgresPlanLimits, mode managedpostgres.CapEnforcementMode, overage bool) string {
+	switch {
+	case mode != managedpostgres.CapEnforcementOn || managedpostgres.HistoryLimitByteSeconds(limits.StorageLimitBytes) <= 0:
+		return ""
+	case managedpostgres.HistoryLimited(snapshot, limits.StorageLimitBytes, overage):
+		return "limited"
+	default:
+		return "normal"
+	}
 }
 
 // managedPostgresComputeCapState (ADR-20261025094915 decision 8). Suspension
@@ -360,7 +401,7 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresProblem(w, err)
 		return
 	}
-	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, s.managedPostgresHistoryMode, overage)
 	in, err := s.managedPostgresHoldInputsFrom(r.Context(), acct, subject, summary)
 	if err != nil {
 		managedPostgresProblem(w, err)
@@ -373,11 +414,12 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
+	view.Databases = s.managedPostgresDatabaseUsageOrLog(r.Context(), acct, view.PeriodStart)
 	writeJSON(w, http.StatusOK, view)
 }
 
-func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
-	customer := managedPostgresUsageView(summary, limits, capMode, overage)
+func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode, historyMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
+	customer := managedPostgresUsageView(summary, limits, capMode, historyMode, overage)
 	lineItems, err := summary.EffectivePolicy.LineItems(summary.Snapshot)
 	if err != nil {
 		return api.ManagedPostgresUsageOperatorResponse{}, err
@@ -400,7 +442,7 @@ func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.
 		ReadyDatabases: customer.ReadyDatabases, DatabaseLimit: customer.DatabaseLimit,
 		StorageLimitBytes: customer.StorageLimitBytes, ComputeUnitSeconds: customer.ComputeUnitSeconds,
 		StorageByteSeconds: customer.StorageByteSeconds, StorageByteSecondsLimit: storageLimit,
-		StorageByteSecondsRemaining: remaining, HistoryByteSeconds: customer.HistoryByteSeconds,
+		StorageByteSecondsRemaining: remaining, HistoryByteSeconds: customer.HistoryByteSeconds, SnapshotByteSeconds: customer.SnapshotByteSeconds,
 		EgressBytes: customer.EgressBytes, CostMillicents: summary.Snapshot.CostMillicents,
 		MaxMonthlyCostMillicents:     summary.EffectivePolicy.MaxMonthlyCostMillicents,
 		MaxMonthlyComputeUnitSeconds: summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds,
@@ -445,7 +487,7 @@ func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.
 		managedPostgresProblem(w, err)
 		return
 	}
-	view, err := managedPostgresUsageOperatorView(target.ID, summary, limits, s.managedPostgresCapMode, overage)
+	view, err := managedPostgresUsageOperatorView(target.ID, summary, limits, s.managedPostgresCapMode, s.managedPostgresHistoryMode, overage)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
@@ -463,9 +505,8 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
 		return
 	}
-	var req api.CreateManagedPostgresDatabaseRequest
-	if err := decodeJSON(r, &req); err != nil {
-		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+	req, ok := s.decodeManagedPostgresCreate(w, r)
+	if !ok {
 		return
 	}
 	spec, err := managedPostgresSpecFromRequest(req, limits)
@@ -520,6 +561,8 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
 	in, holdOK := s.managedPostgresHoldInputsOrLog(r.Context(), acct)
 	s.withManagedPostgresHold(&view, database, in, holdOK)
+	managedpg.ApplySuspendTimeout(&view, s.managedPostgresSuspendTimeoutsOrLog(r.Context(), []managedpostgres.Database{database}))
+	managedpg.ApplyWakeWithApp(&view, s.managedPostgresWakeWithAppOrLog(r.Context(), []managedpostgres.Database{database}))
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -639,6 +682,10 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
+	if req.Region != "" && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
+		writeMissingRoute(w, r)
+		return
+	}
 	restore, err := managedPostgresRestoreRequest(acct.ID, source.ID, req)
 	if err != nil {
 		managedPostgresProblem(w, err)
@@ -664,7 +711,7 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 // No point_in_time restores from the latest point; ttl_seconds makes the copy
 // a branch (ADR-20261106103654).
 func managedPostgresRestoreRequest(accountID, sourceID string, req api.RestoreManagedPostgresDatabaseRequest) (managedpostgres.RestoreDatabaseRequest, error) {
-	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name}
+	restore := managedpostgres.RestoreDatabaseRequest{AccountID: accountID, SourceDatabaseID: sourceID, Name: req.Name, RecoveryRegion: req.Region}
 	if raw := strings.TrimSpace(req.PointInTime); raw == "" {
 		restore.Latest = true
 	} else {
@@ -688,6 +735,9 @@ func managedPostgresRestoredEvent(database managedpostgres.Database, latest bool
 	event := map[string]any{
 		"database_id": database.ID, "source_database_id": database.RestoreSourceDatabaseID,
 		"point_in_time": database.RestorePointInTime.UTC().Format(time.RFC3339Nano), "latest": latest,
+	}
+	if database.RestoreFromRecovery {
+		event["recovery_region"] = database.Spec.Region
 	}
 	if !database.ExpiresAt.IsZero() {
 		event["expires_at"] = database.ExpiresAt.UTC().Format(time.RFC3339Nano)
@@ -733,8 +783,16 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrPRPreviewResourceUnsupported("managed PostgreSQL bindings"))
 		return
 	}
+	if state.IsAPISandbox(app) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Sandbox database is fixed", "Gregale provisions a dedicated database for each API sandbox"))
+		return
+	}
 	// Application Auth is a dark launch: without it the mode is unknown.
 	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
+		managedPostgresProblem(w, managedpostgres.ErrInvalid)
+		return
+	}
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialReplicaOnly && !s.nativePostgresOperationsEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}

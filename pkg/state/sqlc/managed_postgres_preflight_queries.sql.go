@@ -167,7 +167,7 @@ func (q *Queries) PendingManagedPostgresCutoverPreflights(ctx context.Context, d
 }
 
 const readManagedPostgresPreflightBindings = `-- name: ReadManagedPostgresPreflightBindings :many
-SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id FROM managed_postgres_bindings WHERE database_id=$1::text::uuid
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit, database_account_id, data_api_inspection_revision FROM managed_postgres_bindings WHERE database_id=$1::text::uuid
  AND app_id=$2::text::uuid AND scope=$3::text AND state<>'deleted' ORDER BY id
 `
 
@@ -212,6 +212,7 @@ func (q *Queries) ReadManagedPostgresPreflightBindings(ctx context.Context, db D
 			&i.CutoverID,
 			&i.ConnectionLimit,
 			&i.DatabaseAccountID,
+			&i.DataApiInspectionRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -224,7 +225,7 @@ func (q *Queries) ReadManagedPostgresPreflightBindings(ctx context.Context, db D
 }
 
 const readManagedPostgresPreflightDatabases = `-- name: ReadManagedPostgresPreflightDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at FROM managed_postgres_databases WHERE id::text=ANY($1::text[])
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels, previews, preview_source_database_id, preview_environment_id, preview_pr_number, expires_at, data_api_inspection_revision, recovery_region, restore_from_recovery, restore_recovery_timeline FROM managed_postgres_databases WHERE id::text=ANY($1::text[])
 `
 
 func (q *Queries) ReadManagedPostgresPreflightDatabases(ctx context.Context, db DBTX, ids []string) ([]ManagedPostgresDatabase, error) {
@@ -278,6 +279,10 @@ func (q *Queries) ReadManagedPostgresPreflightDatabases(ctx context.Context, db 
 			&i.PreviewEnvironmentID,
 			&i.PreviewPrNumber,
 			&i.ExpiresAt,
+			&i.DataApiInspectionRevision,
+			&i.RecoveryRegion,
+			&i.RestoreFromRecovery,
+			&i.RestoreRecoveryTimeline,
 		); err != nil {
 			return nil, err
 		}

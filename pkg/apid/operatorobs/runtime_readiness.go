@@ -35,6 +35,7 @@ type runtimeReadinessSamples struct {
 }
 
 func readRuntimeReadiness(ctx context.Context, client *promql.Client, spec runtimeBuildJobSpec, result *runtimeBuildJobResult, builds runtimeBuildSamples, selected RuntimeBuildSelection, now time.Time) {
+	ctx = runtimeQueryContext(ctx, "readiness")
 	prefix := strings.TrimSuffix(spec.metric, "_build_info")
 	ready := fmt.Sprintf(`%s_ready{job=%q,daemon=%q}`, prefix, spec.job, spec.daemon)
 	reason := fmt.Sprintf(`%s_ready_reason{job=%q,daemon=%q}`, prefix, spec.job, spec.daemon)

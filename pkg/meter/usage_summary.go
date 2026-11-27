@@ -43,15 +43,14 @@ import (
 //     drift (mirror of MonthlyUsageGB).
 //   - Requests / TxBytes: cumulative HTTP activity (informational,
 //     not billed — billing is on RAM).
-//   - BuilderSeconds: cumulative builder-microVM CPU-time. Not
-//     surfaced on the wire yet (reserved for a future
-//     /v1/apps/{slug}/builds-budget endpoint) but kept here so
-//     the SQL reads stay one round-trip.
+//   - BuilderSeconds: wall-clock seconds of the app's builds that
+//     finished in the window (builder_usage). Zero when the store
+//     cannot read builder usage (ADR-20261121231500).
 //   - ColdBootCount: WAKE_RESTORE→WAKE_COLD_BOOT transitions in
 //     the window.
 //
-// Source labels: "usage_minutes" today (after the 30d retention
-// cap), "usage_daily" after the rollup PR lands, "mixed" if a
+// Source labels: "usage_minutes" today (13-month retention,
+// pkg/meter/retention.go), "usage_daily" after the rollup PR lands, "mixed" if a
 // follow-up bridges both. The handler stamps the value on the
 // wire response so the dashboard SPA can render an "estimated vs.
 // exact" badge.
@@ -114,14 +113,15 @@ func BuildAppWindowSummary(
 		sum.Requests += u.Requests
 		sum.TxBytes += u.TXBytes
 		sum.NetTxBytes += u.NetTxBytes
-		// cpu_usec is host cgroup CPU-µs consumed; convert to
-		// CPU-seconds for the wire shape so the dashboard's
-		// builder-seconds figure is comparable to its
-		// instance-seconds figure. CPUHours gives CPU-hours, so
-		// multiply by 3600.
-		sum.BuilderSeconds += CPUHours(u.CPUUsec) * 3600
 		sum.ColdBootCount += u.ColdBootCount
 	}
 	sum.GBHours = float64(int64(GBHours(sum.MBSeconds)*1e6+0.5)) / 1e6
+	if builders, ok := store.(state.AppBuilderSecondsStore); ok {
+		seconds, err := builders.AppBuilderSeconds(ctx, appID, since.UTC(), until.UTC())
+		if err != nil {
+			return AppWindowSummary{}, "usage_minutes", err
+		}
+		sum.BuilderSeconds = float64(seconds)
+	}
 	return sum, "usage_minutes", nil
 }

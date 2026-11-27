@@ -94,7 +94,7 @@ gregale logs search my-api --source deploy --since 24h
 
 - A failed build is an `error` with its failure class, how long it ran and
   the first 1 KiB of its error; a cancelled build is a `warn`. The full build
-  output stays in `gregale logs --build`.
+  output stays in `gregale release logs <release>`.
 - A rollback or aborted rollout is an `error`; a failed health probe, a
   security scan regression, a fired alert or a held rollout is a `warn`;
   creating a deployment, shifting traffic and the other steps are `info`.

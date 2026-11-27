@@ -28,6 +28,8 @@ type CreateManagedExecutionWorkflowRequest struct {
 	MaxParallelSteps int                                  `json:"max_parallel_steps,omitempty"`
 	FailurePolicy    string                               `json:"failure_policy,omitempty"`
 	Steps            []CreateManagedExecutionWorkflowStep `json:"steps"`
+	Pipeline         *ExecutionPipelineOptions            `json:"pipeline,omitempty"`
+	Batch            *ExecutionTaskBatch                  `json:"batch,omitempty"`
 }
 
 // CreateManagedExecutionWorkflowStep runs after its declared dependencies
@@ -41,6 +43,8 @@ type CreateManagedExecutionWorkflowStep struct {
 	ArtifactInputs           []ManagedExecutionWorkflowArtifactInput `json:"artifact_inputs,omitempty"`
 	ResultSchema             json.RawMessage                         `json:"result_schema,omitempty"`
 	Request                  CreateExecutionRequest                  `json:"request"`
+	Task                     *InvokeExecutionTaskRequest             `json:"task,omitempty"`
+	Retry                    *ExecutionRetryPolicy                   `json:"retry,omitempty"`
 }
 
 // ManagedExecutionWorkflowArtifactInput selects an output artifact from an
@@ -63,6 +67,7 @@ const (
 // ManagedExecutionWorkflowResponse contains workflow metadata only; source
 // and input remain encrypted at rest and are never echoed to callers.
 type ManagedExecutionWorkflowResponse struct {
+	ID         string                         `json:"id,omitempty"`
 	WorkflowID string                         `json:"workflow_id"`
 	PlanID     string                         `json:"plan_id"`
 	Status     ManagedExecutionWorkflowStatus `json:"status"`
@@ -70,6 +75,7 @@ type ManagedExecutionWorkflowResponse struct {
 	NextStep   int                            `json:"next_step"`
 	Error      string                         `json:"error,omitempty"`
 	CreatedAt  string                         `json:"created_at"`
+	Pipeline   *ExecutionPipelineResponse     `json:"pipeline,omitempty"`
 }
 
 func ValidateCreateManagedExecutionWorkflow(req CreateManagedExecutionWorkflowRequest) error {

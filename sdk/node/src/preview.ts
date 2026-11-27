@@ -21,6 +21,13 @@ export * from './files.js';
 export * from './file-pipelines.js';
 export * from './live-jobs.js';
 export * from './live-job-realtime.js';
+export {
+    LiveWorkInboxError, parseLiveWorkInboxSnapshot, watchWorkInbox, workInboxInvalidation, workInboxWatchTarget,
+    type LiveWorkInboxCode, type LiveWorkInboxOptions, type LiveWorkInboxSink, type LiveWorkInboxSnapshot,
+    type LiveWorkInboxSource, type WorkInboxInvalidation, type WorkInboxWatchTarget,
+} from './live-work-inbox.js';
+export * from './live-work-inbox-realtime.js';
+export * from './live-work-inbox-snapshot.js';
 export * from './live-job-bridge.js';
 export * from './job-pipelines.js';
 export * from './job-pipeline-client.js';
@@ -28,6 +35,45 @@ export * from './job-pipeline-live.js';
 export type { ManagedFileBucket, FileHelpers } from './file-client.js';
 export { pathFileSource } from './file-client.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export {
+  listTaskInbox, watchTaskInbox, McpTaskInboxError, type McpTaskInboxConnection,
+  type McpTaskInboxEntry, type McpTaskInboxPage, type McpTaskInboxStatus,
+  type McpTaskInboxListOptions, type McpTaskInboxWatchOptions, type McpTaskInboxFailureCode,
+} from './mcp-task-inbox.js';
+export {
+  getTaskInputReview, respondToReviewedTaskInput, McpTaskInputReviewError,
+  type McpTaskInputReviewConnection, type McpTaskInputReview, type McpTaskInputReviewOptions,
+  type McpTaskInputReviewFailureCode, type McpTaskReviewForm, type McpTaskReviewJSON, type McpTaskReviewJSONObject,
+  type McpTaskReviewAnswer, type McpTaskReviewAnswers, type McpTaskReviewOutcome,
+} from './mcp-task-input-review.js';
+export { createMcpTaskReviewFetch, McpTaskReviewNumber } from './mcp-task-review-json.js';
+export {
+  getMcpTask, waitForMcpTask, cancelMcpTask, McpTaskReadError, McpTaskCancellationError,
+  type McpTaskConnection, type McpTaskReadOptions, type McpTaskReadFailureCode,
+  type McpTaskCancellationConnection, type McpTaskCancellationOutcome, type McpTaskSnapshot, type McpTaskWaitResult,
+} from './mcp-task-result.js';
+export {
+  createMcpTaskSubmissionFetch, submitMcpTask, lookupMcpTaskBySubmissionKey, McpTaskSubmissionError,
+  type McpTaskArgument, type McpTaskArguments, type McpTaskSubmission, type McpTaskSubmissionOptions,
+  type McpTaskSubmissionConnection, type McpTaskSubmissionFailureCode, type McpTaskSubmissionOutcome,
+} from './mcp-task-submission.js';
+export {
+  createMcpTaskTransport, createMcpTaskReceiptTransport, submitMcpTaskWithReceipt, resumeMcpTaskFromReceipt, retryMcpTaskFromReceipt, McpTaskReceiptError,
+  type McpTaskReceiptConnection, type McpTaskReceiptFailureCode, type McpTaskReceiptSubmission,
+  type McpTaskReceiptSubmissionOutcome,
+} from './mcp-task-receipt.js';
+export {
+  watchMcpTask, watchMcpTasks, type McpTaskWatchConnection, type McpTaskWatchEvent, type McpTaskWatchOptions,
+} from './mcp-task-watch.js';
+export {
+  createMcpTaskGroup, getMcpTaskGroupResults, watchMcpTaskGroup, McpTaskGroupError,
+  type McpTaskGroupConnection, type McpTaskGroupEvent, type McpTaskGroupFailureCode, type McpTaskGroupResultEntry,
+  type McpTaskGroupWatchOptions,
+} from './mcp-task-group.js';
+export {
+  submitMcpTaskGroup, resumeMcpTaskGroupSubmission, continueMcpTaskGroupSubmission, type McpTaskGroupSubmissionEntry,
+} from './mcp-task-group-submission.js';
+export { stopMcpTaskGroup, type McpTaskGroupStopConnection, type McpTaskGroupStopEntry } from './mcp-task-group-stop.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 
@@ -736,6 +782,28 @@ export { EventAcknowledgmentIntentRecoveryWorkerMetrics, recoverEventAcknowledgm
 export { formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
   type EventAcknowledgmentIntentRecoveryWorkerPrometheusOptions } from './event-acknowledgment-intent-worker-prometheus.js';
 
+export { prepareExecutionFile, uploadPreparedExecutionFile, downloadExecutionFile, type PreparedExecutionFile } from './execution-files.js';
+
+export { watchExecutionEnvironment, type EnvironmentDiagnostic, type WatchEnvironmentOptions } from './execution-environments.js';
+
+export type { ExecutionPipelineOptions } from './generated/models/ExecutionPipelineOptions.js';
+export type { ExecutionRetryPolicy } from './generated/models/ExecutionRetryPolicy.js';
+export type { ExecutionTaskBatch } from './generated/models/ExecutionTaskBatch.js';
+export type { ExecutionTaskBatchItem } from './generated/models/ExecutionTaskBatchItem.js';
+export type { ExecutionPipelineResponse } from './generated/models/ExecutionPipelineResponse.js';
+export type { ExecutionPipelineStepResponse } from './generated/models/ExecutionPipelineStepResponse.js';
+export type { ExecutionPipelineAttemptResponse } from './generated/models/ExecutionPipelineAttemptResponse.js';
+
+export type { CreateManagedExecutionWorkflowRequest } from './generated/models/CreateManagedExecutionWorkflowRequest.js';
+export type { CreateManagedExecutionWorkflowStep } from './generated/models/CreateManagedExecutionWorkflowStep.js';
+export type { ManagedExecutionWorkflowResponse } from './generated/models/ManagedExecutionWorkflowResponse.js';
+export type { ManagedExecutionWorkflowArtifactInput } from './generated/models/ManagedExecutionWorkflowArtifactInput.js';
+
+export { watchExecutionPipeline, type PipelineProgressEvent, type WatchPipelineOptions } from './execution-pipeline-progress.js';
+
+export { Task, TaskRun, TaskExecutionError, TaskDeliveryError, TaskSubmissionError } from './task.js';
+export type { TaskOptions, TaskWaitOptions, TaskIntent, TaskDestination, TaskResult } from './task.js';
+
 export { SourceUploadError, parseSourceUploadCheckpoint, saveSourceUploadCheckpoint, loadSourceUploadCheckpoint, type SourceUploadCheckpoint, type SourceUploadOptions, type SourceUploadProgress, type SourceUploadStage, type SourceUploadCode, type SourceUploadInput, type SourceUploads } from './source-upload.js';
 export { inspectSource, prepareSource, SourcePreparationError, type SourcePreparationCode, type SourcePreparationOptions, type SourcePreparationProgress, type SourceIssue, type SourceEntry, type SourcePlan, type PreparedSource } from './source-preparation.js';
 export { SourceDeploymentError, loadSourceDeploymentState, parseSourceDeploymentState, type SourceDeploymentCode, type SourceDeploymentPhase, type SourceDeploymentArchive, type SourceDeploymentState, type SourceDeploymentProgress, type SourceDeploymentOptions, type SourceDeploymentPreparationOptions, type SourceDeploymentWaitOptions, type SourceDeploymentReleaseProgress, type SourceDeploymentInput, type SourceDeploymentResumeInput, type SourceDeploymentResult, type SourceDeployments } from './source-deployment.js';
@@ -761,8 +829,43 @@ export {definePipelineSchedule,createPipelineScheduleClient,PipelineScheduleErro
 
 export {createStripeWebhookAdapter,stripeDeliveryContextFromHeaders,stripeReceiptId,stripeWebhookSchema,StripeWebhookError,type StripeWebhookCode,type StripeWebhookDefinition,type StripeWebhookAdapter,type StripeWebhookDelivery,type StripeDeliveryContext,type StripeWebhookEvent,type StripeWebhookAction,type StripeWebhookOptions,type StripeWebhookDecision,type StripeWebhookIgnoreReason,type StripeWebhookReceipt,type StripeWebhookOutcome} from './stripe-webhooks.js';
 
-export {definePipelineTool,PipelineToolError,postgresPipelineToolStore,pipelineToolSchema,pipelineToolIdentity,type PipelineTool,type PipelineToolDefinition,type PipelineToolRequest,type PipelineToolActor,type PipelineToolAction,type PipelineToolReceipt,type PipelineToolIntent,type PipelineToolStore,type PipelineToolStart,type PipelineToolStatus,type PipelineToolApproval,type PipelineToolCode} from './pipeline-tools.js';
-export {createPipelineToolMCP,PipelineToolMCPError,type PipelineToolMCP,type PipelineToolMCPDescriptor,type PipelineToolMCPResult} from './pipeline-tool-mcp.js';
+export {definePipelineTool,PipelineToolError,postgresPipelineToolStore,pipelineToolSchema,pipelineToolIdentity,type PipelineTool,type PipelineToolDefinition,type PipelineToolRequest,type PipelineToolActor,type PipelineToolAction,type PipelineToolReceipt,type PipelineToolIntent,type PipelineToolStore,type PipelineToolStart,type PipelineToolResult,type PipelineToolStartMatch,type PipelineToolWithStartLookup,type PipelineToolWithResult,type PipelineToolStatus,type PipelineToolApproval,type PipelineToolCode} from './pipeline-tools.js';
+export type { PipelineStartPreview, PipelineStartPreviewPolicy } from "./pipeline-start-preview.js";
+export {createPipelineToolMCP,PipelineToolMCPError,type PipelineToolMCP,type PipelineToolMCPDescriptor,type PipelineToolMCPResult,type PipelineToolMCPWithResources} from './pipeline-tool-mcp.js';
+export type { PipelineOutputResource } from "./pipeline-output-resources.js";
 
 export {definePipelineCompensation,CompensationError,compensationContracts,postgresCompensationStore,pipelineCompensationSchema,type PipelineCompensation,type PipelineCompensationDefinition,type CompensationCommand,type CompensationOutcome,type CompensationTask,type CompensationInput,type CompensationResult,type CompensationPlan,type CompensationStore,type CompensationActor,type CompensationAction,type CompensationCode,type CompensationSource,type CompensationSourceStage} from './pipeline-compensations.js';
 export {createCompensationMCP} from './pipeline-compensation-mcp.js';
+
+export {defineOutboundAction,OutboundActionError,outboundActionContracts,outboundActionIdentity,parseOutboundActionRecord,postgresOutboundActionStore,outboundActionSchema,type OutboundAction,type OutboundActionDefinition,type OutboundActionProvider,type OutboundActionReader,type OutboundActionResponse,type OutboundActionActor,type OutboundActionIntent,type OutboundActionRecord,type OutboundActionStore,type OutboundActionRequest,type OutboundActionObservation,type OutboundActionReference,type OutboundActionReview,type OutboundActionView,type OutboundActionResult,type OutboundActionState,type OutboundActionOperation} from './outbound-actions.js';
+export {stripeRefundContract,stripeRefundActionProvider,type StripeRefundInput,type StripeRefundResult} from './stripe-refund-actions.js';
+export {createOutboundActionMCP} from './outbound-action-mcp.js';
+
+export {defineQueryTool,defineAuthorizedQueryTool,type AuthorizedQueryToolDefinition,defineQueryResource,QueryToolError,type QueryCode,type QueryActor,type QueryOptions,type QueryPageOptions,type QueryIterationOptions,type QueryPage,type QueryLoadPage,type QueryLoadContext,type QueryAuthorizedLoadContext,type QueryToolDefinition,type QueryTool,type QueryResourceLink,type QueryResourceDefinition,type QueryResource} from './query-tools.js';
+export {createQueryToolMCP,QueryMCPError,type QueryMCPResult,type QueryToolMCP} from './query-tool-mcp.js';
+
+export { createApplicationToolkit, ApplicationToolkitError, type ApplicationToolkit, type ApplicationToolkitWithWorkInbox, type ToolkitAccess, type ToolkitAdapter, type ToolkitMount, type WorkInboxFollowUp, type WorkInboxFollowUpOptions } from './application-toolkit.js';
+
+export { defineWorkInbox, outboundWorkInboxSource, pipelineWorkInboxSource, postgresWorkInboxStore, workInboxPosition, workInboxSchema, type WorkInboxKind, type WorkInboxState, type WorkInboxNextStep, type WorkInboxFilter, type WorkInbox, type WorkInboxEntry, type WorkInboxReference, type WorkInboxExactLookup, type WorkInboxCandidate, type WorkInboxSelector, type WorkInboxScan, type WorkInboxStore, type WorkInboxSource, type WorkInboxDefinition } from "./work-inbox.js";
+
+export * from "./pipeline-tasks.js";
+export { pipelineTaskHandoffSchema, postgresPipelineTaskHandoffStore, type PipelineTaskHandoff,
+  type PipelineTaskHandoffRecord, type PipelineTaskHandoffSettings, type PipelineTaskHandoffStore, type PipelineTaskHandoffView,
+  type PipelineTaskHandoffSummary, type PipelineTaskHandoffPage, type PipelineTaskHandoffSnapshot, type PipelineTaskHandoffCandidate,
+} from "./pipeline-task-handoffs.js";
+export type { PipelineTaskRecoveryPolicy, PipelineTaskRecoveryPreview, PipelineTaskRecoverySource } from "./pipeline-task-recovery.js";
+
+export { createPipelineTaskInputForm, type PipelineTaskInputForm, type PipelineTaskFormRequest } from "./pipeline-task-input.js";
+export {
+  createPipelineTaskClient, createPipelineTaskHandoffClient, createPipelineTaskApprovalClient, createPipelineTaskReviewerInbox, readPipelineTaskManifest, PipelineTaskClientError, type PipelineTaskCheckpoint,
+  type PipelineTaskClientCode, type PipelineTaskClientMethod, type PipelineTaskClientOptions,
+  type PipelineTaskObservation, type PipelineTaskReader, type PipelineTaskResource, type PipelineTaskTransport,
+  type PipelineTaskReviewerInboxPageOptions, type PipelineTaskReviewerInboxWatchOptions,
+} from "./pipeline-task-client.js";
+export { createPipelineTaskHttpTransport } from "./pipeline-task-http.js";
+export {
+  PIPELINE_TASK_MANIFEST_URI, parsePipelineTaskManifest, PipelineTaskManifestError,
+  type PipelineTaskManifest, type PipelineTaskManifestEntry, type PipelineTaskArtifactDescriptor, type PipelineTaskRevision,
+} from "./pipeline-task-manifest.js";
+
+export { createPipelineTaskApproval, type PipelineTaskApproval, type PipelineTaskApprovalChoice, type PipelineTaskApprovalView, type PipelineTaskApprovalReceipt } from "./pipeline-task-approvals.js";

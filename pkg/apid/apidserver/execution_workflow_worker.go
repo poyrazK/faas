@@ -55,6 +55,7 @@ func (s *server) runManagedExecutionWorkflowWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
+		s.driveExecutionPipelines(ctx, owner)
 		if !s.executionAPIEnabled || mfaIdentities == nil || len(mfaIdentities()) == 0 {
 			continue
 		}
@@ -140,6 +141,9 @@ func (s *server) driveManagedExecutionWorkflow(ctx context.Context, claim state.
 		observed[i] = managedWorkflowObservedStep{Run: row, HasRun: true}
 		if row.Status == api.ExecutionStatusSucceeded {
 			observed[i].ContractFailure = executionworkflow.ValidateResult(row.Result, resultSchemas[i])
+			if row.ResultValidation != nil && row.ResultValidation.Status == "invalid" {
+				observed[i].ContractFailure = "Run result does not match result_schema"
+			}
 			if observed[i].ContractFailure != "" && failureDetail == "" {
 				failureDetail = managedWorkflowResultContractFailure(step.Label, observed[i].ContractFailure)
 			}
@@ -227,7 +231,8 @@ func (s *server) driveManagedExecutionWorkflow(ctx context.Context, claim state.
 			dependencyInputs := managedWorkflowDependencyInputs(dependencies[step.Label], plan, observed)
 			if err := s.admitManagedExecutionWorkflowStep(ctx, runs, account, job, step, previous, dependencyInputs, plan, observed); err != nil {
 				var quota *state.ExecutionQuotaError
-				if errors.As(err, &quota) || errors.Is(err, state.ErrExecutionRuntimeUnpinned) {
+				var fileQuota *state.ExecutionFileQuotaError
+				if errors.As(err, &fileQuota) || errors.As(err, &quota) || errors.Is(err, state.ErrExecutionRuntimeUnpinned) {
 					return s.retryManagedWorkflowClaim(ctx, jobs, claim, startedSteps, "waiting for Run capacity")
 				}
 				if errors.Is(err, state.ErrExecutionWorkflowStepExists) {
@@ -380,6 +385,9 @@ func (s *server) admitManagedExecutionWorkflowStep(ctx context.Context, runs sta
 			if err := api.ValidateExecutionArtifacts([]api.ExecutionArtifact{*artifact}); err != nil {
 				return managedWorkflowPermanentStepError("stored source artifact failed integrity verification")
 			}
+			if artifact.FileID != "" {
+				return managedWorkflowPermanentStepError("stored artifacts must be passed using request.input_files below context.input_dir")
+			}
 			request.Files = append(request.Files, api.ExecutionFile{Path: input.Path, Content: append([]byte(nil), artifact.Content...)})
 		}
 	}
@@ -405,30 +413,19 @@ func (s *server) admitManagedExecutionWorkflowStep(ctx context.Context, runs sta
 	}
 	request.WorkflowID = job.WorkflowID
 	request.StepLabel = managedExecutionWorkflowStepLabel(job.PlanID, step.Label)
-	resolved, problem := request.Resolve(account.Plan)
-	if problem != nil {
-		return managedWorkflowPermanentStepError("step request no longer resolves within the account plan")
+	access := executionAccess{principal: job.RunsPrincipalID, broad: job.RunsPrincipalID != nil && *job.RunsPrincipalID == account.ID}
+	if job.RunsPrincipalID != nil {
+		access.principalID = *job.RunsPrincipalID
 	}
-	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(request.IntegrationIDs)
+	params, _, err := s.prepareExecutionAdmission(ctx, executionStoreAdmissionReader{s.store}, account, access, request)
 	if err != nil {
-		return managedWorkflowPermanentStepError("step has invalid integration ids")
+		var problem *api.Problem
+		if errors.As(err, &problem) && problem.Status >= 400 && problem.Status < 500 && problem.Status != 429 {
+			return managedWorkflowPermanentStepError("step request no longer satisfies its input contract, file access, or account limits")
+		}
+		return err
 	}
-	recipients, kid, err := executionPayloadRecipients()
-	if err != nil {
-		return fmt.Errorf("execution payload recipient is not loaded: %w", err)
-	}
-	sealed, err := executionpayload.SealRequestTo(recipients, resolved)
-	if err != nil {
-		return fmt.Errorf("step payload could not be sealed")
-	}
-	now := time.Now().UTC()
-	_, err = runs.CreateExecution(ctx, state.CreateExecutionParams{
-		AccountID: job.AccountID, WorkflowID: job.WorkflowID, StepLabel: request.StepLabel,
-		OutboundIntegrationIDs: integrationIDs, RunsPrincipalID: job.RunsPrincipalID,
-		Request: resolved, SourceBytes: resolved.SourceBytes(), InputBytes: len(resolved.Input),
-		AdmittedAt: now, DeadlineAt: now.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
-		SealedPayload: sealed, PayloadKID: kid,
-	})
+	_, err = runs.CreateExecution(ctx, params)
 	if err != nil {
 		return err
 	}

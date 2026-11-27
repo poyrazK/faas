@@ -62,6 +62,7 @@ type releasePlan struct {
 	failure            *planFailure
 	configReceipt      *api.EnvBatchResponse
 	localInFlight      bool
+	uploadApproval     *pendingUploadApproval
 	appHash            [32]byte
 	latestID           string
 	attempted          bool
@@ -106,11 +107,12 @@ func registerReleases(s *mcp.Server, m *management) {
 	register(s, m, "gregale_plan_deploy", "Preview an immutable image deployment in the default or an explicitly selected named project environment. Plan pins account, environment identity, configuration revision and current release for 15 minutes. Apply stages at zero traffic; promotion is separate.", m.planDeploy)
 	register(s, m, "gregale_plan_rollback", "Preview a checked rollback to an exact retained release. Apply requires writes enabled and unchanged current release; Gregale enforces integrity and binding checks.", m.planRollback)
 	register(s, m, "gregale_wait_deployment", "Wait up to 45 seconds for a deployment to settle; a timeout returns pending, so poll the same ID. A live revision at 0% traffic is staged, not serving. Service and worker releases stay pending until their handoff finishes.", m.waitDeployment)
+	registerPromotionPlans(s, m)
 	if !m.opts.AllowWrites {
 		return
 	}
 	registerTool(s, m, "gregale_apply_deploy", "Apply a reviewed deploy plan, creating an idempotent zero-traffic revision. This can incur build/runtime costs. Use wait, then explicit promotion. Retry with the same plan ID after ambiguous errors.", false, m.applyDeploy)
-	registerTool(s, m, "gregale_promote_deployment", "Send 100% traffic to the staged revision from a reviewed deploy plan, only if the original serving release still owns traffic in the selected scope. Protected named targets require an approved environment promotion. This changes serving traffic; server-side release gates remain enforced.", false, m.promoteDeployment)
+	registerTool(s, m, "gregale_promote_deployment", "Send 100% traffic to the staged revision from a reviewed deploy plan or gregale_plan_promotion plan, only if the original serving release still owns traffic in the selected scope. Protected named targets require an approved environment promotion. This changes serving traffic; server-side release gates remain enforced.", false, m.promoteDeployment)
 	registerTool(s, m, "gregale_apply_rollback", "Apply a reviewed rollback plan with an atomic current-release guard and stable idempotency key. This changes production traffic and may create an asynchronous rollback operation.", false, m.applyRollback)
 }
 

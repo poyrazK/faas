@@ -2,8 +2,10 @@ package apidsource
 
 import (
 	"errors"
-	"github.com/onebox-faas/faas/pkg/state"
+	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowEnqueueRecoversAcceptedWithoutRepublishing(t *testing.T) {
@@ -14,6 +16,19 @@ func TestWorkflowEnqueueRecoversAcceptedWithoutRepublishing(t *testing.T) {
 	be := newMemBackend()
 	notif := &recordingNotifier{}
 	p := EnqueueParams{AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: path, SourceBytes: n, LogSpool: t.TempDir(), Log: quietLogger(), OperationID: "migration/service/1"}
+	p.ExpectedSourceSHA256 = strings.Repeat("0", 64)
+	if _, err := enqueueWithSourceStorage(ctx, m, notif, p, be); err == nil {
+		t.Fatal("wrong reviewed digest was accepted")
+	}
+	deploymentID, _ := OperationIDs(p.OperationID, app.ID)
+	if _, err := m.DeploymentByID(ctx, deploymentID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("digest mismatch published a deployment: %v", err)
+	}
+	var err error
+	p.ExpectedSourceSHA256, err = hashSourceFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	first, err := enqueueWithSourceStorage(ctx, m, notif, p, be)
 	if err != nil {
 		t.Fatal(err)
@@ -23,6 +38,10 @@ func TestWorkflowEnqueueRecoversAcceptedWithoutRepublishing(t *testing.T) {
 	second, err := enqueueWithSourceStorage(ctx, m, notif, p, be)
 	if err != nil || second != first {
 		t.Fatalf("replay duplicated or lost accepted work: %+v %v", second, err)
+	}
+	p.ExpectedSourceSHA256 = strings.Repeat("0", 64)
+	if _, err := enqueueWithSourceStorage(ctx, m, notif, p, be); err == nil {
+		t.Fatal("replay ignored the reviewed digest")
 	}
 	if _, err = m.ClaimNextQueuedBuild(ctx); err != nil {
 		t.Fatal(err)

@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/buildcache"
@@ -98,17 +99,21 @@ type LayerBuilder interface {
 // advances a deployment row through the build pipeline until a snapshot row
 // exists, at which point schedd picks it up on the next reaper tick.
 type Handler struct {
-	validatorArtifactCheck func(context.Context, string, string) error
-	store                  state.Store
-	notif                  Notifier
-	oci                    oci.Puller
-	builder                LayerBuilder
+	executionEnvironmentsEnabled bool
+	validatorArtifactCheck       func(context.Context, string, string) error
+	store                        state.Store
+	notif                        Notifier
+	oci                          oci.Puller
+	builder                      LayerBuilder
 	// layerDigests remembers the digest of each layer this process just
 	// published, so the deploy scan does not hash the same bytes again.
 	layerDigests *publishedLayerDigests
 	// verifiedBases remembers the base artifacts this process verified
 	// from its node cache (ADR-595 amendment 2026-11-17).
 	verifiedBases *verifiedBaseFiles
+	// runtimeBaseRetries defers a preparation whose runtime-base staging
+	// lost to another node's base to the recovery loop; nil defers nothing.
+	runtimeBaseRetries *runtimeBaseRetries
 	// deferredScans runs the deploy scan after the snapshot handoff when
 	// the app does not gate on it (ADR-075 amendment 2026-11-17); nil
 	// scans every deploy before the handoff.
@@ -386,6 +391,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 	return &Handler{
 		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{}, verifiedBases: &verifiedBaseFiles{},
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log, servingSince: time.Now().UTC(),
+		runtimeBaseRetries: newRuntimeBaseRetries(),
 	}
 }
 
@@ -2268,7 +2274,8 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 			return err
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
-		if errors.Is(err, errReleaseDeploymentClosed) {
+		if errors.Is(err, errReleaseDeploymentClosed) || errors.Is(err, errReleaseApprovalWait) ||
+			errors.Is(err, state.ErrPassingSandboxSuiteRequired) || errors.Is(err, state.ErrReleaseApprovalPolicyChanged) {
 			return nil
 		}
 		if err != nil {
@@ -2276,7 +2283,7 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		}
 		h.retireOutpacedReleases(ctx, dep)
 		wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
-		if err != nil || wait {
+		if err != nil || wait || state.HostedTaskRehearsalMigrationRelease(task) {
 			return err
 		}
 	}
@@ -2302,10 +2309,24 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	if !errors.Is(err, state.ErrNotFound) {
 		return state.AppTask{}, fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
+	current, err := h.store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		return state.AppTask{}, fmt.Errorf("imaged: read release before admission: %w", err)
+	}
+	wait, err := approval.LoadReleaseCommandWait(ctx, h.store, app, current, time.Now())
+	if err != nil {
+		return state.AppTask{}, err
+	}
+	if wait.Waits && wait.Status.State != api.ReleaseApprovalStateApproved {
+		return state.AppTask{}, errReleaseApprovalWait
+	}
 	params := state.CreateAppTaskParams{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
 		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
 		CommandShell: dep.ReleaseCommandShell,
+	}
+	if wait.Waits {
+		params.ReleaseApprovalPolicyUpdatedAt = &wait.Policy.UpdatedAt
 	}
 	contained, err := h.prepareContainedRelease(ctx, app, dep, &params)
 	if err != nil {
@@ -2331,6 +2352,8 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 // errReleaseDeploymentClosed reports that release admission already failed the
 // deployment durably; there is nothing left to wait for or prime.
 var errReleaseDeploymentClosed = errors.New("imaged: release admission closed the deployment")
+
+var errReleaseApprovalWait = errors.New("imaged: release approval is still required")
 
 // prepareContainedRelease pins the release of an app enrolled in a contained
 // rehearsal as that run's contained command (ADR-20261020150000): it executes
@@ -2394,7 +2417,12 @@ func (h *Handler) applyReleaseTaskOutcome(ctx context.Context, dep state.Deploym
 		// the output is. The output itself stays out of the deployment error,
 		// which reaches notifications; the task receipt keeps it.
 		if task.ExitCode != nil {
-			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/{slug}/tasks/%s)", *task.ExitCode, task.ID)
+			// The path named a literal {slug} (prod 2026-11-19); name the app.
+			appRef := dep.AppID
+			if app, appErr := h.store.AppByID(ctx, dep.AppID); appErr == nil && app.Slug != "" {
+				appRef = app.Slug
+			}
+			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/%s/tasks/%s)", *task.ExitCode, appRef, task.ID)
 		}
 		var err error
 		if task.Status == state.AppTaskFailed && task.FailureCode != nil && releaseTaskInfrastructureFailure(*task.FailureCode) {
@@ -2461,7 +2489,7 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 		return fmt.Errorf("imaged: release-gated deployment %s is in %q", dep.ID, dep.Status)
 	}
 	wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
-	if err != nil || wait {
+	if err != nil || wait || state.HostedTaskRehearsalMigrationRelease(task) {
 		return err
 	}
 	return h.notifySnapshotPrime(ctx, dep.AppID, dep.ID)
@@ -2631,6 +2659,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if hint, denied := StatefulDenyListMatch(ref); denied {
 		err := fmt.Errorf("%w: %s — %s", errStatefulViolation, ref, hint)
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stateful base image denied")
+		return err
+	}
+	if err := h.managedValkeyImageCheck(ctx, app, ref); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "managed cache image denied")
 		return err
 	}
 
@@ -3868,6 +3900,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			if err := h.validateEnvironmentBranchActivation(ctx, dep, *ready, mode); err != nil {
 				return err
 			}
+		case state.DeveloperPrimeActivationReason:
+			if dep.Status == state.DeployLive {
+				return nil
+			}
+			ctx, err = h.developerPrimeActivation(ctx, app, dep, *ready, mode)
+			if err != nil {
+				return err
+			}
 		default:
 			switch mode {
 			case api.ExecutionModeWorker:
@@ -4028,7 +4068,28 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// capture replaces it.
 			unrestorable := state.SnapshotDriveKey(stored) == ""
 			otherFC := snap.FCVersion != "" && stored.FCVersion != snap.FCVersion
-			if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
+			// A managed cache's capture holds its data, so the newest one
+			// always replaces the live row (ADR-20261116192126).
+			cacheCapture := h.isManagedCacheDeployment(ctx, snapshot.DeploymentID)
+			if cacheCapture && !unrestorable && !otherFC && state.SnapshotDriveKey(snap) != "" {
+				// Swap in one transaction: a wake between a retire and a
+				// separate publish found no row and cold-booted the cache
+				// empty (native run redis-20261118T230904).
+				replaced := stored.ID
+				stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(state.WithReplacedSnapshot(ctx, replaced), snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt)
+				if errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
+					h.log.Info("imaged: discarded stale managed cache capture", "deployment", snapshot.DeploymentID,
+						"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
+					return h.discardStaleSnapshotCapture(ctx, snap)
+				} else if createErr != nil {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
+					return fmt.Errorf("imaged: replace managed cache snapshot %s: %w", replaced, createErr)
+				}
+				h.log.Info("imaged: managed cache capture replaced the live snapshot",
+					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "replaced", replaced, "snapshot", stored.ID)
+				created = true
+			} else if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
 				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
@@ -4705,14 +4766,23 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 	}
 	if app.Runtime == "" {
 		if _, err := h.EnsureMinimalBase(ctx, oci.ImageArchitecture, os.Getenv); err != nil {
-			return fmt.Errorf("imaged: ensure minimal base: %w", err)
+			return fmt.Errorf("imaged: ensure minimal base: %w", runtimeBaseStagingError(err))
 		}
 		return nil
 	}
 	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, oci.ImageArchitecture, os.Getenv); err != nil {
-		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, err)
+		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, runtimeBaseStagingError(err))
 	}
 	return nil
+}
+
+// runtimeBaseStagingError marks a staging failure that another node's base
+// publication caused with errRuntimeBaseStale.
+func runtimeBaseStagingError(err error) error {
+	if errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+		return fmt.Errorf("%w: %w", errRuntimeBaseStale, err)
+	}
+	return err
 }
 
 // transition is the only place imaged writes to deployments.status. Keeps

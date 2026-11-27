@@ -91,7 +91,11 @@ func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3
 	if _, err := q.ObjectS3CredentialLockBucket(ctx, tx, sqlc.ObjectS3CredentialLockBucketParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID)}); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
-	if _, err := q.ObjectS3BindingLockApp(ctx, tx, sqlc.ObjectS3BindingLockAppParams{AppID: mustPgUUID(c.ManagedAppID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)}); err != nil {
+	if req.Borrowed {
+		if _, err := q.ObjectS3BindingLockBorrower(ctx, tx, sqlc.ObjectS3BindingLockBorrowerParams{AppID: mustPgUUID(c.ManagedAppID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)}); err != nil {
+			return ObjectS3Credential{}, mapErr(err)
+		}
+	} else if _, err := q.ObjectS3BindingLockApp(ctx, tx, sqlc.ObjectS3BindingLockAppParams{AppID: mustPgUUID(c.ManagedAppID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)}); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
 	created, err := insertObjectS3ComputeBindingTx(ctx, tx, req, true)
@@ -354,6 +358,9 @@ func (s *PgStore) FinalizeObjectS3CredentialRotationsForApp(ctx context.Context,
 }
 
 func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
+	if isObjectWorkloadAccessKey(accessKeyID) {
+		return s.resolveObjectWorkloadCredential(ctx, accessKeyID)
+	}
 	row, err := sqlc.New().ObjectS3CredentialResolve(ctx, s.pool, accessKeyID)
 	if err != nil {
 		return ObjectS3Credential{}, ObjectBucket{}, mapErr(err)
@@ -442,4 +449,22 @@ func optionalObjectS3Time(value pgtype.Timestamptz) *time.Time {
 	}
 	result := value.Time
 	return &result
+}
+
+func (s *PgStore) ObjectS3ComputeBindingsHeldBy(ctx context.Context, accountID, appID string) ([]HeldObjectS3ComputeBinding, error) {
+	if _, err := uuid.Parse(accountID); err != nil {
+		return nil, ErrNotFound
+	}
+	if _, err := uuid.Parse(appID); err != nil {
+		return nil, ErrNotFound
+	}
+	rows, err := sqlc.New().ObjectS3ComputeBindingsHeldBy(ctx, s.pool, sqlc.ObjectS3ComputeBindingsHeldByParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]HeldObjectS3ComputeBinding, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, HeldObjectS3ComputeBinding{Credential: objectS3CredentialFromSQL(row.ObjectStorageS3Credential), BucketAppID: pgUUIDString(row.BucketAppID)})
+	}
+	return out, nil
 }

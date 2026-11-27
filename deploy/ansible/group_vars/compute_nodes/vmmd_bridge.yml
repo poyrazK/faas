@@ -20,8 +20,14 @@
 # under the production faas-vmmd.service sandbox (#6089) reproduces the
 # rc.305 failure without it and serves through units with it. Pull fsn-2.faas
 # again if a bridge unit fails to start there.
+#
+# 2026-11-21: production moved to OVH (fsn-2 retired after three weeks on
+# the bridge with no unit failure). Both OVH nodes take it with the adoption
+# switch, so a no-drain vmmd restart hands the bridge units over. A unit that
+# fails to start still falls back to the bridge process (#5999).
 vmmd_bridge_canary_nodes:
-  - fsn-2.faas
+  - bhs-2.faas
+  - bhs-3.faas
 vmmd_bridge_unprivileged: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"
 vmmd_instance_bridge_sessions: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"
 vmmd_instance_bridge_unit: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"

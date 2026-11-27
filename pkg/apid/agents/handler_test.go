@@ -34,6 +34,22 @@ type fakeStore struct {
 	runs      []agentstore.Run
 	run       *agentstore.Run
 	audits    []string
+	approvals []agentstore.Approval
+	decided   []string
+}
+
+func (f *fakeStore) RunApprovals(context.Context, string, string) ([]agentstore.Approval, error) {
+	return f.approvals, f.err
+}
+
+func (f *fakeStore) DecideRunApproval(_ context.Context, _, runID, approvalID, decision, note, decidedBy string) (agentstore.Approval, error) {
+	f.decided = append(f.decided, runID+"/"+approvalID+":"+decision+":"+note+":"+decidedBy)
+	a := agentstore.Approval{ID: approvalID, RunID: runID, Tool: "web_fetch", Decision: decision, Note: note,
+		ExpiresAt: time.Now().Add(time.Hour)}
+	if errors.Is(f.err, agentstore.ErrApprovalClosed) {
+		a.Decision = api.AgentRunApprovalDecisionDeny
+	}
+	return a, f.err
 }
 
 func (f *fakeStore) CreateAgent(_ context.Context, _, name, description string, spec agentstore.VersionSpec, maxAgents int) (agentstore.Agent, agentstore.Version, error) {

@@ -117,10 +117,14 @@ type ManagedPostgresDatabase struct {
 	ServiceClass            string                 `json:"service_class"`
 	Availability            string                 `json:"availability"`
 	ScaleToZero             bool                   `json:"scale_to_zero"`
+	SuspendTimeoutSeconds   int64                  `json:"suspend_timeout_seconds,omitempty"` // scale-to-zero only: idle seconds before suspend
+	SuspendTimeoutCustom    bool                   `json:"suspend_timeout_custom,omitempty"`  // the database's own value, not the default
+	WakeWithApp             bool                   `json:"wake_with_app,omitempty"`           // starts when a bound app wakes (ADR-20261125105038)
 	StorageLimitBytes       int64                  `json:"storage_limit_bytes"`
 	RestoreWindowSeconds    int64                  `json:"restore_window_seconds"`
 	RestoreSourceDatabaseID string                 `json:"restore_source_database_id,omitempty"`
 	RestorePointInTime      string                 `json:"restore_point_in_time,omitempty"`
+	MaskedBranch            bool                   `json:"masked_branch,omitempty"`
 	State                   string                 `json:"state"`
 	LastErrorCode           string                 `json:"last_error_code,omitempty"`
 	CreatedAt               string                 `json:"created_at"`
@@ -161,7 +165,7 @@ type ManagedPostgresDatabase struct {
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
 	// Previews is what this database gives PR preview environments
-	// (ADR-20261102123523): "empty" or "copy"; omitted when off.
+	// (ADR-20261102123523): "empty", "copy" or "masked"; omitted when off.
 	Previews string `json:"previews,omitempty"`
 	// Preview is set on a database a PR preview environment owns: it is
 	// purged with the environment.
@@ -176,9 +180,14 @@ type ManagedPostgresPreviewOwner struct {
 }
 
 // SetManagedPostgresPreviewsRequest sets what a database gives PR preview
-// environments: "off", "empty" or "copy" (ADR-20261102123523).
+// environments (ADR-20261102123523).
 type SetManagedPostgresPreviewsRequest struct {
-	Previews string `json:"previews"`
+	Previews      string                               `json:"previews"`
+	MaskingPolicy *ManagedPostgresPreviewMaskingPolicy `json:"masking_policy,omitempty"`
+}
+
+type ManagedPostgresPreviewMaskingPolicy struct {
+	Tables []ManagedPostgresMaskedTable `json:"tables"`
 }
 
 // ManagedPostgresRestoreRange bounds a restore's point_in_time: from
@@ -225,7 +234,18 @@ type ManagedPostgresUsageResponse struct {
 	StorageByteSecondsLimit     int64      `json:"storage_byte_seconds_limit"`
 	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
-	EgressBytes                 int64      `json:"egress_bytes"`
+	// SnapshotByteSeconds is snapshot storage, apart from restore history,
+	// and IncludedHistoryBytes the history the plan includes for the month
+	// (ADR-20261123062111).
+	SnapshotByteSeconds  int64 `json:"snapshot_byte_seconds"`
+	IncludedHistoryBytes int64 `json:"included_history_bytes"`
+	// HistoryState is limited while restore history and snapshots passed
+	// twice the included history this month with overage off: the
+	// databases keep a 24-hour restore window until the 1st of the next
+	// month, or until overage is turned on (ADR-20261123062111 D2). It is
+	// normal otherwise, and absent while the limit is not enforced.
+	HistoryState string `json:"history_state,omitempty"`
+	EgressBytes  int64  `json:"egress_bytes"`
 	// Compute caps on running databases (ADR-20261025094915). The allowance is
 	// the plan's monthly compute; the ceiling is where running databases are
 	// suspended. ComputeCapState is healthy, warning (at 80% of the allowance),
@@ -257,6 +277,10 @@ type ManagedPostgresUsageResponse struct {
 	// compute_ceiling or inactive, as on each database. Egress holds one
 	// database at a time and is reported on that database only.
 	Hold string `json:"hold,omitempty"`
+	// Databases splits the month's compute by database, most first, with
+	// each one's recorded starts and awake time (ADR-20261125231222);
+	// omitted when it could not be read.
+	Databases []ManagedPostgresDatabaseUsage `json:"databases,omitempty"`
 }
 
 // Why the platform holds a managed database (ManagedPostgresDatabase.Hold).
@@ -334,6 +358,7 @@ type ManagedPostgresUsageOperatorResponse struct {
 	StorageByteSecondsLimit      int64                          `json:"storage_byte_seconds_limit"`
 	StorageByteSecondsRemaining  int64                          `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds           int64                          `json:"history_byte_seconds"`
+	SnapshotByteSeconds          int64                          `json:"snapshot_byte_seconds"`
 	EgressBytes                  int64                          `json:"egress_bytes"`
 	CostMillicents               int64                          `json:"cost_millicents"`
 	MaxMonthlyCostMillicents     int64                          `json:"max_monthly_cost_millicents"`
@@ -359,7 +384,9 @@ type CreateManagedPostgresDatabaseRequest struct {
 }
 
 type RestoreManagedPostgresDatabaseRequest struct {
-	Name string `json:"name"`
+	// Region restores from the database's configured recovery region.
+	Region string `json:"region,omitempty"`
+	Name   string `json:"name"`
 	// PointInTime is an RFC3339 time inside the source's restore range.
 	// Empty restores from the latest point (ADR-20261106103654): apid's
 	// clock minus a couple of seconds.
@@ -430,6 +457,10 @@ type ManagedPostgresCustomRole struct {
 	GrantedTo []string `json:"granted_to"`
 	// MemberOf lists other custom roles of the database it is a member of.
 	MemberOf []string `json:"member_of"`
+	// DefaultFor lists the access modes (read_write, read_only) whose
+	// logins start every session as this role (ADR-20261116213000
+	// amendment 2).
+	DefaultFor []string `json:"default_for"`
 	// State is pending until the role is applied to the database, ready
 	// after, and deleting until a deleted role is dropped.
 	State         string `json:"state"`
@@ -447,6 +478,9 @@ type PutManagedPostgresCustomRoleRequest struct {
 	BypassRLS bool     `json:"bypass_rls"`
 	GrantedTo []string `json:"granted_to"`
 	MemberOf  []string `json:"member_of"`
+	// DefaultFor, when present, replaces the access modes whose logins
+	// start as this role; absent keeps the current ones still granted.
+	DefaultFor *[]string `json:"default_for,omitempty"`
 }
 
 // ManagedPostgresCutover reports staging and control-plane SQL evidence only.

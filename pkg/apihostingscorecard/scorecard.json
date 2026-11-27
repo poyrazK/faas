@@ -81,7 +81,7 @@
       "name": "Capability acceptance: async",
       "category": "reliability",
       "description": "Each released async capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "postgres-changes", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
+      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "postgres-changes", "queue-bindings", "queue-pull-leases", "queues", "stored-workflows", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand"},
@@ -107,6 +107,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queue_bindings_test.go::TestHTTPFunctionPushQueueBinding"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queue_environment_test.go::TestQueueEnvironmentHTTPRejectsSharedKeyedWorkPolicy"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queues_read_test.go::TestQueuePeek_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_stored_workflows_test.go::TestStoredWorkflowAPI"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_triggers_caps_test.go::TestTriggerRetryPolicyRoundTripsAndUpdates"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_workflow_recovery_policy_test.go::TestWorkflowRecoveryPolicyHTTP"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_approval_inputs_test.go::TestOperationApprovalFormsAreHiddenUntilAllowlisted"},
@@ -143,7 +144,7 @@
       "name": "Capability acceptance: data",
       "category": "resources",
       "description": "Each released data capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-prompts", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "database-rollbacks", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-custom-roles", "postgres-cutovers", "postgres-restore", "preview-databases", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
+      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-prompts", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "database-rollbacks", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "native-postgres-operations", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-custom-roles", "postgres-cutovers", "postgres-overage", "postgres-restore", "preview-databases", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_bucket_versioning_test.go::TestBucketVersioningCLI"},
@@ -154,6 +155,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/durable_entities_test.go::TestDurableEntityAPIScopeAndAuthentication"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_test.go::TestRestoreAccount_HappyPath"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_managed_postgres_compute_policy_test.go::TestManagedPostgresComputePolicyRoutesAndReplay"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_managed_postgres_overage_test.go::TestManagedPostgresOverageRoutes"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_bucket_object_lock_test.go::TestBucketObjectLockAuthorityPG"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_compute_triggers_test.go::TestObjectComputeTriggerAPIMem"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_storage_multipart_test.go::TestObjectMultipartLayout"},
@@ -170,6 +172,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/object_signed_url_test.go::TestObjectSignedURLE2EPG"},
         {"kind": "test", "locator": "pkg/apid/apidserver/org_managed_postgres_pg_test.go::TestOrgManagedPostgresPostgresHTTP"},
         {"kind": "test", "locator": "pkg/apid/apidserver/preview_databases_test.go::TestPreviewDatabasesFollowTheirPreview"},
+        {"kind": "test", "locator": "pkg/apid/capgate/gate_test.go::TestNativePostgresOperationsRequireOptIn"},
         {"kind": "test", "locator": "pkg/apid/databaseswitch/worker_test.go::TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes"},
         {"kind": "test", "locator": "pkg/apid/livequeries/service_test.go::TestLiveQueriesLogins"},
         {"kind": "test", "locator": "pkg/apid/managedrealtime/handlers_tickets_test.go::TestRevokeRealtimeTicketHandlers"},
@@ -186,7 +189,8 @@
         {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimePublisherCredentialPublishes"},
         {"kind": "test", "locator": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimeWorkerCredentialScopesOperations"},
         {"kind": "test", "locator": "pkg/tcpd/supervisor_test.go::TestSupervisorRecreationCancelsPreviousIdentitySessions"},
-        {"kind": "test", "locator": "tests/journeys/postgres_test.go::TestManagedPostgres"}
+        {"kind": "test", "locator": "tests/journeys/postgres_test.go::TestManagedPostgres"},
+        {"kind": "test", "locator": "tests/journeys/realtime_test.go::TestRealtime"}
       ]
     },
     {
@@ -194,7 +198,7 @@
       "name": "Capability acceptance: delivery",
       "category": "delivery",
       "description": "Each released delivery capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "kubernetes-manifests", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "resource-labels", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
+      "capabilities": ["alert-rollbacks", "apps", "builds", "claimable-deploys", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "kubernetes-manifests", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "resource-labels", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring", "verification-contracts"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_scheduled_releases_test.go::TestScheduledReleaseLines"},
@@ -226,7 +230,9 @@
         {"kind": "test", "locator": "pkg/imaged/secretscan_pure_test.go::TestWithSecretScanFindings_ScannedAtUTC"},
         {"kind": "test", "locator": "pkg/reposcan/k8s_pod_test.go::TestScanWith_KubernetesManifestsReachesWorkloads"},
         {"kind": "test", "locator": "pkg/state/alert_rollback_selection_test.go::TestAlertRollbackSelectionFailsClosed"},
-        {"kind": "test", "locator": "pkg/state/deployment_queue_controls_pg_test.go::TestPg_CancelDeploymentTx_Pending_Happy"}
+        {"kind": "test", "locator": "pkg/state/deployment_queue_controls_pg_test.go::TestPg_CancelDeploymentTx_Pending_Happy"},
+        {"kind": "test", "locator": "pkg/verifycontract/contract_test.go::TestRunSkipsMutationsInProductionAndBlocksOnRequiredFailures"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/claimable_deploys_test.go::TestAnonymousDeployIsClaimedInPlace"}
       ]
     },
     {
@@ -327,6 +333,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_mcp_oauth_test.go::TestDashboardMCPOAuthRenewalRecovery"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dev_test.go::TestDevSessionGetIsReadOnly"},
+        {"kind": "test", "locator": "tests/journeys/dev_loop_test.go::TestDevLoop"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_lifecycle_test.go::TestAppAfterRestoreLifecycleRoundTrip"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_mcp_catalog_monitor_test.go::TestMCPCatalogMonitorHTTPRoles"},
@@ -548,6 +555,24 @@
       ]
     },
     {
+      "id": "managed-redis-preview",
+      "name": "Managed Redis preview qualification",
+      "category": "reliability",
+      "description": "A Hobby-and-up account creates a Valkey cache, binds it to an app, and keeps its data across scale to zero, restart, resize and upgrade; RESP replies stay in pipeline order through the gateway, and the managed-redis flag (default off) is the rollback (ADR-20261116192126).",
+      "capabilities": ["managed-redis"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCacheCreateBindDelete"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCacheResizeAndUpgradeHandOff"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCachePlanGates"},
+        {"kind": "test", "locator": "pkg/gateway/redis_session_test.go::TestRedisSessionForwardsCommands"},
+        {"kind": "test", "locator": "cmd/e2e/managed_redis_metal_test.go::TestManagedRedisMetal"},
+        {"kind": "test", "locator": "cmd/e2e/managed_redis_metal_test.go::TestManagedRedisHandoffSoakMetal"},
+        {"kind": "test", "locator": "tests/journeys/redis_test.go::TestManagedRedis"},
+        {"kind": "runbook", "locator": "docs/redis.md"}
+      ]
+    },
+    {
       "id": "mcp-hosting-readiness",
       "name": "Stateless MCP hosting qualification",
       "category": "compatibility",
@@ -691,7 +716,10 @@
       "description": "A customer-facing resource binding has qualification evidence before it is promoted beyond internal use.",
       "capabilities": ["object-storage"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
-      "evidence": [{"kind": "test", "locator": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"}]
+      "evidence": [
+        {"kind": "test", "locator": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"},
+        {"kind": "test", "locator": "tests/journeys/object_storage_test.go::TestObjectStorage"}
+      ]
     },
     {
       "id": "rollback-recovery",

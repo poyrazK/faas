@@ -89,6 +89,7 @@
         "/v1/sandboxes"
       ],
       "cli": [
+        "agents",
         "sandbox-templates"
       ],
       "consumers": [
@@ -334,6 +335,7 @@
       "docs_url": "/docs/adr/744-anomaly-alerts",
       "operator_flag": "FAAS_ANOMALY_ALERTS_ENABLED",
       "acceptance_test": "pkg/alerts/anomaly_test.go::TestAnomalyRuleFiresAboveBaseline",
+      "routes": ["=/v1/apps/{}/alerts/anomaly-preview"],
       "parent": "alerts"
     },
     {
@@ -406,6 +408,7 @@
         "/v1/account/billing-run-schedule",
         "/v1/account/billing-runs",
         "/v1/apps/{}/consumer-billing-policy",
+        "/v1/apps/{}/consumer-credit-packs",
         "/v1/apps/{}/consumer-overdue-holds",
         "/v1/apps/{}/consumer-plans",
         "/v1/apps/{}/consumer-signup",
@@ -431,7 +434,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestGetApp_SurfacesRequireAuthn",
       "settings": [
         "app.public_auth",
-        "app.require_authn"
+        "app.require_authn",
+        "manifest.access"
       ]
     },
     {
@@ -795,6 +799,7 @@
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
+        "/v1/orgs/{}/referrals/checkout",
         "/v1/orgs/{}/seat_usage",
         "/v1/orgs/{}/usage",
         "/v1/usage",
@@ -1000,6 +1005,29 @@
       ],
       "settings": [
         "edge_rule.circuit_breaker"
+      ]
+    },
+    {
+      "id": "claimable-deploys",
+      "name": "Claimable deploys",
+      "category": "account",
+      "description": "An agent deploys with no account and gets a live URL plus a claim link; a person who opens the link and confirms an email address owns the app on the Free plan. Unclaimed deploys are limited and expire.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/claimable-deploys",
+      "acceptance_test": "pkg/apid/apidserver/claimable_deploys_test.go::TestAnonymousDeployIsClaimedInPlace",
+      "routes": [
+        "/claim",
+        "/v1/account/claim-link",
+        "/v1/anonymous"
+      ],
+      "cli": [
+        "claim"
       ]
     },
     {
@@ -1725,7 +1753,7 @@
       "id": "developer-environments",
       "name": "Developer environments",
       "category": "runtime",
-      "description": "Run an expiring remote copy of an app for development, with file sync.",
+      "description": "Run an expiring remote copy of an app for development, with file sync and live source patches that put an edit live without a rebuild.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -1734,7 +1762,7 @@
         "scale"
       ],
       "docs_url": "/docs/dev",
-      "acceptance_test": "pkg/apid/apidserver/handlers_dev_test.go::TestDevSessionGetIsReadOnly",
+      "acceptance_test": "tests/journeys/dev_loop_test.go::TestDevLoop",
       "settings": [
         "manifest.dev"
       ],
@@ -1761,8 +1789,19 @@
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
       "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection",
       "routes": [
+        "/dashboard/run-pipelines",
+        "/v1/apps/{}/run-artifact-deliveries",
         "/v1/execution-artifact-grants",
-        "/v1/executions"
+        "/v1/execution-environments",
+        "/v1/execution-files",
+        "/v1/execution-pipelines",
+        "/v1/executions",
+        "/v1/run-controls",
+        "/v1/run-history",
+        "/v1/run-tasks",
+        "/v2/execution-pipelines",
+        "/v2/execution-workflows",
+        "/v2/executions"
       ],
       "cli": [
         "run",
@@ -2614,6 +2653,7 @@
       "acceptance_test": "cmd/e2e/feature_flags_native_restore_metal_test.go::TestFeatureFlagsNativeParkRestoreMetal",
       "routes": [
         "/v1/projects/{}/environments/{}/flags",
+        "/v1/projects/{}/environments/{}/cohorts",
         "/v1/projects/{}/environments/{}/insights",
         "/v1/runtime/flags"
       ],
@@ -2637,6 +2677,20 @@
       "docs_url": "https://gregale.dev/docs/security",
       "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal",
       "always_on": true
+    },
+    {
+      "id": "flag-notifications",
+      "name": "Flag notifications",
+      "category": "delivery",
+      "description": "Send experiment decisions and problems, a weekly digest of flags that need a decision and flag expiries to notification channels.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261125085913-flag-notifications",
+      "acceptance_test": "pkg/flagnotify/flagnotify_test.go::TestRunner",
+      "parent": "feature-flags",
+      "routes": [
+        "/v1/projects/{}/environments/{}/flags/notifications"
+      ]
     },
     {
       "id": "framework-profiles",
@@ -3254,13 +3308,41 @@
         "/v1/postgres/capabilities",
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
+        "/v1/postgres/databases/{}/activity",
         "/v1/postgres/databases/{}/connection-budget",
+        "/v1/postgres/databases/{}/query",
+        "/v1/postgres/databases/{}/suspend-timeout",
         "/v1/postgres/databases/{}/undelete",
+        "/v1/postgres/databases/{}/wake-with-app",
         "/v1/postgres/usage"
       ],
       "cli": [
         "postgres",
         "add postgres"
+      ]
+    },
+    {
+      "id": "managed-redis",
+      "name": "Managed Redis",
+      "category": "data",
+      "description": "Create a Redis-compatible Valkey cache that scales to zero and bind it to an app.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/redis",
+      "acceptance_test": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCacheCreateBindDelete",
+      "routes": [
+        "=/v1/redis",
+        "=/v1/redis/{}",
+        "/v1/redis/{}/bindings",
+        "/v1/redis/{}/restart",
+        "/v1/redis/{}/upgrade"
+      ],
+      "cli": [
+        "redis"
       ]
     },
     {
@@ -3325,13 +3407,13 @@
       "name": "MCP hosting",
       "category": "runtime",
       "description": "Scaffold and deploy stateless Streamable HTTP MCP servers with explicit client access, protocol diagnostics, verified tool discovery, and optional PostgreSQL-backed durable Tasks that can run in a separate Gregale worker app.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney",
       "routes": [
         "/dashboard/apps/{}/mcp-catalog-monitor",
@@ -3376,13 +3458,13 @@
       "name": "MCP readiness monitoring",
       "category": "runtime",
       "description": "Monitor MCP server readiness with incidents, maintenance and notifications.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip",
       "parent": "mcp-hosting",
       "routes": [
@@ -3436,6 +3518,23 @@
       "parent": "mcp-hosting",
       "routes": [
         "/v1/tool-grants"
+      ]
+    },
+    {
+      "id": "mcp-tool-insights",
+      "name": "MCP tool insights",
+      "category": "observability",
+      "description": "Per-tool MCP calls, failures, argument mismatches and estimated compute over the last hour, from the hosted MCP protocol telemetry.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261123110137-mcp-replay-gate-insights-api-mcp-keys",
+      "acceptance_test": "pkg/apid/mcpinsights/mcpinsights_test.go::TestRow",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/apps/{}/mcp-tool-insights"
+      ],
+      "cli": [
+        "mcp insights"
       ]
     },
     {
@@ -3507,7 +3606,7 @@
       "name": "Multipart uploads",
       "category": "data",
       "description": "Upload large objects in parts.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3523,6 +3622,88 @@
       ],
       "cli": [
         "bucket uploads"
+      ]
+    },
+    {
+      "id": "native-postgres-operations",
+      "name": "Native PostgreSQL operations",
+      "category": "data",
+      "description": "Manage native PostgreSQL maintenance, diagnostics, backups, recovery, and migrations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/native-postgres-operations",
+      "acceptance_test": "pkg/apid/capgate/gate_test.go::TestNativePostgresOperationsRequireOptIn",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/apps/{}/database-switches/migration",
+        "/v1/apps/{}/database-switches/migration/{}",
+        "/v1/apps/{}/database-switches/migration/{}/cancel",
+        "/v1/orgs/{}/postgres/bindings/{}/timeouts",
+        "/v1/orgs/{}/postgres/databases/{}/autovacuum",
+        "/v1/orgs/{}/postgres/databases/{}/backup-schedule",
+        "/v1/orgs/{}/postgres/databases/{}/cancel-query",
+        "/v1/orgs/{}/postgres/databases/{}/diagnostics",
+        "/v1/orgs/{}/postgres/databases/{}/errors",
+        "/v1/orgs/{}/postgres/databases/{}/exports",
+        "/v1/orgs/{}/postgres/databases/{}/extensions",
+        "/v1/orgs/{}/postgres/databases/{}/imports",
+        "/v1/orgs/{}/postgres/databases/{}/masked-branches",
+        "/v1/orgs/{}/postgres/databases/{}/migration",
+        "/v1/orgs/{}/postgres/databases/{}/migration-check",
+        "/v1/orgs/{}/postgres/databases/{}/query-insights",
+        "/v1/orgs/{}/postgres/databases/{}/recovery-region",
+        "/v1/orgs/{}/postgres/databases/{}/restore-check",
+        "/v1/orgs/{}/postgres/databases/{}/restore-drills",
+        "/v1/orgs/{}/postgres/databases/{}/sessions",
+        "/v1/orgs/{}/postgres/databases/{}/tables",
+        "/v1/orgs/{}/postgres/databases/{}/upgrade-rehearsals",
+        "/v1/postgres/bindings/{}/timeouts",
+        "/v1/postgres/databases/{}/auto-grow",
+        "/v1/postgres/databases/{}/autovacuum",
+        "/v1/postgres/databases/{}/backup-schedule",
+        "/v1/postgres/databases/{}/cancel-query",
+        "/v1/postgres/databases/{}/diagnostics",
+        "/v1/postgres/databases/{}/errors",
+        "/v1/postgres/databases/{}/exports",
+        "/v1/postgres/databases/{}/extensions",
+        "/v1/postgres/databases/{}/imports",
+        "/v1/postgres/databases/{}/maintenance-window",
+        "/v1/postgres/databases/{}/masked-branches",
+        "/v1/postgres/databases/{}/migration",
+        "/v1/postgres/databases/{}/migration-check",
+        "/v1/postgres/databases/{}/query-insights",
+        "/v1/postgres/databases/{}/recovery-region",
+        "/v1/postgres/databases/{}/restore-check",
+        "/v1/postgres/databases/{}/restore-drills",
+        "/v1/postgres/databases/{}/sessions",
+        "/v1/postgres/databases/{}/tables",
+        "/v1/postgres/databases/{}/upgrade-rehearsals"
+      ],
+      "cli": [
+        "postgres auto-grow",
+        "postgres autovacuum",
+        "postgres backup-schedule",
+        "postgres bindings timeouts",
+        "postgres branch masked",
+        "postgres cancel-query",
+        "postgres diagnose",
+        "postgres errors",
+        "postgres export",
+        "postgres extensions",
+        "postgres import",
+        "postgres import-status",
+        "postgres maintenance",
+        "postgres migrate",
+        "postgres queries",
+        "postgres recovery-region",
+        "postgres restore-drill",
+        "postgres sessions",
+        "postgres tables",
+        "postgres upgrade-rehearsal"
       ]
     },
     {
@@ -3628,7 +3809,7 @@
       "name": "Private object storage",
       "category": "data",
       "description": "Use private managed object buckets and signed URLs from an API.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3637,7 +3818,7 @@
       ],
       "docs_url": "/docs/object-storage",
       "operator_flag": "s3_enabled",
-      "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification",
+      "acceptance_test": "tests/journeys/object_storage_test.go::TestObjectStorage",
       "settings": [
         "manifest.buckets"
       ],
@@ -3663,7 +3844,7 @@
       "name": "Object storage compute bindings and triggers",
       "category": "data",
       "description": "Bind buckets to apps and run app code on bucket notifications.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",
@@ -3678,7 +3859,8 @@
         "/v1/apps/{}/buckets/{}/notifications",
         "/v1/orgs/{}/apps/{}/buckets/{}/compute-bindings",
         "/v1/orgs/{}/apps/{}/buckets/{}/compute-triggers",
-        "/v1/orgs/{}/apps/{}/buckets/{}/notifications"
+        "/v1/orgs/{}/apps/{}/buckets/{}/notifications",
+        "/v1/workload/object-storage/credentials"
       ]
     },
     {
@@ -3686,7 +3868,7 @@
       "name": "Key-scoped bucket bindings",
       "category": "data",
       "description": "Limit an app's bucket binding to object keys under one prefix.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -4065,7 +4247,7 @@
       "name": "Outbound integrations",
       "category": "data",
       "description": "Call third-party APIs through managed integrations with key pools and limits.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
@@ -4234,7 +4416,7 @@
       "name": "Postgres custom roles",
       "category": "data",
       "description": "Declare NOLOGIN group roles, BYPASSRLS included, that a database's own logins can SET ROLE to, so tools such as Windmill run on managed Postgres.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
@@ -4295,13 +4477,13 @@
       "name": "Postgres compute overage",
       "category": "data",
       "description": "Let a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance, up to twice it, before they are suspended.",
-      "maturity": "internal",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/managed-postgres",
+      "docs_url": "/docs/postgres#usage-and-limits",
       "acceptance_test": "pkg/apid/apidserver/handlers_managed_postgres_overage_test.go::TestManagedPostgresOverageRoutes",
       "parent": "managed-postgres",
       "routes": [
@@ -4438,6 +4620,23 @@
       "parent": "service-bindings",
       "consumers": [
         "githubd"
+      ]
+    },
+    {
+      "id": "product-analytics",
+      "name": "Product analytics",
+      "category": "observability",
+      "description": "Keep raw track() events and serve event series, funnels, retention, cohorts and request breakdowns by a flag's served value.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261117084505-product-analytics-events-funnels-retention",
+      "acceptance_test": "pkg/apid/insights/insights_test.go::TestFunnelOrderWindowAndFlagBreakdown",
+      "parent": "feature-flags",
+      "routes": [
+        "/v1/projects/{}/environments/{}/insights/events",
+        "/v1/projects/{}/environments/{}/insights/funnel",
+        "/v1/projects/{}/environments/{}/insights/requests",
+        "/v1/projects/{}/environments/{}/insights/retention"
       ]
     },
     {
@@ -4616,6 +4815,7 @@
       "docs_url": "/docs/multi-service",
       "acceptance_test": "cmd/e2e/multi_service_project_e2e_test.go::TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName",
       "settings": [
+        "app.project_id",
         "manifest.project"
       ],
       "routes": [
@@ -4632,7 +4832,8 @@
         "/v1/projects/{}/environments/{}/config",
         "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
-        "/v1/projects/{}/release-secrets"
+        "/v1/projects/{}/release-secrets",
+        "/v1/projects/{}/rollbacks"
       ],
       "cli": [
         "projects",
@@ -4748,15 +4949,15 @@
       "id": "realtime",
       "name": "Realtime",
       "category": "data",
-      "description": "Broadcast to realtime channels with presence, history and access control.",
-      "maturity": "preview",
+      "description": "Hold WebSocket and SSE client connections while your app sleeps, and publish or send to them from your backend.",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
       "docs_url": "/docs/realtime",
-      "acceptance_test": "cmd/gregale/commands_realtime_usage_test.go::TestPrintRealtimeUsage",
+      "acceptance_test": "tests/journeys/realtime_test.go::TestRealtime",
       "settings": [
         "manifest.realtime",
         "manifest.triggers.realtime"
@@ -4765,6 +4966,9 @@
         "/dashboard/apps/{}/realtime",
         "/v1/account/realtime-history-usage",
         "/v1/apps/{}/realtime",
+        "/v1/apps/{}/realtime/endpoints/{}/channels/{}/publish",
+        "/v1/apps/{}/realtime/endpoints/{}/principals/messages",
+        "/v1/apps/{}/realtime/endpoints/{}/principals:send",
         "/v1/apps/{}/webhooks/{}/realtime-channel",
         "/v1/realtime",
         "/v1/usage/realtime"
@@ -4788,8 +4992,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_realtime_access_test.go::TestRealtimeAccessPreviewRequiresOIDCAndPreservesSessionCutoff",
       "parent": "realtime",
       "routes": [
-        "/v1/apps/{}/realtime/endpoints/{}/principals",
-        "/v1/apps/{}/realtime/endpoints/{}/principals:send"
+        "/v1/apps/{}/realtime/endpoints/{}/principals"
       ]
     },
     {
@@ -4815,7 +5018,7 @@
       "name": "Realtime connections",
       "category": "data",
       "description": "List and disconnect realtime connections.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
@@ -5351,6 +5554,25 @@
       ]
     },
     {
+      "id": "route-resource-peaks",
+      "name": "Route resource peaks",
+      "category": "observability",
+      "description": "Show which routes an app's memory and CPU peaks come from, from per-minute app memory and CPU joined with the routes each instance served in the same minutes.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261121170000-route-resource-peaks",
+      "acceptance_test": "pkg/routeresources/analyze_test.go::TestAnalyzeFindsHeavyRoute",
+      "parent": "metrics",
+      "routes": [
+        "/v1/apps/{}/analytics/route-resources",
+        "/v1/apps/{}/route-splits",
+        "/v1/apps/{}/route-splits/{}"
+      ],
+      "cli": [
+        "route-resources"
+      ]
+    },
+    {
       "id": "route-source-impact",
       "name": "Route source impact",
       "category": "delivery",
@@ -5412,7 +5634,7 @@
       "name": "S3 credentials",
       "category": "data",
       "description": "Mint S3-compatible credentials for a bucket.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5443,6 +5665,22 @@
         "/dashboard/sales",
         "/v1/referrals",
         "/v1/sales"
+      ]
+    },
+    {
+      "id": "saved-insights",
+      "name": "Saved insights",
+      "category": "observability",
+      "description": "Save analytics queries per environment, run and export them as CSV or JSON, and send their value to notification channels as daily or weekly digests and threshold alerts.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261122190000-saved-insights",
+      "acceptance_test": "pkg/apid/insights/saved_test.go::TestRunSavedValues",
+      "parent": "product-analytics",
+      "routes": [
+        "/v1/projects/{}/environments/{}/insights/saved",
+        "/v1/projects/{}/environments/{}/insights/saved/{}",
+        "/v1/projects/{}/environments/{}/insights/saved/{}/run"
       ]
     },
     {
@@ -5725,7 +5963,7 @@
       "name": "Signed URLs and upload routes",
       "category": "data",
       "description": "Share objects with signed URLs and accept browser uploads.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5891,8 +6129,12 @@
       "name": "Stored workflows",
       "category": "async",
       "description": "Run steps against an app manually, on a schedule or on an event.",
-      "maturity": "internal",
-      "plans": [],
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/stored-workflows",
       "acceptance_test": "pkg/apid/apidserver/handlers_stored_workflows_test.go::TestStoredWorkflowAPI",
       "routes": [
@@ -5973,9 +6215,9 @@
     },
     {
       "id": "tcp-listeners",
-      "name": "TCP listeners",
+      "name": "Public TCP listeners",
       "category": "edge",
-      "description": "Serve raw TCP on a dedicated listener.",
+      "description": "Serve raw TCP to the internet on a dedicated public port at the edge. Private TCP between your own apps (managed Redis, internal service addresses) does not need it.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6082,9 +6324,9 @@
     },
     {
       "id": "udp-listeners",
-      "name": "UDP listeners",
+      "name": "Public UDP listeners",
       "category": "edge",
-      "description": "Serve UDP on a dedicated listener.",
+      "description": "Serve UDP to the internet on a dedicated public port at the edge.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -6100,6 +6342,30 @@
       ],
       "cli": [
         "app udp"
+      ]
+    },
+    {
+      "id": "verification-contracts",
+      "name": "Verification contracts",
+      "category": "delivery",
+      "description": "Declare HTTP, MCP and read-only SQL checks in gregale.verify.yaml; Gregale runs them against each new deployment before it takes traffic and returns one pass/fail report.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/verification-contracts",
+      "acceptance_test": "pkg/verifycontract/contract_test.go::TestRunSkipsMutationsInProductionAndBlocksOnRequiredFailures",
+      "consumers": [
+        "imaged"
+      ],
+      "routes": [
+        "/v1/apps/{}/verification-contract"
+      ],
+      "cli": [
+        "verify"
       ]
     },
     {

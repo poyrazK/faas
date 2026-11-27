@@ -295,6 +295,8 @@ New gateways keep unacknowledged usage in a local fsynced outbox and replay it a
 
 To temporarily stop the linked credential and hostname paths, send `PATCH /v1/account/platform-tenants/{id}` with `{"status":"suspended"}`. New keys cannot be issued for its linked consumers while suspended. Linked hostnames are blocked when tenant-surface routing is enabled. Send `{"status":"active"}` to resume. Existing keys are not revoked or rotated by either transition.
 
+There is no tenant delete. A tenant you no longer serve ends in the offboarded (suspended) state: use the offboarding plan above, which revokes its credentials and detaches managed resources while keeping its usage, finalized statements and receipts for billing and audit ([ADR-364](adr/364-platform-tenant-offboarding-plan.md)). A `DELETE` on a tenant is not a supported route.
+
 On requests authenticated with a linked consumer key, or anonymous requests routed through a verified tenant-surface hostname, Gregale sends `X-Faas-Platform-Tenant-Id` to the guest and records `platform_tenant.id` on its request/forward traces. This is the stable account-level customer ID across apps and key rotations. It is distinct from `X-Faas-Tenant-Id`, which remains the app owner's account ID. Anonymous traffic on other domains receives no claim; incoming copies of the header are stripped. A consumer key presented on a hostname bound to a different platform tenant, including an unlinked key, is rejected with the same non-enumerating invalid-key response. Suspension is checked on cached hostname routes as well as cache misses; a custom-domain request may fail closed if the tenant guard's database read is unavailable.
 
 ## Require customer identity on an app

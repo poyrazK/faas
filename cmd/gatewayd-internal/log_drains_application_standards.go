@@ -131,11 +131,19 @@ func (m *appLogDrainManager) runLogDrainWorker(ctx context.Context, w *appLogDra
 	} else {
 		joined.Add(2)
 	}
+	// The source side stops on its own context, so a worker handing its drain
+	// to another node keeps the sender flushing the spool.
+	streamCtx, stopStream := context.WithCancel(ctx)
+	w.stopStream = stopStream
 	go func() { defer joined.Done(); sender.Run(ctx) }()
-	go func() { defer joined.Done(); m.streamWorker(ctx, w.spec, sender, w.standardHealth) }()
+	go func() {
+		defer joined.Done()
+		defer stopStream()
+		m.streamWorker(streamCtx, w.spec, sender, w.standardHealth)
+	}()
 	if exporting {
 		// ADR-1340: the app's AI gateway lines share the drain's sender.
-		go func() { defer joined.Done(); m.aiLogExportWorker(ctx, w.spec, sender, exports) }()
+		go func() { defer joined.Done(); m.aiLogExportWorker(streamCtx, w.spec, sender, exports) }()
 	}
 	go func() {
 		joined.Wait()

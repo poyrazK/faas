@@ -414,7 +414,7 @@ func (c adoptionClassifier) checkCgroup(r resourceJournalRecord) (repair bool, _
 	if err != nil {
 		return false, refuse(id, adoptionRefusedUnreadable, err.Error()), false
 	}
-	parents := []string{BuilderCgroupParent}
+	parents := []string{BuilderCgroupParent, BorrowedBuilderCgroupParent}
 	if !r.Lease.IsBuilder {
 		parents = []string{ParentCgroupFor(r.Lease.Plan), CgroupMountRoot}
 	}

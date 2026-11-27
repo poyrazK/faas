@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FlagExperimentFunnel } from './FlagExperimentFunnel.js';
 import type { FlagExperimentGuardrailSettings } from './FlagExperimentGuardrailSettings.js';
+import type { FlagExperimentRetention } from './FlagExperimentRetention.js';
 /**
  * A flag experiment.
  */
@@ -12,7 +14,27 @@ export type FlagExperiment = {
   rule_id: string;
   control: string;
   metric_event: string;
-  metric_kind: 'conversion' | 'mean';
+  metric_kind: 'conversion' | 'mean' | 'funnel' | 'retention' | 'ratio' | 'percentile';
+  unit: 'customer' | 'subject';
+  allocation: 'fixed' | 'bandit';
+  layer?: string;
+  traffic?: number;
+  /**
+   * Start of the layer slice held while running.
+   */
+  layer_from?: number;
+  /**
+   * End (exclusive) of the layer slice held while running.
+   */
+  layer_to?: number;
+  denominator_event?: string;
+  percentile?: number;
+  funnel?: FlagExperimentFunnel;
+  retention?: FlagExperimentRetention;
+  /**
+   * Whether results are adjusted with CUPED.
+   */
+  cuped: boolean;
   status: 'draft' | 'running' | 'stopped';
   mixing_lift: number;
   weights: Record<string, number>;
@@ -34,5 +56,9 @@ export type FlagExperiment = {
    * The guardrail breach that stopped the experiment.
    */
   breach?: Record<string, any>;
+  /**
+   * The experiment's own notification channels for its decisions and problems; absent uses the environment's.
+   */
+  notify_channel_ids?: Array<string>;
 };
 

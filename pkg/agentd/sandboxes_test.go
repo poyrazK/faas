@@ -8,10 +8,12 @@ import (
 	"context"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -35,6 +37,29 @@ type fakeSandboxSchedd struct {
 	persists []persistAnswer
 	// actions are the browser actions the "actions" script was sent.
 	actions []*scheddpb.SandboxRunAction
+	// pauses are the capture IDs pauses named; the "pause-busy" script
+	// refuses the first, "pause-refused" every one, "pause-late" answers
+	// the first only after lateBy, and "pause-break" breaks the stream.
+	pauses []string
+	lateBy time.Duration
+	// volumeBackups are the backups the fake vmmd reported, in order (a
+	// running session's one, then each pause's); volumeDeletes the volume
+	// deletions agentd asked for, as node/session.
+	volumeBackups []string
+	volumeDeletes []string
+}
+
+func (f *fakeSandboxSchedd) DeleteSandboxVolume(_ context.Context, req *scheddpb.DeleteSandboxVolumeRequest) (*scheddpb.DeleteSandboxVolumeResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.volumeDeletes = append(f.volumeDeletes, req.GetNodeId()+"/"+req.GetSandboxId())
+	return &scheddpb.DeleteSandboxVolumeResponse{Deleted: true}, nil
+}
+
+func (f *fakeSandboxSchedd) volumeState() (backups, deletes []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.volumeBackups...), append([]string(nil), f.volumeDeletes...)
 }
 
 func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
@@ -55,14 +80,37 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 	case "no-workspace":
 		return status.Error(codes.DataLoss, "the workspace could not be unpacked")
 	}
+	if script == "capture-node-busy" && start.GetResume() != nil {
+		return status.Error(codes.Unavailable, "the capture's node cannot take it now")
+	}
+	node := "agents-1"
+	if script == "elsewhere" {
+		node = "agents-2"
+	}
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Placed{Placed: &scheddpb.AgentRunPlaced{
-		Instance: "sandbox-" + start.GetSandboxId(), NodeId: "agents-1"}}}); err != nil {
+		Instance: "sandbox-" + start.GetSandboxId(), NodeId: node}}}); err != nil {
 		return err
 	}
 	if frame, err := stream.Recv(); err != nil || frame.GetProceed() == nil {
 		return status.Error(codes.Aborted, "not told to proceed")
 	}
-	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 700,
+	if script == "resume-stall" && start.GetResume() != nil {
+		// The restore never reports booted; a close ends it.
+		for {
+			frame, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			if frame.GetClose() != nil {
+				return nil
+			}
+		}
+	}
+	method := "WAKE_COLD_BOOT"
+	if start.GetResume() != nil && script != "restore-fails" {
+		method = "WAKE_RESTORE"
+	}
+	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: method, BootMs: 700,
 		Actions: script == "actions", EgressPolicy: script == "egress"}}}); err != nil {
 		return err
 	}
@@ -77,6 +125,17 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			Domains: []*scheddpb.SandboxRunWebDomain{{Domain: "example.com", AtUnixMs: 1_800_000_000_000},
 				{Domain: "admin.example.com", Refused: "policy", AtUnixMs: 1_800_000_001_000},
 				{Domain: "example.com", AtUnixMs: 1_800_000_002_000}}}}}); err != nil {
+			return err
+		}
+	}
+	if start.GetVolumeGb() > 0 {
+		// vmmd backs a running session's volume up (ADR-20261122132055 §4).
+		id := uuid.NewString()
+		f.mu.Lock()
+		f.volumeBackups = append(f.volumeBackups, id)
+		f.mu.Unlock()
+		if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_VolumeBackup{VolumeBackup: &scheddpb.SandboxRunVolumeBackup{
+			BackupId: id, SizeBytes: 10 << 30, DataChunks: 3, UploadedBytes: 9000, BackupMs: 250}}}); err != nil {
 			return err
 		}
 	}
@@ -124,6 +183,38 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			f.freezes++
 			f.mu.Unlock()
 			_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Frozen{Frozen: &scheddpb.SandboxRunFrozen{}}})
+		case frame.GetPause() != nil:
+			id := frame.GetPause().GetCaptureId()
+			f.mu.Lock()
+			f.pauses = append(f.pauses, id)
+			refuse := script == "pause-busy" && len(f.pauses) == 1 || script == "pause-refused"
+			lateBy := f.lateBy
+			f.mu.Unlock()
+			if script == "pause-late" {
+				// vmmd captures inline: it reads no frame until it answers.
+				time.Sleep(lateBy)
+			}
+			if script == "pause-break" {
+				// The stream breaks after vmmd captured and destroyed the VM.
+				return status.Error(codes.Unavailable, "the stream was reset")
+			}
+			if refuse {
+				_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: "busy"}}})
+				continue
+			}
+			// vmmd captures the VM, sends its last records and paused, and
+			// ends the stream (ADR-20261122132055 §2).
+			mem := "snap/sandbox-session-" + start.GetAccountId() + "/captures/" + id + "/v2/mem"
+			var volumeBackup string
+			if start.GetVolumeGb() > 0 {
+				volumeBackup = uuid.NewString()
+				f.mu.Lock()
+				f.volumeBackups = append(f.volumeBackups, volumeBackup)
+				f.mu.Unlock()
+			}
+			return stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Paused{Paused: &scheddpb.SandboxRunPaused{
+				StorageKey: mem, VmstateStorageKey: strings.TrimSuffix(mem, "/mem") + "/vmstate", FcVersion: "1.10.0",
+				MemBytes: 2 << 30, VmstateBytes: 40_000, PauseMs: 900, VolumeBackupId: volumeBackup}}})
 		case frame.GetClose() != nil:
 			f.mu.Lock()
 			f.closes++

@@ -1,0 +1,175 @@
+{
+  "auxiliary_regressions": {
+    "guest_resume": {
+      "package_elapsed_seconds": 1.12,
+      "passed_tests": [
+        "TestExecutionPayloadRevokesPristineRestoreFence",
+        "TestResumeCapabilityAdvertisement",
+        "TestResumeCapabilityAdvertisement/app_guest_whose_barrier_never_started",
+        "TestResumeCapabilityAdvertisement/app_guest_with_barrier",
+        "TestResumeCapabilityAdvertisement/pristine_execution_listener",
+        "TestResumeCapabilityAdvertisement/warm_builder",
+        "TestResumeWithoutEntropyNacks",
+        "TestServeExecutionOnceHandlesOneRequest"
+      ]
+    },
+    "oom_attribution": {
+      "package_elapsed_seconds": 1.083,
+      "passed_tests": [
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/counter_regressed",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/counter_unavailable",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/kernel_OOM",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/ordinary_SIGKILL",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/ordinary_exit",
+        "TestGuestOOMCounterRequiresValidEvidence"
+      ]
+    }
+  },
+  "bare_metal_host": false,
+  "cohort": {
+    "package_elapsed_seconds": 75.074,
+    "passed_tests": [
+      "TestSourceWarmRestoreOOMMetal",
+      "TestSourceWarmRestoreOOMMetal/cold_real_oom",
+      "TestSourceWarmRestoreOOMMetal/corrupt_memory_cold_fallback",
+      "TestSourceWarmRestoreOOMMetal/corrupt_vmstate_cold_fallback",
+      "TestSourceWarmRestoreOOMMetal/payload_erasure_and_single_usage_entry",
+      "TestSourceWarmRestoreOOMMetal/payload_free_capture",
+      "TestSourceWarmRestoreOOMMetal/repeated_restores_are_clean",
+      "TestSourceWarmRestoreOOMMetal/warm_real_oom_and_recovery"
+    ]
+  },
+  "earlier_attempts": [
+    {
+      "failure": "UID-dropping OOM unit helper could not traverse operator TMPDIR; no real-VM cohort ran",
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "process_exit": 1,
+      "source_snapshot": "2d80b2c9bf76909ae1170cf39a47a8670a72c0a2"
+    },
+    {
+      "failure": "Private fixture lacked top-level snapshot directory; cold real OOM passed",
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "process_exit": 1,
+      "source_snapshot": "9d3b2ab5d1fb890be46cf4cd613734de24678440"
+    },
+    {
+      "failure": "Clean-restore JavaScript probe syntax error; pristine capture and cold real OOM passed",
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "process_exit": 1,
+      "source_snapshot": "0641d095eccf8ff84ca105547228d6946e7691e3"
+    }
+  ],
+  "execution_ledger_assertions": {
+    "admitted_runs": 7,
+    "monthly_run_count": 7,
+    "retained_payload_rows": 0,
+    "usage_entries_per_run": 1
+  },
+  "firecracker_version": "1.7.0",
+  "fixture_hashes": {
+    "base_sha256": "c348f8d1eebc7eafd1da7da19265daf068a63086f78e1ff1c5ded7603465d4ea",
+    "guest_init_sha256": "ffda84240283c2663845b6e1ea8b713e694adac7e8a53eef48bb50aac48ab3ac",
+    "kernel_sha256": "178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b"
+  },
+  "functional_pass": true,
+  "guest_kernel_oom_witnesses": [
+    {
+      "after": 1,
+      "before": 0
+    },
+    {
+      "after": 1,
+      "before": 0
+    }
+  ],
+  "host": {
+    "acceptance_marker": true,
+    "architecture": "x86_64",
+    "host_kernel": "7.0.0-1014-gcp",
+    "kvm": true,
+    "virtualization": "google"
+  },
+  "limits": [
+    "node24 standard 256 MiB / 64 MiB scratch only",
+    "sequential restore isolation only",
+    "trusted operator captures a new guest before any Execute RPC; production capture automation is separate",
+    "fixture scan is not vulnerability evidence",
+    "other runtime/profile cohorts and full native release qualification remain open",
+    "Google virtualization does not satisfy repository native acceptance requirements",
+    "production image provenance, default recovery, cross-node recovery and full billing remain separate gates"
+  ],
+  "p0_3_complete": false,
+  "payload_free_capture": {
+    "memory_bytes": 268435456,
+    "private_drive_sha256": "252b2a487d5519320c5ccdcb86b7ac41780d9081ab33a7a7ab5ef23a7c3cce47",
+    "producer": "trusted operator before any Execute RPC",
+    "snapshot_digest": "7715d3b02c8f393fb6106c8b53947274ebc6d53c8609e6c5583f1211fef6af73",
+    "vmstate_bytes": 13716
+  },
+  "process_exits": {
+    "leakcheck_after": 0,
+    "leakcheck_before": 0,
+    "warm_oom": 0
+  },
+  "raw_evidence_location": "retained on the internal test node; no raw logs exported",
+  "raw_evidence_sha256": {
+    "artifacts.sha256": "4e2b235a1ae5df8e448f540cc58c54b229e36e6a2d6acdd1ee4e3a90729d89a2",
+    "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+    "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "linux-lint-result.json": "9256b7d6d63559e53f578e41e40a7edc3cea9e3acc8a8d5de9dc13ab324dba7e",
+    "linux-lint.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "process-exits.json": "40aee781fcc5ea59a5bcbd1172b67257e1de75d633e35098c2aab98c5b4e4ba1",
+    "report.json": "4b5cafff243e45fc7c04e117c30399cf993278e11e6ec821f507136b1fbedb7a",
+    "source.json": "3bb95d29ad348cd7cd325827fa0f85e077ebe6050b9b3d4ac0ad8a1488b75a5a",
+    "warm-oom-executor-checks.jsonl": "7f61c70469504cdbde080662f0d20b64238c0393eca14737d192917770e0c2c0",
+    "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "warm-oom-guest-checks.jsonl": "6f85d7e059f53ecae35629f1933882698e3dfaf654a6b09425459d2b5c304eb8",
+    "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "warm-oom.jsonl": "8810626ef9a2d4d54aa98f990b73aa37d7818d2e0414a80c2123d524780af1e3",
+    "warm-oom.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "raw_report_schema": "gregale.run-warm-oom-functional/v1",
+  "runtime_release_eligibility": false,
+  "schema": "gregale.run-warm-oom-summary/v1",
+  "source": {
+    "base_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+    "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+    "go_version": "go version go1.26.11 linux/amd64",
+    "local_reproduction_ref": "refs/codex/run-warm-oom-qualification-20261113",
+    "parent_commit": "0641d095eccf8ff84ca105547228d6946e7691e3",
+    "snapshot_commit": "7c4f28da3cd48f819120a1202f0f3f492a8d9338",
+    "tree": "aa27bc7a0e22e01e91e8e36cc673bbadbcff80fd"
+  },
+  "source_pre_teardown_leakcheck": true,
+  "source_recovery_profile": "journal_adoption_v7",
+  "validation": {
+    "fixture_javascript_syntax": "passed for all three probes",
+    "independent_hash_and_coverage_check": "passed on node; only whitelisted summary exported",
+    "linux_changed_code_lint": {
+      "exit_code": 0,
+      "new_issues": 0,
+      "packages": [
+        "./guest/init",
+        "./guest/executor",
+        "./pkg/e2etest/runlifecycle"
+      ],
+      "patch_base_snapshot": "8105ab70a1a14f06d2a71b4694d26c79efeea064",
+      "patch_sha256": "75b502252ab6a129c94adacea0acd27d0a2a337953d6a59a9ab0414ed4e7d421",
+      "scope": "new issues in warm/OOM snapshot diff on Linux amd64",
+      "tool": "golangci-lint v2.14.0 via pinned go tool"
+    },
+    "portable_verdict_unit_tests": 9,
+    "runner_bash_syntax": "passed",
+    "runner_shellcheck": "passed"
+  },
+  "wake_witness_counts": {
+    "cold_boot": 3,
+    "restore": 4
+  }
+}

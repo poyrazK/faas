@@ -2,6 +2,7 @@ package reposcan
 
 import (
 	"maps"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -12,6 +13,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 	if w.ServiceBindingPolicy == "" {
 		policy = api.ServiceBindingPolicyProject
 	}
+	releaseCommand, releaseSource := PlanReleaseCommand(w)
 	return api.PlanWorkload{
 		Name:                w.Name,
 		AppSlug:             w.AppSlug,
@@ -27,7 +29,11 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		Resources:           w.Resources.Clone(),
 		Command:             w.Command,
 		DependsOn:           w.DependsOn,
+		Uses:                w.Uses.Clone(),
 		DependsOnConditions: maps.Clone(w.DependsOnConditions),
+
+		ReleaseCommand:       releaseCommand,
+		ReleaseCommandSource: releaseSource,
 
 		ServiceBindingPolicy:      policy,
 		ServiceBindingTransport:   api.ServiceBindingTransport(w.ServiceBindingTransport),
@@ -37,6 +43,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
 		PlatformTenantRequired:    w.PlatformTenantRequired,
 		Visibility:                NewWorkloadVisibility(w),
+		Access:                    w.Access,
 		AppProtocol:               w.AppProtocol,
 		Streaming:                 w.Streaming,
 		WakeAhead:                 w.WakeAhead,
@@ -50,6 +57,23 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		Tier:        w.Tier.String(),
 		DetectedBy:  planDetection(w.DetectedBy),
 	}
+}
+
+// PlanReleaseCommand renders the release command the scan assigned w and
+// where it came from: a Compose service w waits for to complete
+// (ADR-20261102192943) or the repository root Procfile's release: process.
+func PlanReleaseCommand(w Workload) (string, string) {
+	if len(w.ReleaseCommand) == 0 {
+		return "", ""
+	}
+	command := strings.Join(w.ReleaseCommand, " ")
+	if w.ReleaseCommandShell {
+		command = w.ReleaseCommand[0]
+	}
+	if w.ReleaseService != "" {
+		return command, "Compose service " + w.ReleaseService + " (service_completed_successfully)"
+	}
+	return command, "Procfile release:"
 }
 
 func planDetection(d Detection) *api.PlanDetectedBy {

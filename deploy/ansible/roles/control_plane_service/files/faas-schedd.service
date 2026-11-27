@@ -36,6 +36,7 @@ Environment=FAAS_CI_DISPATCH_ENABLED=0
 Environment=FAAS_CI_TRANSPORT_ENABLED=0
 Environment=FAAS_CI_RUNTIME_URL=
 Environment=FAAS_WORKFLOWS_ENABLED=1
+Environment=FAAS_WORKFLOW_OUTBOUND_ENABLED=1
 Environment=FAAS_PREWARM_ENABLED=1
 LoadCredential=fleet.age:/etc/faas/secrets/fleet.age
 LoadCredential=host.age:/etc/faas/secrets/host.age

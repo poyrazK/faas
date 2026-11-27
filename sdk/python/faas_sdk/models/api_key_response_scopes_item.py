@@ -3,6 +3,7 @@ from typing import Literal
 APIKeyResponseScopesItem = Literal[
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",
@@ -33,6 +34,7 @@ APIKeyResponseScopesItem = Literal[
 API_KEY_RESPONSE_SCOPES_ITEM_VALUES: set[APIKeyResponseScopesItem] = {
     "admin",
     "apps:read",
+    "data:read",
     "delayed_tasks:read",
     "delayed_tasks:write",
     "deploy:write",

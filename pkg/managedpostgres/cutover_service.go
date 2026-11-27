@@ -58,7 +58,7 @@ func (s *CutoverService) Prepare(ctx context.Context, r PrepareCutoverRequest) (
 	}
 	for _, member := range members {
 		if member.AppID == r.AppID && member.Scope == r.Scope {
-			if err := backend.Capabilities.SupportsCredentialAccess(member.Access); err != nil {
+			if err := backend.SupportsBindingAccess(target.Spec, member.Access); err != nil {
 				return Cutover{}, err
 			}
 		}
@@ -148,7 +148,7 @@ func (s *CutoverService) Reconcile(ctx context.Context, account, id string) (Cut
 			}
 			err = s.store.RevokeCutoverCredential(ctx, c, member, s.bindings.now())
 		} else {
-			if err = backend.Capabilities.SupportsCredentialAccess(member.Access); err != nil {
+			if err = backend.SupportsBindingAccess(c.Target.Spec, member.Access); err != nil {
 				cancel()
 				return c, s.release(ctx, c, "credential_access_unsupported", err)
 			}

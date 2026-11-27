@@ -80,3 +80,5 @@ CREATE TABLE app_envs(account_id uuid NOT NULL,app_id uuid NOT NULL,scope text N
 CREATE TABLE managed_postgres_databases(id uuid PRIMARY KEY,account_id uuid NOT NULL,state text NOT NULL);
 
 CREATE TABLE hosted_task_rehearsal_plans(account_id uuid NOT NULL,id text NOT NULL,payload jsonb NOT NULL,expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));
+
+CREATE TABLE hosted_task_rehearsal_runs(account_id uuid NOT NULL,id text NOT NULL,run_id uuid NOT NULL,plan_sha256 text NOT NULL,reserved_at timestamptz NOT NULL,approval_expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));

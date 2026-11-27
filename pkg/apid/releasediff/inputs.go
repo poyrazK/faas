@@ -120,8 +120,7 @@ func versions(pkgs []Package) map[string]string {
 	return out
 }
 
-// Predecessor is the newest deployment of to's app and scope created before
-// it that took traffic: it completed a rollout, is live, or was superseded.
+// Predecessor is the newest earlier deployment of to's app and scope that served.
 func Predecessor(deployments []state.Deployment, to state.Deployment) (state.Deployment, bool) {
 	var best state.Deployment
 	found := false
@@ -129,7 +128,7 @@ func Predecessor(deployments []state.Deployment, to state.Deployment) (state.Dep
 		if d.ID == to.ID || d.AppID != to.AppID || scope(d.Scope) != scope(to.Scope) || !d.CreatedAt.Before(to.CreatedAt) {
 			continue
 		}
-		if d.RolloutCompletedAt == nil && d.Status != state.DeployLive && d.Status != state.DeploySuperseded {
+		if !servedRelease(d) {
 			continue
 		}
 		if !found || d.CreatedAt.After(best.CreatedAt) {
@@ -137,6 +136,23 @@ func Predecessor(deployments []state.Deployment, to state.Deployment) (state.Dep
 		}
 	}
 	return best, found
+}
+
+func servedRelease(d state.Deployment) bool {
+	if scope(d.Scope) != api.DefaultEnvScope {
+		// Project environments can serve by release membership at zero weight.
+		return d.RolloutCompletedAt != nil || d.Status == state.DeployLive || d.Status == state.DeploySuperseded
+	}
+	if state.AbortedCanaryCandidate(d) {
+		return false
+	}
+	if d.ServingEndedAt != nil || (d.Status == state.DeployLive && d.TrafficPercent > 0) {
+		return true
+	}
+	// Older superseded rows can predate serving history. Explicit zero-weight
+	// rows need serving evidence even if their readiness rollout completed.
+	return d.Status == state.DeploySuperseded &&
+		(d.TrafficPercent > 0 || (!d.TrafficPercentExplicit && (d.RolloutCompletedAt != nil || len(d.StageState) == 0)))
 }
 
 func scope(s string) string {

@@ -27,6 +27,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -208,7 +209,31 @@ func cmdWebhooksAdd(args []string) int {
 	if generatedSecret {
 		PrintProgress(osStdout, "Signing secret (shown ONCE): %s", *secret)
 	}
+	warnWebhookTargetRequiresKey(client, out.TargetURL)
 	return 0
+}
+
+// warnWebhookTargetRequiresKey notes when the target is one of the caller's
+// own apps that demands an API key: deliveries carry no key, so every one
+// died with 401 and the ledger said only "non-retryable status" (prod hunt
+// r45). Best effort; custom domains are not resolved.
+func warnWebhookTargetRequiresKey(client *Client, target string) {
+	u, err := url.Parse(target)
+	if err != nil || u.Hostname() == "" {
+		return
+	}
+	host := strings.ToLower(u.Hostname())
+	slug, _, _ := strings.Cut(host, ".")
+	app, err := client.GetApp(context.Background(), slug)
+	if err != nil || !app.RequireAuthn {
+		return
+	}
+	for _, own := range []string{app.URL, app.CanonicalURL} {
+		if o, err := url.Parse(own); err == nil && strings.EqualFold(o.Hostname(), host) {
+			PrintWarn(osStderr, "%s is your app %s, which requires an API key; deliveries carry none and will fail with 401. Serve it without one: gregale app %s --no-require-authn", target, app.Slug, app.Slug)
+			return
+		}
+	}
 }
 
 func cmdWebhooksUpdate(args []string) int {

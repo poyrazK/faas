@@ -18,6 +18,8 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runenv"
+	"github.com/onebox-faas/faas/pkg/runfile"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
@@ -25,7 +27,9 @@ const (
 	// CurrentVersion is the authenticated payload wire version. A future
 	// incompatible envelope must use a new version rather than changing the
 	// meaning of an existing ciphertext.
-	CurrentVersion uint16 = 1
+	CurrentVersion     uint16 = 1
+	ContractVersion    uint16 = 2
+	EnvironmentVersion uint16 = 3
 	// Namespace prevents an execution ciphertext from being replayed as a
 	// different secretbox byte-envelope (for example a webhook secret).
 	Namespace = "execution_payload"
@@ -44,24 +48,32 @@ var (
 // deliberately together so the scheduler opens one authenticated object and
 // never has to reconcile independently sealed fields.
 type Envelope struct {
-	Profile     api.ExecutionProfile `json:"profile,omitempty"`
-	Version     uint16               `json:"version"`
-	Source      string               `json:"source,omitempty"`
-	Entrypoint  string               `json:"entrypoint,omitempty"`
-	Files       []api.ExecutionFile  `json:"files,omitempty"`
-	OutputFiles []string             `json:"output_files,omitempty"`
-	Input       json.RawMessage      `json:"input"`
+	EnvironmentID string               `json:"environment_id,omitempty"`
+	StoredInputs  []runfile.Ref        `json:"stored_inputs,omitempty"`
+	StoredOutputs []runfile.Ref        `json:"stored_outputs,omitempty"`
+	Profile       api.ExecutionProfile `json:"profile,omitempty"`
+	Version       uint16               `json:"version"`
+	Source        string               `json:"source,omitempty"`
+	Entrypoint    string               `json:"entrypoint,omitempty"`
+	Files         []api.ExecutionFile  `json:"files,omitempty"`
+	OutputFiles   []string             `json:"output_files,omitempty"`
+	Input         json.RawMessage      `json:"input"`
+	ResultSchema  json.RawMessage      `json:"result_schema,omitempty"`
 }
 
 // DecodedPayload is the authenticated plaintext handed to the scheduler
 // immediately before guest dispatch. Callers must discard it after use.
 type DecodedPayload struct {
-	Profile     api.ExecutionProfile
-	Source      string
-	Entrypoint  string
-	Files       []api.ExecutionFile
-	OutputFiles []string
-	Input       json.RawMessage
+	EnvironmentID string
+	StoredInputs  []runfile.Ref
+	StoredOutputs []runfile.Ref
+	Profile       api.ExecutionProfile
+	Source        string
+	Entrypoint    string
+	Files         []api.ExecutionFile
+	OutputFiles   []string
+	Input         json.RawMessage
+	ResultSchema  json.RawMessage
 }
 
 // Validate enforces the same hard limits as the guest protocol before any
@@ -69,11 +81,20 @@ type DecodedPayload struct {
 // checked by apid; these bounds prevent a malformed ciphertext from bypassing
 // the host/guest protocol's allocation guard.
 func (e Envelope) Validate() error {
+	if err := validateFileRefs(e); err != nil {
+		return err
+	}
+	if e.EnvironmentID != "" && (e.Version < EnvironmentVersion || !runenv.ValidID(e.EnvironmentID) || e.Profile.Normalized() != api.ExecutionProfileStandard) {
+		return ErrInvalid
+	}
 	if !e.Profile.Valid() {
 		return fmt.Errorf("%w: unknown profile", ErrInvalid)
 	}
-	if e.Version != CurrentVersion {
+	if e.Version != CurrentVersion && e.Version != ContractVersion && e.Version != EnvironmentVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalid, e.Version)
+	}
+	if len(e.ResultSchema) > api.ExecutionContractSchemaMaxBytes || len(e.ResultSchema) != 0 && (e.Version < ContractVersion || !json.Valid(e.ResultSchema)) {
+		return fmt.Errorf("%w: invalid result contract", ErrInvalid)
 	}
 	if strings.TrimSpace(e.Source) != "" {
 		if strings.ContainsRune(e.Source, '\x00') || len(e.Source) > api.ExecutionPlaintextFieldMaxBytes || len(e.Files) != 0 || e.Entrypoint != "" {
@@ -118,13 +139,22 @@ func SealRequestTo(recipients []*age.X25519Recipient, request api.ResolvedExecut
 		input = json.RawMessage("null")
 	}
 	envelope := Envelope{
-		Profile:     request.Profile,
-		Version:     CurrentVersion,
-		Source:      request.Source,
-		Entrypoint:  request.Entrypoint,
-		Files:       cloneFiles(request.Files),
-		OutputFiles: append([]string(nil), request.OutputFiles...),
-		Input:       append(json.RawMessage(nil), input...),
+		EnvironmentID: request.EnvironmentID,
+		StoredInputs:  request.StoredInputs, StoredOutputs: request.StoredOutputs,
+		Profile:      request.Profile,
+		Version:      CurrentVersion,
+		Source:       request.Source,
+		Entrypoint:   request.Entrypoint,
+		Files:        cloneFiles(request.Files),
+		OutputFiles:  append([]string(nil), request.OutputFiles...),
+		Input:        append(json.RawMessage(nil), input...),
+		ResultSchema: append(json.RawMessage(nil), request.ResultSchema...),
+	}
+	if len(envelope.ResultSchema) != 0 || len(envelope.StoredInputs)+len(envelope.StoredOutputs) > 0 {
+		envelope.Version = ContractVersion
+	}
+	if envelope.EnvironmentID != "" {
+		envelope.Version = EnvironmentVersion
 	}
 	if envelope.Profile.Normalized() == api.ExecutionProfileStandard {
 		envelope.Profile = ""
@@ -211,6 +241,9 @@ func Decode(ctx context.Context, identities []*age.X25519Identity, sealed []byte
 	if err != nil {
 		return "", nil, err
 	}
+	if len(decoded.ResultSchema) > 0 || len(decoded.StoredInputs)+len(decoded.StoredOutputs) > 0 {
+		return "", nil, ErrInvalid
+	}
 	return decoded.Source, decoded.Input, nil
 }
 
@@ -247,9 +280,11 @@ func DecodeRequest(ctx context.Context, identities []*age.X25519Identity, sealed
 		return DecodedPayload{}, err
 	}
 	return DecodedPayload{
+		EnvironmentID: envelope.EnvironmentID, StoredInputs: envelope.StoredInputs, StoredOutputs: envelope.StoredOutputs,
 		Profile: envelope.Profile.Normalized(),
 		Source:  envelope.Source, Entrypoint: envelope.Entrypoint,
 		Files: cloneFiles(envelope.Files), OutputFiles: append([]string(nil), envelope.OutputFiles...), Input: append(json.RawMessage(nil), envelope.Input...),
+		ResultSchema: append(json.RawMessage(nil), envelope.ResultSchema...),
 	}, nil
 }
 
@@ -314,4 +349,22 @@ func decodeEnvelope(plaintext []byte) (Envelope, error) {
 		return Envelope{}, ErrInvalid
 	}
 	return envelope, nil
+}
+
+func validateFileRefs(e Envelope) error {
+	if len(e.StoredInputs) > api.ExecutionFileMaxInputs || len(e.StoredOutputs) > api.ExecutionArtifactMaxFiles || len(e.StoredOutputs) > 0 && len(e.StoredOutputs) != len(e.OutputFiles) || len(e.StoredInputs)+len(e.StoredOutputs) > 0 && e.Version < ContractVersion {
+		return ErrInvalid
+	}
+	for _, refs := range [][]runfile.Ref{e.StoredInputs, e.StoredOutputs} {
+		for _, r := range refs {
+			parts := strings.Split(r.StorageKey, "/")
+			if len(parts) != 5 || runfile.ValidateKey(parts[2], r.ID, r.StorageKey) != nil || !runfile.ValidPath(r.Path, api.ExecutionBundleMaxPathSize) || r.Bundle {
+				return ErrInvalid
+			}
+			if len(r.PrivateKey) == 0 || len(r.PrivateKey) > api.ExecutionFileKeyMaxBytes {
+				return ErrInvalid
+			}
+		}
+	}
+	return nil
 }

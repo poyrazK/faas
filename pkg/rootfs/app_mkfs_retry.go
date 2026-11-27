@@ -25,6 +25,9 @@ func (b *Builder) runAppMkfs(ctx context.Context, staging, output string, sizeMB
 		}
 		err := b.run.Run(ctx, MkfsCommand(staging, output, sizeMB))
 		if err == nil {
+			if err := b.applyDeferredOverlayOpacity(ctx, staging, output); err != nil {
+				return 0, err
+			}
 			return sizeMB, nil
 		}
 		message := strings.ToLower(err.Error())

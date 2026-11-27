@@ -19,7 +19,7 @@ class QualificationTests(unittest.TestCase):
     def test_prepare_isolated_failure_and_handler_fixtures(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / 'fixtures'
-            MODULE.prepare(ROOT / 'cmd/gregale/templates/mcp-node', target)
+            MODULE.prepare(ROOT / 'cmd/gregale/templates/mcp-node-tasks', target)
             for name in ('web', 'web-bad', 'worker-old', 'worker-candidate', 'observer'):
                 source = target / name
                 config = json.loads((source / 'gregale-mcp.json').read_text())
@@ -35,11 +35,11 @@ class QualificationTests(unittest.TestCase):
                 self.assertEqual(handlers.count('export function installMcpTaskHandlers('), 1)
                 self.assertIn('requestedSchema:', handlers)
                 self.assertTrue((source / 'task-worker-receipts.js').exists())
-            self.assertIn("error: 'qualification rejection'", (target / 'web-bad/app.js').read_text())
-            self.assertNotIn("error: 'qualification rejection'", (target / 'web/app.js').read_text())
+            self.assertIn("error: 'qualification rejection'", (target / 'web-bad/app-core.js').read_text())
+            self.assertNotIn("error: 'qualification rejection'", (target / 'web/app-core.js').read_text())
             self.assertIn('mcp_qualification_observer_role', (target / 'observer/tasks-observer.js').read_text())
             with self.assertRaises(ValueError):
-                MODULE.prepare(ROOT / 'cmd/gregale/templates/mcp-node', target)
+                MODULE.prepare(ROOT / 'cmd/gregale/templates/mcp-node-tasks', target)
 
     def test_missing_credentials_are_blocked_and_redacted(self):
         with tempfile.TemporaryDirectory() as directory:

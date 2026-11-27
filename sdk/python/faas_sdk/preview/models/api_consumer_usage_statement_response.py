@@ -17,6 +17,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
     from ..models.api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
+    from ..models.api_consumer_usage_waiver_response import APIConsumerUsageWaiverResponse
 
 
 T = TypeVar("T", bound="APIConsumerUsageStatementResponse")
@@ -43,6 +44,8 @@ class APIConsumerUsageStatementResponse:
     as_of: datetime.datetime
     created_at: datetime.datetime
     currency: str | Unset = UNSET
+    waiver: APIConsumerUsageWaiverResponse | Unset = UNSET
+    """Approval attached to the statement revision that recorded the waiver."""
     fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
     """The month's base fees and minimum top-ups; amount_millicents includes them."""
     finalized_at: datetime.datetime | None | Unset = UNSET
@@ -84,6 +87,10 @@ class APIConsumerUsageStatementResponse:
 
         currency = self.currency
 
+        waiver: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.waiver, Unset):
+            waiver = self.waiver.to_dict()
+
         fees: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.fees, Unset):
             fees = []
@@ -124,6 +131,8 @@ class APIConsumerUsageStatementResponse:
         )
         if currency is not UNSET:
             field_dict["currency"] = currency
+        if waiver is not UNSET:
+            field_dict["waiver"] = waiver
         if fees is not UNSET:
             field_dict["fees"] = fees
         if finalized_at is not UNSET:
@@ -139,6 +148,7 @@ class APIConsumerUsageStatementResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
         from ..models.api_consumer_usage_statement_bucket_response import APIConsumerUsageStatementBucketResponse
+        from ..models.api_consumer_usage_waiver_response import APIConsumerUsageWaiverResponse
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -173,6 +183,13 @@ class APIConsumerUsageStatementResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         currency = d.pop("currency", UNSET)
+
+        _waiver = d.pop("waiver", UNSET)
+        waiver: APIConsumerUsageWaiverResponse | Unset
+        if isinstance(_waiver, Unset):
+            waiver = UNSET
+        else:
+            waiver = APIConsumerUsageWaiverResponse.from_dict(_waiver)
 
         _fees = d.pop("fees", UNSET)
         fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
@@ -219,6 +236,7 @@ class APIConsumerUsageStatementResponse:
             as_of=as_of,
             created_at=created_at,
             currency=currency,
+            waiver=waiver,
             fees=fees,
             finalized_at=finalized_at,
             credit_applied_millicents=credit_applied_millicents,

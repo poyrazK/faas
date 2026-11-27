@@ -16,10 +16,10 @@ func TestParseDeferCacheExport(t *testing.T) {
 	}{
 		{raw: "", want: false},
 		{raw: "false", want: false},
-		// Refused until the cache export stops editing the drive on the
-		// host (bug hunt H104).
-		{raw: "true", wantErr: true},
-		{raw: " 1 ", wantErr: true},
+		// vmmd stages the cache export run's inputs, so the switch turns on
+		// again (ADR-20261029171525 amendment 2).
+		{raw: "true", want: true},
+		{raw: " 1 ", want: true},
 		{raw: "later", wantErr: true},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {

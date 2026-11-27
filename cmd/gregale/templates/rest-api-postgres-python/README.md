@@ -8,7 +8,7 @@ are self-contained; no SDK checkout or separately published package is needed.
 ## Deploy with managed PostgreSQL
 
 Use a database from Gregale's qualified Neon-backed preview, or create one with
-`gregale postgres create notes --region <region>`. Reserve the app before attaching
+`gregale postgres create notes`. Reserve the app before attaching
 credentials, then deploy the generated source:
 
 ```sh
@@ -38,6 +38,27 @@ SELECT and INSERT, and sequence USAGE. Store only its `DATABASE_URL` with
 `gregale env set --app <slug>` or a protected `--secrets-file` outside this
 directory. An ordinary secret named `MIGRATION_DATABASE_URL` does not obtain the
 managed release-only isolation: never attach that secret to a serving workload.
+
+## Share a test release
+
+Create an API sandbox from the release page after deploying this template.
+Enter `/notes` as the smoke test path to check a database-backed endpoint.
+Gregale supplies a fresh managed database in the background. The release command
+sets up its schema and inserts one sample note when `GREGALE_API_SANDBOX=1`.
+For repeatable copies, open **Define scenario** and **Load Notes example** on
+the release page. The migration reads `GREGALE_API_SANDBOX_SEED` and inserts
+the notes at their specified IDs. Each copy gets its own database. Invitees
+can see the seeded IDs, example requests, and expected HTTP statuses.
+Once verification passes, open the invitation to get its base URL and sandbox key. Set those values as
+`SANDBOX_URL` and `SANDBOX_KEY` to try the API:
+
+```sh
+curl --fail-with-body -H "Authorization: Bearer $SANDBOX_KEY" "$SANDBOX_URL/openapi.json"
+curl --fail-with-body -H "Authorization: Bearer $SANDBOX_KEY" \
+  -H 'Content-Type: application/json' -d '{"body":"A note from my integration"}' \
+  "$SANDBOX_URL/notes"
+curl --fail-with-body -H "Authorization: Bearer $SANDBOX_KEY" "$SANDBOX_URL/notes"
+```
 
 ## Startup, rotation and requests
 

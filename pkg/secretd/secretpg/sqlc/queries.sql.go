@@ -95,6 +95,18 @@ func (q *Queries) DeleteExpiredSecretGrants(ctx context.Context, db DBTX, before
 	return result.RowsAffected(), nil
 }
 
+const deploymentAppID = `-- name: DeploymentAppID :one
+SELECT app_id FROM deployments WHERE id = $1::uuid
+`
+
+// The app a deployment belongs to (ADR-20261117190000 slice 2).
+func (q *Queries) DeploymentAppID(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, deploymentAppID, id)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
 const edgeHeaderSecretSealed = `-- name: EdgeHeaderSecretSealed :one
 SELECT s.ciphertext FROM edge_rule_header_secrets s
  WHERE s.id = $1::uuid AND s.app_id = $2::uuid
@@ -153,6 +165,33 @@ func (q *Queries) InsertSecretOpenAudit(ctx context.Context, db DBTX, arg Insert
 		arg.AppID,
 		arg.Via,
 		arg.Entries,
+	)
+	return err
+}
+
+const insertStorageGrantAudit = `-- name: InsertStorageGrantAudit :exec
+INSERT INTO storage_grant_audit (node_id, subject_class, subject_id, app_id, access, objects)
+VALUES ($1::uuid, $2::text, $3::uuid,
+        $4::uuid, $5::text, $6::int)
+`
+
+type InsertStorageGrantAuditParams struct {
+	NodeID       pgtype.UUID
+	SubjectClass string
+	SubjectID    pgtype.UUID
+	AppID        pgtype.UUID
+	Access       string
+	Objects      int32
+}
+
+func (q *Queries) InsertStorageGrantAudit(ctx context.Context, db DBTX, arg InsertStorageGrantAuditParams) error {
+	_, err := db.Exec(ctx, insertStorageGrantAudit,
+		arg.NodeID,
+		arg.SubjectClass,
+		arg.SubjectID,
+		arg.AppID,
+		arg.Access,
+		arg.Objects,
 	)
 	return err
 }
@@ -216,6 +255,28 @@ func (q *Queries) LogDrainHeaderSealed(ctx context.Context, db DBTX, arg LogDrai
 	return auth_header_sealed, err
 }
 
+const nodeBuildsDeployment = `-- name: NodeBuildsDeployment :one
+SELECT EXISTS (
+    SELECT 1 FROM builds
+     WHERE deployment_id = $1::uuid AND builder_node_name = $2::text
+       AND status = 'running' AND started_at > $3::timestamptz
+) AS builds
+`
+
+type NodeBuildsDeploymentParams struct {
+	DeploymentID pgtype.UUID
+	NodeName     string
+	Since        pgtype.Timestamptz
+}
+
+// A running build of the deployment the node claimed, started since since.
+func (q *Queries) NodeBuildsDeployment(ctx context.Context, db DBTX, arg NodeBuildsDeploymentParams) (bool, error) {
+	row := db.QueryRow(ctx, nodeBuildsDeployment, arg.DeploymentID, arg.NodeName, arg.Since)
+	var builds bool
+	err := row.Scan(&builds)
+	return builds, err
+}
+
 const nodePreparesAppImage = `-- name: NodePreparesAppImage :one
 SELECT EXISTS (
     SELECT 1 FROM deployment_image_preparations p
@@ -240,6 +301,99 @@ func (q *Queries) NodePreparesAppImage(ctx context.Context, db DBTX, arg NodePre
 	var preparing bool
 	err := row.Scan(&preparing)
 	return preparing, err
+}
+
+const nodeRunsApp = `-- name: NodeRunsApp :one
+SELECT EXISTS (
+    SELECT 1 FROM instances
+     WHERE app_id = $1::uuid AND node_id = $2::uuid
+       AND state NOT IN ('stopped', 'failed', 'evicting_account_deleting')
+) AS runs
+`
+
+type NodeRunsAppParams struct {
+	AppID  pgtype.UUID
+	NodeID pgtype.UUID
+}
+
+// An instance of the app on the node that is not over.
+func (q *Queries) NodeRunsApp(ctx context.Context, db DBTX, arg NodeRunsAppParams) (bool, error) {
+	row := db.QueryRow(ctx, nodeRunsApp, arg.AppID, arg.NodeID)
+	var runs bool
+	err := row.Scan(&runs)
+	return runs, err
+}
+
+const nodeRunsJob = `-- name: NodeRunsJob :one
+SELECT (EXISTS (
+    SELECT 1 FROM instances
+     WHERE job_id = $1::uuid AND node_id = $2::uuid
+       AND state NOT IN ('stopped', 'failed', 'evicting_account_deleting')
+) OR EXISTS (
+    SELECT 1 FROM sandbox_sessions
+     WHERE image_job_id = $1::uuid
+       AND (node_id = $2::text OR placed_node_id = $2::text)
+       AND state IN ('starting', 'ready', 'frozen')
+))::boolean AS runs
+`
+
+type NodeRunsJobParams struct {
+	JobID  pgtype.UUID
+	NodeID pgtype.UUID
+}
+
+// A task instance of the job on the node that is not over, or a live
+// sandbox session on the node that boots the job's image.
+func (q *Queries) NodeRunsJob(ctx context.Context, db DBTX, arg NodeRunsJobParams) (bool, error) {
+	row := db.QueryRow(ctx, nodeRunsJob, arg.JobID, arg.NodeID)
+	var runs bool
+	err := row.Scan(&runs)
+	return runs, err
+}
+
+const nodeRunsSandboxOf = `-- name: NodeRunsSandboxOf :one
+SELECT EXISTS (
+    SELECT 1 FROM sandbox_sessions
+     WHERE account_id = $1::uuid
+       AND (node_id = $2::text OR placed_node_id = $2::text)
+       AND state IN ('starting', 'ready', 'frozen')
+) AS runs
+`
+
+type NodeRunsSandboxOfParams struct {
+	AccountID pgtype.UUID
+	NodeID    string
+}
+
+// A live sandbox session of the account placed on the node.
+func (q *Queries) NodeRunsSandboxOf(ctx context.Context, db DBTX, arg NodeRunsSandboxOfParams) (bool, error) {
+	row := db.QueryRow(ctx, nodeRunsSandboxOf, arg.AccountID, arg.NodeID)
+	var runs bool
+	err := row.Scan(&runs)
+	return runs, err
+}
+
+const nodeRunsSandboxTemplateOf = `-- name: NodeRunsSandboxTemplateOf :one
+SELECT EXISTS (
+    SELECT 1 FROM sandbox_sessions s JOIN sandbox_templates t ON t.id = s.template_id
+     WHERE t.app_id = $1::uuid
+       AND (s.node_id = $2::text OR s.placed_node_id = $2::text)
+       AND s.state IN ('starting', 'ready', 'frozen')
+) AS runs
+`
+
+type NodeRunsSandboxTemplateOfParams struct {
+	AppID  pgtype.UUID
+	NodeID string
+}
+
+// A live sandbox session on the node whose template is built by the app:
+// the session boots that app's layer (reads only).
+func (q *Queries) NodeRunsSandboxTemplateOf(ctx context.Context, db DBTX, arg NodeRunsSandboxTemplateOfParams) (bool, error) {
+	row := db.QueryRow(ctx, nodeRunsSandboxTemplateOf, arg.AppID, arg.NodeID)
+	var runs bool
+	err := row.Scan(&runs)
+	return runs, err
 }
 
 const postgresCutoverVerification = `-- name: PostgresCutoverVerification :one
@@ -436,4 +590,38 @@ func (q *Queries) UpsertSecretGrant(ctx context.Context, db DBTX, arg UpsertSecr
 	var expires_at pgtype.Timestamptz
 	err := row.Scan(&expires_at)
 	return expires_at, err
+}
+
+const verificationLease = `-- name: VerificationLease :one
+SELECT l.app_id, l.node_name, l.expires_at, d.status, d.scope,
+       c.contract::jsonb AS contract
+  FROM deployment_verification_leases l
+  JOIN deployments d ON d.id = l.deployment_id AND d.app_id = l.app_id
+  LEFT JOIN app_verification_contracts c ON c.app_id = l.app_id
+ WHERE l.deployment_id = $1::uuid
+`
+
+type VerificationLeaseRow struct {
+	AppID     pgtype.UUID
+	NodeName  string
+	ExpiresAt pgtype.Timestamptz
+	Status    string
+	Scope     string
+	Contract  []byte
+}
+
+// The node verifying a deployment, the deployment's status and scope, and the
+// app's stored verification contract (ADR-20261122220000 amendment 2).
+func (q *Queries) VerificationLease(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (VerificationLeaseRow, error) {
+	row := db.QueryRow(ctx, verificationLease, deploymentID)
+	var i VerificationLeaseRow
+	err := row.Scan(
+		&i.AppID,
+		&i.NodeName,
+		&i.ExpiresAt,
+		&i.Status,
+		&i.Scope,
+		&i.Contract,
+	)
+	return i, err
 }

@@ -19,17 +19,29 @@ type Config struct {
 	IntakeTimezone     *time.Location
 	Enabled            bool
 	Members            map[string]bool // value true grants team-wide management visibility
+	Admins             map[string]bool // owner admins; config is the only source
 	Policy             referrals.Policy
 	PublicOrigin       string
 }
 
-func (c Config) Member(email string) (manager, member bool) {
-	manager, member = c.Members[strings.ToLower(strings.TrimSpace(email))]
-	return
+// ConfigRole is the role the environment grants an email, or "".
+func (c Config) ConfigRole(email string) string {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if c.Admins[email] {
+		return referrals.RoleAdmin
+	}
+	manager, member := c.Members[email]
+	switch {
+	case manager:
+		return referrals.RoleManager
+	case member:
+		return referrals.RoleRep
+	}
+	return ""
 }
 
 func FromEnv(getenv func(string) string, origin string) (Config, error) {
-	c := Config{Enabled: getenv("FAAS_SALES_ENABLED") == "1", PublicOrigin: origin, Members: map[string]bool{}, Policy: referrals.Policy{Currency: "usd", HoldDays: 30, ConversionDays: 90}}
+	c := Config{Enabled: getenv("FAAS_SALES_ENABLED") == "1", PublicOrigin: origin, Members: map[string]bool{}, Admins: map[string]bool{}, Policy: referrals.Policy{Currency: "usd", HoldDays: 30, ConversionDays: 90}}
 	c.IntakeEnabled = getenv("FAAS_SALES_INTAKE_ENABLED") == "1"
 	c.IntakeFollowupDays = api.SalesIntakeFollowupDefaultDays
 	c.IntakeTimezone = time.UTC
@@ -61,7 +73,7 @@ func FromEnv(getenv func(string) string, origin string) (Config, error) {
 	for _, group := range []struct {
 		key     string
 		manager bool
-	}{{"FAAS_SALES_EMAILS", false}, {"FAAS_SALES_MANAGER_EMAILS", true}} {
+	}{{"FAAS_SALES_EMAILS", false}, {"FAAS_SALES_MANAGER_EMAILS", true}, {"FAAS_SALES_ADMIN_EMAILS", true}} {
 		for _, email := range strings.Split(getenv(group.key), ",") {
 			email = strings.ToLower(strings.TrimSpace(email))
 			if email == "" {
@@ -72,6 +84,9 @@ func FromEnv(getenv func(string) string, origin string) (Config, error) {
 				return Config{}, fmt.Errorf("%s contains an invalid email address", group.key)
 			}
 			c.Members[email] = group.manager || c.Members[email]
+			if group.key == "FAAS_SALES_ADMIN_EMAILS" {
+				c.Admins[email] = true
+			}
 		}
 	}
 	if value := getenv("FAAS_REFERRAL_CURRENCY"); value != "" {

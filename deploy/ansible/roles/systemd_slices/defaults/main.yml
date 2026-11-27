@@ -11,6 +11,8 @@ faas_cp_slice_cpu_quota: 400%
 # faas_cp_slice_memory_max with it, lets builderd run a second, opportunistic
 # build when the slice has room for a whole builder (retail-store A3).
 faas_cp_build_slice_memory_max: 5120M
+# faas-borrowed.slice cpu.weight (ADR-20261118154632); api.BorrowedBuilderCPUWeight.
+faas_borrowed_slice_cpu_weight: 10
 
 # The CPUWeight every per-plan tenant sub-slice gets (ADR-20261109172421 §3):
 # one value, so no plan outranks another on a busy host. 16 was Scale's

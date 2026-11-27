@@ -67,6 +67,7 @@ type Provider struct {
 	objectStorageMeterID string
 	postgresMode         string
 	postgresFrom         time.Time
+	postgresHistoryFrom  time.Time
 	postgresEvent        string
 	postgresMeterID      string
 	products             map[api.Plan]string
@@ -131,6 +132,10 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 	egressFrom, _ := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
 	objectStorageFrom, _ := time.Parse(time.RFC3339, cfg.ObjectStorageBillingFrom)
 	postgresFrom, _ := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
+	var postgresHistoryFrom time.Time
+	if cfg.ManagedPostgresHistoryBillingFrom != "" {
+		postgresHistoryFrom, _ = time.Parse(time.RFC3339, cfg.ManagedPostgresHistoryBillingFrom)
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -163,6 +168,7 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		objectStorageMeterID: cfg.ObjectStorageMeterID,
 		postgresMode:         cfg.ManagedPostgresBillingMode,
 		postgresFrom:         postgresFrom.UTC(),
+		postgresHistoryFrom:  postgresHistoryFrom.UTC(),
 		postgresEvent:        cfg.ManagedPostgresUsageEventName,
 		postgresMeterID:      cfg.ManagedPostgresMeterID,
 		products: map[api.Plan]string{
@@ -220,6 +226,13 @@ func validateManagedPostgresConfig(cfg Config) error {
 	_, utcOffset := effectiveFrom.Zone()
 	if err != nil || utcOffset != 0 || !effectiveFrom.Equal(state.ObjectStoragePeriod(effectiveFrom)) {
 		return errors.New("polar: managed postgres billing from must be an RFC3339 UTC-month boundary")
+	}
+	if cfg.ManagedPostgresHistoryBillingFrom != "" {
+		historyFrom, err := time.Parse(time.RFC3339, cfg.ManagedPostgresHistoryBillingFrom)
+		_, historyOffset := historyFrom.Zone()
+		if err != nil || historyOffset != 0 || !historyFrom.Equal(state.ObjectStoragePeriod(historyFrom)) {
+			return errors.New("polar: managed postgres history billing from must be an RFC3339 UTC-month boundary")
+		}
 	}
 	if strings.TrimSpace(cfg.ManagedPostgresMeterID) == "" {
 		return errors.New("polar: managed postgres meter id missing")
@@ -321,7 +334,8 @@ func (p *Provider) ManagedPostgresChargePolicy() (billing.ManagedPostgresChargeP
 	if p == nil || p.postgresMode == ManagedPostgresBillingOff || p.postgresMode == "" {
 		return billing.ManagedPostgresChargePolicy{}, false
 	}
-	return billing.ManagedPostgresChargePolicy{Provider: "polar", Live: p.postgresMode == ManagedPostgresBillingLive, EffectiveFrom: p.postgresFrom}, true
+	return billing.ManagedPostgresChargePolicy{Provider: "polar", Live: p.postgresMode == ManagedPostgresBillingLive, EffectiveFrom: p.postgresFrom,
+		HistoryFrom: p.postgresHistoryFrom}, true
 }
 
 // ObjectStorageLineItemPolicy exposes the object-storage rollout boundary to
@@ -1042,6 +1056,15 @@ func (p *Provider) PublishManagedPostgresCharge(ctx context.Context, step billin
 			"egress_allowance_bytes":           step.EgressAllowanceBytes,
 			"billed_egress_bytes":              step.BilledEgressBytes,
 			"egress_millicents_per_gb":         api.ManagedPostgresEgressOverageMillicentsPerGB,
+			// ADR-20261123062111: restore history and snapshots past the
+			// included history.
+			"used_history_byte_seconds":               step.UsedHistoryByteSeconds,
+			"used_snapshot_byte_seconds":              step.UsedSnapshotByteSeconds,
+			"included_history_bytes":                  step.IncludedHistoryBytes,
+			"billed_history_byte_seconds":             step.BilledHistoryByteSeconds,
+			"billed_snapshot_byte_seconds":            step.BilledSnapshotByteSeconds,
+			"restore_history_millicents_per_gb_month": api.ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth,
+			"snapshot_millicents_per_gb_month":        api.ManagedPostgresSnapshotOverageMillicentsPerGBMonth,
 		},
 		Timestamp: step.At.UTC().Format(time.RFC3339),
 	}}}
@@ -1170,10 +1193,15 @@ func (p *Provider) ReconcileUsage(ctx context.Context, acct state.Account, start
 }
 
 type refundResponse struct {
-	ID       string `json:"id"`
-	Amount   int64  `json:"amount"`
-	Currency string `json:"currency"`
-	Status   string `json:"status"`
+	ID     string `json:"id"`
+	Amount int64  `json:"amount"`
+	// Amount is pre-tax. TaxAmount is the tax Polar refunds on top of it.
+	// Invoices are tax-inclusive, so the recorded refund is Amount +
+	// TaxAmount: the same figure the refund.* webhook records for this
+	// refund ID (a mismatch there is a RecordInvoiceRefund conflict).
+	TaxAmount int64  `json:"tax_amount"`
+	Currency  string `json:"currency"`
+	Status    string `json:"status"`
 }
 
 // refundMetadataKey is the Polar refund metadata field that carries the
@@ -1208,6 +1236,12 @@ const refundLookupMaxPages = 5
 // Idempotency-Key header). Without one the key defaults to
 // (order, amount), which collapses two separate refunds of the same
 // amount on one order into one — the safe direction, never the double.
+//
+// Units: amountCents and the result's AmountCents are tax-inclusive, like
+// the invoice ledger (total_amount) and the refund.* webhook (amount +
+// tax_amount). Polar's refund `amount` is pre-tax and Polar refunds the
+// proportional tax on top, so Refund reads the order's net/tax split and
+// posts the pre-tax share (polarRefundNetAmount).
 func (p *Provider) Refund(ctx context.Context, chargeID string, amountCents int64) (*billing.RefundResult, error) {
 	if chargeID == "" {
 		return nil, errors.New("polar: refund requires order ID")
@@ -1224,12 +1258,20 @@ func (p *Provider) Refund(ctx context.Context, chargeID string, amountCents int6
 	} else if existing != nil {
 		p.log.Info("polar: refund already exists for idempotency key; not re-issuing",
 			"order_id", chargeID, "refund_id", existing.ID)
-		return existing.result(chargeID, amountCents)
+		return existing.replayResult(chargeID, amountCents)
+	}
+	var order refundOrder
+	if err := p.doJSON(ctx, http.MethodGet, "/v1/orders/"+url.PathEscape(chargeID), nil, &order, ""); err != nil {
+		return nil, fmt.Errorf("polar: refund order lookup order=%s: %w", chargeID, err)
+	}
+	netCents, err := order.netAmountFor(amountCents)
+	if err != nil {
+		return nil, fmt.Errorf("polar: refund order=%s: %w", chargeID, err)
 	}
 	body := map[string]any{
 		"order_id": chargeID,
 		"reason":   "customer_request",
-		"amount":   amountCents,
+		"amount":   netCents,
 		"metadata": map[string]any{refundMetadataKey: idem},
 	}
 	var refund refundResponse
@@ -1238,12 +1280,55 @@ func (p *Provider) Refund(ctx context.Context, chargeID string, amountCents int6
 			if existing, lerr := p.findRefundByKey(ctx, chargeID, idem); lerr == nil && existing != nil {
 				p.log.Warn("polar: refund response lost but refund exists; recovered by metadata lookup",
 					"order_id", chargeID, "refund_id", existing.ID, "err", err)
-				return existing.result(chargeID, amountCents)
+				return existing.replayResult(chargeID, amountCents)
 			}
 		}
 		return nil, fmt.Errorf("polar: create refund order=%s: %w", chargeID, err)
 	}
-	return refund.result(chargeID, amountCents)
+	res, err := refund.result(chargeID, netCents)
+	if err == nil && refund.Amount <= 0 {
+		// Polar omitted the amounts: report the requested tax-inclusive
+		// figure, not the pre-tax share that was posted.
+		res.AmountCents = amountCents
+	}
+	return res, err
+}
+
+// refundOrder is the slice of a Polar Order that splits a tax-inclusive
+// refund into Polar's pre-tax refund amount.
+type refundOrder struct {
+	NetAmount         int64 `json:"net_amount"`
+	TaxAmount         int64 `json:"tax_amount"`
+	RefundedAmount    int64 `json:"refunded_amount"`
+	RefundedTaxAmount int64 `json:"refunded_tax_amount"`
+}
+
+// netAmountFor returns the pre-tax refund amount whose amount + Polar's
+// proportional tax equals grossCents. Refunding the whole remaining balance
+// posts the exact remaining net, so no rounding cent is left behind; a
+// partial refund rounds half-up. Integer math only.
+func (o refundOrder) netAmountFor(grossCents int64) (int64, error) {
+	if o.NetAmount < 0 || o.TaxAmount < 0 || o.RefundedAmount < 0 || o.RefundedTaxAmount < 0 {
+		return 0, errors.New("order has negative amounts")
+	}
+	if o.NetAmount == 0 && o.TaxAmount == 0 {
+		// Polar omitted the split; no tax to separate out.
+		return grossCents, nil
+	}
+	remainingNet := o.NetAmount - o.RefundedAmount
+	remainingGross := remainingNet + o.TaxAmount - o.RefundedTaxAmount
+	if remainingNet <= 0 || remainingGross <= 0 {
+		return 0, errors.New("order is already fully refunded")
+	}
+	if grossCents > remainingGross {
+		return 0, fmt.Errorf("refund %d exceeds the order's refundable %d", grossCents, remainingGross)
+	}
+	if grossCents == remainingGross || o.TaxAmount == 0 {
+		return min(grossCents, remainingNet), nil
+	}
+	total := o.NetAmount + o.TaxAmount
+	net := (2*grossCents*o.NetAmount + total) / (2 * total)
+	return max(1, min(net, remainingNet)), nil
 }
 
 // result validates both fresh and replayed refunds before exposing a success.
@@ -1256,10 +1341,14 @@ func (r refundResponse) result(chargeID string, amountCents int64) (*billing.Ref
 	if r.Amount < 0 || (r.Amount > 0 && r.Amount != amountCents) {
 		return nil, fmt.Errorf("polar: refund order=%s returned amount %d, requested %d", chargeID, r.Amount, amountCents)
 	}
+	if r.TaxAmount < 0 {
+		return nil, fmt.Errorf("polar: refund order=%s returned tax amount %d", chargeID, r.TaxAmount)
+	}
 	amount := r.Amount
 	if amount <= 0 {
 		amount = amountCents
 	}
+	amount += r.TaxAmount
 	return &billing.RefundResult{
 		ProviderRefundID: r.ID,
 		ChargeID:         chargeID,
@@ -1267,6 +1356,29 @@ func (r refundResponse) result(chargeID string, amountCents int64) (*billing.Ref
 		Currency:         r.Currency,
 		Status:           r.Status,
 	}, nil
+}
+
+// refundReplayToleranceCents bounds how far a replayed refund's
+// tax-inclusive total may differ from the requested amount: the pre-tax
+// share is rounded once by Refund and Polar rounds the tax once more.
+const refundReplayToleranceCents = 2
+
+// replayResult validates a refund found by idempotency key. The pre-tax
+// amount it was posted with depended on the order's refund balance at the
+// time, which has since changed, so the check is on the tax-inclusive total.
+// A refund posted before amounts were tax-inclusive carries the requested
+// amount as its pre-tax amount; it is accepted too.
+func (r refundResponse) replayResult(chargeID string, grossCents int64) (*billing.RefundResult, error) {
+	if r.Amount <= 0 || r.Amount == grossCents {
+		return r.result(chargeID, grossCents)
+	}
+	if r.TaxAmount < 0 {
+		return nil, fmt.Errorf("polar: refund order=%s returned tax amount %d", chargeID, r.TaxAmount)
+	}
+	if diff := r.Amount + r.TaxAmount - grossCents; diff < -refundReplayToleranceCents || diff > refundReplayToleranceCents {
+		return nil, fmt.Errorf("polar: refund order=%s returned amount %d + tax %d, requested %d", chargeID, r.Amount, r.TaxAmount, grossCents)
+	}
+	return r.result(chargeID, r.Amount)
 }
 
 type refundListResponse struct {

@@ -149,3 +149,56 @@ test('runExecution creates, streams, and fetches the terminal receipt', async ()
     client.uninstall();
   }
 });
+
+test('runExecution probes admission before uploading and keeps the same key', async () => {
+  const calls: string[] = []; const keys: string[] = []; let admissions = 0;
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const client = new FaaSClient('https://api.example.test', { token: 'test-token', fetch: async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString());
+    const method = init?.method ?? 'GET'; calls.push(`${method} ${url.pathname}`);
+    if (url.pathname === '/v1/execution-files') return json({ id: 'file-1', status: 'missing', size_bytes: 3, sha256: 'sha256:' + 'a'.repeat(64), upload_required: true, content_url: '/v1/execution-files/file-1/content' });
+    if (method === 'POST' && url.pathname === '/v2/executions') {
+      keys.push(new Headers(init?.headers).get('Idempotency-Key') ?? ''); admissions++;
+      if (admissions === 1) return json({ status: 409, code: 'execution_files_not_ready', title: 'Run files not ready' }, 409);
+      return json({ id: 'run-files', status: 'queued' }, 202);
+    }
+    if (method === 'PUT') return json({ id: 'file-1', status: 'ready', size_bytes: 3, content_url: '/v1/execution-files/file-1/content' });
+    if (url.pathname.endsWith('/events')) return stream('id: 1\nevent: terminal\ndata: {"status":"succeeded"}\n\n');
+    if (url.pathname === '/v1/executions/run-files') return json({ id: 'run-files', status: 'succeeded', result_validation: { status: 'invalid', message: 'Run result does not match result_schema' } });
+    return json({}, 404);
+  }});
+  try {
+    const receipt = await client.runExecution({ runtime: 'node24', source: 'export default ()=>42', result_schema: { type: 'string' } }, { files: { 'data.bin': new Blob(['abc']) }, idempotencyKey: 'stable-files-key' });
+    assert.deepEqual(calls.slice(0, 4), ['POST /v1/execution-files', 'POST /v2/executions', 'PUT /v1/execution-files/file-1/content', 'POST /v2/executions']);
+    assert.deepEqual(keys, ['stable-files-key', 'stable-files-key']);
+    assert.equal(receipt.status, 'succeeded'); assert.equal(receipt.result_validation?.status, 'invalid');
+  } finally { client.uninstall(); }
+});
+
+test('extended admission errors never fall back to v1 or upload after uncertainty', async () => {
+  const calls: string[] = [];
+  const client = new FaaSClient('https://api.example.test', { fetch: async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString()); calls.push(url.pathname);
+    return new Response(JSON.stringify({ status: 404, code: 'not_found', title: 'Unavailable' }), { status: 404, headers: { 'content-type': 'application/json' } });
+  }});
+  try { await assert.rejects(client.runExecution({ runtime: 'node24', source: 'export default ()=>42', result_schema: false })); assert.deepEqual(calls, ['/v2/executions']); }
+  finally { client.uninstall(); }
+});
+
+
+test('five-minute class and custom environments use v2 without silent fallback', async () => {
+  const paths: string[] = [];
+  const client = new FaaSClient('https://api.example.test', { fetch: async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input.toString()); paths.push(url.pathname);
+    if (url.pathname.endsWith('/events')) return stream('id: 1\nevent: terminal\ndata: {"status":"succeeded"}\n\n');
+    if (init?.method !== 'POST') return new Response(JSON.stringify({ id: 'run-five-minute', status: 'succeeded', result: 42 }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.limits.execution_class, 'extended'); assert.equal(body.limits.timeout_ms, 300000);
+    assert.equal(body.environment_id, '12345678-1234-4234-8234-123456789abc');
+    return new Response(JSON.stringify({ id: 'run-five-minute', status: 'succeeded', result: 42 }), { status: 202, headers: { 'content-type': 'application/json' } });
+  }});
+  try {
+    const receipt = await client.runExecution({ runtime: 'node24', source: 'export default ()=>42', environment_id: '12345678-1234-4234-8234-123456789abc', limits: { execution_class: 'extended', timeout_ms: 300000 } });
+    assert.equal(receipt.result, 42); assert.deepEqual(paths, ['/v2/executions', '/v1/executions/run-five-minute/events', '/v1/executions/run-five-minute']);
+  } finally { client.uninstall(); }
+});

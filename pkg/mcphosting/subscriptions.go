@@ -273,7 +273,7 @@ func (c *Client) ListenCatalogChange(ctx context.Context, filter CatalogNotifica
 		return change != "", nil
 	})
 	if err != nil {
-		if errors.Is(err, errTaskSubscriptionInterrupted) {
+		if errors.Is(err, ErrTaskSubscriptionInterrupted) {
 			return "", fmt.Errorf("%w: %w", ErrSubscriptionInterrupted, err)
 		}
 		return "", err

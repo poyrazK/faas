@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.execution_capabilities_response_environment_runtimes_item import (
+    ExecutionCapabilitiesResponseEnvironmentRuntimesItem,
+    check_execution_capabilities_response_environment_runtimes_item,
+)
 from ..models.execution_capabilities_response_network_modes_item import (
     ExecutionCapabilitiesResponseNetworkModesItem,
     check_execution_capabilities_response_network_modes_item,
@@ -22,7 +26,11 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.execution_capability_limits import ExecutionCapabilityLimits
+    from ..models.execution_class_capability import ExecutionClassCapability
+    from ..models.execution_environment_limits import ExecutionEnvironmentLimits
+    from ..models.execution_file_limits import ExecutionFileLimits
     from ..models.execution_profile_capability import ExecutionProfileCapability
+    from ..models.run_control_capabilities import RunControlCapabilities
 
 
 T = TypeVar("T", bound="ExecutionCapabilitiesResponse")
@@ -48,6 +56,22 @@ class ExecutionCapabilitiesResponse:
     runtimes: list[ExecutionCapabilitiesResponseRuntimesItem]
     profiles: list[ExecutionProfileCapability]
     network_modes: list[ExecutionCapabilitiesResponseNetworkModesItem]
+    artifact_deliveries: bool | Unset = UNSET
+    """New Run artifact deliveries are currently admitted into configured app upload routes."""
+    task_pipelines: bool | Unset = UNSET
+    """Whether new version-pinned task pipelines and batches are enabled."""
+    run_controls: RunControlCapabilities | Unset = UNSET
+    """Available budget, attribution and history controls for this account."""
+    custom_environments: bool | Unset = UNSET
+    environment_runtimes: list[ExecutionCapabilitiesResponseEnvironmentRuntimesItem] | Unset = UNSET
+    environment_limits: ExecutionEnvironmentLimits | Unset = UNSET
+    """Dependency recipe and image limits for the current account."""
+    execution_classes: list[ExecutionClassCapability] | Unset = UNSET
+    extended_admissions: bool | Unset = UNSET
+    """New standalone contract and stored-file admissions are enabled."""
+    file_limits: ExecutionFileLimits | Unset = UNSET
+    """Per-file and account storage limits for Run inputs and retained outputs."""
+    max_contract_schema_bytes: int | Unset = UNSET
     unavailable_reasons: list[ExecutionCapabilitiesResponseUnavailableReasonsItem] | Unset = UNSET
     limits: ExecutionCapabilityLimits | Unset = UNSET
     """Plan limits and fixed request-shape caps for Runs."""
@@ -77,6 +101,42 @@ class ExecutionCapabilitiesResponse:
             network_modes_item: str = network_modes_item_data
             network_modes.append(network_modes_item)
 
+        artifact_deliveries = self.artifact_deliveries
+
+        task_pipelines = self.task_pipelines
+
+        run_controls: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.run_controls, Unset):
+            run_controls = self.run_controls.to_dict()
+
+        custom_environments = self.custom_environments
+
+        environment_runtimes: list[str] | Unset = UNSET
+        if not isinstance(self.environment_runtimes, Unset):
+            environment_runtimes = []
+            for environment_runtimes_item_data in self.environment_runtimes:
+                environment_runtimes_item: str = environment_runtimes_item_data
+                environment_runtimes.append(environment_runtimes_item)
+
+        environment_limits: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.environment_limits, Unset):
+            environment_limits = self.environment_limits.to_dict()
+
+        execution_classes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.execution_classes, Unset):
+            execution_classes = []
+            for execution_classes_item_data in self.execution_classes:
+                execution_classes_item = execution_classes_item_data.to_dict()
+                execution_classes.append(execution_classes_item)
+
+        extended_admissions = self.extended_admissions
+
+        file_limits: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.file_limits, Unset):
+            file_limits = self.file_limits.to_dict()
+
+        max_contract_schema_bytes = self.max_contract_schema_bytes
+
         unavailable_reasons: list[str] | Unset = UNSET
         if not isinstance(self.unavailable_reasons, Unset):
             unavailable_reasons = []
@@ -101,6 +161,26 @@ class ExecutionCapabilitiesResponse:
                 "network_modes": network_modes,
             }
         )
+        if artifact_deliveries is not UNSET:
+            field_dict["artifact_deliveries"] = artifact_deliveries
+        if task_pipelines is not UNSET:
+            field_dict["task_pipelines"] = task_pipelines
+        if run_controls is not UNSET:
+            field_dict["run_controls"] = run_controls
+        if custom_environments is not UNSET:
+            field_dict["custom_environments"] = custom_environments
+        if environment_runtimes is not UNSET:
+            field_dict["environment_runtimes"] = environment_runtimes
+        if environment_limits is not UNSET:
+            field_dict["environment_limits"] = environment_limits
+        if execution_classes is not UNSET:
+            field_dict["execution_classes"] = execution_classes
+        if extended_admissions is not UNSET:
+            field_dict["extended_admissions"] = extended_admissions
+        if file_limits is not UNSET:
+            field_dict["file_limits"] = file_limits
+        if max_contract_schema_bytes is not UNSET:
+            field_dict["max_contract_schema_bytes"] = max_contract_schema_bytes
         if unavailable_reasons is not UNSET:
             field_dict["unavailable_reasons"] = unavailable_reasons
         if limits is not UNSET:
@@ -111,7 +191,11 @@ class ExecutionCapabilitiesResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.execution_capability_limits import ExecutionCapabilityLimits
+        from ..models.execution_class_capability import ExecutionClassCapability
+        from ..models.execution_environment_limits import ExecutionEnvironmentLimits
+        from ..models.execution_file_limits import ExecutionFileLimits
         from ..models.execution_profile_capability import ExecutionProfileCapability
+        from ..models.run_control_capabilities import RunControlCapabilities
 
         d = dict(src_dict)
         plan = d.pop("plan")
@@ -143,6 +227,57 @@ class ExecutionCapabilitiesResponse:
 
             network_modes.append(network_modes_item)
 
+        artifact_deliveries = d.pop("artifact_deliveries", UNSET)
+
+        task_pipelines = d.pop("task_pipelines", UNSET)
+
+        _run_controls = d.pop("run_controls", UNSET)
+        run_controls: RunControlCapabilities | Unset
+        if isinstance(_run_controls, Unset):
+            run_controls = UNSET
+        else:
+            run_controls = RunControlCapabilities.from_dict(_run_controls)
+
+        custom_environments = d.pop("custom_environments", UNSET)
+
+        _environment_runtimes = d.pop("environment_runtimes", UNSET)
+        environment_runtimes: list[ExecutionCapabilitiesResponseEnvironmentRuntimesItem] | Unset = UNSET
+        if _environment_runtimes is not UNSET:
+            environment_runtimes = []
+            for environment_runtimes_item_data in _environment_runtimes:
+                environment_runtimes_item = check_execution_capabilities_response_environment_runtimes_item(
+                    environment_runtimes_item_data
+                )
+
+                environment_runtimes.append(environment_runtimes_item)
+
+        _environment_limits = d.pop("environment_limits", UNSET)
+        environment_limits: ExecutionEnvironmentLimits | Unset
+        if isinstance(_environment_limits, Unset):
+            environment_limits = UNSET
+        else:
+            environment_limits = ExecutionEnvironmentLimits.from_dict(_environment_limits)
+
+        _execution_classes = d.pop("execution_classes", UNSET)
+        execution_classes: list[ExecutionClassCapability] | Unset = UNSET
+        if _execution_classes is not UNSET:
+            execution_classes = []
+            for execution_classes_item_data in _execution_classes:
+                execution_classes_item = ExecutionClassCapability.from_dict(execution_classes_item_data)
+
+                execution_classes.append(execution_classes_item)
+
+        extended_admissions = d.pop("extended_admissions", UNSET)
+
+        _file_limits = d.pop("file_limits", UNSET)
+        file_limits: ExecutionFileLimits | Unset
+        if isinstance(_file_limits, Unset):
+            file_limits = UNSET
+        else:
+            file_limits = ExecutionFileLimits.from_dict(_file_limits)
+
+        max_contract_schema_bytes = d.pop("max_contract_schema_bytes", UNSET)
+
         _unavailable_reasons = d.pop("unavailable_reasons", UNSET)
         unavailable_reasons: list[ExecutionCapabilitiesResponseUnavailableReasonsItem] | Unset = UNSET
         if _unavailable_reasons is not UNSET:
@@ -169,6 +304,16 @@ class ExecutionCapabilitiesResponse:
             runtimes=runtimes,
             profiles=profiles,
             network_modes=network_modes,
+            artifact_deliveries=artifact_deliveries,
+            task_pipelines=task_pipelines,
+            run_controls=run_controls,
+            custom_environments=custom_environments,
+            environment_runtimes=environment_runtimes,
+            environment_limits=environment_limits,
+            execution_classes=execution_classes,
+            extended_admissions=extended_admissions,
+            file_limits=file_limits,
+            max_contract_schema_bytes=max_contract_schema_bytes,
             unavailable_reasons=unavailable_reasons,
             limits=limits,
         )

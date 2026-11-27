@@ -64,6 +64,9 @@ type GuestSpansIngester struct {
 	// binding, when set by WithPeerNodes, accepts a mutual-TLS caller's
 	// frames only for instances on its node.
 	binding *guestBinding
+	// routeResources, when set by WithRouteResources, stores vmmd's
+	// resource minutes (ADR-20261121170000).
+	routeResources *RouteResources
 }
 
 func NewGuestSpansIngester(accounts guestSpansAccounts, limiter *peraccount.Limiter, log *slog.Logger) *GuestSpansIngester {

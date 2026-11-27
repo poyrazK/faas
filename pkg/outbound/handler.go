@@ -67,6 +67,9 @@ type Handler struct {
 	// §7); without them agent run calls are refused.
 	AgentRunAuthorizer AgentRunAuthorizer
 	AgentRunSpend      AgentRunSpendLedger
+	// Capabilities serves CapabilityMCPPath to agent runs (ADR-20261027090016);
+	// without it the path is not found.
+	Capabilities       http.Handler
 	WorkflowAuthorizer WorkflowAuthorizer
 	workflowClient     *http.Client
 	CredentialResolver ManagedCredentialResolver
@@ -227,6 +230,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodConnect {
 		writeProblem(w, http.StatusMethodNotAllowed, "outbound_method_not_allowed", "CONNECT is not supported", "")
+		return
+	}
+	if r.URL.EscapedPath() == CapabilityMCPPath && h.Capabilities != nil {
+		h.Capabilities.ServeHTTP(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.EscapedPath(), RoutePrefix) {

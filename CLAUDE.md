@@ -106,8 +106,13 @@ docs/adr/
   ADR-20261024225612). Never make wake depend on a snapshot existing.
 - **Billing uses plan RAM + 8 MB per running second** (§4.7), not sampled RSS. Sampled
   RSS is telemetry only. Customers get predictable bills; the model's math depends on it.
-- **Builder slots**: 1 guaranteed (inside the 6 GB control-plane slice), 2nd opportunistic
-  only when tenant residency < 60%. Builds never outrank tenant wakes.
+- **Builder slots**: each compute node runs the guaranteed slots it is provisioned with
+  (manifest `builder_reserved_slots` → `FAAS_BUILDER_RESERVED_SLOTS`, default 1; ADR-20261118154632
+  amendment 1) in `faas-cp-build.slice`, which node_join sizes for them together with the
+  tenant fence; one more opportunistic slot only when tenant residency < 60% and the slice has
+  room. Builds never outrank tenant wakes. With `builder_elastic_slots` on each node runs those
+  reserved slots plus borrowed ones in `faas-borrowed.slice` that give their memory back to
+  tenants (builderd at 85%, vmmd at 92% of the tenant fence).
 
 ## Hard limits (source: financial model §1 as amended by the Oct 2026 COGS report, ADR-1430; encoded in pkg/api/limits.go)
 

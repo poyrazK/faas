@@ -241,7 +241,11 @@ demand.
    to the managed records. Rollback is the CNAME again; the tunnel is still
    running under `both`.
 6. **One release later**, `entry: direct`: remove cloudflared, the tunnel
-   and its token, and update the drain runbook.
+   and its token, and update the drain runbook. Done 2026-11-20 for the
+   OVHcloud fleet, which never ran a tunnel: the manifest accepts `direct`,
+   the compute roles remove the connector, Prometheus stops scraping it, and
+   `FaasComputeEdgeUnavailable` counts an answering edge as serving when no
+   connector is scraped.
 7. **§5**, in parallel with 1–6. The edge part goes first, then the
    gateway part.
 

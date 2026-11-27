@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func validateAPIConsumerInput(op, accountID, appID, externalRef, name string) error {
@@ -35,12 +37,14 @@ func (m *MemStore) CreateAPIConsumer(_ context.Context, accountID, appID, extern
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// The app-wide identity indexes stay until the contract release, so a
+	// stage cannot reuse production's identities yet (ADR-20261104120000 Release).
 	for _, c := range m.apiConsumers {
 		if c.AppID == appID && c.ExternalRef == externalRef {
 			return APIConsumer{}, ErrConflict
 		}
 	}
-	now := time.Now().UTC()
+	now := m.clock().UTC()
 	c := APIConsumer{
 		ID:          uuid.NewString(),
 		AccountID:   accountID,
@@ -76,7 +80,7 @@ func (m *MemStore) ListAPIConsumersForApp(_ context.Context, accountID, appID st
 	defer m.mu.Unlock()
 	var out []APIConsumer
 	for _, c := range m.apiConsumers {
-		if c.AccountID == accountID && c.AppID == appID {
+		if c.AccountID == accountID && c.AppID == appID && c.EnvironmentID == "" {
 			out = append(out, c)
 		}
 	}
@@ -133,6 +137,9 @@ func validateConsumerKeyForConsumer(op, accountID, consumerID, name, prefix stri
 		switch scope {
 		case "read", "write", "admin", "billing":
 		default:
+			if api.ValidConsumerKeyMCPScope(scope) {
+				continue
+			}
 			return fmt.Errorf("memstore: %s: scope %q is not in the closed-set {read, write, admin}", op, scope)
 		}
 	}
@@ -165,6 +172,8 @@ func (m *MemStore) createConsumerKeyForConsumerLocked(accountID, consumerID, nam
 			return ConsumerKey{}, ErrConflict
 		}
 	}
+	// The app-wide identity indexes stay until the contract release, so a
+	// stage cannot reuse production's identities yet (ADR-20261104120000 Release).
 	for _, k := range m.consumerKeys {
 		if k.AccountID == c.AccountID && k.AppID == c.AppID && k.Name == name {
 			return ConsumerKey{}, ErrConflict
@@ -184,6 +193,8 @@ func (m *MemStore) createConsumerKeyForConsumerLocked(accountID, consumerID, nam
 		Scopes:     append([]string(nil), scopes...),
 		CreatedAt:  time.Now().UTC(),
 		ExpiresAt:  expiresAt,
+		// A key takes its consumer's environment.
+		EnvironmentID: c.EnvironmentID,
 	}
 	m.consumerKeys[k.ID] = k
 	return k, nil

@@ -26,6 +26,17 @@ func TestSandboxLifecycle(t *testing.T) {
 	if _, found, _ := s.ClaimSandbox(ctx, "agentd", "tok-b", ttl, maxLive(5)); found {
 		t.Fatal("a starting session was claimed twice")
 	}
+	// ADR-20261117190000: placement is recorded before boot, fenced by the
+	// lease, without making the session look up.
+	if err := s.MarkSandboxPlaced(ctx, sb.ID, "tok-other", "node-a"); !errors.Is(err, agents.ErrLeaseLost) {
+		t.Fatalf("another token recorded the placement: %v", err)
+	}
+	if err := s.MarkSandboxPlaced(ctx, sb.ID, "tok-a", "node-a"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Sandbox(ctx, account, sb.ID); got.State != agents.SandboxStarting || got.NodeID != "" {
+		t.Fatalf("placed session = %+v; want still starting with no node", got)
+	}
 	if err := s.MarkSandboxReady(ctx, sb.ID, "tok-other", "node-a", "sandbox-vm"); !errors.Is(err, agents.ErrLeaseLost) {
 		t.Fatalf("another token marked the session ready: %v", err)
 	}

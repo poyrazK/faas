@@ -98,7 +98,11 @@ func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data 
 		return err
 	}
 	b := m.objectBuckets[data.BucketID]
-	recipients, err := notificationRecipients(b, m.objectNotifications[b.ID], typ, data, m.notificationQueueLocked)
+	policy := m.objectNotifications[b.ID]
+	if m.objectNotificationClonePaused[b.ID] {
+		policy = api.ObjectBucketNotifications{}
+	}
+	recipients, err := notificationRecipients(b, m.objectBucketNotificationEnvironmentLocked(b.ID), policy, typ, data, m.notificationQueueLocked)
 	if err != nil {
 		return err
 	}

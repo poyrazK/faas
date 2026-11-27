@@ -1,0 +1,28 @@
+{
+  "rows": [
+    {
+      "order_id": "ord-001",
+      "region": "north",
+      "quantity": 2,
+      "unit_price_cents": 1299
+    },
+    {
+      "order_id": "ord-002",
+      "region": "south",
+      "quantity": 1,
+      "unit_price_cents": 2500
+    },
+    {
+      "order_id": "ord-003",
+      "region": "north",
+      "quantity": 3,
+      "unit_price_cents": 500
+    },
+    {
+      "order_id": "ord-004",
+      "region": "south",
+      "quantity": 2,
+      "unit_price_cents": 199
+    }
+  ]
+}

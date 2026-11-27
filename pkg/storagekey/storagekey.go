@@ -100,6 +100,17 @@ func IsJobLayer(key string) bool {
 	return canonicalUUID(job) && (!attempt || canonicalUUID(artifact))
 }
 
+// JobLayerJobID returns the job a JobLayer or JobLayerAttempt key belongs
+// to.
+func JobLayerJobID(key string) (string, bool) {
+	if !IsJobLayer(key) {
+		return "", false
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(key, "jobs/"), ".ext4")
+	job, _, _ := strings.Cut(name, "__")
+	return job, true
+}
+
 // IsSandboxTemplateLayer reports whether key is a sandbox template build's
 // full-rootfs artifact, AppLayer of a template build app
 // (api.IsSandboxTemplateAppSlug) and a UUID deployment
@@ -273,6 +284,26 @@ func SandboxSnapshotNamespace(accountID string, image bool) string {
 // of accountID may restore (snap/<namespace>/captures/<id>/v2/mem).
 func IsSandboxSnapshotKey(key, accountID string, image bool) bool {
 	rest, ok := strings.CutPrefix(key, "snap/"+SandboxSnapshotNamespace(accountID, image)+"/captures/")
+	id, ok2 := strings.CutSuffix(rest, "/v2/mem")
+	return ok && ok2 && id != "" && !strings.ContainsAny(id, "/.")
+}
+
+// SandboxSessionSnapshotNamespace is the capture namespace of accountID's
+// paused persistent sessions (ADR-20261122132055 §2). A pause capture holds
+// what the session's guest held, so only that account's sessions restore it,
+// and the namespace never names another kind of capture.
+func SandboxSessionSnapshotNamespace(accountID string) string {
+	return "sandbox-session-" + accountID
+}
+
+// IsSandboxSessionSnapshotKey reports whether key is a pause capture's
+// memory key a session of accountID may restore
+// (snap/sandbox-session-<account>/captures/<id>/v2/mem).
+func IsSandboxSessionSnapshotKey(key, accountID string) bool {
+	if accountID == "" || strings.ContainsAny(accountID, "/.") {
+		return false
+	}
+	rest, ok := strings.CutPrefix(key, "snap/"+SandboxSessionSnapshotNamespace(accountID)+"/captures/")
 	id, ok2 := strings.CutSuffix(rest, "/v2/mem")
 	return ok && ok2 && id != "" && !strings.ContainsAny(id, "/.")
 }

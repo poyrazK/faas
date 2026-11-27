@@ -35,10 +35,10 @@ func (m *MemStore) GetObjectBucketNotifications(ctx context.Context, account, ap
 	_, p, err := m.ownedNotificationsLocked(account, app, bucket)
 	return p, err
 }
-func (m *MemStore) notificationQueueLocked(t api.ObjectNotificationTarget) (QueueBinding, error) {
+func (m *MemStore) notificationQueueLocked(t api.ObjectNotificationTarget, env notificationEnvironment) (QueueBinding, error) {
 	var selected QueueBinding
 	for _, b := range m.queueBindings {
-		if notificationSameIdentity(b.AccountID, t.AccountID) && notificationSameIdentity(b.AppID, t.AppID) && b.QueueName == t.QueueName && b.Enabled && b.RetiredAt == nil {
+		if notificationSameIdentity(b.AccountID, t.AccountID) && notificationSameIdentity(b.AppID, t.AppID) && b.QueueName == t.QueueName && b.Enabled && b.RetiredAt == nil && queueInNotificationEnvironment(b, env) {
 			if selected.ID != "" {
 				return QueueBinding{}, ErrNotFound // An unqualified ARN cannot choose between environments.
 			}
@@ -85,6 +85,10 @@ func (m *MemStore) changeObjectBucketNotifications(ctx context.Context, account,
 	if request != nil {
 		validateRules = managedObjectNotificationRules(next)
 	}
+	env := m.objectBucketNotificationEnvironmentLocked(b.ID)
+	if env.Gone && len(validateRules) > 0 {
+		return p, ErrObjectNotificationInvalid
+	}
 	for _, r := range validateRules {
 		t, e := notificationTarget(r, b)
 		if e != nil {
@@ -94,15 +98,20 @@ func (m *MemStore) changeObjectBucketNotifications(ctx context.Context, account,
 		if !ok || !notificationSameIdentity(a.AccountID, account) || a.Status == AppDeleted || !notificationEntitled(owner.Plan, t.Kind) {
 			return p, ErrObjectNotificationInvalid
 		}
+		if t.Kind == "function" && !m.functionInNotificationEnvironmentLocked(a, env) {
+			return p, ErrObjectNotificationInvalid
+		}
 		if kept, e := m.recipientsInProducerReachLocked(account, objectNotificationProducer(b), []PublishedEventRecipient{{AppID: t.AppID}}); e != nil || len(kept) == 0 {
 			return p, ErrObjectNotificationInvalid
 		}
 		if t.Kind == "queue" {
-			if _, e = m.notificationQueueLocked(t); e != nil {
+			if _, e = m.notificationQueueLocked(t, env); e != nil {
 				return p, ErrObjectNotificationInvalid
 			}
 		}
 	}
+	// Any explicit write clears a clone's pause, identical rules included.
+	delete(m.objectNotificationClonePaused, bucket)
 	if sameObjectNotificationPolicy(p, next) {
 		return p, nil
 	}
@@ -146,6 +155,13 @@ func (m *MemStore) EnqueueObjectNotification(ctx context.Context, in Invocation,
 	}
 	if !notificationEntitled(owner.Plan, t.Kind) {
 		return ErrObjectNotificationCapacity
+	}
+	if t.Kind == "function" && s.EnvironmentID != "" {
+		env := notificationEnvironment{Scope: s.DeploymentScope, ID: s.EnvironmentID}
+		if !m.functionInNotificationEnvironmentLocked(a, env) {
+			return ErrNotFound
+		}
+		in.DeploymentScope = env.Scope
 	}
 	if t.Kind == "queue" {
 		binding, exists := m.queueBindings[s.QueueBindingID]

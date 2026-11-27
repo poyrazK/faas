@@ -58,10 +58,11 @@ DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
 ```
 
 - `DJANGO_ALLOWED_HOSTS` lists the app's host names: its default host
-  `<app>.gregale.dev` and any [custom domain](domains.md). Set it
+  `<app>.gregale.app` and any [custom domain](domains.md). Set it
   before the first deploy. Every deploy ends with a request to the default
   host, and Django answers `400 Bad Request` to a host it does not allow,
-  which fails the deploy.
+  which fails the deploy. Health checks do not use these names; see
+  [Health check](#health-check).
 - `DATABASE_URL` goes through a connection pooler in transaction mode.
   `DISABLE_SERVER_SIDE_CURSORS` and `conn_max_age=0` are the settings Django
   needs behind one.
@@ -70,7 +71,7 @@ Set the values once:
 
 ```bash
 gregale env set --app my-site DJANGO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(50))')"
-gregale env set --app my-site DJANGO_ALLOWED_HOSTS="my-site.gregale.dev,www.example.com"
+gregale env set --app my-site DJANGO_ALLOWED_HOSTS="my-site.gregale.app,www.example.com"
 ```
 
 The app must exist before `gregale env set`: reserve it first with
@@ -81,7 +82,7 @@ out of the repository).
 ## Database and migrations
 
 ```bash
-gregale add postgres --app my-site --region <region>
+gregale add postgres --app my-site
 gregale postgres attach my-site-postgres my-site --access migration --env MIGRATION_DATABASE_URL
 ```
 
@@ -111,21 +112,59 @@ web: python manage.py collectstatic --noinput && gunicorn mysite.wsgi:applicatio
 The filesystem is ephemeral and there is no shared disk: user uploads belong
 in object storage, not `MEDIA_ROOT`.
 
+## Health check
+
+Gregale checks the health path from inside the instance, when a new
+version starts and while it runs. The check's `Host` header is the
+instance's internal address, not `<app>.gregale.app`, and Django answers a
+host missing from `ALLOWED_HOSTS` with `400 Bad Request` before any view
+runs. If the health path is a view in `urls.py`, every check fails and the
+deploy fails with `app_startup_timeout`. Answer the health path in a
+middleware that runs before Django checks the host:
+
+```python
+# mysite/health.py
+from django.http import HttpResponse
+
+
+class HealthCheckMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.path == "/healthz":
+            return HttpResponse("ok")
+        return self.get_response(request)
+```
+
+Put it first in `MIDDLEWARE`, above `SecurityMiddleware`:
+
+```python
+MIDDLEWARE = [
+    "mysite.health.HealthCheckMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    # ... the rest of the project's middleware
+]
+```
+
+Gregale finds the `/healthz` comparison in the source and uses it as the
+health path. Do not add the internal address to `ALLOWED_HOSTS`: it is not
+stable. Without a health path Gregale only waits for the port to accept
+connections.
+
 ## HTTPS
 
 Gregale terminates TLS and passes requests to the app with
 `X-Forwarded-Proto: https`. To redirect plain HTTP with Django, trust that
-header, and keep the health route out of the redirect, because Gregale's
-health check calls the app over plain HTTP inside the instance:
+header:
 
 ```python
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = True
-SECURE_REDIRECT_EXEMPT = [r"^healthz$"]
 ```
 
-Without a health route Gregale only waits for the port, and nothing needs
-exempting.
+Health checks call the app over plain HTTP. The health middleware answers
+them before `SecurityMiddleware` can redirect, so nothing needs exempting.
 
 ## Choose the Python version
 
@@ -147,5 +186,7 @@ gregale app health my-site --errors
 gregale logs my-site
 ```
 
-A `DisallowedHost` error in the logs means the host is missing from
-`DJANGO_ALLOWED_HOSTS`.
+A `DisallowedHost` error naming `<app>.gregale.app` or your domain means
+that host is missing from `DJANGO_ALLOWED_HOSTS`. One naming an IP address
+comes from the health check: put the health middleware first in
+`MIDDLEWARE`, as in [Health check](#health-check).

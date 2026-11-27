@@ -172,6 +172,12 @@ func safePlanRetry(p *releasePlan, tool string) bool {
 // ambiguous attempts retain their original request and idempotency identity.
 func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bool) error {
 	problem := m.toolError(err).StructuredContent.(ToolError)
+	if problem.Approval != nil && problem.Code == api.CodeApprovalRequired {
+		// apid's approval gate answers before the route runs: nothing was
+		// written, and the approval allows exactly this plan's retry.
+		// Recording a refusal would make the approved retry impossible.
+		return err
+	}
 	status := "outcome_unknown"
 	if p.configReceipt != nil {
 		status = "partial"

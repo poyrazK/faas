@@ -58,6 +58,12 @@ stored. Only the documented safe status codes and bodies up to 1 MiB are
 eligible. A cache miss or cache-backend failure always falls through to the
 application.
 
+Outside these rules, Cloudflare sits in front of every app. A response that
+sets no `Cache-Control`, `CDN-Cache-Control` or `Cloudflare-CDN-Cache-Control`
+is kept out of Cloudflare's cache, so per-user content never reaches another
+user. To let Cloudflare cache a public asset, send a cache header such as
+`Cache-Control: public, max-age=3600`.
+
 A response served from the cache, fresh or stale, counts toward the app's
 monthly egress like a response from the app itself
 ([plans](plans.md#what-each-limit-means)). It does not wake the app or use

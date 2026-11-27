@@ -1,6 +1,9 @@
 package storage
 
-import "os"
+import (
+	"os"
+	"time"
+)
 
 // SetSyncFileForTest replaces the fsync that makes a cache fill durable.
 func (c *LocalCacheBackend) SetSyncFileForTest(sync func(*os.File) error) {
@@ -14,4 +17,11 @@ func (c *LocalCacheBackend) SetDiskSpaceForTest(space func(string) (free, total 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.diskSpace = space
+}
+
+// SetDetachedFillTimeoutForTest bounds each background fill of an immutable key.
+func (c *LocalCacheBackend) SetDetachedFillTimeoutForTest(d time.Duration) {
+	c.fillsMu.Lock()
+	defer c.fillsMu.Unlock()
+	c.detachedFillTimeout = d
 }

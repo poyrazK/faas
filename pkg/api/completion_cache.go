@@ -371,7 +371,35 @@ func (c *CompletionCache) writeEntryLocked(entry CompletionCacheEntry) error {
 		cleanup()
 		return fmt.Errorf("rename completion cache tmp: %w", err)
 	}
+	pruneStaleCompletionCaches(dir, filepath.Base(path), c.now())
 	return nil
+}
+
+// completionCacheStaleAfter is how long another credential's cache file may
+// sit unwritten before a write removes it. Each file is useless after the
+// 24 h TTL; a week keeps a profile switched back to within that time warm.
+const completionCacheStaleAfter = 7 * 24 * time.Hour
+
+// pruneStaleCompletionCaches removes cache files beside keep that no write
+// has touched in completionCacheStaleAfter. Every credential (each FAAS_TOKEN,
+// each rotated key) gets its own file, and none was ever removed: a CLI had
+// 747 of them (prod 2026-11-19). Best effort, like the cache itself.
+func pruneStaleCompletionCaches(dir, keep string, now time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || name == keep || !isCompletionCacheFile(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || now.Sub(info.ModTime()) < completionCacheStaleAfter {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, name)) //nolint:errcheck // best effort
+	}
 }
 
 // MaybeRefresh inspects a 2xx response body and, if path matches

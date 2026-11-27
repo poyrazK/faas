@@ -9,6 +9,7 @@ export async function csvCompensation({
   pool,
   jobStore,
   reviewBaseURL,
+  reviewed = process.env.GREGALE_REVIEWED_PIPELINE === "1",
 }) {
   const business = new sdk.JobContract(
     JSON.parse(
@@ -22,7 +23,12 @@ export async function csvCompensation({
   const original = new sdk.JobContract(
       JSON.parse(
         await readFile(
-          new URL("pipeline-contract.json", import.meta.url),
+          new URL(
+            reviewed
+              ? "reviewed-pipeline-contract.json"
+              : "pipeline-contract.json",
+            import.meta.url,
+          ),
           "utf8",
         ),
       ),

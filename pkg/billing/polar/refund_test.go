@@ -26,6 +26,8 @@ type refundServer struct {
 	// listItemsAfterPost is installed before the POST response so a
 	// recovery lookup observes the provider-side write deterministically.
 	listItemsAfterPost string
+	order              string // GET /v1/orders/order-1 body
+	orderGets          int
 	posts              int
 	gets               int
 	lastPost           map[string]any
@@ -36,6 +38,15 @@ func (f *refundServer) handler(t *testing.T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/orders/order-1" {
+			f.orderGets++
+			order := f.order
+			if order == "" {
+				order = `{"id":"order-1"}` // no net/tax split: amount passes through
+			}
+			_, _ = io.WriteString(w, order)
+			return
+		}
 		if r.URL.Path != "/v1/refunds" {
 			http.NotFound(w, r)
 			return
@@ -52,7 +63,9 @@ func (f *refundServer) handler(t *testing.T) http.HandlerFunc {
 		case http.MethodPost:
 			f.posts++
 			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			dec := json.NewDecoder(r.Body)
+			dec.UseNumber() // money stays integer cents, never float64
+			if err := dec.Decode(&body); err != nil {
 				t.Errorf("decode refund body: %v", err)
 			}
 			f.lastPost = body
@@ -223,6 +236,132 @@ func TestRefund_ClientRejectionSkipsRecoveryLookup(t *testing.T) {
 	if posts, gets := f.counts(); posts != 1 || gets != 1 {
 		t.Fatalf("posts/gets = %d/%d, want 1/1 (no recovery lookup on a definite rejection)", posts, gets)
 	}
+}
+
+const taxedOrder = `{"id":"order-1","net_amount":833,"tax_amount":167,"total_amount":1000,"refunded_amount":0,"refunded_tax_amount":0}`
+
+// TestRefund_TaxInclusiveAmounts: callers pass and get back tax-inclusive
+// cents (the invoice ledger's unit). Polar's refund amount is pre-tax, so
+// Refund posts the order's pre-tax share and returns amount + tax_amount —
+// the figure the refund.* webhook records for the same refund ID.
+func TestRefund_TaxInclusiveAmounts(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		gross               int64
+		postBody            string
+		wantPost, wantGross int64
+	}{
+		{"full refund posts the exact net", 1000, `{"id":"refund-new","amount":833,"tax_amount":167,"currency":"usd","status":"succeeded"}`, 833, 1000},
+		{"partial refund posts the proportional net", 500, `{"id":"refund-new","amount":417,"tax_amount":83,"currency":"usd","status":"succeeded"}`, 417, 500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &refundServer{order: taxedOrder, postBody: tc.postBody}
+			p, closeFn := newRefundProvider(t, f)
+			defer closeFn()
+			res, err := p.Refund(context.Background(), "order-1", tc.gross)
+			if err != nil {
+				t.Fatalf("Refund: %v", err)
+			}
+			if res.AmountCents != tc.wantGross {
+				t.Fatalf("AmountCents = %d, want %d (amount + tax)", res.AmountCents, tc.wantGross)
+			}
+			if got := postedAmount(t, f); got != tc.wantPost {
+				t.Fatalf("posted amount = %d, want pre-tax %d", got, tc.wantPost)
+			}
+		})
+	}
+}
+
+// TestRefund_RejectsAmountAboveOrderBalance: a tax-inclusive request above
+// what is left on the order fails before any POST.
+func TestRefund_RejectsAmountAboveOrderBalance(t *testing.T) {
+	f := &refundServer{order: `{"id":"order-1","net_amount":833,"tax_amount":167,"refunded_amount":417,"refunded_tax_amount":83}`}
+	p, closeFn := newRefundProvider(t, f)
+	defer closeFn()
+	if _, err := p.Refund(context.Background(), "order-1", 501); err == nil {
+		t.Fatal("Refund above the order's remaining 500 succeeded")
+	}
+	if posts, _ := f.counts(); posts != 0 {
+		t.Fatalf("posts = %d, want 0", posts)
+	}
+}
+
+// TestRefund_ReplayValidatesTaxInclusiveTotal: a refund found by key was
+// posted against an older balance, so its pre-tax amount is not recomputed;
+// its amount + tax must match the request within rounding.
+func TestRefund_ReplayValidatesTaxInclusiveTotal(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		item    string
+		want    int64
+		wantErr bool
+	}{
+		{"taxed refund", `[{"id":"r1","amount":417,"tax_amount":83,"order_id":"order-1","metadata":{"faas_idempotency_key":"k"}}]`, 500, false},
+		{"rounding cent", `[{"id":"r1","amount":417,"tax_amount":84,"order_id":"order-1","metadata":{"faas_idempotency_key":"k"}}]`, 501, false},
+		{"legacy pre-tax post", `[{"id":"r1","amount":500,"tax_amount":100,"order_id":"order-1","metadata":{"faas_idempotency_key":"k"}}]`, 600, false},
+		{"different amount", `[{"id":"r1","amount":300,"tax_amount":60,"order_id":"order-1","metadata":{"faas_idempotency_key":"k"}}]`, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &refundServer{listItems: tc.item}
+			p, closeFn := newRefundProvider(t, f)
+			defer closeFn()
+			res, err := p.Refund(billing.ContextWithIdempotencyKey(context.Background(), "k"), "order-1", 500)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("Refund = %+v, want amount mismatch error", res)
+				}
+				return
+			}
+			if err != nil || res.AmountCents != tc.want {
+				t.Fatalf("Refund = %+v, %v; want AmountCents %d", res, err, tc.want)
+			}
+			if posts, _ := f.counts(); posts != 0 || f.orderGets != 0 {
+				t.Fatalf("posts/order reads = %d/%d, want 0/0 on replay", posts, f.orderGets)
+			}
+		})
+	}
+}
+
+func TestRefundOrderNetAmountFor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		order   refundOrder
+		gross   int64
+		want    int64
+		wantErr bool
+	}{
+		{"no split passes through", refundOrder{}, 700, 700, false},
+		{"untaxed order", refundOrder{NetAmount: 1000}, 400, 400, false},
+		{"full", refundOrder{NetAmount: 833, TaxAmount: 167}, 1000, 833, false},
+		{"partial rounds half-up", refundOrder{NetAmount: 833, TaxAmount: 167}, 500, 417, false},
+		{"remaining after partial is exact", refundOrder{NetAmount: 833, TaxAmount: 167, RefundedAmount: 417, RefundedTaxAmount: 83}, 500, 416, false},
+		{"one cent", refundOrder{NetAmount: 833, TaxAmount: 167}, 1, 1, false},
+		{"above balance", refundOrder{NetAmount: 833, TaxAmount: 167}, 1001, 0, true},
+		{"fully refunded", refundOrder{NetAmount: 833, TaxAmount: 167, RefundedAmount: 833, RefundedTaxAmount: 167}, 1, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.order.netAmountFor(tc.gross)
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("netAmountFor(%d) = %d, %v; want %d, err=%v", tc.gross, got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+// postedAmount reads the refund POST's amount as integer cents.
+func postedAmount(t *testing.T, f *refundServer) int64 {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	num, ok := f.lastPost["amount"].(json.Number)
+	if !ok {
+		t.Fatalf("posted amount = %#v, want a JSON number", f.lastPost["amount"])
+	}
+	n, err := num.Int64()
+	if err != nil {
+		t.Fatalf("posted amount %s is not integer cents: %v", num, err)
+	}
+	return n
 }
 
 // TestRefund_DefaultKeyIsOrderAndAmount: without a context key the

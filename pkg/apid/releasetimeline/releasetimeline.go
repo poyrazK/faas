@@ -38,9 +38,9 @@ type Inputs struct {
 	// its rollout decision, current hold and schedule.
 	Deployment api.DeploymentResponse
 	App        string
-	// AutoRollbackReason is set when an automatic rollback replaced the
-	// release after its rollout.
+	// AutoRollbackReason records what triggered a rollback request.
 	AutoRollbackReason string
+	Rollback           *api.RollbackOperation
 	// Watched means the post-release watch judges the release after its
 	// rollout completes (ADR-1445).
 	Watched     bool
@@ -76,16 +76,19 @@ func Build(in Inputs) api.ReleaseTimeline {
 	if watched {
 		out.WatchUntil = watchUntil.Format(time.RFC3339)
 	}
-	out.Phase, out.Summary = phase(in, out.Approval, watchUntil, watched)
 	b := builder{in: in}
 	b.created()
 	b.schedule(d.ScheduledRelease)
 	b.approval(out.Approval)
 	b.audit()
+	if in.Rollback != nil && in.Rollback.CompletedAt != nil {
+		b.add(*in.Rollback.CompletedAt, api.ReleaseEventRolledBack, "Traffic returned to the previous release", "", nil, nil)
+	}
+	out.Phase, out.Summary = phase(in, out.Approval, watchUntil, watched)
 	if kept := regressionKept(d); kept != nil {
 		at, _ := time.Parse(time.RFC3339Nano, kept.DecidedAt)
 		b.add(at, api.ReleaseEventWatchRegressed, regressionKeptText(kept), "", nil, kept)
-	} else if watched && !in.Now.Before(watchUntil) && out.Phase != api.ReleasePhaseRolledBack {
+	} else if watched && !in.Now.Before(watchUntil) && out.Phase != api.ReleasePhaseRolledBack && in.AutoRollbackReason == "" {
 		b.add(watchUntil, api.ReleaseEventWatchPassed, watchPassedText(in, watchUntil), "", nil, nil)
 	}
 	if in.ReplacedBy != nil && !in.ReplacedBy.At.IsZero() {
@@ -138,6 +141,13 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 	case "pending", "building", "imaging", "snapshotting":
 		return api.ReleasePhaseBuilding, "Building"
 	case "failed":
+		// An image means the build finished: snapshot prime, scan or
+		// readiness failed after it. "Build failed:
+		// stage_snapshot_prepare_timeout" sent customers to their build
+		// (prod hunt r60).
+		if d.ImageDigest != "" && d.ErrorCode != "" {
+			return api.ReleasePhaseFailed, "Failed before release: " + d.ErrorCode
+		}
 		if d.ErrorCode != "" {
 			return api.ReleasePhaseFailed, "Build failed: " + d.ErrorCode
 		}
@@ -150,8 +160,27 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 	if kept := regressionKept(d); kept != nil {
 		return api.ReleasePhaseReleased, "Released, but " + regressionKeptText(kept)
 	}
-	if d.RolloutAbortedAt != nil || d.RolloutState == "aborted" || in.AutoRollbackReason != "" {
+	if d.RolloutAbortedAt != nil || d.RolloutState == "aborted" {
 		return api.ReleasePhaseRolledBack, "Rolled back: " + rolledBackWhy(in)
+	}
+	if in.Rollback != nil {
+		switch in.Rollback.Status {
+		case "complete":
+			if in.Rollback.CompletedAt != nil && (d.Status != "live" || d.TrafficPercent == 0) {
+				if in.AutoRollbackReason != "" {
+					return api.ReleasePhaseRolledBack, "Rolled back: " + rolledBackWhy(in)
+				}
+				return api.ReleasePhaseRolledBack, "Rolled back to the previous release"
+			}
+		case "preparing":
+			if d.Status == "live" {
+				return api.ReleasePhaseReleased, "Rollback is preparing. This release is still live."
+			}
+		case "failed":
+			if d.Status == "live" {
+				return api.ReleasePhaseReleased, "Rollback failed. This release is still live."
+			}
+		}
 	}
 	if s := d.ScheduledRelease; s != nil && s.State == api.ScheduledReleaseStatePending {
 		return api.ReleasePhaseScheduled, "Scheduled for " + humanTime(s.ReleaseAt)

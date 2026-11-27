@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -280,5 +281,55 @@ func TestUnifiedDeadLetter_MalformedIDIsNotFound(t *testing.T) {
 	rec := e.Do(t, http.MethodGet, "/v1/apps/dlq-owner/dlq/not-an-id", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("malformed id status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+type replayedInvocationStore struct {
+	MemStore *state.MemStore
+}
+
+func (s replayedInvocationStore) InvocationByID(ctx context.Context, id string) (state.Invocation, error) {
+	inv, err := s.MemStore.InvocationByID(ctx, id)
+	if err != nil {
+		return inv, err
+	}
+	at := time.Date(2026, 11, 19, 19, 0, 0, 0, time.UTC)
+	inv.ReplayGeneration, inv.LastReplayedAt = 2, &at
+	return inv, nil
+}
+
+// prod 2026-11-19: a replayed message that failed again came back under the
+// same DLQ id with REPLAYED "-" and no sign it had been replayed.
+func TestUnifiedDeadLetter_InspectReportsEarlierReplays(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "dlq-history")
+	apidserver.SeedDeadLetterRow(t, e, appID, "refailed")
+	var page api.DeadLetterEventsResponse
+	list := e.Do(t, http.MethodGet, "/v1/apps/dlq-history/dlq", nil, nil)
+	if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil || len(page.Events) != 1 {
+		t.Fatalf("list = %s (%v)", list.Body.String(), err)
+	}
+	eventID := page.Events[0].ID
+	if page.Events[0].ReplayCount != 0 {
+		t.Fatalf("list replay_count = %d, want omitted", page.Events[0].ReplayCount)
+	}
+
+	fresh := e.Do(t, http.MethodGet, "/v1/apps/dlq-history/dlq/"+eventID, nil, nil)
+	var got api.DeadLetterEvent
+	if err := json.Unmarshal(fresh.Body.Bytes(), &got); err != nil || got.ReplayCount != 0 || got.LastReplayedAt != nil {
+		t.Fatalf("never-replayed entry = %s (%v), want no replay history", fresh.Body.String(), err)
+	}
+
+	(*(*e.S()).Store()) = statetest.NewMem(replayedInvocationStore{MemStore: (*e.Store())})
+	rec := e.Do(t, http.MethodGet, "/v1/apps/dlq-history/dlq/"+eventID, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("inspect status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	got = api.DeadLetterEvent{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ReplayCount != 2 || got.LastReplayedAt == nil || got.ReplayedAt != nil {
+		t.Fatalf("inspect = replay_count %d last %v replayed_at %v, want 2 replays and an open entry", got.ReplayCount, got.LastReplayedAt, got.ReplayedAt)
 	}
 }

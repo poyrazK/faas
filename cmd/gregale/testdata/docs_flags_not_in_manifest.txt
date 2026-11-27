@@ -1,0 +1,35 @@
+# Flags customer pages use that the CLI accepts but its manifest (cli_meta.go)
+# leaves out of --help, the CLI reference and completion. Only shrinks:
+# add the flag to the manifest and delete its line (TestDocsCommandsRunAsWritten).
+app wait --for
+app wait --timeout
+billing backfill-invoices --cursor
+dev --go-command
+dev trigger --data
+dev trigger --event
+edge-rule-lists create --app
+github setup --preview-mode
+incidents --app
+incidents --open
+incidents --since
+issues create-token --expires-in
+issues create-token --name
+issues impact-alert --min-customers
+issues list --assignee
+issues list --min-customers
+issues list --sort
+issues list --state
+issues list --tag
+jobs run --arg
+mcp policy (word not in the manifest)
+postgres branch orders (word not in the manifest)
+projects environments diff --from
+projects environments diff --to
+projects environments preview --migrate
+projects environments preview --verify
+projects environments preview --workers
+projects environments release-sets shop (word not in the manifest)
+projects environments status --to
+rollouts recover --action
+run --dir
+stored-workflows recovery-policy-reviews --status

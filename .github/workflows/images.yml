@@ -108,54 +108,57 @@ jobs:
     outputs:
       builder: ${{ steps.changed.outputs.builder }}
       bases: ${{ steps.changed.outputs.bases }}
+      source: ${{ steps.changed.outputs.source }}
     steps:
+      # A full-history clone took ~2.5 of this job's ~2.7 minutes on every
+      # pull request. Depth 2 is enough: a pull request checks out its merge
+      # commit, and a push fetches its before-SHA below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0
+          fetch-depth: 2
 
       - name: Detect runtime-affecting changes
         id: changed
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
-            echo "builder=true" >> "$GITHUB_OUTPUT"
-            echo "bases=true" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch: runtime matrix requested."
+          request_all() {
+            printf 'builder=true\nbases=true\nsource=true\n' >> "$GITHUB_OUTPUT"
+            echo "$1: runtime matrix requested."
             exit 0
+          }
+
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            request_all "Manual dispatch"
           fi
 
-          # A pull request is compared from its merge base: the base SHA is
-          # the base branch tip, so a plain base..head diff of a branch that
-          # is behind main also lists main's own newer changes (pkg/api on
-          # most days) and rebuilt builder-base for nearly every PR.
-          range_sep=".."
+          # A pull request checks out its merge commit (base branch tip +
+          # the pull request), so HEAD^1..HEAD is exactly what the pull
+          # request changes relative to current main. A plain base..head
+          # diff of a branch that is behind main would also list main's own
+          # newer changes (pkg/api on most days) and rebuild builder-base for
+          # nearly every PR.
           if [[ "$EVENT_NAME" == pull_request ]]; then
-            base="$PR_BASE_SHA"
-            head="$PR_HEAD_SHA"
-            range_sep="..."
+            git rev-parse --verify -q HEAD^1 >/dev/null || request_all "No merge-commit parent"
+            changed="$(git diff --name-only HEAD^1 HEAD)"
           else
             base="$PUSH_BEFORE_SHA"
             head="$CURRENT_SHA"
+            # A first push has no usable parent. Fail closed toward running
+            # the matrix; a false negative here would be a silent bypass.
+            if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
+              request_all "No usable base SHA"
+            fi
+            git cat-file -e "${base}^{commit}" 2>/dev/null \
+              || git fetch --no-tags --depth=1 origin "$base" \
+              || request_all "Cannot fetch base SHA $base"
+            changed="$(git diff --name-only "$base" "$head")"
           fi
-
-          # A first push has no usable parent. Fail closed toward running
-          # the matrix; a false negative here would be a silent bypass.
-          if [[ -z "$base" || "$base" == 0000000000000000000000000000000000000000 ]]; then
-            echo "builder=true" >> "$GITHUB_OUTPUT"
-            echo "bases=true" >> "$GITHUB_OUTPUT"
-            echo "No usable base SHA: runtime matrix requested."
-            exit 0
-          fi
-
-          changed="$(git diff --name-only "${base}${range_sep}${head}")"
           printf '%s\n' "$changed"
           builder=false
           bases=false
@@ -173,13 +176,24 @@ jobs:
           # runner-python312's pip pin, and the profiling and tracing
           # bootstraps (their hashed Python locks). Daemon code and guest runner shims ship in the signed
           # release bundle and cannot change these image bytes.
-          if grep -Eq '^(images/(agent-base|base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine)\.Dockerfile$|images/rootfs-skel/|images/agent-base/|images/agent_base_install_test\.py$|pkg/agentpresets/presets\.json$|images/runner-python312-pip\.txt$|guest/(profiling|tracing)/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+          if grep -Eq '^(images/(agent-base|base-debian-parent|base-minimal|runner-node22|runner-node24|runner-python312|runner-python313|execution-python-data-v1|runner-go124|runner-go124-alpine|sandbox-code-interpreter)\.Dockerfile$|images/rootfs-skel/|images/agent-base/|images/sandbox-code-interpreter/|images/agent_base_install_test\.py$|pkg/agentpresets/presets\.json$|images/runner-python312-pip\.txt$|guest/(profiling|tracing)/|images/install-execution-profile\.py$|images/install_execution_profile_test\.py$|pkg/executionprofiles/python-data-v1\.json$|images/Dockerfile\.lock$|scripts/ci/(install-grype|update-grype-db|scan-oci-image|validate-runtime-image|smoke-runtime-image)\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
             bases=true
           fi
 
-          echo "builder=$builder" >> "$GITHUB_OUTPUT"
-          echo "bases=$bases" >> "$GITHUB_OUTPUT"
-          echo "Image build decision: builder=$builder bases=$bases"
+          # The source-artifact smoke tests compile pkg/rootfs and
+          # pkg/imaged. ci-light already runs those packages' tests (in full,
+          # with -race) whenever they or anything they import changes, so
+          # pull requests run this smoke only when the packages themselves,
+          # the Go toolchain/modules or this workflow change. Pushes and
+          # merge groups always run it.
+          source=true
+          if [[ "$EVENT_NAME" == pull_request ]] \
+            && ! grep -Eq '^(pkg/(rootfs|imaged)/|go\.(mod|sum)$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+            source=false
+          fi
+
+          printf 'builder=%s\nbases=%s\nsource=%s\n' "$builder" "$bases" "$source" >> "$GITHUB_OUTPUT"
+          echo "Image build decision: builder=$builder bases=$bases source=$source"
 
       # imaged stages runner-node24 and runner-python312 as deltas over the
       # Debian parent (ADR-053). Every image builds and scans cleanly on its
@@ -576,6 +590,10 @@ jobs:
           # ADR-20261027090010 §2: the shared agent drive0 with the preset harnesses.
           - image: agent-base
             dockerfile: images/agent-base.Dockerfile
+          # ADR-20261027090013 step 14: the code interpreter's sandbox image;
+          # apid's FAAS_SANDBOX_CODE_INTERPRETER_IMAGE names a published digest.
+          - image: sandbox-code-interpreter
+            dockerfile: images/sandbox-code-interpreter.Dockerfile
     env:
       IMAGE_NAME: ghcr.io/poyrazk/${{ matrix.image }}
     steps:
@@ -739,6 +757,8 @@ jobs:
   # the final gate below still aggregates its result fail-closed.
   runtime-source-contract:
     name: runtime source contract
+    needs: runtime-change
+    if: needs.runtime-change.outputs.source == 'true'
     runs-on: ubuntu-latest
     # Cold dependency downloads and compilation can exceed five minutes.
     # The test process below keeps its separate two-minute execution limit.
@@ -792,6 +812,7 @@ jobs:
         env:
           DETECTION_RESULT: ${{ needs.runtime-change.result }}
           SOURCE_RESULT: ${{ needs.runtime-source-contract.result }}
+          SOURCE_RELEVANT: ${{ needs.runtime-change.outputs.source }}
           BUILDER_RELEVANT: ${{ needs.runtime-change.outputs.builder }}
           BASES_RELEVANT: ${{ needs.runtime-change.outputs.bases }}
           BUILDER_RESULT: ${{ needs.builder-base.result }}
@@ -803,7 +824,7 @@ jobs:
             echo "::error::runtime change detection did not complete: $DETECTION_RESULT"
             exit 1
           fi
-          if [[ "$SOURCE_RESULT" != success ]]; then
+          if [[ "$SOURCE_RELEVANT" == true && "$SOURCE_RESULT" != success ]]; then
             echo "::error::runtime source contract did not complete: $SOURCE_RESULT"
             exit 1
           fi

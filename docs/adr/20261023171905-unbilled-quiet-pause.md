@@ -229,6 +229,17 @@ the model.)
    `FaasQuietPauseUnbilledExceedsMeasured` still sees the whole fleet. The
    rollout is: mode `on`, then the flag to internal accounts or an org, then
    to everyone.)
+   (Amended 2026-11-19: production-us ran step 1 from 2026-11-17 17:19Z; in
+   its first 48 h meterd would have unbilled 1.70M s against 1.72M s that
+   vmmd measured, with no ledger write errors. Mode `on` from 2026-11-19
+   15:56Z, owner's decision. The flag has released one internal account,
+   the owner's test account, since 2026-11-07, so that account's paused
+   seconds are unbilled from then; every other account is billed in full
+   until the flag's default changes after the financial-model sign-off. The ledger
+   switch (`schedd_quiet_pause_ledger`, compute nodes) and the mode
+   (`meterd_quiet_pause_unbilled`, control plane) are Ansible group_vars in
+   `deploy/ansible/group_vars/*/quiet_pause_billing.yml` instead of hand
+   drop-ins.)
 3. **Customer surface.** Pricing page, usage views with paused seconds,
    `gregale usage`, the changelog: "billed while running requests, plus 2 s".
    (Amended 2026-10-31: the record and the account summary are in. For each

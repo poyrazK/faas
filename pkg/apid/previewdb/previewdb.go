@@ -36,8 +36,9 @@ type Bindings interface {
 
 // Manager sets up and releases preview databases.
 type Manager struct {
-	Databases Databases
-	Bindings  Bindings
+	Databases   Databases
+	Bindings    Bindings
+	AllowMasked bool
 }
 
 // ErrPending reports a preview database or binding that is still
@@ -98,12 +99,16 @@ func (m Manager) Prepare(ctx context.Context, plan api.Plan, parent, preview sta
 			Owner:             managedpostgres.PreviewOwner{SourceDatabaseID: source.ID, EnvironmentID: environmentID, PRNumber: prNumber},
 			StorageLimitBytes: StorageLimitBytes(plan),
 			Limit:             api.ManagedPostgresPreviewDatabasesMax(plan),
+			AllowMasked:       m.AllowMasked,
 		})
 		if errors.Is(err, managedpostgres.ErrPreviewsOff) {
-			continue // turned off since the list
+			continue // Previews are off or this mode is gated.
 		}
 		if err != nil {
 			return refusal(err)
+		}
+		if source.Previews == managedpostgres.PreviewsMasked && !database.IsMaskedBranch() {
+			return refusal(managedpostgres.ErrPreviewReplacementRequired)
 		}
 		if database.State == managedpostgres.StateDeleting {
 			// A delete is under way; the next attempt sets up a new one.
@@ -177,6 +182,14 @@ type Previews interface {
 	ListPreviewsForAccount(ctx context.Context, accountID string) ([]state.App, error)
 }
 
+// PullRequestBranches lists a project's environment branches. A Previews
+// that also implements it keeps the databases of a PR environment whose pull
+// request still has a branch (ADR-20261113121342 amendment 2026-11-26): a
+// branch preview binds the same empty database an app preview would.
+type PullRequestBranches interface {
+	ListProjectEnvironmentBranches(ctx context.Context, accountID, projectID string) ([]state.ProjectEnvironmentBranch, error)
+}
+
 type environment struct {
 	id       string
 	prNumber int
@@ -189,6 +202,7 @@ type environment struct {
 // returns how many it purged.
 func (m Manager) Sweep(ctx context.Context, previews Previews, page []managedpostgres.Database, setupBefore time.Time) (int, error) {
 	open := map[string]map[environment]bool{}
+	branches := map[environment]map[int]bool{}
 	purged := 0
 	var errs error
 	for _, database := range page {
@@ -208,7 +222,15 @@ func (m Manager) Sweep(ctx context.Context, previews Previews, page []managedpos
 		if environments == nil || environments[environment{database.Preview.EnvironmentID, database.Preview.PRNumber}] {
 			continue
 		}
-		_, err := m.Purge(ctx, database.AccountID, database.ID)
+		branched, err := pullRequestBranched(ctx, previews, branches, database)
+		if err != nil {
+			errs = errors.Join(errs, err)
+			continue
+		}
+		if branched {
+			continue
+		}
+		_, err = m.Purge(ctx, database.AccountID, database.ID)
 		switch {
 		case err == nil:
 			purged++
@@ -219,6 +241,32 @@ func (m Manager) Sweep(ctx context.Context, previews Previews, page []managedpos
 		}
 	}
 	return purged, errs
+}
+
+// pullRequestBranched reports whether database's PR environment, a project,
+// still has a branch for its pull request. branches caches each project's
+// pull request numbers, keyed by account and project.
+func pullRequestBranched(ctx context.Context, previews Previews, branches map[environment]map[int]bool, database managedpostgres.Database) (bool, error) {
+	lister, ok := previews.(PullRequestBranches)
+	if !ok {
+		return false, nil
+	}
+	key := environment{id: database.AccountID + "/" + database.Preview.EnvironmentID}
+	numbers, listed := branches[key]
+	if !listed {
+		rows, err := lister.ListProjectEnvironmentBranches(ctx, database.AccountID, database.Preview.EnvironmentID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return false, fmt.Errorf("previewdb: list branches of project %s: %w", database.Preview.EnvironmentID, err)
+		}
+		numbers = map[int]bool{}
+		for _, row := range rows {
+			if row.PullRequestNumber > 0 {
+				numbers[row.PullRequestNumber] = true
+			}
+		}
+		branches[key] = numbers
+	}
+	return numbers[database.Preview.PRNumber], nil
 }
 
 // SweepAll pages through every preview database and sweeps each page.
@@ -380,7 +428,7 @@ func StorageLimitBytes(plan api.Plan) int64 {
 }
 
 func previewSource(source managedpostgres.Database) bool {
-	return (source.Previews == managedpostgres.PreviewsEmpty || source.Previews == managedpostgres.PreviewsCopy) &&
+	return (source.Previews == managedpostgres.PreviewsEmpty || source.Previews == managedpostgres.PreviewsCopy || source.Previews == managedpostgres.PreviewsMasked) &&
 		source.Preview.IsZero() && source.State != managedpostgres.StateDeleting && source.State != managedpostgres.StateDeleted
 }
 
@@ -396,6 +444,10 @@ func refusal(err error) error {
 		return &RefusedError{Reason: "the plan does not include a PR preview database", Err: err}
 	case errors.Is(err, managedpostgres.ErrPreviewCopyUnsupported):
 		return &RefusedError{Reason: "its production database cannot be copied: it has no restore window", Err: err}
+	case errors.Is(err, managedpostgres.ErrPreviewReplacementRequired):
+		return &RefusedError{Reason: "an existing preview database must be replaced before using the masking policy", Err: err}
+	case errors.Is(err, managedpostgres.ErrMaskedPreviewValidationFailed):
+		return &RefusedError{Reason: "the masked data failed validation; a database owner can update the policy and recreate the preview database", Err: err}
 	case errors.Is(err, managedpostgres.ErrConflict):
 		return &RefusedError{Reason: "its PR preview database conflicts with an existing database or binding", Err: err}
 	default:

@@ -113,7 +113,7 @@ func snapshotRestoreSpec(lease Lease, req SnapshotRestoreInputs, keepPaused bool
 		Workloads: r.Workloads, SecretsEnvJSON: r.SecretsEnvJSON, APIEnvJSON: r.APIEnvJSON,
 		ServiceDiscoveryIP: r.ServiceDiscoveryIP, VsockDevice: NewVsockDevice(lease.Slot),
 		StorageKey: req.Snapshot.StorageKey, VMStateStorageKey: req.Snapshot.VMStateStorageKey,
-		HealthcheckPath: r.HealthcheckPath, HealthcheckGRPC: r.HealthcheckGRPC,
+		HealthcheckPath: r.HealthcheckPath, ProbeHost: r.ProbeHost, HealthcheckGRPC: r.HealthcheckGRPC,
 		HealthcheckGRPCService: r.HealthcheckGRPCService, StartupDeadlineS: r.StartupDeadlineS, ImageHealthcheckRequired: r.ImageHealthcheckRequired,
 		KeepPaused: keepPaused}
 }

@@ -16,7 +16,7 @@ import (
 func TestQueueGuestCatalogNeedsNoProviderOperations(t *testing.T) {
 	config := QueueGuestCatalogConfig()
 	registry, err := managedpostgres.NewRegistry(config, func(string) string { return "unused-native-fixture" }, map[string]managedpostgres.Factory{"neon": neon.New})
-	if err != nil || registry == nil || registry.ProvisioningEnabled || registry.UsagePolicy().Enabled || registry.HealthPolicy().Enabled {
+	if err != nil || registry == nil || registry.ProvisioningEnabled() || registry.UsagePolicy().Enabled || registry.HealthPolicy().Enabled {
 		t.Fatalf("queue inventory catalog is not isolated and disabled: %v", err)
 	}
 }

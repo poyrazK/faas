@@ -86,6 +86,23 @@ func grantCustomRoleSet(ctx context.Context, tx pgx.Tx, role, member string, inh
 	return err
 }
 
+// grantCustomRoleExecute lets a custom role run the schema owner's functions
+// in public, those the migrations made and those they make later. Stock
+// PostgreSQL gives them to PUBLIC; Gregale revokes that, so tools written
+// for it (Windmill's set_session_context) need it granted
+// (ADR-20261123112326). DROP OWNED in dropCustomRole removes both grants.
+func grantCustomRoleExecute(ctx context.Context, tx pgx.Tx, owner, role string) error {
+	for _, query := range []string{
+		"GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO " + roleIdentifier(role),
+		"ALTER DEFAULT PRIVILEGES FOR ROLE " + roleIdentifier(owner) + " IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO " + roleIdentifier(role),
+	} {
+		if _, err := tx.Exec(ctx, query); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type customRoleRow struct {
 	name, marker string
 	login        bool
@@ -253,6 +270,9 @@ func (m *sqlCredentialRoles) ApplyCustomRoles(ctx context.Context, material mana
 		if _, err := tx.Exec(ctx, "COMMENT ON ROLE "+name+" IS '"+marker+"'"); err != nil {
 			return err
 		}
+		if err := grantCustomRoleExecute(ctx, tx, scope.schemaOwner, spec.Name); err != nil {
+			return err
+		}
 	}
 	for _, spec := range desired {
 		// Parent memberships, inherited, among this scope's custom roles.
@@ -317,6 +337,27 @@ func (m *sqlCredentialRoles) ApplyCustomRoles(ctx context.Context, material mana
 					continue
 				}
 				if _, err := tx.Exec(ctx, "REVOKE "+roleIdentifier(spec.Name)+" FROM "+roleIdentifier(member)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// Default roles: every login of an access mode starts as the role
+	// declared its default, or as itself.
+	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly} {
+		want := ""
+		for _, spec := range desired {
+			if slices.Contains(spec.DefaultFor, access) && slices.Contains(spec.GrantedTo, access) {
+				want = spec.Name
+			}
+		}
+		for _, loginAccess := range accessLogins(access) {
+			logins, err := scopeLogins(ctx, tx, scope.scope, loginAccess)
+			if err != nil {
+				return err
+			}
+			for _, login := range logins {
+				if err := setLoginDefaultRole(ctx, tx, login, want, existing); err != nil {
 					return err
 				}
 			}
@@ -420,9 +461,6 @@ func ensureLoginCustomRoles(ctx context.Context, tx pgx.Tx, role credentialRole)
 		}
 		return nil
 	}
-	if len(role.customRoles) == 0 {
-		return nil
-	}
 	existing, err := customRolesByMarker(ctx, tx)
 	if err != nil {
 		return err
@@ -444,5 +482,43 @@ func ensureLoginCustomRoles(ctx context.Context, tx pgx.Tx, role credentialRole)
 			return err
 		}
 	}
-	return nil
+	// The default role is set once it exists and is granted; until then
+	// the next custom-role apply sets it.
+	want := ""
+	if row, ok := existing[role.defaultCustomRole]; ok && row.marker == marker && slices.Contains(role.customRoles, role.defaultCustomRole) {
+		want = role.defaultCustomRole
+	}
+	return setLoginDefaultRole(ctx, tx, role.name, want, existing)
+}
+
+// loginDefaultRole is the custom role a login's role setting names, or ""
+// when it has none.
+func loginDefaultRole(ctx context.Context, tx pgx.Tx, login string, existing map[string]customRoleRow) (string, error) {
+	var settings []string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(rolconfig, ARRAY[]::text[]) FROM pg_roles WHERE rolname = $1`, login).Scan(&settings); err != nil {
+		return "", err
+	}
+	for _, setting := range settings {
+		if name, ok := strings.CutPrefix(setting, "role="); ok {
+			if _, custom := existing[name]; custom {
+				return name, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// setLoginDefaultRole makes want ("" for none) the custom role login starts
+// as. It only touches a role setting that names a custom role.
+func setLoginDefaultRole(ctx context.Context, tx pgx.Tx, login, want string, existing map[string]customRoleRow) error {
+	current, err := loginDefaultRole(ctx, tx, login, existing)
+	if err != nil || current == want {
+		return err
+	}
+	if want == "" {
+		_, err = tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(login)+" RESET role")
+		return err
+	}
+	_, err = tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(login)+" SET role TO "+roleIdentifier(want))
+	return err
 }

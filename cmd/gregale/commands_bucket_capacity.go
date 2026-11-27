@@ -9,6 +9,11 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	resolved, err := resolveBucketArgs(context.Background(), args, func() (bucketLister, error) { return authedClient() })
+	if err != nil {
+		return printErr("Unknown bucket", err)
+	}
+	args = resolved
 	if len(args) > 0 && args[0] == "list" {
 		return cmdBucketList(args[1:])
 	}
@@ -70,6 +75,12 @@ func cmdBucket(args []string) int {
 		// Unknown subcommands used to fall through to the capacity parser and
 		// print `bucket reconcile` usage (H9-141).
 		printCommandValidation(osStderr, "unknown bucket subcommand %q\n", args[0])
+		switch args[0] {
+		case "create", "add", "new":
+			// Buckets are created with `gregale add bucket`; `bucket create`
+			// listed every other verb and not that one (prod hunt 2026-11-21).
+			_, _ = fmt.Fprintln(osStderr, "  Create a bucket with: gregale add bucket NAME --app APP")
+		}
 		return unknownSubcommandChoices(osStderr, "bucket", nestedCliCommand("bucket"), args[0])
 	}
 	return cmdBucketCapacity(args)

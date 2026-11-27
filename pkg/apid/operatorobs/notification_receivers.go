@@ -24,7 +24,7 @@ const (
 
 // NotificationReceiverNames contains roles, never arbitrary configured names.
 func NotificationReceiverNames() []string {
-	return []string{"faas-heartbeat", "faas-page", "faas-warn"}
+	return []string{"faas-delivery-page", "faas-heartbeat", "faas-page", "faas-warn"}
 }
 
 // NotificationReceiverLimitations describes the scope of this read-only view.

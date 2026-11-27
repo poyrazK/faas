@@ -20,18 +20,8 @@
     - name: Gather facts for the primary and the standby
       ansible.builtin.setup:
   tasks:
-    - name: Require a usable private transport address
-      ansible.builtin.assert:
-        that:
-          - (faas_private_address | default(ansible_facts.default_ipv4.address, true) | default('')) | length > 0
-        fail_msg: >-
-          No private transport address was discovered for {{ inventory_hostname }}.
-          Set faas_private_address in the provider inventory or ensure the
-          host has a default IPv4 address.
-
     - name: Publish private transport address to later plays
-      ansible.builtin.set_fact:
-        faas_private_dns_address: "{{ faas_private_address | default(ansible_facts.default_ipv4.address, true) }}"
+      ansible.builtin.include_tasks: tasks/resolve_private_address.yml
 
 - name: Converge the warm-standby PostgreSQL replica
   hosts: postgres_standby

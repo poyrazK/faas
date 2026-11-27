@@ -65,14 +65,15 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		t.Fatalf("items = %d, want every catalogued flag", len(initial.Items))
 	}
 	for _, item := range initial.Items {
-		// Hand-written flags boot off, except the ADR-570 kill switch, which
-		// boots on; generated capability flags boot at their tier default
+		// Hand-written flags boot off, except the ADR-570 kill switch and
+		// postgres_custom_roles, whose beta (ADR-20261125232048) boots on;
+		// generated capability flags boot at their tier default
 		// (ADR-20261023115741).
 		spec, _ := platformflags.Lookup(item.Key)
 		if item.Source != "default_or_environment" || item.Definition.Enabled != spec.Default.Enabled || item.Definition.Default != spec.Default.Default || item.ConfigKey != platformflags.ConfigKey(item.Key) {
 			t.Fatalf("fresh flag = %+v, want its declared bootstrap value %+v", item, spec.Default)
 		}
-		if !spec.Generated && item.Definition.Enabled && item.Key != platformflags.TrafficRevocationFence {
+		if !spec.Generated && item.Definition.Enabled && item.Key != platformflags.TrafficRevocationFence && item.Key != platformflags.PostgresCustomRoles {
 			t.Fatalf("hand-written flag %s must boot off", item.Key)
 		}
 	}

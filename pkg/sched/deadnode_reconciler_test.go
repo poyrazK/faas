@@ -48,6 +48,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -338,6 +339,33 @@ func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T
 				t.Fatalf("app row changed during %s recovery: rows=%+v err=%v", lifecycle, appRows, err)
 			}
 		})
+	}
+}
+
+// Past api.DeadNodeRecoveryHandoffMaxSeconds of silence no handoff can land,
+// so the sweep fails the recovery-managed app row instead of leaving a
+// billable ghost (account usage audit 2026-11-21).
+func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsFailedAfterHandoffBound(t *testing.T) {
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
+		Name: "managed-silent-" + uuid.NewString(), Lifecycle: state.NodeLifecycleActive,
+		LastHeartbeatAt: time.Now().UTC().Add(-time.Duration(api.DeadNodeRecoveryHandoffMaxSeconds)*time.Second - time.Minute),
+		MemMB:           8192, MaxConcurrency: 16,
+	})
+	if err != nil {
+		t.Fatalf("CreateComputeNode: %v", err)
+	}
+	_, insID := seedRunningInstance(t, store, node.ID)
+	if err := store.NodeSetLifecycle(t.Context(), node.ID, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
+		t.Fatal(err)
+	}
+	threshold := time.Now().UTC().Add(-2 * time.Minute)
+	rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)
+	if err != nil || len(rows) != 1 || rows[0].ID != insID {
+		t.Fatalf("rows=%+v err=%v; want the silent node's app row", rows, err)
+	}
+	if err := store.FailRunningInstanceOnDeadNode(context.Background(), insID, node.ID, threshold); err != nil {
+		t.Fatalf("FailRunningInstanceOnDeadNode: %v", err)
 	}
 }
 

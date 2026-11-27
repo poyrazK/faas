@@ -50,6 +50,7 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
+	RunBudget *RunBudgetRefusal `json:"run_budget,omitempty"`
 	// RetryAfter preserves the response header for read-only retry policies.
 	RetryAfter        string              `json:"-"`
 	RetryAfterSeconds *int64              `json:"retry_after_seconds,omitempty"`

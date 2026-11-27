@@ -1153,6 +1153,10 @@ func TestCancelAndRefund(t *testing.T) {
 			_, _ = io.WriteString(w, `{"id":"sub-1","current_period_end":"2026-09-30T00:00:00Z","cancel_at_period_end":true}`)
 			return
 		}
+		if r.URL.Path == "/v1/orders/order-1" {
+			_, _ = io.WriteString(w, `{"id":"order-1"}`)
+			return
+		}
 		if r.URL.Path == "/v1/refunds" {
 			if r.Method == http.MethodGet {
 				_, _ = io.WriteString(w, `{"items":[],"pagination":{"total_count":0,"max_page":1}}`)
@@ -1187,10 +1191,10 @@ func TestCancelAndRefund(t *testing.T) {
 	if refundIdempotencyKey != "faas-refund-order-1-500" {
 		t.Fatalf("refund metadata idempotency key = %q", refundIdempotencyKey)
 	}
-	// PATCH subscription, then the refund preflight listing, then the
-	// single refund POST — Polar ignores Idempotency-Key, so Refund reads
-	// the order's refunds before writing.
-	if len(paths) != 3 || paths[1] != "GET /v1/refunds" || paths[2] != "POST /v1/refunds" {
+	// PATCH subscription, then the refund preflight listing, the order read
+	// (its net/tax split), then the single refund POST — Polar ignores
+	// Idempotency-Key, so Refund reads the order's refunds before writing.
+	if len(paths) != 4 || paths[1] != "GET /v1/refunds" || paths[2] != "GET /v1/orders/order-1" || paths[3] != "POST /v1/refunds" {
 		t.Fatalf("API paths = %v", paths)
 	}
 }
@@ -1198,6 +1202,10 @@ func TestCancelAndRefund(t *testing.T) {
 func TestRefundUsesContextIdempotencyKey(t *testing.T) {
 	var got string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/orders/order-1" {
+			_, _ = io.WriteString(w, `{"id":"order-1"}`)
+			return
+		}
 		if r.URL.Path != "/v1/refunds" {
 			http.NotFound(w, r)
 			return

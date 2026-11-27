@@ -55,6 +55,13 @@ func (c *GuestSpansClientImpl) IngestGuestMetrics(ctx context.Context, req *apid
 	return c.cli.IngestGuestMetrics(ctx, req)
 }
 
+// IngestInstanceResourceMinutes forwards vmmd's per-instance resource
+// minutes (ADR-20261121170000). It is not on GuestSpansClient, so that
+// interface's fakes are unaffected; vmmd asserts it on the impl.
+func (c *GuestSpansClientImpl) IngestInstanceResourceMinutes(ctx context.Context, req *apidpb.IngestInstanceResourceMinutesRequest) (*apidpb.IngestInstanceResourceMinutesResponse, error) {
+	return c.cli.IngestInstanceResourceMinutes(ctx, req)
+}
+
 func (c *GuestSpansClientImpl) Close() error {
 	if c == nil || c.conn == nil {
 		return nil

@@ -141,6 +141,9 @@ func TestEvaluateRound2KindsAndOutcomes(t *testing.T) {
 		t.Fatalf("resolved oom = %+v", s)
 	}
 
+	// A signal closed before outcomes were recorded has none.
+	f.exec(`INSERT INTO customer_attention_signals (account_id, kind, subject, detail, state, observed, first_seen_at, last_seen_at, resolved_at)
+		VALUES ($1, $2, 'legacy', '', 'resolved', 1, $3, $3, $3)`, a, api.AttentionKindAppOOM, now.Add(-time.Hour))
 	summary, err := e.Summary(ctx, now.Add(-api.AttentionSummaryWindow))
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +158,7 @@ func TestEvaluateRound2KindsAndOutcomes(t *testing.T) {
 	if k := byKind[api.AttentionKindLimitPressure]; k.Total != 2 || k.Open != 1 || k.FalsePositive != 1 || k.FalsePositivePercent() != 100 {
 		t.Fatalf("limit summary = %+v", k)
 	}
-	if k := byKind[api.AttentionKindAppOOM]; k.ResolvedOnOwn != 1 || k.MedianActSeconds != nil || k.FalsePositivePercent() != -1 || k.MedianAct() != "" {
+	if k := byKind[api.AttentionKindAppOOM]; k.Total != 2 || k.ResolvedOnOwn != 1 || k.NoOutcome != 1 || k.MedianActSeconds != nil || k.FalsePositivePercent() != -1 || k.MedianAct() != "" {
 		t.Fatalf("oom summary = %+v", k)
 	}
 	if summary[0].Kind != api.AttentionKindAppOOM {

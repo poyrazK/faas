@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // SandboxVMMAPI is the sandbox session capability. *fcvm.Manager implements
@@ -62,14 +64,18 @@ const (
 // ID; done closes when the stream's server loop ends.
 type sandboxActivity struct {
 	sandboxID string
+	accountID string
 	plan      api.Plan
 
 	mu        sync.Mutex
 	inFlight  int
 	lastEnded time.Time
 	dirty     bool
-	thawMu    sync.Mutex
-	thawed    chan struct{}
+	// pausing refuses new calls while a pause captures the VM
+	// (ADR-20261122132055 §2).
+	pausing bool
+	thawMu  sync.Mutex
+	thawed  chan struct{}
 
 	outbox chan *vmmdpb.RunSandboxEvent
 	// webLog is set when the caller asked for the domain log
@@ -83,6 +89,12 @@ type sandboxActivity struct {
 	// for a session that takes none; actionMu runs them one at a time.
 	runAction func(ctx context.Context, a *vmmdpb.RunSandboxAction)
 	actionMu  sync.Mutex
+	// volume: the session has a workspace volume (ADR-20261122132055 §4),
+	// backed up every volumeBackupEvery while it runs (zero: only at a
+	// pause); volumeBackingUp runs one backup at a time.
+	volume            bool
+	volumeBackupEvery time.Duration
+	volumeBackingUp   atomic.Bool
 }
 
 func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
@@ -94,6 +106,35 @@ func (a *sandboxActivity) begin() {
 	a.mu.Lock()
 	a.inFlight++
 	a.dirty = true
+	a.mu.Unlock()
+}
+
+// tryBegin begins a call unless a pause is capturing the VM.
+func (a *sandboxActivity) tryBegin() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pausing {
+		return false
+	}
+	a.inFlight++
+	a.dirty = true
+	return true
+}
+
+// beginPause fences new calls for a pause, unless one is in flight.
+func (a *sandboxActivity) beginPause() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.inFlight > 0 || a.pausing {
+		return false
+	}
+	a.pausing = true
+	return true
+}
+
+func (a *sandboxActivity) endPause() {
+	a.mu.Lock()
+	a.pausing = false
 	a.mu.Unlock()
 }
 
@@ -154,6 +195,11 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = problem
 		return grpcerr.ToStatus(problem)
 	}
+	volumeGB, volumeBackupID, volumeEvery, problem := sandboxVolumeFromProto(first.GetStart(), wake.Plan)
+	if problem != nil {
+		opErr = problem
+		return grpcerr.ToStatus(problem)
+	}
 	runner, _ := s.vmm.(sandboxTaskRunner)
 	if task != nil && runner == nil {
 		problem := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented, "Sandbox tasks unavailable", "this vmm cannot run sandbox tasks")
@@ -161,6 +207,12 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		return grpcerr.ToStatus(problem)
 	}
 	ctx := stream.Context()
+	if volumeGB > 0 {
+		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID); err != nil {
+			opErr = err
+			return err
+		}
+	}
 	inst, err := sandboxVMM.WakeSandbox(ctx, wake)
 	if err != nil {
 		opErr = err
@@ -180,6 +232,8 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		}
 	}
 	act := newSandboxActivity(wake.SandboxID, wake.Plan)
+	act.accountID = wake.AccountID
+	act.volume, act.volumeBackupEvery = volumeGB > 0, volumeEvery
 	if meter, ok := s.vmm.(sandboxMeter); ok {
 		act.usage = meter.MeterSandbox(wake.Instance)
 	}
@@ -232,6 +286,12 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 	}
 	usageTick := time.NewTicker(usageEvery)
 	defer usageTick.Stop()
+	var volumeTick <-chan time.Time
+	if act.volume && act.volumeBackupEvery > 0 {
+		t := time.NewTicker(act.volumeBackupEvery)
+		defer t.Stop()
+		volumeTick = t.C
+	}
 	stopped := false
 	defer func() {
 		if act.usage != nil && !stopped {
@@ -266,6 +326,30 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 				return nil
 			case msg.GetFreeze() != nil:
 				ev = s.freezeSandbox(ctx, instance)
+			case msg.GetPause() != nil:
+				paused, refused, err := s.pauseSandbox(ctx, instance, act, msg.GetPause())
+				if err != nil {
+					return err
+				}
+				if refused != nil {
+					ev = refused
+					break
+				}
+				// The VM is gone: its last records, then paused, end the
+				// stream (ADR-20261122132055 §2).
+				if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {
+					return err
+				}
+				if act.usage != nil {
+					stopped = true
+					u := act.usage.Stop()
+					final := sandboxUsageEvent(&u)
+					final.GetUsage().Final = true
+					if err := stream.Send(final); err != nil {
+						return err
+					}
+				}
+				return stream.Send(paused)
 			case msg.GetPersistGrant() != nil:
 				act.persists.deliver(msg.GetPersistGrant().GetRequestId(), msg)
 			case msg.GetPersistRecorded() != nil:
@@ -287,6 +371,8 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 			if report, changed := act.report(); changed {
 				ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Activity{Activity: report}}
 			}
+		case <-volumeTick:
+			s.backupSandboxVolume(ctx, act)
 		case <-usageTick.C:
 			if act.usage != nil {
 				u := act.usage.Snapshot()
@@ -344,6 +430,158 @@ func (s *Server) freezeSandbox(ctx context.Context, instance string) *vmmdpb.Run
 		return refused("failed")
 	}
 	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Frozen{Frozen: &vmmdpb.RunSandboxFrozen{}}}
+}
+
+// sandboxPauser captures a persistent session's VM and destroys it
+// (ADR-20261122132055 §2); *fcvm.Manager implements it.
+type sandboxPauser interface {
+	PauseSandbox(ctx context.Context, p fcvm.SandboxPause) (fcvm.SandboxPaused, bool, error)
+}
+
+// sandboxCapturePublisher uploads a pause capture's node-only objects to the
+// shared store (ADR-20261122132055 §2); *fcvm.Manager implements it.
+type sandboxCapturePublisher interface {
+	PublishSandboxCapture(ctx context.Context, memKey string) error
+	UnpinSandboxCapture(memKey string) error
+	PublishPendingSandboxCaptures(ctx context.Context, maxAge time.Duration) (int, error)
+}
+
+const (
+	// sandboxPublishFirstRetry and sandboxPublishMaxRetry pace a failed
+	// capture upload's retries; sandboxPublishGiveUp ends them, leaving the
+	// capture on its node as an ordinary cache entry. agentd's sweep waits
+	// out this window (sandboxCaptureUploadWindow) before it deletes a used
+	// capture, so keep the two in step.
+	sandboxPublishFirstRetry = 2 * time.Second
+	sandboxPublishMaxRetry   = 5 * time.Minute
+	sandboxPublishGiveUp     = time.Duration(api.SandboxCaptureUploadSec) * time.Second
+)
+
+// publishSandboxCapture uploads a pause capture in the background, retrying
+// until it succeeds or sandboxPublishGiveUp passes. agentd sees the upload
+// in the shared store and marks the session's durability remote.
+func (s *Server) publishSandboxCapture(ctx context.Context, memKey string) {
+	pub, ok := s.vmm.(sandboxCapturePublisher)
+	if !ok {
+		return
+	}
+	started := time.Now()
+	s.retryInBackground(ctx, "SandboxCaptureUpload", "capture upload", memKey, func(ctx context.Context) error {
+		return pub.PublishSandboxCapture(ctx, memKey)
+	}, func() {
+		s.log.Info("sandbox: capture uploaded", "storage_key", memKey, "upload_ms", time.Since(started).Milliseconds())
+	}, func() {
+		// Left to the node cache's eviction rather than pinned for good.
+		if err := pub.UnpinSandboxCapture(memKey); err != nil {
+			s.log.Warn("sandbox: unpin a given-up capture failed", "storage_key", memKey, "err", err)
+		}
+	})
+}
+
+// retryInBackground runs upload until it succeeds or sandboxPublishGiveUp
+// passes, backing off between tries, outliving the caller's stream; done
+// runs after a success and gaveUp after the last failure.
+func (s *Server) retryInBackground(ctx context.Context, op, what, key string, upload func(context.Context) error, done, gaveUp func()) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sandboxPublishGiveUp)
+		defer cancel()
+		started := time.Now()
+		wait := sandboxPublishFirstRetry
+		for {
+			err := upload(ctx)
+			s.ops.Observe(op, time.Since(started), err)
+			if err == nil {
+				if done != nil {
+					done()
+				}
+				return
+			}
+			s.log.Warn("sandbox: "+what+" failed; retrying", "key", key, "retry_in", wait, "err", err)
+			select {
+			case <-ctx.Done():
+				s.log.Warn("sandbox: "+what+" gave up; it stays on this node", "key", key)
+				if gaveUp != nil {
+					gaveUp()
+				}
+				return
+			case <-time.After(wait):
+			}
+			wait = min(2*wait, sandboxPublishMaxRetry)
+		}
+	}()
+}
+
+// PublishPendingSandboxCaptures uploads the pause captures a restart left on
+// this node alone, retrying as a pause's own upload does until none is left
+// or sandboxPublishGiveUp passes. vmmd runs it at start, in the background.
+func (s *Server) PublishPendingSandboxCaptures(ctx context.Context) {
+	pub, ok := s.vmm.(sandboxCapturePublisher)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, sandboxPublishGiveUp)
+	defer cancel()
+	wait := sandboxPublishFirstRetry
+	for {
+		n, err := pub.PublishPendingSandboxCaptures(ctx, sandboxPublishGiveUp)
+		if n > 0 {
+			s.log.Info("sandbox: uploaded pending capture objects", "objects", n)
+		}
+		if err == nil {
+			return
+		}
+		s.log.Warn("sandbox: pending capture uploads failed; retrying", "uploaded", n, "retry_in", wait, "err", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = min(2*wait, sandboxPublishMaxRetry)
+	}
+}
+
+// pauseSandbox captures the session VM. It answers paused, or refused when
+// the VM keeps running: a call in flight, a thaw or capture that failed
+// before the guest was touched. An error is a VM lost to a failed capture,
+// which ends the stream as a lost VM does.
+func (s *Server) pauseSandbox(ctx context.Context, instance string, act *sandboxActivity, p *vmmdpb.RunSandboxPause) (paused, refused *vmmdpb.RunSandboxEvent, err error) {
+	refuse := func(reason string) (*vmmdpb.RunSandboxEvent, *vmmdpb.RunSandboxEvent, error) {
+		return nil, &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_PauseRefused{PauseRefused: &vmmdpb.RunSandboxPauseRefused{Reason: reason}}}, nil
+	}
+	pauser, ok := s.vmm.(sandboxPauser)
+	if !ok {
+		return refuse("unsupported")
+	}
+	if id, err := uuid.Parse(p.GetCaptureId()); err != nil || id.String() != p.GetCaptureId() {
+		return refuse("invalid")
+	}
+	if !act.beginPause() {
+		return refuse("busy")
+	}
+	defer act.endPause()
+	if err := s.thawSandbox(ctx, instance, act); err != nil {
+		s.log.Warn("sandbox: thaw before a pause failed", "instance", instance, "err", err)
+		return refuse("failed")
+	}
+	started := time.Now()
+	captured, kept, err := pauser.PauseSandbox(ctx, fcvm.SandboxPause{Instance: instance, SandboxID: act.sandboxID,
+		AccountID: act.accountID, CaptureID: p.GetCaptureId()})
+	if err != nil {
+		s.log.Warn("sandbox: pause failed", "instance", instance, "vm_kept", kept, "err", err)
+		if kept {
+			return refuse("failed")
+		}
+		return nil, nil, status.Error(codes.Aborted, "sandbox pause failed: the session's VM ended while it was being captured")
+	}
+	snap := captured.Snapshot
+	s.publishSandboxCapture(ctx, snap.StorageKey)
+	// The VM is gone, so the volume is as the capture left it.
+	volumeBackup := s.prepareSandboxPauseBackup(ctx, act)
+	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Paused{Paused: &vmmdpb.RunSandboxPaused{
+		Snapshot: &vmmdpb.AgentRunSnapshot{StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey,
+			FcVersion: snap.FCVersion, MemBytes: snap.MemBytes},
+		VmstateBytes: captured.Info.VMStateBytes, PauseMs: time.Since(started).Milliseconds(), HasBacking: captured.HasBacking,
+		VolumeBackupId: volumeBackup}}}, nil, nil
 }
 
 // thawSandbox thaws a frozen session VM in place before a call. A freeze in
@@ -425,6 +663,27 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		return fcvm.SandboxWakeRequest{}, invalid("quiet_pause_after_ms is out of range")
 	}
 	wake.QuietPauseAfter = time.Duration(ms) * time.Millisecond
+	if start.GetSessionCapture() {
+		// A pause capture (ADR-20261122132055 §2) restores only into a session
+		// of its own account, and carries the session's workspace itself.
+		snap := start.GetSnapshot()
+		switch {
+		case snap == nil:
+			return fcvm.SandboxWakeRequest{}, invalid("session_capture needs the capture's snapshot")
+		case start.GetWorkspaceKey() != "":
+			return fcvm.SandboxWakeRequest{}, invalid("a session capture carries its workspace; workspace_key goes only with a new session")
+		case start.GetTask() != nil:
+			return fcvm.SandboxWakeRequest{}, invalid("a sandbox task is never paused")
+		case !storagekey.IsSandboxSessionSnapshotKey(snap.GetStorageKey(), wake.AccountID) ||
+			snap.GetVmstateStorageKey() != state.SnapshotVMStateKey(state.Snapshot{StorageKey: snap.GetStorageKey()}) ||
+			snap.GetFcVersion() == "" || snap.GetMemBytes() < 1:
+			return fcvm.SandboxWakeRequest{}, invalid("snapshot must be a pause capture of this session's account, with its keys, version and size")
+		}
+		wake.Snapshot = &fcvm.Snapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
+			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network == api.SandboxNetworkNone}
+		wake.SessionCapture = true
+		return wake, nil
+	}
 	if snap := start.GetSnapshot(); snap != nil {
 		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey != "") ||
 			snap.GetVmstateStorageKey() != state.SnapshotVMStateKey(state.Snapshot{StorageKey: snap.GetStorageKey()}) ||
@@ -663,10 +922,12 @@ func (s *Server) sandboxActionEnd(ctx context.Context, runner sandboxTaskRunner,
 	}
 	act.actionMu.Lock()
 	defer act.actionMu.Unlock()
+	if !act.tryBegin() {
+		return actionDone(a.GetActionId(), "the session is pausing")
+	}
+	defer func() { act.end(time.Now()) }()
 	s.beginActivity(wake.Instance)
 	defer s.endActivity(wake.Instance)
-	act.begin()
-	defer func() { act.end(time.Now()) }()
 	if err := s.thawSandbox(ctx, wake.Instance, act); err != nil {
 		s.log.Warn("sandbox: thaw before an action failed", "instance", wake.Instance, "err", err)
 		return actionDone(a.GetActionId(), "the session could not be thawed")

@@ -116,6 +116,9 @@ func (j *nativeHostHelperJournal) prepareDeviceInputs(ctx context.Context, owner
 			return nil, errors.New("native jail device setup: original generation already retains a setup frame")
 		}
 	}
+	if owner.Lease.Networkless {
+		return j.owner.jailDevices.Prepare(ctx, owner, j.deviceRoot, nativeTunSource{})
+	}
 	tun := nativeTunBindJournal{owner: j.owner, backend: j.owner.tunBinds}
 	bindings, err := tun.records()
 	if err != nil {

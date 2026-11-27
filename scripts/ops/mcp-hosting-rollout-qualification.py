@@ -62,7 +62,8 @@ def prepare(starter, destination):
             server_path = target / 'server.js'
             server_path.write_text(server_path.read_text().replace("const role = process.env.MCP_TASKS_ROLE || 'combined';", "const role = 'web';"))
             if name == 'web-bad':
-                app_path = target / 'app.js'
+                # The Express app lives in app-core.js; app.js only binds the Tasks module.
+                app_path = target / 'app-core.js'
                 source = app_path.read_text()
                 needle = 'const app = express();'
                 if source.count(needle) != 1:

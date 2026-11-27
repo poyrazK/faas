@@ -260,6 +260,13 @@ type LocalCacheBackend struct {
 	// (cache_generation.go, ADR-20261026181418). Guarded by routesMu.
 	routesMu sync.RWMutex
 	routes   map[string]string
+	// fills holds the in-flight background fill of each immutable key
+	// (cache_detached_fill.go, ADR-20261121220000). Guarded by fillsMu.
+	fillsMu sync.Mutex
+	fills   map[string]*detachedFill
+	// detachedFillTimeout bounds one background fill; zero is
+	// DefaultDetachedFillTimeout.
+	detachedFillTimeout time.Duration
 }
 
 // ReclaimFreeBytes evicts the oldest unpinned entries, beyond the byte budget,
@@ -374,12 +381,21 @@ func (c *LocalCacheBackend) LocalPath(key string) (string, bool, error) {
 // file or this wrapper supplied a cache hit. It never calls parent.Get, so a
 // cache hit cannot fall through to a remote existence check or blob copy.
 func (c *LocalCacheBackend) LocalPathWithSource(key string) (string, LocalPathSource, bool, error) {
+	// A local-only entry has no parent copy yet: a local parent would name
+	// a path that does not exist until the upload (ADR-20261122132055 §2).
+	if c.LocalOnly(key) {
+		cacheFile, _ := c.cacheFileFor(key)
+		if regularFileExists(cacheFile) {
+			c.touchCacheFile(cacheFile)
+			return cacheFile, LocalPathSourceCache, true, nil
+		}
+	}
 	if resolver, ok := c.parent.(LocalPathSourceResolver); ok {
-		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local {
+		if p, source, local, err := resolver.LocalPathWithSource(key); err == nil && local && !isDriveDeltaPayload(key, p) {
 			return p, source, true, nil
 		}
 	} else if resolver, ok := c.parent.(LocalPathResolver); ok {
-		if p, local, err := resolver.LocalPath(key); err == nil && local {
+		if p, local, err := resolver.LocalPath(key); err == nil && local && !isDriveDeltaPayload(key, p) {
 			return p, LocalPathSourceBackend, true, nil
 		}
 	}
@@ -598,6 +614,8 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	}
 	keep = true
 	_ = os.Remove(path + ".generation")
+	// The parent holds this write, so it is no longer local-only.
+	_ = os.Remove(path + localOnlySuffix)
 	_ = os.Chmod(path, 0o644)
 	if err := os.WriteFile(metaPath, []byte(c.parentKey(key)), 0o644); err != nil {
 		// Sidecar failure is non-fatal but degrades List.
@@ -673,7 +691,16 @@ func (c *LocalCacheBackend) fetch(ctx context.Context, key, parentKey string, re
 		if cached, ok := c.openCache(key); ok {
 			return cached, nil
 		}
+		if detachedFillKey(key) {
+			return c.fetchDetached(ctx, key, parentKey)
+		}
 	}
+	return c.fetchFromParent(ctx, key, parentKey, refresh)
+}
+
+// fetchFromParent reads parentKey under the caller's context and installs it
+// as key's entry.
+func (c *LocalCacheBackend) fetchFromParent(ctx context.Context, key, parentKey string, refresh bool) (io.ReadCloser, error) {
 	rc, err := c.parent.Get(ctx, parentKey)
 	if err != nil {
 		// A refresh is an explicit integrity operation (used when
@@ -777,14 +804,16 @@ func regularFileExists(path string) bool {
 
 // parentLocalArtifactExists reports whether the wrapped backend already owns
 // a canonical local copy. Generation markers for those keys describe that
-// parent artifact, so they do not need a duplicate blob in this cache.
+// parent artifact, so they do not need a duplicate blob in this cache. A
+// parent's drive delta is not a copy of the drive: the cache entry is, and
+// stays pinned while its generation is marked.
 func (c *LocalCacheBackend) parentLocalArtifactExists(key string) bool {
 	resolver, ok := c.parent.(LocalPathResolver)
 	if !ok {
 		return false
 	}
 	path, local, err := resolver.LocalPath(key)
-	return err == nil && local && path != "" && regularFileExists(path)
+	return err == nil && local && path != "" && regularFileExists(path) && !isDriveDeltaPayload(key, path)
 }
 
 // refresh reports whether the next Get must read the parent and replace the
@@ -1221,6 +1250,7 @@ func (c *LocalCacheBackend) evictCache(key string) {
 	if err := os.Remove(path + ".generation"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		_ = err
 	}
+	_ = os.Remove(path + localOnlySuffix)
 }
 
 // enforceBudgetLocked walks the cache directory, sums allocated filesystem
@@ -1418,7 +1448,7 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 			if f.IsDir() {
 				continue
 			}
-			if strings.HasSuffix(f.Name(), ".meta") || strings.HasSuffix(f.Name(), ".generation") {
+			if strings.HasSuffix(f.Name(), ".meta") || strings.HasSuffix(f.Name(), ".generation") || strings.HasSuffix(f.Name(), localOnlySuffix) {
 				continue
 			}
 			info, err := f.Info()
@@ -1434,12 +1464,14 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 				continue
 			}
 			_, generationErr := os.Stat(path + ".generation")
+			// A local-only entry (cache_local_only.go) has no other copy.
+			_, localErr := os.Stat(path + localOnlySuffix)
 			out = append(out, cacheEntry{
 				key:     string(metaBytes),
 				path:    path,
 				size:    cacheDiskUsage(info),
 				modTime: info.ModTime(),
-				pinned:  generationErr == nil && !c.parentLocalArtifactExists(string(metaBytes)),
+				pinned:  generationErr == nil && !c.parentLocalArtifactExists(string(metaBytes)) || localErr == nil,
 			})
 		}
 	}

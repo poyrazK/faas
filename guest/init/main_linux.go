@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -87,6 +88,9 @@ func main() {
 	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
 		os.Exit(runPublicBuildURLs(os.Args[1:]))
 	}
+	if os.Getenv(dependencyInputsHelperEnv) == nextStandaloneHelperValue && os.Getpid() != 1 {
+		os.Exit(runNextStandalone(os.Args[1:]))
+	}
 	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
@@ -139,12 +143,20 @@ func boot() error {
 				_ = poweroffDatabase()
 				return fmt.Errorf("database restore mode: %w", targetErr)
 			}
+			timeline, timelineErr := dbguest.RestoreTimeline(string(cmdline))
+			if timelineErr == nil && timeline != 0 && !restoring {
+				timelineErr = errors.New("timeline needs a restore target")
+			}
+			if timelineErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database restore mode: %w", timelineErr)
+			}
 			upgradeFrom, upgradeErr := dbguest.UpgradeFrom(string(cmdline), major)
 			if upgradeErr != nil {
 				_ = poweroffDatabase()
 				return fmt.Errorf("database upgrade mode: %w", upgradeErr)
 			}
-			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
+			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target, restoreTimeline: timeline, queryInsights: dbguest.QueryInsightsEnabled(string(cmdline)),
 				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline)),
 				promote: dbguest.Promote(string(cmdline)), upgradeFrom: upgradeFrom}
 			if upgradeFrom != 0 && (boot.spare || boot.standby || restoring) {
@@ -598,7 +610,7 @@ func boot() error {
 			return BuildEnvWithSecrets(os.Environ(), manifest, currentSecrets, apiEnv)
 		},
 	}); err != nil {
-		slog.Default().Warn("healthcheck poll unavailable", "err", err)
+		logHealthcheckPollUnavailable(slog.Default(), err)
 	}
 	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
 	// signal handler before invoking the supervisor. The handler
@@ -661,6 +673,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// tests the exact code path the production execve uses.
 	env = StampOverridePortEnv(env, m.EffectivePort())
 	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
+	env = StampMiseCacheEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
@@ -719,6 +732,11 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	cmd.Dir = m.EffectiveWorkingDir()
 	if err := ensureWorkingDir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
 		return fmt.Errorf("run app: prepare working directory: %w", err)
+	}
+	if devWatchActive.Load() {
+		if err := prepareDevWatchWorkdir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
+			slog.Warn("dev watch: working directory stays read-only for the app user", "dir", cmd.Dir, "err", err)
+		}
 	}
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
@@ -811,6 +829,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 	}, slog.Default())
 	defer oomWatch.stop()
+	// ADR-20261121170000: the app cgroup's memory and CPU, per 10 s slot,
+	// so apid can tell which routes the app's peaks come from.
+	defer startResourceSlots(mainLeaf, slog.Default())()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -1218,7 +1239,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		// Prepare the entire repository context, including sibling workspace
 		// packages, without erasing executable bits or following symlinks.
 		if err := prepareBuildSourceModes(m.BuildContext); err != nil {
-			return writeAndPoweroff(m, fmt.Errorf("prepare source permissions: %w", err), "")
+			return writeAndPoweroff(m, fmt.Errorf("prepare source modes and times: %w", err), "")
 		}
 	}
 
@@ -1394,8 +1415,11 @@ func runBuildOnce(m api.BuildManifest) error {
 	// fetch/unpack step; without the console mirror the host only sees a hot
 	// Firecracker process and cannot distinguish progress from a deadlock.
 	bk.WaitDelay = 2 * time.Second
-	bk.Stdout = io.MultiWriter(os.Stdout, &buildkitLog)
-	bk.Stderr = io.MultiWriter(os.Stderr, &buildkitLog)
+	// The console is the customer's build log: drop buildkitd's debug
+	// entries and stack frames there. buildkitLog keeps them for the
+	// start-failure tail.
+	bk.Stdout = io.MultiWriter(newBuildkitConsoleFilter(os.Stdout), &buildkitLog)
+	bk.Stderr = io.MultiWriter(newBuildkitConsoleFilter(os.Stderr), &buildkitLog)
 	if err := bk.Start(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("start buildkitd: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
@@ -1516,8 +1540,9 @@ func runBuildOnce(m api.BuildManifest) error {
 		"BUILDKIT_SESSION_HEALTH_TIMEOUT_MS=300000",
 	), secretEnv...)
 	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	stdoutConsole, stderrConsole := newBuildOutputFilter(os.Stdout), newBuildOutputFilter(os.Stderr)
+	cmd.Stdout = io.MultiWriter(stdoutConsole, &buf)
+	cmd.Stderr = io.MultiWriter(stderrConsole, &buf)
 	clock.stage("build-command")
 	buildStarted := time.Now()
 	if err := cmd.Start(); err != nil {
@@ -1540,6 +1565,12 @@ func runBuildOnce(m api.BuildManifest) error {
 		// Use exit 124 for the durable build marker even when the stuck
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		// A stuck descendant may still be writing after a timeout; only a
+		// finished command's last partial line is flushed.
+		stdoutConsole.Flush()
+		stderrConsole.Flush()
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
 	// A failure to reach the registry for a platform-owned image is the
@@ -1578,7 +1609,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	var combined bytes.Buffer
 	if buf.Len() > 0 {
 		combined.WriteString("[build]\n")
-		combined.WriteString(tailOf(buf.Bytes(), m.LogTailBytes/2))
+		combined.WriteString(tailOf(withoutPlatformBuildNoise(buf.Bytes()), m.LogTailBytes/2))
 	}
 	if err != nil && buildkitLog.Len() > 0 {
 		combined.WriteString("\n[buildkitd]\n")
@@ -1897,6 +1928,16 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 			deploy["startCommand"] = "/bin/true"
 		}
 	}
+	// imaged starts every function through its runner, never the image's
+	// start command. Without one Railpack printed its "No start command"
+	// advice, with Railway docs and RAILPACK_* variables, into every function
+	// deploy (prod hunt r38). This covers functions with a package manifest
+	// too, which the copy-only branch above does not.
+	if m.Function {
+		if _, configured := deploy["startCommand"]; !configured {
+			deploy["startCommand"] = "/bin/true"
+		}
+	}
 	if err := devWatchRailpackConfig(config, m); err != nil {
 		return nil, err
 	}
@@ -2101,6 +2142,11 @@ func buildArgv(m api.BuildManifest) []string {
 	}, " ")
 	goCommand, goCommandEnv := railpackGoCommand(m)
 	prepare += goCommand
+	if nextStandaloneBuild(m) {
+		// Never fails the build; see runNextStandalone.
+		prepare += " && { " + dependencyInputsHelperEnv + "=" + nextStandaloneHelperValue + " /proc/1/exe " +
+			shellQuote(planPath) + " " + shellQuote(m.Workdir) + " " + strconv.Itoa(m.AppLayerMaxMB) + " || true; }"
+	}
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}
@@ -3077,6 +3123,7 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		Manifest:       manifest,
 		ProvenWorker:   bootProvenWorker(),
 		FunctionRunner: bootFunctionRunner(),
+		RawTCPListener: bootRawTCPListener(),
 		AppPID:         func() int { return sup.LastAppPID() },
 		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {

@@ -10,6 +10,7 @@ import type { ReleaseApprovalStatus } from './ReleaseApprovalStatus.js';
 import type { ReleaseFreeze } from './ReleaseFreeze.js';
 import type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
 import type { RollbackCrossedRelease } from './RollbackCrossedRelease.js';
+import type { RunBudgetRefusal } from './RunBudgetRefusal.js';
 import type { SecretFinding } from './SecretFinding.js';
 /**
  * RFC 9457 problem+json envelope. The `code` field is the stable
@@ -33,6 +34,11 @@ import type { SecretFinding } from './SecretFinding.js';
  *
  */
 export type Problem = {
+  /**
+   * The running project rollback identified by a project rollback start conflict.
+   */
+  active_operation_id?: string;
+  run_budget?: RunBudgetRefusal;
   /**
    * Observed channel head on realtime_sequence_conflict.
    */
@@ -97,6 +103,12 @@ export type Problem = {
    *
    */
   checkout_url?: string;
+  /**
+   * On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+   * where the consumer moves to another plan.
+   *
+   */
+  upgrade_url?: string;
   billing_portal_url?: string;
   /**
    * Legacy Paddle-hosted checkout URL on a `payment_required`
@@ -184,5 +196,21 @@ export type Problem = {
    *
    */
   relevant_logs?: Array<LogExcerpt>;
+  /**
+   * The runnable commands quoted in `fix`, in order, with this
+   * failure's values (app, deployment) filled in. A command that
+   * still needs a value nobody knew is left out rather than shown
+   * with a placeholder. Omitted when there are none.
+   *
+   */
+  fix_commands?: Array<string>;
+  /**
+   * Whether repeating the same request can succeed without a
+   * change: true for rate limits, a Retry-After and transient
+   * platform errors; false when the request or the app must
+   * change. Absent when unknown.
+   *
+   */
+  retryable?: boolean;
 };
 

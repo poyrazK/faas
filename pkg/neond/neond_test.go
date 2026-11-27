@@ -36,6 +36,8 @@ func TestMatch(t *testing.T) {
 		{"DELETE", "/projects/quiet-river-123", "delete project", Params{Project: "quiet-river-123"}},
 		{"DELETE", "/projects/p-1/branches/br-x", "delete branch", Params{Project: "p-1", Branch: "br-x"}},
 		{"POST", "/projects/p-1/snapshots/snap-1/restore", "restore snapshot", Params{Project: "p-1"}},
+		{"POST", "/projects/p-1/endpoints/ep-1/suspend", "suspend endpoint", Params{Project: "p-1"}},
+		{"POST", "/projects/p-1/endpoints/ep-1/start", "start endpoint", Params{Project: "p-1"}},
 		{"GET", "/consumption_history/v2/projects", "read consumption", Params{}},
 		{"DELETE", "/projects", "", Params{}},
 		{"PUT", "/projects/p-1", "", Params{}},

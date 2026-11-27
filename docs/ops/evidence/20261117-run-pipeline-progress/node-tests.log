@@ -1,0 +1,12 @@
+✔ pipeline submission uses v2 and cancellation preserves encoded workflow identity (37.313791ms)
+✔ pipeline watch resumes a retained-tail gap and stops after the terminal page (9.726417ms)
+✔ named task invocation preserves explicit retry identity and task lineage (21.682167ms)
+✔ Run controls preserve explicit zero limits, revisions, history filters and cursor (29.888458ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1075.84225

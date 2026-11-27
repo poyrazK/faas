@@ -6,8 +6,16 @@
  * One UTC minute captured in a durable usage statement.
  */
 export type APIConsumerUsageStatementBucketResponse = {
+  /**
+   * Model priced in this statement bucket.
+   */
+  model?: string;
   window_start: string;
   billable_units: number;
+  /**
+   * Model units recorded at zero charge by a waiver in this revision.
+   */
+  waived_units?: number;
   rate_card_id?: string;
   currency?: string;
   price_millicents_per_unit?: number;

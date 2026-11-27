@@ -3814,6 +3814,45 @@ raise SystemExit(int(os.environ.get('SSH_CODE', '255')))
                 self.assertEqual(result["progress"]["regressions"], regressions)
                 self.assertEqual(result["progress"]["matching_throughout_observed_polls"], events == 1)
 
+    def test_runtime_busy_reason_survives_ssh_collection_and_history(self):
+        response = self.history_response(("unknown", "matching", "unknown"))
+        current = response["runtime_builds"]
+        current.update(reason="source_runtime_busy", source_http_status=429)
+        history = current["history"]
+        history["events"][0].update(reason="source_rate_limited", source_http_status=429)
+        history["events"][-1].update(reason="source_runtime_busy", source_http_status=429)
+        history["retained_bytes"] = builds.build_history_bytes(history["events"])
+        self.build_response_file(response)
+        process, report = self.invoke()
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(report["runtime_builds"], current)
+        self.assertEqual(report["checks"], response["checks"])
+        self.assertIn("source_runtime_busy", (self.root / "summary").read_text())
+
+        bad_history = copy.deepcopy(response)
+        bad_events = bad_history["runtime_builds"]["history"]["events"]
+        bad_events[0].update(reason="source_runtime_busy", source_http_status=503)
+        bad_history["runtime_builds"]["history"]["retained_bytes"] = builds.build_history_bytes(bad_events)
+        self.build_response_file(bad_history)
+        process, report = self.invoke()
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(report["runtime_builds"]["reason"], "source_runtime_busy")
+        self.assertEqual(report["runtime_builds"]["history_unavailable_reason"], "invalid_history")
+
+        for status in (None, 503):
+            with self.subTest(status=status):
+                bad = copy.deepcopy(response)
+                bad_current = bad["runtime_builds"]
+                if status is None:
+                    del bad_current["source_http_status"]
+                else:
+                    bad_current["source_http_status"] = status
+                self.build_response_file(bad)
+                process, report = self.invoke()
+                self.assertEqual(process.returncode, 0)
+                self.assertEqual(report["runtime_builds"]["reason"], "invalid_advisory_evidence")
+                self.assertEqual(report["checks"], response["checks"])
+
     def test_historical_source_clocks_are_not_reclassified_at_collection_time(self):
         after = (dt.datetime.now(dt.UTC)-dt.timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
         response = self.history_response(ages=[240, 180, 1], after=after)

@@ -12,6 +12,8 @@ https://api.gregale.dev/mcp
 - **claude.ai and the Claude apps:** add it as a custom connector.
 - **ChatGPT:** add it as a connector.
 - **Claude Code:** `claude mcp add --transport http gregale https://api.gregale.dev/mcp`.
+- **Cursor and VS Code:** `gregale mcp connect --client cursor` (or
+  `vscode`) adds the server; sign in when the editor asks.
 
 For **Antigravity**, add a remote server named `gregale` with
 `"serverUrl": "https://api.gregale.dev/mcp"` to its MCP configuration. In
@@ -54,6 +56,14 @@ still follows connection consent, including separate per-app diagnostic access:
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
+| Read my app data | `gregale_get_postgres_schema`, `gregale_query_postgres`, `gregale_read_object`, message and workflow payloads in queue and workflow tools, and client IPs and user agents in edge events (`data:read`), including on a read-only connection |
+
+Write access also covers running a command in the app
+(`gregale_plan_run_command`) and changing feature flags
+(`gregale_plan_flag_change`, `gregale_kill_flag`); see
+[Run a command in the app](#run-a-command-in-the-app),
+[Change feature flags](#change-feature-flags) and
+[Query PostgreSQL](#query-postgresql).
 
 A cloud agent deploys code it wrote in one of three ways:
 - **Upload:** `gregale_create_source_upload` returns a one-time URL and a
@@ -70,6 +80,16 @@ For uploads and inline files, call `gregale_apply_upload_deploy` with the
 apply tool for a service/worker. Like a local deploy:
 - a new app goes live;
 - a serving app is staged at 0% until `gregale_promote_deployment`.
+
+Start an upload deploy plan within 15 minutes. If its resumable upload commit
+returns `approval_required`, the bridge keeps the original plan, staged source
+and upload checkpoint through the deadline in `approval.expires_at`. The review
+page shows that same deadline. After approval, retry the same plan ID. The
+bridge rechecks the app and its release state and commits the original upload.
+A changed app or release requires a new plan. The encrypted journal restores
+approval-bound plans for the same connection after a restart using the same
+bridge upload directory. One-time upload URLs and source for plans that
+have yet to reach commit approval expire with the process.
 
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
@@ -102,10 +122,11 @@ of those tools are listed.
 
 The key reaches every app in its account. Agent keys expire after 90 days by
 default; rotate them like any key. Revoking the key ends the agent's access at
-its next request. The hosted journal preserves completed receipts and resumable release plans
-for the same key across bridge restarts. Pending upload files are temporary;
-after a restart, inspect deployments and resources before uploading or planning
-again. `gregale_get_plan` recovers an unexpired receipt without repeating a write.
+its next request. The hosted journal preserves completed receipts and resumable
+release plans for the same key across bridge restarts. A pending resumable
+upload commit approval keeps its staged source through the original review
+deadline. `gregale_get_plan` recovers an unexpired plan or receipt without
+repeating a write.
 
 Hosted agent-key connections use the `core` catalog unless the client sends a
 `Gregale-MCP-Toolsets` header on every MCP request. Select a comma-separated
@@ -196,8 +217,9 @@ gregale org agent policy set --org acme --agents allow --capabilities deploy:wri
 gregale org agent policy set --org acme --agents deny
 ```
 
-The capabilities are `deploy:write`, `secrets:request`, `storage:manage` and
-`postgres:manage`; `--capabilities ""` makes agents read-only. An organization
+The capabilities are `deploy:write`, `secrets:request`, `storage:manage`,
+`postgres:manage`, `env:write`, `usage:read` and `data:read`;
+`--capabilities ""` makes agents read-only. An organization
 that never set a policy allows agents with every capability. The policy
 applies to hosted MCP connections and to organization keys with the `agent`
 scope. Setting a stricter policy revokes, at once, every agent connection it
@@ -226,7 +248,7 @@ key takes the same limit:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --projects api,web
-gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+gregale org key create ci-agent --org acme --scopes agent --projects api
 ```
 
 A limited agent reaches the apps of those projects, including apps added to
@@ -250,7 +272,7 @@ of the agent's key: the hosted MCP server, the CLI and direct API calls.
 | Kind | What needs approval |
 |---|---|
 | `delete` | Deleting anything: apps, databases, buckets, domains, secrets, keys |
-| `production` | Deploying, rolling back, restarting or moving traffic of a production app (previews and `gregale dev` environments are free) |
+| `production` | Deploying, rolling back, restarting or moving traffic of a production app, and running a command in it (previews and `gregale dev` environments are free); publishing, rolling back or promoting feature flags in any project environment (killing a flag never asks) |
 | `credentials` | Minting or rotating API keys, deploy tokens, secrets and signing secrets |
 | `billing` | Plan, subscription, payment and budget changes |
 
@@ -364,6 +386,19 @@ both default to `core`; hosted connections also select their catalog during
 onboarding. Existing connections without a saved selection use `core` when the
 operator permits it, or the operator's narrower selection. An explicitly empty
 selection stays empty.
+
+A selection larger than 128 tools (for example `all` with writes) lists the
+core tools and `gregale_find_tools` instead, because some clients refuse more
+than 128 tools. Call `gregale_find_tools` with words for the task, such as
+`postgres schema` or `cron`. It adds up to 20 matching tools to the
+connection's list and sends `notifications/tools/list_changed`. If your client
+does not refresh its list, reconnect with the toolsets the result names.
+Found tools have the same checks as listed ones (ADR-20261121140000).
+
+Log search, incidents and product analytics tools are listed only while the
+capability is enabled for your account (`gregale feature list`). The server
+reads this when it starts, so a capability released later appears on the next
+connection.
 Plan receipt and verification tools accompany `core`, `release`, `provision`
 and `operate`. Core includes saved-plan review, checks and retained action
 history and outcome lookups, as well as `gregale_get_restart` for configuration
@@ -376,7 +411,7 @@ listed.
 Use an absolute executable path if the client cannot find `gregale` on its PATH.
 To select a named connection, place the prefix before the command, for example
 `["--profile", "staging", "mcp", "serve", "--transport", "stdio"]`.
-`FAAS_API` and `FAAS_TOKEN` retain their normal precedence over saved settings.
+`GREGALE_API_URL` and `GREGALE_TOKEN` retain their normal precedence over saved settings.
 Use the profile's stored login or supply a scoped token through the client's
 environment; do not put tokens in command arguments or commit them to a client
 configuration. A missing credential fails startup on stderr. API authorization
@@ -399,7 +434,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_app` | One app's status, URLs, deployment availability, resource settings and, with the resource-labels preview, labels. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
 | `gregale_get_deployment` | Build/deployment status, commit and image identifiers, and failure diagnostics. |
-| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. |
+| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. For a parked app it reads the newest instance's retained logs (`source: archive`). |
 | `gregale_get_metrics` | App metrics over the requested `range`; the API's default is `5m`. |
 | `gregale_get_request` | Exact retained public request, telemetry-row or trace ID: status, deployment, route, timing and bounded guest execution summary. Requires separate per-app diagnostic consent remotely. |
 | `gregale_list_requests` | One bounded retained-request page, filtered by lookback, route, HTTP status, deployment, minimum latency or cold boot. Reuses diagnostic consent; continue with `next_arguments`. |
@@ -440,6 +475,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_plan_source_deploy` | Connected GitHub source review: exact commit, repository/install identities and target configuration. |
 | `gregale_plan_deploy` | Preview a digest-pinned image release; creates no deployment. |
 | `gregale_plan_rollback` | Preview rollback to an exact retained release; changes no traffic. |
+| `gregale_plan_promotion` | Preview sending 100% traffic to a deployment already staged at 0%; changes no traffic. |
+| `gregale_find_tools` | Listed only above 128 tools: find unlisted tools and add them to the connection. |
 | `gregale_plan_workload_rollout` | Review native service/worker activation, retained image redeployment or retained GitHub commit rebuild. |
 | `gregale_plan_service_abort` | Review exact service reverse handoff to its pinned predecessor. |
 | `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
@@ -598,7 +635,7 @@ and behavioral fixtures:
 `access_mode` must match `gregale-mcp.json`. Open access requires no token
 reference. External OAuth requires `token_env`, naming an existing `MCP_*`
 client-token variable in the local CLI environment. Tokens are never accepted
-as tool arguments or inferred from the account's `FAAS_TOKEN`. Ordinary publication
+as tool arguments or inferred from the account's `GREGALE_TOKEN`. Ordinary publication
 excludes durable MCP Tasks, which retain their dedicated stack release flow.
 The explicit access declaration is required because the built-in example
 starters initially use open access.
@@ -3973,6 +4010,13 @@ The image release workflow is:
    original serving release still owns production traffic. A concurrent release
    returns `traffic_serving_changed`; the adapter never retries without the guard.
 
+To promote a revision staged by the CLI, another session, or a client that has
+since restarted, call `gregale_plan_promotion` with the app, the staged
+`deployment_id` and a reason. The deployment must be live at 0% traffic and
+be the app's latest revision. Then call `gregale_promote_deployment` with the
+returned `plan_id`; it applies the same guards, and production still asks a
+person.
+
 For rollback, call `gregale_plan_rollback` with the app, exact
 `target_deployment_id`, and reason, then review and apply its `plan_id` through
 `gregale_apply_rollback`. Checked rollback verifies the current release, artifact
@@ -4084,7 +4128,7 @@ earlier attempt created instead of creating it twice.
 |---|---|---|
 | `gregale_plan_domain` (`app`, `domain`) | `gregale domain create DOMAIN --app APP` | `deploy:write` |
 | `gregale_plan_bucket` (`app`, `name`, `permission`) | `gregale add bucket --app APP --env default --permission P NAME` | `storage:manage` |
-| `gregale_plan_postgres` (`app`, `region`, `access`) | `gregale add postgres --app APP --env default --region R --access A` | `postgres:manage`, `postgres:read` |
+| `gregale_plan_postgres` (`app`, optional `region`, `access`) | `gregale add postgres --app APP --env default [--region R] --access A` | `postgres:manage`, `postgres:read` |
 | `gregale_plan_cron` (`app`, `schedule`, `path`, `timezone`) | `gregale cron create --app APP --schedule S --path P` | `deploy:write` |
 
 Every plan also takes a `reason`. Apply each with `gregale_apply_provision`
@@ -4103,8 +4147,8 @@ and its `plan_id`.
 - **Crons.** The plan reports `duplicate_of` if the app already has a cron
   with the same schedule and path.
 
-Object storage and managed PostgreSQL are preview capabilities; when one is
-off for the account, apply returns the API's error. Jobs and `gregale run`
+Object storage and managed PostgreSQL are released per account during their
+rollout; when one is off for the account, apply returns the API's error. Jobs and `gregale run`
 stay in the CLI.
 
 ## Configure, inspect and recover
@@ -4149,7 +4193,7 @@ access. Native resource capability flags still apply. An older server without
 `GET /v1/apps/{slug}/resource-inventory` returns an unavailable read; the bridge
 does not fall back to account inventory. Counts exclude other apps and scopes.
 
-For local read-only inspection with an app-bound token in `FAAS_TOKEN`:
+For local read-only inspection with an app-bound token in `GREGALE_TOKEN`:
 
 ```sh
 gregale mcp serve --tools core,provision
@@ -4595,11 +4639,17 @@ The server is the `mcp-bridged` daemon:
 - **Failover:** after a control-plane takeover, the standby's bootstrap and
   deploy start the server again. Connected agents keep their grants; open
   streams reconnect.
-- **Clients:** the unit allows Claude's, ChatGPT's and Google Antigravity's published OAuth
-  callbacks plus loopback clients. Antigravity publishes its client at
-  `https://antigravity.google/oauth/client-metadata.json` and uses the exact
-  callback `https://antigravity.google/oauth-callback`. Override `ExecStart` in a drop-in to
-  change the list.
+- **Clients:** the unit allows Claude's, ChatGPT's, Google Antigravity's and
+  Glama's published OAuth callbacks plus loopback clients. Antigravity
+  publishes its client at `https://antigravity.google/oauth/client-metadata.json`
+  and uses the exact callback `https://antigravity.google/oauth-callback`.
+  Glama publishes two clients: its connector at
+  `https://glama.ai/api/app/mcp/oauth/client-metadata.json` (callback
+  `https://glama.ai/api/app/mcp/oauth/callback`), which runs Glama's health
+  checks and users' connections, and its MCP Inspector at
+  `https://glama.ai/mcp/inspector/oauth/client-metadata.json` (callback
+  `https://glama.ai/mcp/inspector/oauth/callback`). Override `ExecStart` in a
+  drop-in to change the list.
 - **Client identity:** a client either registers (Dynamic Client
   Registration) or names a Client ID Metadata Document URL as its
   `client_id` (ADR-20261030065746). The server fetches the document over
@@ -4737,8 +4787,11 @@ callback, and use authorization-code **S256 PKCE** with the exact resource URL.
 Read scope is `gregale:read`; optional write scope is `gregale:write`. API keys
 are accepted only by browser account review, never as MCP access tokens. Gregale
 API scopes remain authoritative for every tool call.
-The default challenge requests read access. To expose remote write tools, request
-both scopes in the client's OAuth settings as well as enabling bridge writes.
+The default challenge requests read access. When bridge writes are enabled and a
+client asks only for `gregale:read`, browser consent offers "Deploy and manage
+apps" (preselected) or "Inspect only" before sign-in; choosing deploy grants
+`gregale:write` too, and the token response names the granted scope. A client
+can also request both scopes in its OAuth settings.
 
 Each grant has its own SDK server, API credential, and plan store. Every remote
 request rechecks its account credential through the API. Access tokens expire
@@ -4895,6 +4948,14 @@ Choose another starter language with `gregale mcp server init --language go --pa
 Both templates use the same zero-traffic `gregale mcp server deploy` verification and
 promotion flow.
 
+The Node, Go and Python starters answer every tool call in their response and
+carry no durable Task code. For tools that return durable MCP Task handles,
+start from `gregale init --template mcp-node-tasks` (or `mcp-go-tasks`,
+`mcp-python-tasks`) with `--path ./my-mcp` (Tasks off until you bind
+PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
+observer projects. Native Task releases need the Node Tasks starter's
+`tasks-release.js`.
+
 In another terminal:
 
 ```sh
@@ -4910,6 +4971,21 @@ gregale mcp client complete --app my-mcp --prompt summarize --argument style --v
 gregale mcp server export --app my-mcp --name my-mcp
 gregale mcp server watch --app my-mcp --baseline gregale-mcp.lock.json
 ```
+
+The first `gregale mcp server deploy` of an app makes it reachable to MCP
+clients: streaming on, no Gregale API key, open public auth (access is then
+controlled by `gregale-mcp.json`). It also raises an unset request timeout to
+300 seconds or the plan's ceiling, whichever is lower (Free 30, Hobby 60,
+Pro and Scale 300), so tool calls slower than the 30-second HTTP default do not
+fail with `request_budget_exceeded`. Scale apps can go up to 900 seconds with
+`gregale app my-mcp --request-timeout 900`. A timeout you set yourself is kept.
+An app that already serves behind an API key, public auth or with streaming
+off is refused before anything is uploaded; the error names the
+`gregale app` commands that open it (ADR-20261121160000).
+
+The starters negotiate the protocol revision: they speak 2026-07-28 and, in
+legacy mode (the default), 2025-11-25, 2025-06-18 and 2025-03-26, so clients
+built on older MCP SDKs connect too.
 
 `mcp resources` and `mcp prompts` return definitions only. Resource reads and
 prompt rendering require the explicit `resource-read --uri` and `prompt-get --prompt`
@@ -5035,6 +5111,9 @@ qualification. Raw upstream error text, Task payloads and bearer values are
 excluded. Actions carry argument arrays for use by automation or a dashboard.
 
 ## Runtime catalog management
+
+The Node and Python starters can also publish a [typed application toolkit](sdk-application-toolkits.md)
+with explicit scopes for its SDK tools and resources.
 
 The Node, Go, and Python starters expose in-process operations to register,
 replace, and remove tools, resources, and prompts. Application code can change
@@ -5534,6 +5613,26 @@ gregale mcp client read --url https://mcp.example.com/mcp --uri task://tasks/TAS
 gregale mcp client watch --url https://mcp.example.com/mcp --uri task://tasks/TASK_ID
 ```
 
+Use `--metadata-only` for a status snapshot suitable for agent context.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --task-id TASK_ID --metadata-only
+```
+
+The command reads the saved handle once using the same MCP endpoint and
+caller credential. It emits JSON with the Task ID, state, last update,
+`nextAction`, and a polling delay in milliseconds when available. The snapshot
+is limited to those fields.
+
+- `poll_status` means the Task is working. Wait `pollIntervalMs`, then read the same handle.
+- `provide_input` means the Task is waiting for a form response. Use `client respond` with a reviewed file, or `client wait` with `--interactive` or `--input-responses-file`.
+- `read_result` means the Task completed. Use `client status` with the Task ID or use `--read-result` with a receipt.
+- `none` means the Task failed or was cancelled.
+- `retry_status` means a temporary endpoint failure left the state `unknown`. Exit code 3 accompanies the snapshot. Use the same handle and honor a polling delay when provided.
+
+An access denial or missing Task returns an error without a snapshot. Status
+checks leave the Task untouched.
+
 With Tasks enabled, `task://tasks/{taskId}` exposes the caller-visible task
 status and result as a resource in all three starters. Reading it requires both
 ownership of the task and permission for its originating tool, plus the
@@ -5558,6 +5657,978 @@ calls keep their existing behavior. Task IDs are opaque and must be saved by
 the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
 `--interactive` or `--input-responses-file` options for supported form requests.
+
+The `mcp-node-tasks` and `mcp-go-tasks` PostgreSQL starters support retrying a
+lost submission reply on an authenticated endpoint. Before starting the updated starter, run
+`npm run tasks:migrate` for Node or `go run . tasks-migrate apply` for Go with
+the migration binding. Generate and save a lowercase UUIDv7 before the first call.
+
+The `mcp-python-tasks` starter supports the same receipt and lookup flow. Apply
+its updated schema with the Python Task schema command from the starter README,
+then restart the web or combined process to advertise the extensions.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-submission-key "$TASK_SUBMISSION_KEY"
+```
+
+If the reply is lost, repeat the command with the same key, tool, arguments and
+caller within one minute of the key's UUIDv7 timestamp. A matching retry returns
+the original Task handle. A different request or caller is rejected. The
+server uses its PostgreSQL clock and rejects expired or future-dated keys.
+After the window closes, reconcile the original request before submitting again
+with a fresh key. Check or wait for the result using the returned Task ID.
+
+The CLI requires the server to advertise the `io.gregale/task-submission`
+extension. Keyed submission deduplicates Task creation within this window.
+Worker execution retains its existing at-least-once contract. See
+[ADR-20261121213156](adr/20261121213156-keyed-mcp-task-submission.md).
+
+After the submission window closes, use the saved key to find the original
+Task while it is still retained. This read checks Task ownership and current
+tool access and returns only metadata. Use the returned Task ID for `client wait`
+or an explicit result read.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-submission-key "$TASK_SUBMISSION_KEY" --metadata-only
+```
+
+For a process that may restart, use a new private receipt file in place of a
+manually saved key. The CLI saves it before sending the Task submission.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-receipt ./weekly-task.json
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --metadata-only
+```
+
+The CLI saves the submission key, fingerprints of the resolved endpoint and
+original request, and a proof bound to the original client credential. Use a
+new receipt path for each new submission.
+
+If the initial reply is lost, explicitly retry within one minute using the
+existing receipt, the original caller's credential, and the same endpoint,
+tool, arguments and `--defer-form-input` setting. The CLI checks the request
+fingerprint and credential proof and reuses the receipt's submission key. A
+retry creates the Task if the server never accepted it or returns the original
+handle if it did.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-receipt ./weekly-task.json --retry-submission
+```
+
+Use `client status --metadata-only` to check for a retained Task after the
+retry window expires or the credential changes. Version 1 and 2 receipts
+support retained Task recovery. Submission retry requires a version 3 receipt
+and the exact credential used to create it.
+
+To check several receipts for the same endpoint, repeat `--task-receipt` with
+`client status --metadata-only`.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --metadata-only --task-receipt ./weekly-task.json --task-receipt ./monthly-task.json
+```
+
+With multiple receipts, the command returns a JSON array in argument order.
+Each entry has an `outcome` and, when available, a `task` containing the
+metadata described above. An `available` entry contains the observed status.
+An `invalid_receipt` entry means the file could not be read as a private receipt
+for the selected endpoint. An `unavailable` entry covers expired or inaccessible
+Tasks. A `retry` entry gives `nextAction: retry_status` after a temporary failure
+or when the batch timeout expires. Exit code 0 means every entry is available.
+Exit code 3 means at least one entry needs a retry. Exit code 1 covers other
+unavailable or invalid entries. The array is returned in all three cases once
+the batch starts. A single receipt still returns the Task metadata object.
+
+To check a directory of local receipts after restart, point metadata status
+at the application's receipts.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --metadata-only --receipt-dir ./receipts
+```
+
+Directory mode always returns an array sorted by filename, including when
+the directory is empty or has one receipt. Each outcome includes the relative
+filename in `receipt`. The scan covers direct files of any extension and
+skips subdirectories and the CLI's temporary publication files. Entries must
+be private regular files for the selected endpoint. Malformed, mismatched, or
+unreadable entries receive `invalid_receipt`. The current credential and the
+usual batch exit codes apply to the whole scan.
+
+#### Submit and recover a keyed Task from TypeScript
+
+Pass `createMcpTaskSubmissionFetch()` from `@gregale/sdk-node/preview` as
+the `fetch` option on the official `StreamableHTTPClientTransport`. To use
+exact form numbers on the same connection, pass
+`createMcpTaskSubmissionFetch(createMcpTaskReviewFetch())`. Connect with the
+caller's OAuth credential to a Tasks endpoint that advertises keyed submission
+and lookup on protocol `2026-07-28`.
+
+```ts
+import {
+  lookupMcpTaskBySubmissionKey, submitMcpTask, waitForMcpTask,
+} from '@gregale/sdk-node/preview';
+
+const submission = {
+  submissionKey: savedUuidV7,
+  toolName: 'build_report',
+  arguments: { report: 'weekly', steps: 8 },
+};
+const result = await submitMcpTask(mcp, submission);
+const accepted = result.outcome === 'accepted'
+  ? result.task
+  : await lookupMcpTaskBySubmissionKey(mcp, submission.submissionKey);
+
+const task = await waitForMcpTask(mcp, accepted.taskId);
+```
+
+Save a new lowercase UUIDv7 before submitting and keep it with the endpoint,
+tool, and original arguments if the process may restart. The SDK sends one
+submission per invocation. An `unconfirmed` result means the server may have
+accepted it. Use the saved key for a read-only lookup, including from a fresh
+connection. The lookup returns only Task metadata and works while the Task is
+retained and the caller has access.
+
+Within the server's one-minute submission window, an explicit retry with the
+same endpoint, caller, key, tool, arguments, and deferred-input setting recovers
+the original handle if the first call succeeded. If the window has closed,
+continue with lookup and reconcile the original request before issuing a new
+key. Set `deferFormInput: true` to let the Task pause for reviewed forms.
+
+#### Save a durable Task receipt from TypeScript
+
+Use a receipt when recovery must survive a process restart. Connect the
+official client with `createMcpTaskReceiptTransport` from the Node SDK preview.
+Supply the caller's OAuth credential through the transport options.
+
+```ts
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import {
+  createMcpTaskReceiptTransport, submitMcpTaskWithReceipt,
+} from '@gregale/sdk-node/preview';
+
+await mcp.connect(createMcpTaskReceiptTransport(StreamableHTTPClientTransport, endpoint, transportOptions));
+const submitted = await submitMcpTaskWithReceipt(mcp, './receipts/weekly.json', {
+  toolName: 'build_report',
+  arguments: { report: 'weekly', steps: 8 },
+});
+```
+
+Use a new path in an existing application-owned directory on a POSIX file
+system that supports hard links and directory sync. The SDK generates the
+UUIDv7 key, syncs the private receipt, and then sends the submission. The
+file stores the endpoint fingerprint and key. With bearer authentication,
+it also records a request fingerprint and a proof of the bearer credential
+selected by the transport. If the server returns the Task ID, the SDK
+atomically adds it and reports whether it durably recorded the ID in
+`taskIdRecorded`. Credentials and tool arguments stay out of the receipt.
+
+After restart, reconnect using the same endpoint and the current credential.
+Recover the Task using the receipt path alone.
+
+```ts
+import { resumeMcpTaskFromReceipt } from '@gregale/sdk-node/preview';
+
+const task = await resumeMcpTaskFromReceipt(mcp, './receipts/weekly.json');
+```
+
+The SDK checks the receipt against the connected transport's endpoint before
+sending requests. Recovery uses the recorded Task ID when present and otherwise
+does a read-only lookup by submission key. It returns the current Task snapshot
+and any retained result. Use `waitForMcpTask` if it is still working. This
+workflow uses the Node SDK's receipt format.
+
+#### Retry the original submission from a TypeScript receipt
+
+If a submitter is interrupted and you need to resend its request, reconnect
+to the same endpoint with the original bearer credential and supply the
+original tool, arguments, and deferred-input setting.
+
+```ts
+import { retryMcpTaskFromReceipt } from '@gregale/sdk-node/preview';
+
+const retried = await retryMcpTaskFromReceipt(mcp, './receipts/weekly.json', {
+  toolName: 'build_report',
+  arguments: { report: 'weekly', steps: 8 },
+});
+```
+
+The SDK checks the request fingerprint and the bearer on the outgoing
+request. It reuses the recorded key within the one-minute submission window.
+If the server accepted the first request, a matching retry returns its
+original Task. Otherwise the retry can admit it. If the credential has
+changed, the key has expired, or the receipt has no proof, use the read-only
+resume helper to check for a retained Task.
+
+#### Find retained Tasks on the server
+
+Use the Task inbox when a new CLI profile has no local receipts or Task IDs.
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required
+```
+
+The command returns a JSON object with a `tasks` array. Each entry contains the
+Task ID, status, creation and update timestamps, and the suggested next action.
+Working Tasks also include a poll interval. The inbox reads metadata only.
+Use an ID from the inbox with `gregale mcp client status --task-id` or
+`gregale mcp client wait --task-id` on the same endpoint.
+
+Omit `--status` for all retained states, or filter by `working`,
+`input_required`, `completed`, `failed`, or `cancelled`. Pages hold up to
+20 Tasks by default, or up to 50 with `--limit`. The server orders entries by
+latest expiry first, with the Task ID breaking ties. If the response contains
+`nextCursor`, use it with `--cursor`, the same endpoint, caller, and status
+filter to continue. Each page reflects current retention and tool access.
+
+The Node, Go, and Python PostgreSQL Tasks starters advertise `io.gregale/task-inbox` on
+modern external OAuth endpoints after they detect the inbox index at startup.
+Update the starter and run its migration command with the migration credential.
+Use `npm run tasks:migrate -- apply` for Node, `go run . tasks-migrate apply`
+for Go, or `python task_schema.py apply` for Python. Restart the Task server
+after applying the migration. Use a credential
+with the original OAuth subject and client ID and the current scope for each
+Task's tool. Start a new scan if the server changes runtimes or owner keys.
+
+#### Watch for Tasks that need input
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch
+```
+
+Each line on stdout is one Task metadata object, with its ID, status,
+timestamps, and next action. The watch reports existing matches from the
+initial scan, then reports new matches and changed metadata. It keeps
+running when the inbox is empty. Use a reported ID to
+[review and submit input](#review-and-submit-input-by-task-id).
+
+Every scan starts from the first page and uses the server's current tool
+access and retention checks. An unsuccessful scan publishes no events. The
+watch waits before retrying temporary network and server failures and uses
+the server's retry delay when available. A Task that leaves the visible set
+produces no event. If it becomes visible again, the watch can report it again.
+
+`--interval` sets the delay between scans (default 30 seconds, from 1 second to
+1 hour). `--timeout` applies to each scan (default 30 seconds). Each scan is
+limited to 64 pages. Increase `--limit` or narrow `--status` if the inbox
+exceeds that bound. Press Ctrl+C to stop.
+
+To resume an inbox watch after restarting the CLI, pass the same checkpoint
+file, endpoint, status filter, and bearer credential:
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch --checkpoint-file ./inbox-watch.json
+```
+
+Use a path in an existing private directory and one file per watch. The CLI
+saves fingerprints of the reported entries still visible in the last complete
+scan. On restart it scans the current inbox again and skips
+unchanged entries. A renewed bearer credential starts a fresh history with the
+currently visible Tasks. An interruption after output and before the checkpoint
+is saved can replay those events on restart.
+
+#### Wait for one Task that needs input
+
+```sh
+gregale mcp client inbox --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --status input_required --watch --once --checkpoint-file ./inbox-watch.json \
+  --wait-timeout 2m
+```
+
+`--once` prints the first new or changed entry from a complete scan as one
+JSON line and exits with code 0. Later entries stay eligible for a subsequent
+invocation with the same checkpoint. Use the returned ID to
+[review and submit input](#review-and-submit-input-by-task-id).
+
+`--wait-timeout` takes a positive duration and requires `--watch --once`.
+It covers endpoint resolution, scanning, retries, and the time between
+scans. When that budget expires before an event is printed, the command exits
+with code 124 and empty stdout. `--timeout` sets the deadline for each scan.
+Without `--wait-timeout`, a one-shot watch keeps polling until it prints an
+event, encounters a permanent error, or is interrupted.
+
+#### Read or watch the inbox from TypeScript
+
+The Node SDK preview accepts an already connected, authenticated
+`@modelcontextprotocol/client` connection. Connect to the Tasks starter
+using MCP `2026-07-28` and the caller's OAuth credential.
+
+```ts
+import { listTaskInbox, watchTaskInbox } from '@gregale/sdk-node/preview';
+
+const page = await listTaskInbox(mcp, { status: 'input_required', limit: 20 });
+console.log(page.tasks.map(task => task.taskId));
+
+for await (const task of watchTaskInbox(mcp, {
+  status: 'input_required',
+  intervalMs: 5_000,
+  signal: AbortSignal.timeout(120_000),
+})) {
+  await handlePendingTask(task.taskId);
+  break;
+}
+```
+
+`listTaskInbox` returns metadata and an optional `nextCursor`. Pass it as
+`cursor` with the same filter and connection when listing another page.
+`watchTaskInbox` collects up to 64 pages per scan before yielding new or
+changed entries. It restarts at the first page after a transient read
+failure. Each scan has its own `timeoutMs` (default 30 seconds). An
+`AbortSignal` can bound the whole wait, and closing the iterator cancels
+its outstanding work. Each iterator starts with a fresh in-memory history.
+
+To watch Task status from a receipt, use `client watch` with the same endpoint
+and the caller's current credential.
+
+```sh
+gregale mcp client watch --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+The watch writes newline-delimited JSON metadata, starting with the current
+snapshot. It exits when the Task needs input or reaches a terminal state.
+Each update is checked against the receipt, including after a stream
+disconnect. If subscriptions are unavailable, the watch polls the receipt.
+`--interval` controls the reconciliation interval (default 30 seconds).
+Use `nextAction` to decide how to respond or retrieve the result. Press Ctrl+C
+to stop watching and reuse the receipt from another process.
+
+Repeat `--task-receipt` to watch several Tasks on that endpoint.
+
+```sh
+gregale mcp client watch --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --task-receipt ./monthly-task.json
+```
+
+Batch watch writes one initial record per receipt in argument order, followed
+by changed records. Each record includes `receiptIndex`, the receipt's
+zero-based position, and the same `outcome` and `task` fields as batch status.
+Paused, terminal, and unsuccessful receipts stop producing updates while the
+remaining working Tasks continue on the shared subscription. The watch
+rechecks working receipts after a disconnect. It uses polling if the stream
+is unavailable or the working set exceeds the 64-ID subscription limit.
+When the working set is empty, it exits with the batch status exit codes.
+
+To read the result from a receipt in one status check, use `--read-result`.
+The CLI resolves the original Task using the caller's current credential and
+fetches its result once if it completed. The completed Task has the same JSON
+format as a status read by Task ID. In other states the CLI returns metadata
+and a `nextAction` immediately.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --read-result
+```
+
+To wait for the result directly from a receipt, use the same endpoint and
+provide the caller's current credential. This resolves the original Task even
+after the one-minute submission window, for as long as the Task is retained
+and the caller has tool access. Use `--cancel-on-timeout` to request cancellation
+if the wait times out after resolving the Task.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+To request cooperative cancellation from a fresh process, pass the same
+receipt and the caller's current credential:
+
+```sh
+gregale mcp client cancel --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+Use either `--task-receipt` or `--task-id`. A cancellation acknowledgement
+sets `cancellation_requested` to true. If the Task is already terminal,
+the receipt command returns its metadata. If time remains after an ambiguous
+cancellation reply, it reads the same receipt once. A terminal status is
+reported as observed. Exit code 3 with `retry_status` means the outcome is still unclear.
+Check the same receipt before deciding whether to request cancellation again.
+
+Use `--defer-form-input` on a keyed submission to let a Task request approval
+after the submitting process exits. Keep this opt-in on matching retries.
+The receipt contains the same submission key and endpoint fingerprint.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8,"request_approval":true}' \
+  --tasks --task-receipt ./approval-task.json --defer-form-input
+```
+
+When the receipt's metadata reports `provide_input`, a process with the
+caller's current credential can resume the Task. Use `--interactive` to review
+the form and answer from a terminal, or supply the authorized answers in a
+JSON file keyed by request ID. For the example report, a file containing
+`{"approval":{"action":"accept","content":{"approved":true}}}` approves generation.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --input-responses-file ./responses.json
+```
+
+If the form update loses its reply, the CLI reads the same Task to reconcile
+the outcome. It continues waiting when the submitted requests are no longer
+pending. If the Task is still waiting for an answer, exit code 3 accompanies
+a metadata snapshot with `provide_input`. Review the current request before
+supplying an answer again. If status is unavailable, exit code 3 accompanies
+`retry_status`. Check the same receipt or Task ID before submitting input.
+
+To review answers outside the submitting process, export the pending forms
+to a new private file. The template records the endpoint fingerprint, Task ID
+and each form's request ID and digest. It includes the form text and schema
+for review, and starts with a null response for each request.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --write-input-template ./reviewed-input.json
+```
+
+After reviewing a form, fill in its `response` field. For the example report,
+`{"action":"accept","content":{"approved":true}}` is an approval. Use the same
+endpoint, Task receipt, and the caller's current credential. The CLI checks
+the Task and each live form against the review before sending any answers.
+
+```sh
+gregale mcp client respond --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --reviewed-input-file ./reviewed-input.json
+```
+
+`respond` sends at most one update, then returns the Task's status metadata
+without waiting for completion. If the reply is lost, it checks status once
+without resending the update. Exit code 3 with `provide_input` means an
+answer is still pending. Review the live form before submitting again.
+Exit code 3 with `retry_status` means status is temporarily unavailable.
+Check the receipt before taking another action. Use `client status --read-result`
+with the same receipt to retrieve a completed result.
+
+To submit reviewed input and wait for completion in the same process, use
+`client wait`.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --reviewed-input-file ./reviewed-input.json
+```
+
+#### Review and submit input by Task ID
+
+On the Node, Go, or Python PostgreSQL starter, get the ID from
+`gregale mcp client inbox --status input_required` and export its forms with
+the same endpoint and OAuth caller.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --write-input-template ./reviewed-input.json
+```
+
+Fill in each form's `response` in the private file and submit the review.
+
+```sh
+gregale mcp client respond --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --reviewed-input-file ./reviewed-input.json
+```
+
+The template includes the server's revision of the complete pending form set.
+The server checks it under a PostgreSQL row lock before recording the answers.
+If the forms changed, export a new template and review it again. After a lost
+reply, the CLI checks once whether the original answers were recorded. The
+result is `applied` when the server confirms the answers, or `unconfirmed`
+with exit code 3 when the check cannot confirm them. The CLI sends at most one
+update per invocation. Use `client wait --task-id` to retrieve the result.
+
+The server advertises `io.gregale/task-input-review` on modern external OAuth
+endpoints. Upgrade and restart the Task server to use the version 2 template. Export a new
+review if the server changes runtimes or owner keys. Receipt workflows continue
+to use their version 1 template.
+
+#### Review and submit Task input from TypeScript
+
+Connect the same authenticated MCP client with the preview
+`createMcpTaskReviewFetch()` as the `fetch` option on
+`StreamableHTTPClientTransport`. It preserves exact numbers in form schemas.
+Use a Tasks endpoint that advertises `io.gregale/task-input-review`.
+
+```ts
+import {
+  getTaskInputReview, respondToReviewedTaskInput,
+} from '@gregale/sdk-node/preview';
+
+const review = await getTaskInputReview(mcp, taskId);
+if (review.reviewRevision && review.forms.approval) {
+  // Show the form and collect the user's reviewed answer before submitting.
+  const answer = await reviewApprovalWithUser(review.forms.approval);
+  const result = await respondToReviewedTaskInput(mcp, review, { approval: answer });
+  console.log(result.outcome);
+}
+```
+
+Use the original review object on the client and transport that fetched it.
+Fetch a new review after reconnecting. Include an answer for every form ID.
+Accepted forms take an `accept` action and an object
+`content`. They also support `decline` and `cancel` without content. For
+exact numeric answers, pass the `McpTaskReviewNumber` from a form or construct
+one from the original number text, such as
+`new McpTaskReviewNumber('0.1000000000000000001')`.
+The Node starter rejects answers that its JSON store would round or change,
+including integers outside the JavaScript safe range. Use string fields for
+values that need higher precision on Node.
+
+An `applied` outcome means the answer is recorded for the original Task.
+For `stale`, read the current forms and review them again. If the submission
+reply is lost, the SDK checks the retained answer once within the
+operation's time budget. It returns `unconfirmed` if it cannot establish
+that the answer was recorded. The response includes Task metadata when
+available. Retrieve the original result with the same Task ID.
+
+#### Reconnect and retrieve a Task result from TypeScript
+
+Keep the Task ID and reconnect to the same MCP endpoint using the caller's
+current credential. The Node SDK preview uses the existing Tasks capability
+on protocol `2026-07-28`.
+
+```ts
+import { waitForMcpTask } from '@gregale/sdk-node/preview';
+
+const task = await waitForMcpTask(mcp, taskId, { timeoutMs: 120_000, signal });
+
+switch (task.status) {
+  case 'completed':
+    await handleOriginalResult(task.result);
+    break;
+  case 'input_required':
+    await reviewPendingInput(task.taskId);
+    break;
+  case 'failed':
+    await handleTaskError(task.error);
+    break;
+  case 'cancelled':
+    break;
+}
+```
+
+`getMcpTask` reads one snapshot. `waitForMcpTask` polls at the server's
+interval and returns when the Task finishes or needs input. Use
+`getTaskInputReview` for the pending forms. A completed Task's `result`
+includes the original tool response, including its `isError` field when
+present. A failed Task returns its retained execution error.
+
+The default deadlines are 30 seconds for a read and two minutes for a
+wait. Aborting or timing out stops observation while the Task follows
+its existing lifecycle. Expired Tasks and Tasks the caller cannot access
+may report the same `not_found` read error.
+
+#### Watch live Task status from TypeScript
+
+Use `watchMcpTask` from `@gregale/sdk-node/preview` to follow one known
+Task. Create the official Streamable HTTP transport with `createMcpTaskTransport`
+to enable live subscriptions on the authenticated connection.
+
+```ts
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { createMcpTaskTransport, watchMcpTask } from '@gregale/sdk-node/preview';
+
+await mcp.connect(createMcpTaskTransport(StreamableHTTPClientTransport, endpoint, transportOptions));
+for await (const state of watchMcpTask(mcp, taskId, { timeoutMs: 120_000, signal })) {
+  console.log(state.status, state.nextAction);
+}
+```
+
+The watch yields the current metadata and changed snapshots until the Task
+finishes or needs input. It confirms subscription updates with authenticated
+status reads and reconciles after a disconnect and periodically on quiet
+streams. The default reconciliation interval is 30 seconds. Connections
+without Task subscriptions poll at the Task's server-directed interval.
+Closing the iterator or aborting its signal stops the watch. Use `getMcpTask`
+to retrieve the completed Task's result.
+
+Use `watchMcpTasks` on that same connection to follow several known Task
+IDs. The watcher deduplicates IDs and yields metadata or a read error for
+each Task independently.
+
+```ts
+import { watchMcpTasks } from '@gregale/sdk-node/preview';
+
+for await (const event of watchMcpTasks(mcp, taskIds, { signal })) {
+  if (event.outcome === 'unavailable') {
+    console.log(event.taskId, event.error.code);
+    continue;
+  }
+  console.log(event.taskId, event.task.status, event.task.nextAction);
+}
+```
+
+Tasks leave the watch when they finish, need input, or can no longer be
+read. One subscription covers up to 64 active IDs. The watch polls larger
+batches until they fit, and also polls IDs omitted from the subscription
+acknowledgement. It uses at most four concurrent status reads, and checks
+all remaining Tasks after a disconnect before subscribing again.
+
+#### Resume a Task group after an agent restart
+
+Save a group from one to 64 existing Node Task receipts for the same MCP
+endpoint. The group uses a private subdirectory of an existing
+application-owned directory on a POSIX file system. It stores the read-only
+references from the receipts and the acknowledgement of each handled update.
+
+```ts
+import { createMcpTaskGroup, watchMcpTaskGroup } from '@gregale/sdk-node/preview';
+
+// Create the group once from receipts produced by submitMcpTaskWithReceipt.
+await createMcpTaskGroup('./receipts/weekly-group', receiptPaths);
+
+// Use the same group path after reconnecting with createMcpTaskTransport.
+for await (const event of watchMcpTaskGroup(mcp, './receipts/weekly-group', { signal })) {
+  if (event.outcome === 'unavailable') {
+    console.log(event.receiptIndex, event.error.code);
+    continue;
+  }
+  await handleTaskUpdate(event.task, event.updateId);
+  await event.acknowledge();
+}
+```
+
+The watcher uses the current credential and recovers lost submission replies
+by key. It reads each retained Task's latest metadata and shares a stream
+for Tasks still working. Use `receiptIndex` to match the original order of
+the receipts. The group stores no credentials, tool arguments, forms, or
+results, and recovery never submits a Task.
+
+Acknowledge an update after handling it. A restart skips the same
+acknowledged snapshot, while a current unacknowledged snapshot can be
+delivered again with the same `updateId`. Use that ID if handling the update
+needs an idempotency key. An acknowledgement applies to that snapshot alone.
+
+By default, Tasks that need input leave the current watch and are checked
+the next time the group is opened. Pass `{ followInput: true, signal }` as the
+third argument to `watchMcpTaskGroup` to keep following them on the shared
+stream, with polling fallback. Acknowledge the `input_required` update after
+showing it to the user. The acknowledgement records delivery of the notice.
+The user's answer goes through `getTaskInputReview` and
+`respondToReviewedTaskInput`, and the watcher reports later Task updates.
+The watch deadline also applies while Tasks are paused. Use the same option
+and group directory after a restart to follow acknowledged pauses without
+repeating their notices.
+
+#### Submit a Task group with restart recovery
+
+Use `submitMcpTaskGroup` with a receipt-capable transport and a new group path.
+It saves the full plan for up to 64 Tasks before sending the first request.
+Each member has one submission key and a fingerprint of its original
+request. The SDK sends members in order and stops at the first uncertain or
+rejected submission.
+
+```ts
+import {
+  continueMcpTaskGroupSubmission, resumeMcpTaskGroupSubmission, submitMcpTaskGroup,
+} from '@gregale/sdk-node/preview';
+
+await submitMcpTaskGroup(mcp, './receipts/weekly-batch', submissions);
+
+// After reconnecting, inspect admission evidence before choosing a member.
+const entries = await resumeMcpTaskGroupSubmission(mcp, './receipts/weekly-batch');
+const pending = entries.find(entry => entry.outcome === 'prepared');
+if (pending) {
+  await continueMcpTaskGroupSubmission(
+    mcp, './receipts/weekly-batch', pending.receiptIndex, submissions[pending.receiptIndex],
+  );
+}
+```
+
+Recovery reads the Task ID from a confirmed receipt or looks up the saved key
+after a lost reply. It reports `prepared` for a member with no send attempt,
+`unconfirmed` when an attempted submission has no retained Task visible to the
+caller, and `unavailable` when the status could not be read. Continue one
+member explicitly with its original tool, arguments, and deferred-input
+setting. If admission is already confirmed, continuation returns that Task.
+A recorded attempt keeps its key and can be retried within one minute of
+that key's issuance. If a prepared member's unused key has expired,
+continuation records a fresh key in the member receipt before sending.
+Concurrent callers use the key recorded by the first attempt. A caller can
+receive `unconfirmed` while another caller's send is still in progress.
+An attempted member uses the bearer recorded for that send.
+
+On Node Task starters that advertise `io.gregale/task-group-owner`, new
+plans save an opaque binding issued by the endpoint. An agent can reconnect
+with a renewed OAuth token and explicitly continue an unsent member. The
+endpoint checks the same issuer, resource, subject, and OAuth client, and
+applies the current tool scope both before the SDK records the attempt and
+on the admission request. Groups created without this capability use the
+original group bearer for sends.
+
+The private group stores fingerprints and receipts. Keep the original
+requests in your application for explicit continuation. Use
+`watchMcpTaskGroup` on the same path to observe the Tasks already submitted.
+
+#### Submit a Task group from the CLI
+
+On an MCP endpoint that advertises owner-bound admission, save one to 64 tool
+calls in a JSON array. Each call has a `toolName`, optional object `arguments`,
+and optional boolean `deferFormInput`.
+
+```json
+[
+  {"toolName":"build_report","arguments":{"report":"weekly","steps":2}},
+  {"toolName":"build_report","arguments":{"report":"monthly","steps":3},"deferFormInput":true}
+]
+```
+
+```sh
+gregale mcp client group submit \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch --plan ./calls.json
+```
+
+Choose a group path inside an existing directory and keep the original plan
+file, which can be up to 1 MiB. The group directory contains fingerprints,
+submission keys, the owner binding, and receipt metadata. The CLI saves the
+entire group plan before admitting any Task, and saves each attempt before
+sending it. A stopped group blocks new admissions.
+
+Rerun the same command with the original plan and a current token for the
+same owner. The CLI checks the recorded attempts first and submits prepared
+members in order after it confirms the preceding admissions. A receipt
+with no confirmed Task reports `unconfirmed` and keeps its saved key. Its
+status can be checked again by repeating the command. To retry a member that
+the server reports as missing, add `--retry-unconfirmed` and use the original
+bearer. The command rechecks group ownership and tool access and reuses the
+saved key within one minute of issuance. Outcomes are returned in receipt
+order. Exit code `0` means every member was accepted, `3` means an attempt
+remains unconfirmed, and `1` covers other incomplete submissions.
+The same directory works with the Node SDK and the CLI's
+`group status`, `group watch`, and `group stop` commands.
+
+#### Collect Task group results from TypeScript
+
+Use `getMcpTaskGroupResults` with the saved group path and the current
+authorized connection. It makes one pass over the group, with at most four
+members being read at a time, and returns entries in the original receipt
+order. It resolves lost submission replies by the saved key.
+
+```ts
+import { getMcpTaskGroupResults } from '@gregale/sdk-node/preview';
+
+const members = await getMcpTaskGroupResults(mcp, './receipts/weekly-batch');
+for (const member of members) {
+  if (member.outcome === 'available' && member.task.status === 'completed') {
+    await useResult(member.receiptIndex, member.task.result);
+  }
+}
+```
+
+Available Tasks contain their current status. Completed and failed Tasks
+also contain the original retained result or execution error. A pending
+input review stays available through `getTaskInputReview`. Unsent members
+report `not_submitted`, and individual read failures report `unavailable`
+with an SDK error code. The group directory holds the existing receipts and
+acknowledgements, while the collector returns payloads in memory.
+
+#### Inspect a saved Task group from the CLI
+
+Use the endpoint the Node SDK group was saved against and a current MCP
+client token. A renewed token can read Tasks that its principal is still
+authorized to access.
+
+```sh
+gregale mcp client group status \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch
+```
+
+The JSON array follows the saved receipt order. Each available Task includes
+its status and next action. Members without an admission receipt report
+`not_submitted`. A present receipt that cannot be read reports
+`invalid_receipt`, and a read the server cannot confirm reports
+`unavailable` or `retry`. Add `--include-results` to include retained
+results for completed Tasks and execution errors for failed Tasks. Pending
+form contents stay private, and inspecting the group leaves its files intact.
+
+#### Watch a saved Task group from the CLI
+
+Use the endpoint the Node SDK group was saved against and a current client
+token.
+
+```sh
+gregale mcp client group watch \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch
+```
+
+The command streams one JSON object per line. It starts with each receipt in
+group order, then emits changed status and next actions. It follows Tasks
+that are working and reports `provide_input` when a Task pauses for reviewed
+input. Members without a saved receipt report `not_submitted`. Start a new
+watch to pick up members submitted later or to follow Tasks after answering
+their input.
+
+The watch uses one shared subscription when available. It rechecks current
+status after interruptions and uses polling when it cannot keep a stream
+open. The polling interval defaults to two seconds and honors longer Task
+polling hints. Tune it with `--interval`.
+
+Updates include only Task metadata. The watch leaves the saved group and
+its receipts intact. Duplicate observations are suppressed within each run.
+It exits when each watched Task settles or needs input. Use `--timeout` to
+change the two-minute deadline.
+
+Available observations include an `updateId`. Once you have handled an
+update, acknowledge it in the same private group directory.
+
+```sh
+gregale mcp client group ack \
+  --group ./receipts/weekly-batch --update-id "$UPDATE_ID"
+
+gregale mcp client group watch \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch --resume
+```
+
+The CLI and Node SDK share acknowledgement markers. A resumed watch uses
+the current token to read each Task, skips acknowledged observations and
+keeps following working Tasks. If an unacknowledged observation is still
+current when the watcher restarts, it is emitted again with the same ID.
+A newer Task state has its own ID. Acknowledging a pause records delivery
+of that update. Use the reviewed input flow to submit the answer.
+
+#### Export reviews for paused Task group members
+
+Use a current client token on an endpoint that advertises reviewed input
+by Task ID. Choose a separate private output directory under an existing
+directory.
+
+```sh
+gregale mcp client group review \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch --out-dir ./reviews
+```
+
+The command returns one entry per receipt in group order. Each available
+review includes the Task ID and a path such as `member-0-input.json`. The
+private file holds the forms and their server revision. Fill in each
+`response` and submit it through the existing reviewed-input command.
+
+```sh
+gregale mcp client respond \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --task-id "$TASK_ID" --reviewed-input-file ./reviews/member-0-input.json
+```
+
+Repeat exports preserve draft answers. An `existing` entry points to a
+template for the current revision, and `stale_template` flags a saved draft
+from an earlier revision. Choose a new output directory to export the
+current forms while keeping the earlier draft. The server verifies the
+revision again when the response is submitted.
+
+#### Apply selected Task group responses
+
+Fill in every response in each private review file you intend to submit.
+Pass those files explicitly with the saved group and your current token.
+
+```sh
+gregale mcp client group respond \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch \
+  --reviewed-input-file ./reviews/member-0-input.json \
+  --reviewed-input-file ./reviews/member-2-input.json
+```
+
+The command matches files to group members by the Task ID inside each
+file. JSON results follow receipt order, with unmatched and invalid
+selections listed afterward. A stale or unavailable member leaves the
+other selected members eligible to respond. If a reply is lost, the
+command checks for the exact recorded response before reporting the
+outcome. Review files and receipts are preserved.
+
+The command exits with `0` when every selected response is confirmed.
+It exits with `3` if any answer remains unconfirmed or a review read
+needs a retry, and with `1` for other selection failures. Read the
+per-file results before retrying.
+
+#### Stop a Task group from TypeScript
+
+Call `stopMcpTaskGroup` with the saved group path and the current authorized
+connection. The SDK records the stop in the private group directory before
+requesting cooperative cancellation. Attempts to continue admission through
+the stopped group return `group_stopped`.
+
+```ts
+import { stopMcpTaskGroup } from '@gregale/sdk-node/preview';
+
+const members = await stopMcpTaskGroup(mcp, './receipts/weekly-batch', { signal });
+for (const member of members) {
+  console.log(member.receiptIndex, member.outcome);
+}
+```
+
+The result is ordered by receipt index. A `not_submitted` member has no
+recorded admission attempt. An `admission_unconfirmed` member has a receipt
+whose Task could not yet be confirmed. A Task found by ID or submission key
+returns the same `terminal`, `requested`, or `unconfirmed` outcome as
+`cancelMcpTask`, or `unavailable` if its access or status could not be
+verified. A terminal Task includes its observed status.
+
+Repeat the call to resume cleanup after an interruption or to reconcile
+pending admissions and cancellations. An admission already in flight can
+commit during the stop. Its receipt stays available for the next pass.
+Use the same group directory to keep the stop in effect across restarts.
+
+#### Stop a saved Task group from the CLI
+
+Use the same Node SDK group directory, its original endpoint URL, and a
+current client token.
+
+```sh
+gregale mcp client group stop \
+  --url https://reports.example.com/mcp --token-env MCP_TOKEN \
+  --group ./receipts/weekly-batch
+```
+
+The CLI records the same durable stop marker as the SDK before reaching the
+endpoint. Each cancellation still requires the caller to have access to the
+Task. The JSON array preserves receipt order. A `requested` entry confirms
+that the server acknowledged a cancellation request. A `terminal` entry
+reports an observed final state. An `unconfirmed` cancellation or
+`admission_unconfirmed` receipt can be checked by running the command again.
+Members without a receipt report `not_submitted`. Unreadable receipts and
+Tasks the server cannot confirm report `invalid_receipt` and `unavailable`,
+respectively.
+
+After an interruption, rerun the command against the same directory. The CLI
+rechecks retained Tasks and skips those already in a terminal state. The
+marker remains active across CLI and SDK restarts, including when a
+cancellation fails or the endpoint is unavailable.
+
+#### Cancel a Task from TypeScript
+
+Use `cancelMcpTask(mcp, taskId)` from `@gregale/sdk-node/preview` on the
+authenticated Tasks connection. If you saved only a submission key, resolve
+the ID with `lookupMcpTaskBySubmissionKey` first.
+
+The SDK reads the Task before requesting cancellation. It returns one of
+three outcomes.
+
+- `terminal` includes the observed `cancelled`, `completed`, or `failed`
+  status as Task metadata. Use `getMcpTask` to retrieve a retained result.
+- `requested` means the server acknowledged the request. A running Task may
+  still need time to stop. Check its status with `getMcpTask`.
+- `unconfirmed` means the acknowledgement was lost or unusable and the SDK
+  could not verify a terminal state. If time remains, it checks the status
+  once. Check the same Task before deciding whether to request cancellation
+  again.
+
+The deadline covers the initial read, the cancellation request, and any
+reconciliation. The SDK sends at most one cancellation request per call.
+Aborting a wait still stops observation alone.
 
 ## MCP catalog snapshots
 
@@ -5738,7 +6809,7 @@ Before adding sensitive catalog entries, change `auth` in `gregale-mcp.json`:
   "mode": "external-oauth",
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
-  "resource": "https://my-mcp.gregale.dev/mcp",
+  "resource": "https://my-mcp.gregale.app/mcp",
   "scopes": ["mcp:tools"],
   "tool_scopes": {
     "greet": [],
@@ -5800,6 +6871,26 @@ key set can provide one eligible key for each supported algorithm.
 The OAuth provider doctor's signing-key check applies the same `key_ops`
 requirement and does not count encryption-only or malformed-operation keys
 as usable verification keys.
+
+The `jwks_url` must answer anonymous requests. When the starter cannot fetch
+its keys it does not call the token wrong: a network failure, timeout, 5xx or
+429 is answered with `error_description="signing keys unavailable"` and
+`Retry-After`, and a 401 or 403 with `error_description="signing keys
+refused"` and no `Retry-After`. The CLI names the cause in both cases. A 403
+can also come from a firewall in front of the provider that refuses the app's
+requests.
+
+An authorization server you deploy on Gregale answers 401 or 403 while its URL
+is private (new apps start private on some plans) or has a `--public-auth`
+mode other than `open` (see [App access control](auth.md#app-access-control)).
+Open it to anonymous callers:
+
+```bash
+gregale app update <authorization-server-app> --no-require-authn --public-auth open
+```
+
+and set `access: public` in its `gregale.yaml`, or its next deploy makes it
+private again.
 
 All three starters filter `tools/list`, `resources/list`,
 `resources/templates/list` and `prompts/list` using verified JWT scopes for each
@@ -6779,10 +7870,23 @@ serialize cooperating gate invocations; coordinate independent policy changes
 and all key-writing processes during rollout. No automatic cleanup follows a
 failed release; inspect the reported stage and reconcile candidate processes.
 
-#### Manual Go and Python worker upgrades
+#### Go and Python worker upgrades
 
-Go/Python workers require a manual rollout. The automated release gate and its
-native deployment adapter currently support generated Node workers only.
+`gregale mcp server tasks deploy` also releases Go and Python workers. Their
+starters have no admission tables, so the CLI runs the gate itself, entirely
+through the Gregale API (ADR-20261123160000, amendment 1): the same journal,
+checkpoint and deployment adapters as the Node gate; the schema migration in
+the web app's release command (`/app/out tasks-migrate apply` or
+`python task_schema.py apply`), with the staged web deployed before the
+candidate worker; and a readiness rule based on unfinished Tasks: a fresh
+report from the always-on observer, taken after the release began, must show
+the candidate deployment serving every `(tool, handler_version)` that `queued`,
+`running` or `input_required` Tasks need, on every replacement, before previous
+workers drain. The machine running the release needs no database credentials;
+set `observer_metric_app` to the app the observer reports for
+(`MCP_TASKS_SCALING_APP_SLUG`). `recover`, `restore`, `quarantine` and `retire` need the Node gate's claim
+fence and stay Node-only; for a failed Go/Python release use the manual steps
+below.
 
 Run explicit schema migrations with the migration binding. Keep retained owner
 and payload keys, compatible handler versions and execution policy consistent
@@ -7145,9 +8249,196 @@ Neither tool ships or stops an experiment. The recommendation's commands are
 for the owner to run; only a guardrail breach changes a flag without an
 owner's request.
 
+## Change feature flags
+
+Five tools in the `release` toolset change Gregale Flags (ADR-20261117215858).
+All take `project` and `environment`; writes need write consent for that
+environment.
+
+- `gregale_list_flags` returns the configuration, its version and the
+  lifecycle report.
+- `gregale_plan_flag_change` takes `changes`, an ordered list of 1–20 edits:
+  `create` (`variants`, `default`, `description`, `owner`, `expires`), `set`,
+  `enable`, `disable`, `kill`, `revive`, `set_percent` (`percent`, 0–100),
+  `add_rule` (`rule_id`, `customers`, `group`, `attributes`, `percent`,
+  `value`), `remove_rule` and `delete`. The edits follow the same rules as the
+  `gregale flag` commands. The plan shows each edit's summary and every changed
+  flag before and after, and pins the configuration version for 15 minutes.
+- `gregale_plan_flag_rollback` reviews restoring an earlier `version`.
+- `gregale_apply_flag_change` publishes a plan. A configuration that changed
+  since the plan is refused as `plan_stale`; review a new plan. Retry the same
+  `plan_id` after an uncertain response.
+- `gregale_kill_flag` kills one flag on the latest configuration at once:
+  every evaluation serves the fallback in the application's code. It needs no
+  plan and no approval, and is idempotent. Revive the flag with a reviewed
+  `revive` change.
+
+Flag publishes, rollbacks and rollout promotions by an agent connection ask a
+person first ([approvals](#approve-an-agents-risky-actions)); the kill switch
+does not.
+
+## Run a command in the app
+
+`gregale_plan_run_command` (toolset `operate`) reviews one non-interactive
+command for `app`: `command` as an argv array, or `shell` as one line run by
+`/bin/sh -c`, with `timeout_seconds` (1–900, default 120) and
+`max_output_bytes` (1024–262144, default 65536). The command runs once in a
+fresh task VM from the app's live default deployment, with its variables and
+secrets, never in a serving instance. Apply the plan with
+`gregale_apply_operation`; a retried apply never starts a second command. On a
+production app an agent connection asks a person first.
+
+`gregale_get_command_run` returns the status, exit code and the stdout and
+stderr tails, waiting up to `wait_seconds` (0–45) for the command to finish.
+Lines that look like credentials, such as an `env` dump, are replaced with
+`[redacted: <kind>]`. `gregale_cancel_command_run` asks a running command to
+stop; work it already did stays done.
+
+## Query PostgreSQL
+
+With the "Read my app data" consent, or an agent key with the
+`data:read` scope, two tools in the `diagnose` toolset read a managed
+database bound to an app (ADR-20261117215858):
+
+- `gregale_get_postgres_schema` lists the tables and views of one schema
+  (default `public`) with their columns, types, NOT NULL, primary keys and
+  indexes. A large schema is listed by name with column counts; name up to
+  20 tables in `tables` for their detail.
+- `gregale_query_postgres` runs one statement and returns up to `max_rows`
+  rows (default 100, at most 1000, and 1 MiB) as text, with `truncated` when a
+  cap stopped reading.
+
+Both take `app`, `database` (an ID or name from `gregale_list_databases`) and
+optional `project` and `environment`; the database must be bound to the app in
+that scope. The statement runs as the database's read-only agent login, which
+reads the public schema, in a READ ONLY transaction with a 5-second timeout.
+Writes, DDL and several statements are refused with PostgreSQL's error. One
+query per database runs at a time. A query wakes a suspended database and its
+compute is billed as usage. The audit log records a hash of each statement,
+never the SQL or rows. The same API is `POST /v1/postgres/databases/{id}/query`.
+
+## Queues, workflows and monitoring
+
+ADR-20261117232109. Reads (toolset `diagnose`): `gregale_get_queue_state`,
+`gregale_list_dead_letters`, `gregale_list_workflow_runs`,
+`gregale_get_workflow_run`, `gregale_list_workflow_attention`,
+`gregale_list_alerts`, `gregale_get_slo_status`, `gregale_list_synthetics`,
+`gregale_list_incidents` and `gregale_get_incident`. Message bodies and
+workflow inputs and outputs are replaced with their size unless the
+connection has "Read my app data" (`data:read`).
+
+Reviewed changes (toolset `operate`), applied with `gregale_apply_operation`:
+
+- `gregale_plan_dead_letter_replay`: up to 50 named dead letters, or the
+  oldest up to 200. A replay runs the app's code again on old input.
+- `gregale_plan_workflow_recovery`: `retry_step`, `resume` (fails if the run
+  was resumed since the plan), `cancel` or `cancel_queued`.
+- `gregale_plan_monitoring_change`: create an SLO; create, enable or disable a
+  synthetic check; create or update an alert rule that notifies existing
+  channels. Agents cannot add webhooks or alert actions, and cannot delete.
+
+`gregale_acknowledge_incident` and `gregale_add_incident_note` act at once.
+Replays and workflow recovery by an agent connection ask a person first
+(workflow run actions in every environment).
+
+## Edge rules, previews, objects and workflow tests
+
+ADR-20261118140000.
+
+- Edge rules: `gregale_list_edge_rules` and `gregale_get_edge_activity`
+  (toolset `diagnose`) read rules, attack mode, rule-set versions, hits and
+  recent rule events. Client IPs and user agents need `data:read`.
+  `gregale_plan_edge_rule_change` (toolset `operate`) reviews creating,
+  updating or deleting a rule, rolling back to a version, or switching attack
+  mode on or off. The plan is pinned to the current rules: apply fails with
+  `plan_stale` if they changed. On a production app the apply asks a person
+  first.
+- Verification contracts (toolset `release`, ADR-20261122220000):
+  `gregale_validate_verification_contract` checks a `gregale.verify.yaml`
+  offline; `gregale_get_verification_contract` reads the app's stored contract;
+  `gregale_plan_verification_contract_change` reviews `set` or `delete`, pinned
+  to the stored revision. Once set, a new deployment whose required check fails
+  is not promoted.
+- Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
+  and `gregale_plan_preview_change` (`create` for a pull request, or
+  `destroy`, which asks a person first). Previews are reached only through
+  their parent app.
+- Objects (toolset `diagnose`): `gregale_list_objects` lists keys and sizes;
+  `gregale_read_object` reads up to 256 KiB from the start of an object and
+  needs `data:read`. No writes or deletes.
+- Workflow tests (toolset `release`): `gregale_list_workflow_tests` and
+  `gregale_run_workflow_tests`, which runs a saved workflow's test cases (mocked
+  simulations) against its current draft.
+
+## Events, audit trail, budgets and API consumers
+
+ADR-20261118161500.
+
+- Events (toolset `diagnose`): `gregale_list_event_subscriptions`,
+  `gregale_get_event_subscription_health`, `gregale_list_event_deliveries`
+  and `gregale_list_event_recoveries`. `gregale_plan_event_change` (toolset
+  `operate`) reviews pausing or resuming a subscription, recovering matched
+  events (the plan shows how many) or cancelling a recovery. On a production
+  app, pauses and recoveries ask a person first.
+- Audit (toolset `diagnose`): `gregale_list_audit_events` reads the account
+  audit log, or one app's events. A connection limited to some apps must name
+  an app.
+- Spend (toolset `operate`, needs "Read usage and billing"):
+  `gregale_get_spend_forecast`, `gregale_list_budgets`,
+  `gregale_plan_budget_change` and `gregale_apply_budget_change`. Agents create
+  and update only budgets that notify; enforcing budgets stay with people.
+  Every budget write asks a person first. The forecast leaves out per-usage
+  allocations; read one app's costs with `gregale_get_costs`. Budget and flag
+  plans live only in the server's memory: after a release restarts the hosted
+  server, plan again.
+- API consumers (toolset `operate`): `gregale_get_mcp_seller_stats` (a
+  sold MCP server's customers, revenue, tools and customers near their
+  limit; `gregale mcp server stats`), `gregale_list_api_consumers`,
+  `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
+  revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans
+  and spend caps ask a person first.
+
+## Log search, drains, channels and organization members
+
+ADR-20261119110000.
+
+- Logs (toolset `diagnose`): `gregale_search_logs` filters by source, level,
+  route, status, deployment, request, trace and text over a window (default
+  the last hour); `gregale_get_log_facets` counts matches to narrow a search.
+  `gregale_list_log_drains` and `gregale_get_log_drain_health` show drains
+  and their delivery.
+- Channels (toolset `operate`): `gregale_list_notification_channels` and
+  `gregale_test_notification_channel` (one test message, at most once a
+  minute per channel).
+- Drain and channel destinations show only their host (`https://hooks.slack.com`,
+  `…@example.com`); the rest of a webhook URL is often its credential.
+- `gregale_list_org_members` (toolset `operate`) lists an organization's
+  members, roles and pending invitations.
+
+## Experiments, saved workflows, event schemas and domains
+
+ADR-20261119190000.
+
+- Experiments (toolset `release`): `gregale_plan_experiment_change` reviews
+  creating (never started by create), starting, stopping or shipping a flag
+  experiment; apply with `gregale_apply_reviewed_change`. Production starts
+  and ships ask a person first.
+- Saved workflows (toolset `release`): `gregale_save_workflow_draft` saves a
+  draft (it runs nothing); `gregale_plan_workflow_publish` reviews publishing
+  it and refuses unless the draft's saved tests passed on that version.
+  Production publishes ask a person first.
+- Event schemas: `gregale_list_event_schemas` (toolset `diagnose`) and
+  `gregale_plan_event_schema_registration` (toolset `operate`), which previews
+  which subscriptions accept the new version and validates samples. It needs
+  a connection to every app and asks a person first. Pin or reset a
+  subscription's schema versions with `gregale_plan_event_change`
+  (`set_schema_versions`, `reset_schema_versions`).
+- `gregale_diagnose_domain` (toolset `diagnose`) explains why a custom domain
+  does or does not serve, with the record to change.
+
 ## Read product analytics
 
-Four read-only tools in the `diagnose` toolset query product analytics (see
+Five read-only tools in the `diagnose` toolset query product analytics (see
 [Flags](flags.md#analyze-product-events)). All take `project` and
 `environment`; the first three also take optional `from`, `until` (RFC 3339),
 `unit` (`customer` or `subject`) and `by` (`flag:KEY` or `property:KEY`).
@@ -7159,6 +8450,14 @@ Four read-only tools in the `diagnose` toolset query product analytics (see
   `periods`.
 - `gregale_get_insight_requests` takes `flag` and returns requests, server
   errors and p95 latency per variant.
+- `gregale_list_insight_cohorts` lists saved cohorts with their definition,
+  member count, the plan's member bound and the last refresh; rules target a
+  cohort with the `gregale.cohort` attribute (see
+  [Target a cohort](flags.md#target-a-cohort)).
+- `gregale_list_saved_insights` lists saved insights with their query,
+  digest, alert, last scheduled value and alert state;
+  `gregale_run_saved_insight` takes `key` and runs one now (see
+  [Save, share and export an insight](flags.md#save-share-and-export-an-insight)).
 
 Each result carries guidance: a flag breakdown is observational, so causal
 claims need an experiment.
@@ -9642,11 +10941,11 @@ All receipts keep `ready_to_apply=false`, `bindings_verified=false` and
 Once a retained source review has a passing binding observation, an unscoped personal administrator API key can reserve a disposable rehearsal target. APID must enable `FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN=1`, hosted source retention, and binding verification.
 
 ```bash
-gregale mcp server tasks rehearsal plan --id INTENT \
+gregale mcp server tasks rehearse plan --id INTENT \
   --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
   --binding-sha256 BINDING_DIGEST
-gregale mcp server tasks rehearsal approve --id INTENT --plan-sha256 PLAN_DIGEST
-gregale mcp server tasks rehearsal get --id INTENT
+gregale mcp server tasks rehearse approve --id INTENT --plan-sha256 PLAN_DIGEST
+gregale mcp server tasks rehearse get --id INTENT
 ```
 
 Review the allocated target identity, queue namespace, and fixed expiry before approving. The plan expires with the passing binding observation and retries preserve its identity and deadline. Use `rehearsal revoke --id INTENT --plan-sha256 PLAN_DIGEST` to withdraw an unconsumed approval. These commands only record planning and approval metadata. Runtime allocation, migration and candidate verification belong to the contained runner. See [the rehearsal plan ADR](adr/20261118062934-hosted-task-rehearsal-plan.md).

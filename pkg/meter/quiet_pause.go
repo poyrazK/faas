@@ -135,7 +135,12 @@ func (s *Sampler) quietPauseModeFor(app state.App, plan api.Plan) QuietPauseMode
 // returns the seconds left to bill.
 func (s *Sampler) unbilledQuietSeconds(paused map[string]state.QuietPausedSeconds, mode QuietPauseMode, instanceID, plan string, seconds int64) int64 {
 	p, ok := paused[instanceID]
-	if !ok {
+	// An instance with no resident second this minute bills nothing, so an
+	// open pause on it over-bills nothing either. The sampler walks an app's
+	// whole retained instance history, which keeps a failed instance whose
+	// pause its retired node never closed; counting it as unproven fired
+	// FaasQuietPauseUnprovenMinutes for minutes no one was billed.
+	if !ok || seconds <= 0 {
 		return seconds
 	}
 	sub := min(max(p.Seconds, 0), seconds)

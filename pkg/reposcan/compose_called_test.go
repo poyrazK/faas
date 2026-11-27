@@ -205,3 +205,40 @@ func TestComposeCalledServicesServeRequests(t *testing.T) {
 		})
 	}
 }
+
+// Retail-store probe 2026-11-17: a Compose service with only expose: and no
+// caller was planned as a worker without a word, then every boot failed with
+// execution_mode_conflict. It stays a worker (ADR-20261029120000), but the
+// plan now says why it will fail.
+func TestComposeUncalledExposedServiceIsWarned(t *testing.T) {
+	compose := `services:
+  web: {image: ghcr.io/x/web:1, ports: ["80:3000"]}
+  probe: {image: nginx:1.27, expose: ["80"]}
+  queue: {image: ghcr.io/x/consumer:1}
+`
+	result, err := Scan(fstest.MapFS{"compose.yaml": {Data: []byte(compose)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe, queue Class
+	for _, w := range result.Workloads {
+		switch w.Name {
+		case "probe":
+			probe = w.Class
+		case "queue":
+			queue = w.Class
+		}
+	}
+	if probe != ClassWorker || queue != ClassWorker {
+		t.Fatalf("classes probe=%q queue=%q, want both workers", probe, queue)
+	}
+	var found []string
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "execution_mode_conflict") {
+			found = append(found, warning)
+		}
+	}
+	if len(found) != 1 || !strings.Contains(found[0], `service "probe" declares expose: [80]`) || !strings.Contains(found[0], "http://probe:80") {
+		t.Fatalf("warnings = %v, want one for probe only (queue listens on nothing declared)", result.Warnings)
+	}
+}

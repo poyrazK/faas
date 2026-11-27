@@ -39,6 +39,11 @@ func TestPgInstanceApplicationStandardArtifactChangeDuringBoot(t *testing.T) {
 	standardRuntimeArtifactChangeDuringBoot(t, s)
 }
 
+func TestPgInstanceApplicationStandardScanLandsDuringBoot(t *testing.T) {
+	s, _ := runtimeCapturePGStore(t)
+	standardRuntimeScanLandsDuringBoot(t, s)
+}
+
 func TestPgInstanceApplicationStandardLoggingChangeDuringBoot(t *testing.T) {
 	s, _ := runtimeCapturePGStore(t)
 	standardRuntimeLoggingChangeDuringBoot(t, s)

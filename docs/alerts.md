@@ -47,7 +47,7 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert preset enable stored_workflow_back
 ```
 
 Use `workflow_due_age_seconds` for a custom threshold in seconds. Inspect
-[stored workflow health](stored-workflow-authoring.md#inspect-stored-workflow-health) and run
+[stored workflow health](stored-workflow-operations.md#inspect-stored-workflow-health) and run
 history to find waiting reasons. The preset does not enable itself for
 existing apps; add it to each app that needs it.
 
@@ -115,6 +115,18 @@ A rule's cool-down (15 minutes by default) limits repeat notices for one inciden
 Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed `alert.resolved` event, with the same headers, when the rule recovers. It is off by default because receivers written before it count every delivery as a fire; turn it on once yours checks `event`. Notification channels always receive resolves. A firing rule that stops being evaluated (you disable it, the plan or account no longer covers it, or its app is deleted) gets an `alert.resolved` with `reason` (`disabled`, `not_released` or `app_deleted`) and a null `observed`; a deleted rule sends none, since its webhook secret goes with it.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
+
+## Alerts in a stage
+
+A stage (a project environment other than production) can have its own
+rules: `gregale alert create --env staging ...` and
+`gregale alert list --env staging` (`?environment=staging` in the API). A stage's rule
+watches only the requests its host served (`request_count`,
+`error_rate_pct`, `latency_p50_ms`/`p95`/`p99`, `cold_start_pct`) or its own
+`failed_invocations`, with `gt`, `gte`, `lt` or `lte` and a webhook action.
+Production's rules leave every stage's traffic out. A stage's deliveries
+carry `app_id` and `environment_id`. Stage rules are rolling out and may
+answer 501 until they are available on your deployment.
 
 ## Notification channels
 
@@ -238,25 +250,82 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert create --app my-api --name traffic
   --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 ```
 
-The usual value is the median of the same metric, over the same window length,
-at the same time of day on each of the previous seven days. With
+The usual value is the median of the same metric over the previous seven days.
+Each historical window has the same length and ends at the same UTC time of
+day as the current window. With
 `above_baseline` the threshold is a multiplier from 1.5 to 20; with
 `below_baseline` (request count only) it is a fraction from 0.05 to 0.67.
 Supported metrics are `error_rate_pct`, `latency_p95_ms`, `latency_p99_ms`,
 `cold_start_pct`, and `request_count`.
 
-To avoid alerts on tiny numbers, a baseline rule does not fire when:
+Current windows with missing, stale, or incomplete request telemetry show as
+`degraded`. Historical windows without coverage are skipped. The rule shows
+as `unknown` if fewer than five historical windows qualify.
 
-- the window had fewer than 50 requests;
-- the value is below a sensible minimum (1% errors, 50 ms latency, 5% cold
-  starts) even if it is several times the usual value;
-- the usual value is zero;
-- fewer than five of the previous seven days had traffic, for example for a new
-  app. The rule shows as unknown until enough history exists.
+- For error rate, latency, and cold starts, each qualifying window needs at
+  least 50 eligible requests. Error rate counts 2xx, 5xx, and capacity refusals.
+  Latency counts 2xx responses. Cold starts use the total request count. A
+  current window with too few eligible requests shows as `unknown`.
+- A spike requires a positive baseline and an absolute minimum of 1% errors,
+  50 ms latency, 5% cold starts, or 50 current requests, depending on the metric.
+- A traffic drop requires a historical median of at least 50 requests. A
+  current window with confirmed zero requests can fire the rule.
+
+The rule's **Latest evaluation** explains why a check was skipped or stayed
+within the rule's limits. Skipped checks show how many requests or historical
+windows qualified when there are too few, or what went wrong with telemetry.
+For a completed check that didn't breach, the panel shows the observed value,
+the baseline, and the threshold derived from the baseline when available. It
+also explains when the metric or baseline was too small for the rule to fire.
+While the same incident is still firing, the panel shows when another
+notification becomes eligible if the breach continues. At the end of cooldown,
+it shows that the rule is awaiting its next evaluation.
+
+Use **Test on recent traffic** while creating or editing a request count,
+error rate, or p95 latency baseline rule. It checks one window each hour
+over the past seven days using the selected window length
+and the same baseline and telemetry checks as the live evaluator. The preview
+shows evaluated and skipped windows and the observed value and trigger for
+each threshold breach. Several breaches can belong to one incident. The
+preview is read-only.
+
+Choose **Observe only** on an app-scoped baseline rule to run it on live
+traffic with delivery and automated actions off. The rule page keeps the
+20 most recent observed incidents and counts when each would have been
+eligible for a notification under the rule's cooldown. A recovery closes
+the observed incident. Each new incident keeps the observed value, baseline,
+trigger, and metric window from its first breach, even after the rule is
+edited. Pausing, changing its condition, or switching modes
+ends the observation. Choose **Notify** with a configured destination to
+start live alerting. The first live breach can notify immediately and starts
+its own cooldown.
+Notifications or actions already in flight can finish after a mode change.
+Switching into **Observe only** also queues a stand-down for any open
+live incident's notification channels.
+
+**Evaluation coverage** shows how many live checks completed in the last
+24 hours, why checks were skipped, and when Gregale last checked the rule.
+The notification confirmation shows the same coverage for the saved
+condition and environment. Changing either starts a fresh summary.
+
+App-scoped baseline rules recover after one healthy check by default. Set
+**Healthy checks to recover** to **Two consecutive healthy checks** to keep
+the incident open after the first healthy check. The latest evaluation shows
+the progress.
+A breach or skipped check resets the count. This works in both modes, and a
+scheduler restart preserves the count.
+
+For an environment-scoped rule, **Notify** keeps the saved environment and
+sends to the configured channels and webhook. Switch to **Observe only** to
+change the environment of a notifying rule. Channel messages identify the
+environment. Scoped webhook fire and resolve events include
+`environment_scope`.
 
 The webhook payload adds `baseline` (the usual value), `baseline_days`, and
-`ratio` (observed divided by baseline) to the usual fields. Baseline rules are a
-preview and may not be enabled for your account.
+`ratio` (observed divided by baseline) to the usual fields. The app's delivery
+history shows the observed value, baseline, ratio, and threshold from the time
+the alert fired. Baseline rules are a preview and may not be enabled for your
+account.
 
 ## Log alerts
 
@@ -357,6 +426,21 @@ signal and reason. Both rules are notification-only and accept windows `5m`,
 held by route health" create them with `gt 0` over 15 minutes. Each needs its
 feature released for the account: production route monitoring for incidents,
 the route health canary guard for holds.
+
+## Out-of-memory kills
+
+`oom_kills` counts the app's instances the kernel killed for running out of
+memory within the window: the kills `gregale debug status` lists. One kill now
+and then can be a traffic spike; repeated kills mean the app needs more memory
+than its plan gives it, and requests fail while instances restart.
+
+```bash
+gregale alert create --app shop --name "Out of memory" \
+  --metric oom_kills --comparison gt --threshold 0 --window-spec 1h \
+  --channel OPS_EMAIL_ID
+```
+
+The rule needs an app and accepts every alert window and action.
 
 ## AI budget alerts
 

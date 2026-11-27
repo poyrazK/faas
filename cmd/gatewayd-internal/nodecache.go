@@ -277,6 +277,14 @@ func (n *nodeCache) RawForwarding() func(gateway.Target) http.Handler {
 	return gateway.WithDeploymentActivity(gateway.ForwardingRawReverseProxyWithEventsAndDrain(n.cache, n.log, n.events, n.egressSink, n.drain), n.activity)
 }
 
+// ServiceRawForwarding is RawForwarding for private service calls: the same
+// bridge without the egress ring. A reply to another Gregale app is internal
+// traffic, and the ring's bytes are billed as public app egress
+// (ADR-20261121210517); service-call HTTP already bypasses it.
+func (n *nodeCache) ServiceRawForwarding() func(gateway.Target) http.Handler {
+	return gateway.ForwardingRawReverseProxyWithEventsAndDrain(n.cache, n.log, n.events, nil, n.drain)
+}
+
 // Close shuts down every cached *grpc.ClientConn. Called once at
 // shutdown; subsequent ClientFor calls return ok=false so any
 // in-flight listener draining sees "node unavailable" → 503.

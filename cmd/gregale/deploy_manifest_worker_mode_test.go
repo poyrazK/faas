@@ -105,7 +105,9 @@ func TestDeployManifestExecutionModeReachesTheAppBeforeTheBuild(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 			main.WithResetJSONOutput(t, false)
 			_, _, restore := main.SwapIO(t)
-			code := main.CmdDeployTarball(append([]string{"--name", "demo", "--app", "--no-wait"}, tt.args...))
+			// --yes: the test TTY would otherwise stop an existing-app
+			// redeploy at the unlinked-app confirmation (#7372).
+			code := main.CmdDeployTarball(append([]string{"--name", "demo", "--app", "--no-wait", "--yes"}, tt.args...))
 			restore()
 			if code != 0 {
 				t.Fatalf("deploy exit %d", code)

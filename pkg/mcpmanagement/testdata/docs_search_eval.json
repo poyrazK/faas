@@ -1,9 +1,9 @@
 {
   "comment": "Retrieval eval for gregale_search_docs (TestDocsSearchRetrieval). Each case is a question a coding agent asks and the docs sections that answer it, as <docs source without docs/ and .md>[#section anchor]; a page without an anchor accepts any of its sections. The floors are the scores the search must keep: raise them when a change improves the score, and never lower them to land a change.",
   "floors": {
-    "hit_at_1": 0.77,
-    "hit_at_5": 0.92,
-    "mrr": 0.84
+    "hit_at_1": 0.98,
+    "hit_at_5": 0.98,
+    "mrr": 0.99
   },
   "cases": [
     {"query": "deploy a Dockerfile", "want": ["deploys#dockerfile-builds"]},
@@ -42,14 +42,14 @@
     {"query": "api_rate_limited 429", "want": ["error-codes#api_rate_limited"]},
     {"query": "deploy failed with env_var_missing", "want": ["error-codes#env_var_missing"]},
     {"query": "my app returns app_loopback_bound", "want": ["error-codes#app_loopback_bound"]},
-    {"query": "429 Too Many Requests from the API", "want": ["error-codes#api_rate_limited", "errors"]},
+    {"query": "429 Too Many Requests from the API", "want": ["error-codes#api_rate_limited", "errors", "faas_openapi_spec#errors"]},
     {"query": "what does an error response look like", "want": ["errors"]},
     {"query": "build runs out of memory", "want": ["build#memory"]},
-    {"query": "build timeout", "want": ["build#timeout"]},
+    {"query": "build timeout", "want": ["build#timeout", "plans#builds"]},
     {"query": "preview environment for each pull request", "want": ["preview-environments", "multi-service-apps#pull-request-previews"]},
-    {"query": "run my app locally", "want": ["gregale-dev#run-http-apps-on-this-machine"]},
+    {"query": "run my app locally", "want": ["gregale-dev#run-http-apps-locally"]},
     {"query": "where do I store user uploaded files", "want": ["storage"]},
-    {"query": "spend cap", "want": ["billing#spend-cap"]},
+    {"query": "spend cap", "want": ["billing#spend-cap", "cost-controls#set-your-spend-cap"]},
     {"query": "upgrade my plan", "want": ["billing#upgrades", "billing#changing-plan"]},
     {"query": "export my data and delete my account", "want": ["account#export-and-deletion"]},
     {"query": "redirect one path to another at the edge", "want": ["edge-rules#redirect"]},
@@ -65,6 +65,7 @@
     {"query": "install the Python SDK", "want": ["sdks#python"]},
     {"query": "liveness probe health check path", "want": ["deploy-overrides", "companions#startup-liveness-and-readiness-probes"]},
     {"query": "queue worker that pulls messages", "want": ["queue-pull-leases"]},
+    {"query": "run a background worker that processes a queue", "want": ["queue-pull-leases#run-a-background-worker-that-processes-the-queue", "queue-pull-leases"]},
     {"query": "invite a teammate to my organization", "want": ["account#invitations", "account#members-roles-and-invitations"]},
     {"query": "what can the viewer role do", "want": ["account#roles"]},
     {"query": "transfer organization ownership", "want": ["account#changing-roles-removing-members-and-ownership"]},

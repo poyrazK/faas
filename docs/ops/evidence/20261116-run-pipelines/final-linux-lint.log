@@ -1,0 +1,5 @@
+PASS ./pkg/apid/runpipeline
+PASS ./pkg/api
+PASS ./pkg/state
+PASS ./pkg/apid/apidserver
+PASS ./cmd/gregale

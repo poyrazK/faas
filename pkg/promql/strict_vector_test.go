@@ -19,8 +19,8 @@ func TestQueryVectorStrictRejectsIncompleteEvidence(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
 			defer srv.Close()
-			if _, err := NewClient(srv.URL, srv.Client()).QueryVectorStrict(t.Context(), "up"); err == nil {
-				t.Fatal("incomplete evidence accepted")
+			if _, err := NewClient(srv.URL, srv.Client()).QueryVectorStrict(t.Context(), "up"); err == nil || VectorQueryFailure(err) != VectorFailureInvalidResponse {
+				t.Fatalf("incomplete evidence error = %v, want invalid response", err)
 			}
 		})
 	}

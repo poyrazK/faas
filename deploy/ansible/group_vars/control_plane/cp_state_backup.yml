@@ -1,0 +1,26 @@
+# group_vars/control_plane/cp_state_backup.yml — turn on the off-host,
+# encrypted backup of the control plane's host-local state (ADR-1344 §8,
+# docs/runbooks/ControlPlaneStateBackup.md).
+#
+# Production had no such backup until this file (2026-11-19): losing the
+# control node would have meant re-issuing every node certificate, breaking
+# every MFA recovery code and audit join, and re-provisioning every secret.
+# The GCP -> OVH move also needs a bundle: the OVH control node is rebuilt
+# from backups (docs/runbooks/GcpToOvhMigration.md).
+#
+# The bundle is encrypted to these public keys only. The matching identity
+# (gregale-cp-state-operator-2026-11-19) is held offline by the owner and
+# must never be on a control plane. It is separate from the disk recovery
+# identity, so one leaked key does not open both.
+faas_cp_state_backup_recipients:
+  - age18c05dxrhsa6vjyqnulsyuext6sycyefgpmachzuch4pj68aucezqnedvaj
+
+# The Alertmanager receiver files live outside /etc/faas, so the default list
+# misses them, and a control plane rebuilt without them fails its converge
+# (alertmanager role). These are production's paths (am_slack_webhook_url_file,
+# am_heartbeat_url_file, am_smtp_password_file); a path the host lacks is skipped.
+faas_cp_state_extra_files:
+  - /etc/alertmanager/secrets/slack-webhook-url
+  - /etc/alertmanager/secrets/heartbeat-url
+  - /etc/alertmanager/secrets/smtp-password
+  - /etc/alertmanager/secrets/delivery-pagerduty-key

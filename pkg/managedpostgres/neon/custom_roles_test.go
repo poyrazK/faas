@@ -100,6 +100,8 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
 		t.Fatal(err)
 	}
+	// A function from before the roles were declared (ADR-20261123112326).
+	executeSQL(t, f.connect(t, f.migration.name), `CREATE FUNCTION earlier() RETURNS int LANGUAGE sql AS 'SELECT 1'`)
 	if err := f.apply(t, f.windmillRoles()); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +132,10 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	executeSQL(t, migration, `CREATE FUNCTION pg_temp.wrap_session_gucs(expr text) RETURNS text AS $fn$ BEGIN RETURN expr; END $fn$ LANGUAGE plpgsql`)
 	executeSQL(t, migration, `SELECT pg_temp.wrap_session_gucs('x')`)
 	executeSQL(t, migration, `DROP FUNCTION pg_temp.wrap_session_gucs(text)`)
+	// Windmill's user_db transactions call set_session_context(), which
+	// migration 20250412144540 defines without granting it: stock PostgreSQL
+	// gives EXECUTE to PUBLIC, which Gregale revokes (ADR-20261123112326).
+	executeSQL(t, migration, `CREATE FUNCTION set_session_context(username text) RETURNS void LANGUAGE sql AS $fn$ SELECT set_config('session.user', username, true) $fn$`)
 
 	runtime := f.connect(t, f.runtime.name)
 	if !sqlPermissionDenied(ctx, runtime, "CREATE TEMP TABLE runtime_temp (id integer)") {
@@ -145,8 +151,11 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+role); err != nil {
 			t.Fatalf("SET LOCAL ROLE %s: %v", role, err)
 		}
-		if _, err := tx.Exec(ctx, "SELECT set_config('session.user', 'alice', true)"); err != nil {
-			t.Fatal(err)
+		if _, err := tx.Exec(ctx, "SELECT set_session_context('alice')"); err != nil {
+			t.Fatalf("set_session_context as %s: %v", role, err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT earlier()"); err != nil {
+			t.Fatalf("earlier() as %s: %v", role, err)
 		}
 		var n int
 		if err := tx.QueryRow(ctx, "SELECT count(*) FROM job").Scan(&n); err != nil {
@@ -159,6 +168,10 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	}
 	if n := count(f.wmAdmin); n != 2 {
 		t.Fatalf("windmill_admin saw %d rows, want 2 (BYPASSRLS)", n)
+	}
+	// The app's own login runs its functions too.
+	if _, err := runtime.Exec(ctx, "SELECT set_session_context('alice'), earlier()"); err != nil {
+		t.Fatalf("runtime login cannot run the migrations' functions: %v", err)
 	}
 	// The login inherits nothing from the roles: RLS has no policy for it.
 	var direct int
@@ -191,6 +204,10 @@ func TestCustomRolesRunWindmillStyleMigrations(t *testing.T) {
 	reader := f.connect(t, f.readonly.name)
 	if _, err := reader.Exec(ctx, "SET ROLE "+f.wmAdmin); err == nil {
 		t.Fatal("read-only login could SET ROLE to a role granted only to migration and read_write")
+	}
+	// PUBLIC stays without EXECUTE: the read-only login gets none.
+	if !sqlPermissionDenied(ctx, reader, "SELECT earlier()") {
+		t.Fatal("read-only login ran a function of the schema owner")
 	}
 }
 
@@ -314,4 +331,105 @@ func directMember(t *testing.T, conn *pgx.Conn, role, member string) bool {
 		t.Fatal(err)
 	}
 	return exists
+}
+
+func sessionRole(t *testing.T, conn *pgx.Conn) string {
+	t.Helper()
+	var role string
+	if err := conn.QueryRow(context.Background(), "SELECT current_user::text").Scan(&role); err != nil {
+		t.Fatal(err)
+	}
+	return role
+}
+
+// TestCustomRoleDefaultFor checks amendment 2: read_write logins start as
+// the declared default role (Windmill's windmill_admin), keep conforming
+// on re-issue, and go back to themselves when the default is removed.
+func TestCustomRoleDefaultFor(t *testing.T) {
+	f := newCustomRoleFixture(t)
+	ctx := context.Background()
+	for _, role := range []credentialRole{f.migration, f.runtime, f.readonly} {
+		if err := f.manager.Ensure(ctx, f.material, role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	roles := f.windmillRoles()
+	roles[1].DefaultFor = []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite}
+	if err := f.apply(t, roles); err != nil {
+		t.Fatal(err)
+	}
+	migration := f.connect(t, f.migration.name)
+	executeSQL(t, migration, `CREATE TABLE audit (id bigserial PRIMARY KEY, username text NOT NULL)`)
+	executeSQL(t, migration, `ALTER TABLE audit ENABLE ROW LEVEL SECURITY`)
+	executeSQL(t, migration, `CREATE POLICY own ON audit TO `+f.wmUser+` USING (username = current_setting('session.user', true))`)
+	executeSQL(t, migration, `GRANT ALL ON audit TO `+f.wmUser+`, `+f.wmAdmin)
+	executeSQL(t, migration, `GRANT ALL ON SEQUENCE audit_id_seq TO `+f.wmUser+`, `+f.wmAdmin)
+
+	// Windmill's own connection: starts as windmill_admin and writes past RLS.
+	runtime := f.connect(t, f.runtime.name)
+	if got := sessionRole(t, runtime); got != f.wmAdmin {
+		t.Fatalf("read_write login starts as %q, want %q", got, f.wmAdmin)
+	}
+	executeSQL(t, runtime, `INSERT INTO audit (username) VALUES ('anyone')`)
+	// Its user transactions still switch down to windmill_user.
+	tx, err := runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+f.wmUser); err != nil {
+		t.Fatalf("default-role session cannot SET LOCAL ROLE windmill_user: %v", err)
+	}
+	var visible int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM audit").Scan(&visible); err != nil || visible != 0 {
+		t.Fatalf("windmill_user saw %d audit rows (%v), want 0 through RLS", visible, err)
+	}
+	_ = tx.Rollback(ctx)
+	// The read-only login is not a default: it starts as itself.
+	if got := sessionRole(t, f.connect(t, f.readonly.name)); got != f.readonly.name {
+		t.Fatalf("read_only login starts as %q", got)
+	}
+	// The migration login keeps starting as the schema owner.
+	if got := sessionRole(t, migration); got != f.migration.schemaOwner {
+		t.Fatalf("migration login starts as %q", got)
+	}
+
+	// Re-issue conforms and keeps the setting; a login issued later gets it.
+	f.runtime.customRoles = []string{f.wmAdmin, f.wmUser}
+	f.runtime.defaultCustomRole = f.wmAdmin
+	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
+		t.Fatalf("re-ensure login with a default role: %v", err)
+	}
+	next := f.runtime
+	next.name += "_next"
+	f.extraRoles = append(f.extraRoles, next.name)
+	if err := f.manager.Ensure(ctx, f.material, next); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionRole(t, f.connect(t, next.name)); got != f.wmAdmin {
+		t.Fatalf("login issued later starts as %q, want %q", got, f.wmAdmin)
+	}
+
+	// Removing the default resets every login.
+	roles[1].DefaultFor = nil
+	if err := f.apply(t, roles); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionRole(t, f.connect(t, f.runtime.name)); got != f.runtime.name {
+		t.Fatalf("after removing the default the login starts as %q", got)
+	}
+	f.runtime.defaultCustomRole = ""
+	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
+		t.Fatalf("re-ensure after removing the default: %v", err)
+	}
+	// Dropping the role while it is a default leaves no dangling setting.
+	roles[1].DefaultFor = []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite}
+	if err := f.apply(t, roles); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.apply(t, roles[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionRole(t, f.connect(t, next.name)); got != next.name {
+		t.Fatalf("after dropping the default role the login starts as %q", got)
+	}
 }

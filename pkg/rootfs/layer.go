@@ -211,6 +211,11 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		if opts.skipRuntimeMountpoints && isRuntimeMountpointPath(archiveName) {
 			continue
 		}
+		// The deferred opacity marker is builder metadata in an overlay
+		// upper; an image may neither ship nor white out that name.
+		if base := filepath.Base(archiveName); opts.preserveWhiteouts && (base == deferredOpaqueMarker || base == whiteoutPrefix+deferredOpaqueMarker) {
+			return fmt.Errorf("%w: %q", errReservedOverlayMarker, hdr.Name)
+		}
 
 		// Keep all filesystem operations inside the positive validation
 		// branch. resolveEntryPath performs the stronger containment and

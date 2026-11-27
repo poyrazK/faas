@@ -1,0 +1,11 @@
+# ADR-20261023171905: each compute node's schedd writes its quiet pauses to the
+# billing pause ledger (instance_quiet_pauses), which meterd reads. node_join
+# renders it into zz-faas-quiet-pause-ledger.conf on every run.
+#
+# production-us has written the ledger since 2026-11-17 17:16Z (hand drop-in,
+# owner OK). In the first 48 h of shadow, meterd would have unbilled 1.70M s
+# against 1.72M s that vmmd measured (99%), with no ledger write errors.
+#
+# Turning it off leaves open pauses unproven, so meterd bills them in full.
+# false renders 0 and takes effect at the next schedd start.
+schedd_quiet_pause_ledger: true

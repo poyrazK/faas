@@ -21,9 +21,9 @@ func TestCmdUsageListSortsAndTotals(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode([]api.UsageResponse{
-			{AppID: "small", Requests: 9, MBSeconds: 3_600_000, IncludedGBHours: 3000},
-			{AppID: "big", Requests: 1, MBSeconds: 36_000_000, IncludedGBHours: 3000},
-			{AppID: "mid", Requests: 5, MBSeconds: 7_200_000, IncludedGBHours: 3000},
+			{AppID: "small", Requests: 9, MBSeconds: 3_686_400, IncludedGBHours: 3000},
+			{AppID: "big", Requests: 1, MBSeconds: 36_864_000, IncludedGBHours: 3000},
+			{AppID: "mid", Requests: 5, MBSeconds: 7_372_800, IncludedGBHours: 3000},
 		})
 	}))
 	defer srv.Close()

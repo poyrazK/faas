@@ -142,6 +142,9 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 		if !PmemBaseSupported(fcVersion) {
 			t.Skipf("Firecracker %s has no virtio-pmem", fcVersion)
 		}
+		if bits, ok := pmemHostSupported(); !ok {
+			t.Skipf("host has %d physical address bits; pmem needs %d", bits, PmemMinPhysAddrBits)
+		}
 		vmm.WithPmemBase(pmemDir)
 		account = "restore-bench"
 		t.Logf("pmem base: %s", pmemDir)

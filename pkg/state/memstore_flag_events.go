@@ -1,6 +1,8 @@
 package state
 
 import (
+	"github.com/onebox-faas/faas/pkg/flags"
+
 	"context"
 	"time"
 )
@@ -19,6 +21,11 @@ type memFlagEvents struct {
 	// analytics events and property keys by environment (ADR 20261117084505).
 	analytics    []memAnalyticsEvent
 	propertyKeys map[string]map[string]bool
+	// cohorts by ID and their members (ADR 20261119102741 §3).
+	cohorts       map[string]*AnalyticsCohort
+	cohortMembers map[string][]string
+	// rolloutArms are test-set metric-driven rollout arms by flag NUL rule.
+	rolloutArms map[string][2]flags.Arm
 }
 
 type flagConversionKeyMem struct {

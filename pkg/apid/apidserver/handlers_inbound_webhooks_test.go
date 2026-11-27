@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,6 +131,10 @@ func TestGenericInboundWebhookVerifiesFreshMetadataAndDeduplicates(t *testing.T)
 	tampered := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, "wrong-signing-secret", "evt_generic_tampered", "order.paid", timestamp)
 	if tampered.Code != http.StatusBadRequest {
 		t.Fatalf("tampered generic signature=%d %s", tampered.Code, tampered.Body.String())
+	}
+	// prod 2026-11-20: the generic refusal named the Stripe-Signature header.
+	if body := tampered.Body.String(); strings.Contains(body, "Stripe") || !strings.Contains(body, "X-Gregale-Signature") {
+		t.Fatalf("tampered generic signature detail = %s", body)
 	}
 	first := postGenericInboundWebhook(t, e, endpoint.EndpointURL, body, genericInboundWebhookTestSecret, "evt_generic_1", "order.paid", timestamp)
 	if first.Code != http.StatusAccepted {

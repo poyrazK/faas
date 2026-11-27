@@ -536,6 +536,26 @@ func (f *fakeVmmdClient) DatabaseReplication(context.Context, ...grpc.CallOption
 	panic("DatabaseReplication: not stubbed")
 }
 
+func (f *fakeVmmdClient) DatabaseReplicaSession(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	panic("DatabaseReplicaSession: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseArchiveRestoreCheck(context.Context, *vmmdpb.DatabaseArchiveRestoreCheckRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveRestoreCheckResponse, error) {
+	panic("DatabaseArchiveRestoreCheck: not stubbed")
+}
+
+func (f *fakeVmmdClient) StreamDatabaseExport(context.Context, *vmmdpb.DatabaseExportRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.DatabaseExportFrame], error) {
+	panic("StreamDatabaseExport: not stubbed")
+}
+
+func (f *fakeVmmdClient) StreamDatabaseArchiveImport(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseArchiveImportFrame, vmmdpb.DatabaseArchiveImportProgress], error) {
+	panic("StreamDatabaseArchiveImport: not stubbed")
+}
+
+func (f *fakeVmmdClient) DeleteSandboxVolume(context.Context, *vmmdpb.DeleteSandboxVolumeRequest, ...grpc.CallOption) (*vmmdpb.DeleteSandboxVolumeResponse, error) {
+	panic("DeleteSandboxVolume: not stubbed")
+}
+
 // All other RPCs panic — the forwarder only calls ForwardHTTPStream.
 func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed")
@@ -580,6 +600,9 @@ func (f *fakeVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecut
 func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteExecutionEvent], error) {
 	panic("ExecuteExecutionStream: not stubbed")
 }
+func (*fakeVmmdClient) ExecuteExecutionFiles(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteExecutionEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "Run file execution is not used by forwarding tests")
+}
 func (f *fakeVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by gateway tests")
 }
@@ -603,6 +626,9 @@ func (f *fakeVmmdClient) CaptureAgentSnapshot(context.Context, *vmmdpb.CaptureAg
 }
 func (f *fakeVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed")
+}
+func (*fakeVmmdClient) CaptureExecutionTemplate(context.Context, *vmmdpb.CaptureExecutionTemplateRequest, ...grpc.CallOption) (*vmmdpb.CaptureExecutionTemplateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "Run template capture is not used by forwarding tests")
 }
 func (f *fakeVmmdClient) RestoreAppTask(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
 	panic("RestoreAppTask: not stubbed")

@@ -49,6 +49,16 @@ on:
           without this acknowledgement.
         type: boolean
         default: false
+      skip_control_stage:
+        description: >-
+          Roll out only the compute targets, against the control plane's
+          already-active release_tag. For a control plane rebuilt from
+          backups with no compute node yet: its gatewayd-public reports ready
+          only once a compute gatewayd-internal answers, so the control-plane
+          stage cannot pass until one node has joined
+          (docs/runbooks/ControlPlaneStateBackup.md).
+        type: boolean
+        default: false
       release_tag:
         description: "Existing signed pre-1.0 release tag"
         required: true
@@ -251,6 +261,7 @@ jobs:
 
   control:
     name: Control-plane stage
+    if: ${{ !inputs.skip_control_stage }}
     uses: ./.github/workflows/cd-controlplane.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment }}
@@ -262,7 +273,7 @@ jobs:
   compute-prepare:
     name: Prepare compute fleet in parallel
     needs: [control, plan]
-    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'
+    if: ${{ always() && (needs.control.result == 'success' || (inputs.skip_control_stage && needs.control.result == 'skipped')) && needs.plan.result == 'success' && inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true' }}
     uses: ./.github/workflows/cd-compute.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment }}
@@ -279,7 +290,7 @@ jobs:
   compute-prepare-compat:
     name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, plan]
-    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare != 'true'
+    if: ${{ always() && (needs.control.result == 'success' || (inputs.skip_control_stage && needs.control.result == 'skipped')) && needs.plan.result == 'success' && inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare != 'true' }}
     strategy:
       # Claims, signed enrollment bundles, and explicit preflight skips retain
       # the single-target path until the fleet command supports those inputs.
@@ -311,7 +322,7 @@ jobs:
   compute:
     name: Roll out compute (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, compute-prepare, compute-prepare-compat, plan]
-    if: ${{ always() && needs.control.result == 'success' && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true' && needs.compute-prepare.result == 'success') || (needs.plan.outputs.batch_prepare != 'true' && needs.compute-prepare-compat.result == 'success')) }}
+    if: ${{ always() && (needs.control.result == 'success' || (inputs.skip_control_stage && needs.control.result == 'skipped')) && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true' && needs.compute-prepare.result == 'success') || (needs.plan.outputs.batch_prepare != 'true' && needs.compute-prepare-compat.result == 'success')) }}
     strategy:
       # Activation drains and restarts one node at a time. Fail fast preserves
       # the remaining old-version nodes as the healthy fallback.
@@ -359,6 +370,7 @@ jobs:
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
       CONTROL_RESULT: ${{ needs.control.result }}
+      SKIP_CONTROL_STAGE: ${{ inputs.skip_control_stage }}
       CONTROL_ACTIVATED: ${{ needs.control.outputs.activated }}
       BATCH_PREPARE: ${{ needs.plan.outputs.batch_prepare }}
       COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}
@@ -445,13 +457,18 @@ jobs:
             prepare_ok=true
           fi
           gate_timeout=2m
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then
+          control_ok=false
+          if [[ "$CONTROL_RESULT" == "success" || ( "$SKIP_CONTROL_STAGE" == "true" && "$CONTROL_RESULT" == "skipped" ) ]]; then control_ok=true; fi
+          if [[ "$PLAN_RESULT" != "success" || "$control_ok" != "true" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then
             gate_timeout=0
           fi
+          # Actions runs this step with `bash -e`, so a bare `gate_exit=$?`
+          # never ran on a failed gate: the step died here and the summary
+          # below, the only place that says why, was never written (rc.374).
+          gate_exit=0
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
             "/usr/local/bin/gregalectl compute-nodes release-status --desired-release '${DESIRED_RELEASE}' --timeout '${gate_timeout}' --poll-interval 10s --break-glass-db -json" \
-            >"$status_file" 2>"$error_file"
-          gate_exit=$?
+            >"$status_file" 2>"$error_file" || gate_exit=$?
 
           {
             echo "### Platform rollout ${RELEASE_TAG}"
@@ -482,7 +499,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
+          if [[ "$PLAN_RESULT" != "success" || "$control_ok" != "true" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
             echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute-prepare=${selected_prepare_result} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
             exit 1
           fi

@@ -11,7 +11,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -26,7 +25,7 @@ const (
 	flagsEditAttempts     = 3
 	flagsEveryonePercent  = "everyone-percent"
 	flagsTypeVariant      = "variant"
-	flagsUsageEditVerbs   = "list|stale|create|set|on|off|kill|unkill|percent|rule-add|rule-rm|rm"
+	flagsUsageEditVerbs   = "list|stale|create|set|on|off|kill|unkill|percent|rule-add|rule-rm|rm|edge-set|edge-rm|edge-list"
 	flagsEditConflictCode = "flags_version_conflict"
 )
 
@@ -44,6 +43,10 @@ var flagsEditVerbs = map[string]string{
 	"rule-add": "a flag KEY and --id",
 	"rule-rm":  "a flag KEY and --id",
 	"rm":       "a flag KEY",
+	// ADR-20261124212701: edge routing.
+	"edge-set":  "a flag KEY, --path, --variant and --rewrite",
+	"edge-rm":   "a flag KEY (and --path for one route)",
+	"edge-list": "--project",
 }
 
 // flagsSnapshot is the part of GET .../flags the edit verbs use.
@@ -75,6 +78,9 @@ func cmdFlagsEdit(verb string, args []string) int {
 	owner := fs.String("owner", "", "who decides about the flag: a team or an email")
 	expires := fs.String("expires", "", "expiry date YYYY-MM-DD, or 'never' to clear")
 	all := fs.Bool("all", false, "stale: list every flag, not only those needing attention")
+	edgePath := fs.String("path", "", "edge: the routed path, /page or /prefix/*")
+	edgeVariant := fs.String("variant", "", "edge: the variant the route rewrites")
+	edgeRewrite := fs.String("rewrite", "", "edge: the path the variant serves instead")
 	var customers, attrs repeatedFlag
 	fs.Var(&customers, "customer", "platform customer UUID (repeatable)")
 	fs.Var(&attrs, "attr", "attribute condition NAME=V1,V2, NAME!=V1,V2 or NAME$=SUFFIX (repeatable)")
@@ -84,13 +90,24 @@ func cmdFlagsEdit(verb string, args []string) int {
 	}
 	want := 1
 	switch verb {
-	case "list", "stale":
+	case "list", "stale", "edge-list":
 		want = 0
 	case "percent":
 		want = 2
 	}
+	if *project == "" {
+		// Prod hunt r43: a linked checkout names its project.
+		if linked, linkErr := linkedProjectSlug("."); linkErr == nil {
+			*project = linked
+		}
+	}
 	if *project == "" || *environment == "" || len(positionals) != want {
-		PrintUsage(os.Stderr, fmt.Sprintf("gregale %s needs --project and %s", cliTreeSpellPath("flags "+verb), flagsEditVerbs[verb]), "flags")
+		// `flag list` printed "needs --project and --project" (prod hunt r43).
+		need := "--project (or a linked checkout)"
+		if extra := flagsEditVerbs[verb]; extra != "--project" {
+			need += " and " + extra
+		}
+		PrintUsage(os.Stderr, fmt.Sprintf("gregale %s needs %s", cliTreeSpellPath("flags "+verb), need), "flags")
 		return 1
 	}
 	client, err := authedClient()
@@ -104,6 +121,13 @@ func cmdFlagsEdit(verb string, args []string) int {
 			return printErr("Flags operation failed", err)
 		}
 		return printFlagsList(snap)
+	}
+	if verb == "edge-list" {
+		snap, err := readFlagsSnapshot(ctx, client, *project, *environment)
+		if err != nil {
+			return printErr("Flags operation failed", err)
+		}
+		return printFlagsEdge(snap)
 	}
 	if verb == "stale" {
 		raw, err := client.ProjectFlagLifecycle(ctx, *project, *environment)
@@ -157,6 +181,14 @@ func cmdFlagsEdit(verb string, args []string) int {
 		edit = flagsRuleRemove(key, *ruleID)
 	case "rm":
 		edit = flagsRemove(key)
+	case "edge-set":
+		if *edgePath == "" || *edgeVariant == "" || *edgeRewrite == "" {
+			PrintUsage(os.Stderr, "gregale flag edge set needs --path, --variant and --rewrite", "flags")
+			return 1
+		}
+		edit = flagsEdgeSet(key, *edgePath, *edgeVariant, *edgeRewrite)
+	case "edge-rm":
+		edit = flagsEdgeRemove(key, *edgePath)
 	}
 	version, summary, err := runFlagsEdit(ctx, client, *project, *environment, edit)
 	if err != nil {
@@ -251,156 +283,35 @@ func isFlagsVersionConflict(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Problem.Code == flagsEditConflictCode
 }
 
-func findFlag(cfg *flags.Config, key string) (*flags.Flag, error) {
-	for i := range cfg.Flags {
-		if cfg.Flags[i].Key == key {
-			return &cfg.Flags[i], nil
-		}
-	}
-	return nil, fmt.Errorf("flag %q does not exist; create it with gregale flag create %s", key, key)
-}
-
-func isVariantFlag(f *flags.Flag) bool { return f.Type == flagsTypeVariant }
-
-// parseFlagValue turns a CLI value into the JSON value for flag f.
-func parseFlagValue(f *flags.Flag, raw string) (any, error) {
-	if isVariantFlag(f) {
-		for _, v := range f.Variants {
-			if v.Key == raw {
-				return raw, nil
-			}
-		}
-		return nil, fmt.Errorf("%q is not a variant of %s", raw, f.Key)
-	}
-	switch raw {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	}
-	return nil, fmt.Errorf("boolean flag %s takes true or false, not %q", f.Key, raw)
-}
-
 func flagsCreate(key, variantList, defaultValue, description string, fs *flag.FlagSet) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		if _, err := findFlag(cfg, key); err == nil {
-			return "", fmt.Errorf("flag %q already exists", key)
+	var variants []string
+	if variantList != "" {
+		variants = splitList(variantList)
+		if len(variants) == 0 {
+			variants = []string{""}
 		}
-		f := flags.Flag{Key: key, Description: description, Enabled: true, Default: false, Rules: []flags.Rule{}}
-		if variantList != "" {
-			keys := splitList(variantList)
-			if len(keys) < 2 {
-				return "", fmt.Errorf("--variants needs at least two keys")
-			}
-			f.Type = flagsTypeVariant
-			share := 10000 / len(keys)
-			for i, k := range keys {
-				weight := share
-				if i == 0 {
-					weight += 10000 - share*len(keys)
-				}
-				f.Variants = append(f.Variants, flags.FlagVariant{Key: k, Weight: weight})
-			}
-			f.Default = keys[0]
-		}
-		if flagSetAny(fs, "default") {
-			v, err := parseFlagValue(&f, defaultValue)
-			if err != nil {
-				return "", err
-			}
-			f.Default = v
-		}
-		cfg.Flags = append(cfg.Flags, f)
-		return fmt.Sprintf("Created %s (default %v)", key, f.Default), nil
 	}
+	return flagsEdit(flags.EditCreate(key, variants, optionalFlag(fs, "default", defaultValue), description))
+}
+
+// optionalFlag is value when the option was given on the command line.
+func optionalFlag(fs *flag.FlagSet, name, value string) *string {
+	if !flagSetAny(fs, name) {
+		return nil
+	}
+	return &value
 }
 
 func flagsSet(key, defaultValue, description string, fs *flag.FlagSet) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		f, err := findFlag(cfg, key)
-		if err != nil {
-			return "", err
-		}
-		var changed []string
-		if flagSetAny(fs, "default") {
-			v, err := parseFlagValue(f, defaultValue)
-			if err != nil {
-				return "", err
-			}
-			f.Default = v
-			changed = append(changed, fmt.Sprintf("default %v", v))
-		}
-		if flagSetAny(fs, "description") {
-			f.Description = description
-			changed = append(changed, "description")
-		}
-		return fmt.Sprintf("Updated %s: %s", key, strings.Join(changed, ", ")), nil
-	}
+	return flagsEdit(flags.EditSet(key, optionalFlag(fs, "default", defaultValue), optionalFlag(fs, "description", description)))
 }
 
-func flagsOnOff(key string, on bool) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		f, err := findFlag(cfg, key)
-		if err != nil {
-			return "", err
-		}
-		f.Enabled = on
-		if on {
-			return fmt.Sprintf("Enabled %s", key), nil
-		}
-		// A disabled flag serves its default; for a boolean that must be
-		// false, or "off" would leave the behavior on (ADR-377).
-		if !isVariantFlag(f) && f.Default == true {
-			f.Default = false
-			return fmt.Sprintf("Disabled %s and set its default to false", key), nil
-		}
-		return fmt.Sprintf("Disabled %s; it serves its default %v", key, f.Default), nil
-	}
-}
+func flagsOnOff(key string, on bool) flagsEdit { return flagsEdit(flags.EditOnOff(key, on)) }
 
 // withFlagsMeta applies --owner and --expires after edit
-// (ADR 20261114150000 §4). --expires never clears the date.
+// (ADR 20261114150000 §4).
 func withFlagsMeta(edit flagsEdit, key, owner, expires string, fs *flag.FlagSet) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		summary, err := edit(cfg)
-		if err != nil {
-			return "", err
-		}
-		f, err := findFlag(cfg, key)
-		if err != nil {
-			return "", err
-		}
-		var changed []string
-		if flagSetAny(fs, "owner") {
-			if !flags.ValidOwner(owner) {
-				return "", fmt.Errorf("--owner must be at most %d bytes of printable text", api.FlagsMaxOwnerBytes)
-			}
-			f.Owner = owner
-			changed = append(changed, "owner "+owner)
-		}
-		if flagSetAny(fs, "expires") {
-			if expires == "never" || expires == "" {
-				f.ExpiresAt = ""
-				changed = append(changed, "no expiry")
-			} else {
-				if _, err := flags.ParseExpiresAt(expires); err != nil {
-					return "", err
-				}
-				f.ExpiresAt = expires
-				changed = append(changed, "expires "+expires)
-			}
-		}
-		if len(changed) == 0 {
-			return summary, nil
-		}
-		if strings.HasPrefix(summary, "Updated "+key+": ") {
-			return summary + ", " + strings.Join(changed, ", "), nil
-		}
-		if strings.HasSuffix(summary, ": ") {
-			return summary + strings.Join(changed, ", "), nil
-		}
-		return summary + "; " + strings.Join(changed, ", "), nil
-	}
+	return flagsEdit(flags.EditMeta(flags.Edit(edit), key, optionalFlag(fs, "owner", owner), optionalFlag(fs, "expires", expires)))
 }
 
 // printFlagsLifecycle prints the lifecycle report, by default only the flags
@@ -443,90 +354,21 @@ func printFlagsLifecycle(raw json.RawMessage, all bool) int {
 	return 0
 }
 
-// flagsKill sets or clears a flag's kill (ADR 20261114150000 §3). A killed
-// flag serves the application's fallback on the next request through the
-// gateway, whatever its default or rules say.
-func flagsKill(key string, killed bool) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		f, err := findFlag(cfg, key)
-		if err != nil {
-			return "", err
-		}
-		if f.Killed == killed {
-			if killed {
-				return fmt.Sprintf("%s is already killed", key), nil
-			}
-			return fmt.Sprintf("%s is not killed", key), nil
-		}
-		f.Killed = killed
-		if killed {
-			return fmt.Sprintf("Killed %s: requests now get the fallback value in your code", key), nil
-		}
-		return fmt.Sprintf("Revived %s: it serves its configuration again", key), nil
-	}
-}
+// flagsKill sets or clears a flag's kill (ADR 20261114150000 §3).
+func flagsKill(key string, killed bool) flagsEdit { return flagsEdit(flags.EditKill(key, killed)) }
 
 // parseFlagsPercent accepts "12", "12.5" or "12.5%" and returns basis points.
-func parseFlagsPercent(raw string) (int, error) {
-	s := strings.TrimSuffix(strings.TrimSpace(raw), "%")
-	p, err := strconv.ParseFloat(s, 64)
-	if err != nil || math.IsNaN(p) || p < 0 || p > 100 {
-		return 0, fmt.Errorf("percentage must be a number from 0 to 100, not %q", raw)
-	}
-	if i := strings.IndexByte(s, '.'); i >= 0 && len(s)-i-1 > 2 {
-		return 0, fmt.Errorf("percentage takes at most two decimals, not %q", raw)
-	}
-	return int(math.Round(p * 100)), nil
-}
+func parseFlagsPercent(raw string) (int, error) { return flags.ParsePercent(raw) }
 
-func flagsPercent(key string, bp int) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		f, err := findFlag(cfg, key)
-		if err != nil {
-			return "", err
-		}
-		at := slices.IndexFunc(f.Rules, func(r flags.Rule) bool { return r.ID == flagsEveryonePercent })
-		if at >= 0 && f.Rules[at].Progression != nil {
-			return "", fmt.Errorf("rule %s has a progression plan; advance it with gregale flag promote", flagsEveryonePercent)
-		}
-		if bp == 0 {
-			if at < 0 {
-				return fmt.Sprintf("%s has no percentage rollout", key), nil
-			}
-			f.Rules = slices.Delete(f.Rules, at, at+1)
-			return fmt.Sprintf("Removed the percentage rollout of %s", key), nil
-		}
-		rollout := bp
-		rule := flags.Rule{ID: flagsEveryonePercent, Rollout: &rollout}
-		if !isVariantFlag(f) {
-			rule.Value = true
-		}
-		if at >= 0 {
-			f.Rules = slices.Delete(f.Rules, at, at+1)
-		}
-		f.Rules = append(f.Rules, rule)
-		return fmt.Sprintf("%s now serves %s to %s%% of customers", key, flagsRuleValueText(f, rule), formatBasisPoints(bp)), nil
-	}
-}
+func flagsPercent(key string, bp int) flagsEdit { return flagsEdit(flags.EditPercent(key, bp)) }
 
-func flagsRuleValueText(f *flags.Flag, r flags.Rule) string {
-	if r.Value == nil && isVariantFlag(f) {
-		return "weighted variants"
-	}
-	return fmt.Sprint(r.Value)
-}
-
-func formatBasisPoints(bp int) string {
-	return strings.TrimSuffix(strings.TrimRight(strconv.FormatFloat(float64(bp)/100, 'f', 2, 64), "0"), ".")
-}
-
-// flagsAttributeName expands a short attribute name: country and ua_family
-// are the gateway's, any other bare name is the application's.
+// flagsAttributeName expands a short attribute name: country, ua_family and
+// cohort are the gateway's, any other bare name is the application's.
 func flagsAttributeName(name string) string {
 	switch {
 	case strings.Contains(name, "."):
 		return name
-	case name == "country" || name == "ua_family":
+	case name == "country" || name == "ua_family" || name == "cohort":
 		return "gregale." + name
 	default:
 		return flags.AppAttributePrefix + name
@@ -547,7 +389,7 @@ func parseFlagsCondition(raw string) (flags.Condition, error) {
 		}
 		return c, nil
 	}
-	return flags.Condition{}, fmt.Errorf("--attr %q: use NAME=V1,V2 (in), NAME!=V1,V2 (not in) or NAME$=SUFFIX (ends with); NAME is country, ua_family or an app attribute", raw)
+	return flags.Condition{}, fmt.Errorf("--attr %q: use NAME=V1,V2 (in), NAME!=V1,V2 (not in) or NAME$=SUFFIX (ends with); NAME is country, ua_family, cohort or an app attribute", raw)
 }
 
 // parseFlagsInspectAttributes reads repeated NAME=VALUE options.
@@ -560,7 +402,7 @@ func parseFlagsInspectAttributes(raw []string) (map[string]string, error) {
 		name, value, ok := strings.Cut(item, "=")
 		name = flagsAttributeName(strings.TrimSpace(name))
 		if !ok || !flags.ValidAttributeName(name) || !flags.ValidAttributeValue(value) {
-			return nil, fmt.Errorf("--attr %q: use NAME=VALUE; NAME is country, ua_family or an app attribute", item)
+			return nil, fmt.Errorf("--attr %q: use NAME=VALUE; NAME is country, ua_family, cohort or an app attribute", item)
 		}
 		out[name] = value
 	}
@@ -594,60 +436,14 @@ func flagsRuleFromOptions(id string, customers []string, group string, attrs []s
 	return rule, nil
 }
 
-// flagsRuleAdd inserts rule before the everyone-percent rule, so a
-// targeted rule wins over the catch-all rollout, or appends it.
+// flagsRuleAdd inserts rule before the everyone-percent rule.
 func flagsRuleAdd(key string, rule flags.Rule) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		f, err := findFlag(cfg, key)
-		if err != nil {
-			return "", err
-		}
-		if slices.ContainsFunc(f.Rules, func(r flags.Rule) bool { return r.ID == rule.ID }) {
-			return "", fmt.Errorf("flag %s already has a rule %q; remove it first with gregale flag rule delete", key, rule.ID)
-		}
-		if raw, ok := rule.Value.(string); ok {
-			v, err := parseFlagValue(f, raw)
-			if err != nil {
-				return "", err
-			}
-			rule.Value = v
-		} else if !isVariantFlag(f) {
-			rule.Value = true
-		}
-		at := slices.IndexFunc(f.Rules, func(r flags.Rule) bool { return r.ID == flagsEveryonePercent })
-		if at < 0 {
-			at = len(f.Rules)
-		}
-		f.Rules = slices.Insert(f.Rules, at, rule)
-		return fmt.Sprintf("Added rule %s to %s at position %d", rule.ID, key, at+1), nil
-	}
+	return flagsEdit(flags.EditRuleAdd(key, rule))
 }
 
-func flagsRuleRemove(key, id string) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		f, err := findFlag(cfg, key)
-		if err != nil {
-			return "", err
-		}
-		at := slices.IndexFunc(f.Rules, func(r flags.Rule) bool { return r.ID == id })
-		if at < 0 {
-			return "", fmt.Errorf("flag %s has no rule %q", key, id)
-		}
-		f.Rules = slices.Delete(f.Rules, at, at+1)
-		return fmt.Sprintf("Removed rule %s from %s", id, key), nil
-	}
-}
+func flagsRuleRemove(key, id string) flagsEdit { return flagsEdit(flags.EditRuleRemove(key, id)) }
 
-func flagsRemove(key string) flagsEdit {
-	return func(cfg *flags.Config) (string, error) {
-		at := slices.IndexFunc(cfg.Flags, func(f flags.Flag) bool { return f.Key == key })
-		if at < 0 {
-			return "", fmt.Errorf("flag %q does not exist", key)
-		}
-		cfg.Flags = slices.Delete(cfg.Flags, at, at+1)
-		return fmt.Sprintf("Removed %s", key), nil
-	}
-}
+func flagsRemove(key string) flagsEdit { return flagsEdit(flags.EditRemove(key)) }
 
 func flagState(f flags.Flag) string {
 	if f.Killed {
@@ -682,3 +478,54 @@ func printFlagsList(snap flagsSnapshot) int {
 	_, _ = fmt.Fprintf(osStdout, "version %d\n", snap.Version)
 	return 0
 }
+
+// flagEdgeRow is one route action in `gregale flag edge list`.
+type flagEdgeRow struct {
+	Flag    string `json:"flag"`
+	Path    string `json:"path"`
+	Variant string `json:"variant"`
+	Rewrite string `json:"rewrite"`
+}
+
+// printFlagsEdge lists every edge route action (ADR-20261124212701).
+func printFlagsEdge(snap flagsSnapshot) int {
+	rows := []flagEdgeRow{}
+	for _, f := range snap.Flags {
+		if f.Edge == nil {
+			continue
+		}
+		for _, route := range f.Edge.Routes {
+			variants := make([]string, 0, len(route.Variants))
+			for v := range route.Variants {
+				variants = append(variants, v)
+			}
+			slices.Sort(variants)
+			for _, v := range variants {
+				rows = append(rows, flagEdgeRow{Flag: f.Key, Path: route.Path, Variant: v, Rewrite: route.Variants[v].Rewrite})
+			}
+		}
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"version": snap.Version, "routes": rows}))
+	}
+	if len(rows) == 0 {
+		_, _ = fmt.Fprintf(osStdout, "No edge routes (version %d). Add one with gregale flag edge set KEY --path /page --variant VARIANT --rewrite /page-b --project ...\n", snap.Version)
+		return 0
+	}
+	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "FLAG\tPATH\tVARIANT\tSERVES")
+	for _, r := range rows {
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Flag, r.Path, r.Variant, r.Rewrite)
+	}
+	if err := tw.Flush(); err != nil {
+		return 1
+	}
+	_, _ = fmt.Fprintf(osStdout, "version %d; other variants serve the path unchanged\n", snap.Version)
+	return 0
+}
+
+func flagsEdgeSet(key, path, variant, rewrite string) flagsEdit {
+	return flagsEdit(flags.EditEdgeSet(key, path, variant, rewrite))
+}
+
+func flagsEdgeRemove(key, path string) flagsEdit { return flagsEdit(flags.EditEdgeRemove(key, path)) }

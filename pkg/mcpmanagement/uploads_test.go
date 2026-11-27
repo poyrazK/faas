@@ -28,6 +28,40 @@ type tarEntry struct {
 	link     string
 }
 
+func newUploadStore(root, resourceURL string) (*uploadStore, error) {
+	return openUploadStore(root, resourceURL, nil)
+}
+
+func TestUploadStoreSecuresPrecreatedDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openUploadStore(root, "https://api.gregale.test/mcp", nil); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(root); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("pre-created upload directory was not made private: %v, %v", info, err)
+	}
+}
+
+func TestPrepareUploadDirectoryRefusesSymlink(t *testing.T) {
+	target := t.TempDir()
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "uploads")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareUploadDirectory(path); err == nil {
+		t.Fatal("accepted a symlink as the upload directory")
+	}
+	if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("symlink target was changed: %v, %v", info, err)
+	}
+}
+
 func tarball(t *testing.T, entries ...tarEntry) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -95,7 +129,6 @@ func TestExtractUploadKeepsOnlyFilesAndDirectoriesInside(t *testing.T) {
 		"symlink":        tarball(t, tarEntry{name: "link", typeflag: tar.TypeSymlink, link: "/etc"}),
 		"hard link":      tarball(t, tarEntry{name: "link", typeflag: tar.TypeLink, link: "/etc/passwd"}),
 		"device":         tarball(t, tarEntry{name: "dev", typeflag: tar.TypeChar}),
-		"linked project": tarball(t, tarEntry{name: ".gregale/project.json", typeflag: tar.TypeReg, body: "{}"}),
 		"duplicate":      tarball(t, tarEntry{name: "a", typeflag: tar.TypeReg, body: "1"}, tarEntry{name: "a", typeflag: tar.TypeReg, body: "2"}),
 		"too large":      tarball(t, tarEntry{name: "big", typeflag: tar.TypeReg, body: strings.Repeat("x", 2048)}),
 		"not gzip":       []byte("plain text"),
@@ -322,5 +355,32 @@ func TestUploadStagingIsBoundedPerAccountAndOnDisk(t *testing.T) {
 	}
 	if _, _, err := floor.create("grant-a", "account-1", "alpha", 1<<10); err != nil {
 		t.Fatalf("small upload above the floor: %v", err)
+	}
+}
+
+// A directory deployed before carries the CLI's .gregale link; its upload
+// used to fail. The local context is skipped, never written.
+func TestUploadSkipsLocalContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upload.tar.gz")
+	archive := tarball(t, tarEntry{name: ".gregale/project.json", typeflag: tar.TypeReg, body: `{"version":2,"app":"alpha"}`}, tarEntry{name: "index.js", typeflag: tar.TypeReg, body: "ok"})
+	if err := os.WriteFile(path, archive, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := extractUpload(path, target, 1024); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, ".gregale")); err == nil {
+		t.Fatal("wrote the local context")
+	}
+	if _, err := os.Stat(filepath.Join(target, "index.js")); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := writeInlineFiles(dir, []inlineFile{{Path: ".gregale/project.json", Content: "{}"}, {Path: "index.js", Content: "ok"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".gregale")); err == nil {
+		t.Fatal("inline files wrote the local context")
 	}
 }

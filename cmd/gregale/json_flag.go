@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
 // jsonOutput is set by run() from --json or FAAS_JSON=1; read by
@@ -227,10 +228,22 @@ func publicCommandPath(args []string) string {
 		return args[0]
 	}
 	path := command.Name
-	if command.SubcommandsAfterPositionals || len(args) < 2 {
+	if len(args) < 2 {
 		return path
 	}
 	sub, ok := findCliSubcommand(command.Subcommands, args[1])
+	if command.SubcommandsAfterPositionals {
+		// `app scale X --max 3` and `app X scale --max 3` both reach
+		// `app scale`; reporting just "app" sent an unknown flag to
+		// 'gregale app --help' (prod hunt r59).
+		if !ok && len(args) > 2 && !strings.HasPrefix(args[1], "-") {
+			sub, ok = findCliSubcommand(command.Subcommands, args[2])
+		}
+		if ok {
+			return path + " " + sub.Name
+		}
+		return path
+	}
 	if !ok {
 		return path
 	}
@@ -245,7 +258,9 @@ func publicCommandPath(args []string) string {
 
 // flagDiagnosticDash matches the single-dash flag names the flag package
 // prints ("-app"); the CLI documents and accepts double-dash flags.
-var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )-([A-Za-z0-9])`)
+// A digit after the dash is a negative number the flag package read as a
+// flag: `flag rollout set … -5` said "unknown flag --5" (prod 2026-11-19).
+var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )-([A-Za-z])`)
 
 // normalizeFlagDiagnostic rewrites a flag package parse error in the CLI's
 // own spelling, e.g. "flag provided but not defined: -app" becomes
@@ -253,6 +268,9 @@ var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )
 func normalizeFlagDiagnostic(message string) string {
 	message = flagDiagnosticDash.ReplaceAllString(message, "${1}--${2}")
 	if rest, ok := strings.CutPrefix(message, "flag provided but not defined: "); ok {
+		if len(rest) > 1 && rest[0] == '-' && rest[1] >= '0' && rest[1] <= '9' {
+			return "unknown flag " + rest + " (a negative number is read as a flag)"
+		}
 		return "unknown flag " + rest
 	}
 	if rest, ok := strings.CutPrefix(message, "flag needs an argument: "); ok {
@@ -478,6 +496,7 @@ func writeJSONProblem(p api.Problem) error {
 }
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
+	_ = whycopy.Complete(&p, whycopy.Values{})
 	b, err := json.Marshal(struct {
 		api.Problem
 		RequestID string `json:"request_id,omitempty"`
@@ -495,6 +514,9 @@ func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
 }
 
 func writeJSONProblemWithCLI(w io.Writer, p api.Problem, code int, advice *cliFlagDiagnostic) error {
+	// fix_commands and retryable even from a server that predates them
+	// (ADR-20261123230000); p is a copy.
+	_ = whycopy.Complete(&p, whycopy.Values{})
 	b, err := json.Marshal(struct {
 		api.Problem
 		Category  string             `json:"category"`

@@ -27,7 +27,7 @@ func (f runtimeSnapshotVerifierFunc) VerifyRuntimeSnapshot(ctx context.Context, 
 }
 
 func validRuntimeSnapshotIdentity() RuntimeSnapshotIdentity {
-	return RuntimeSnapshotIdentity{
+	return RuntimeSnapshotIdentity{FCVersion: "1.7.0",
 		Runtime:             api.ExecutionRuntimeNode22,
 		Architecture:        archAMD64,
 		KernelDigest:        strings.Repeat("a", 64),
@@ -55,7 +55,7 @@ func validRuntimeSnapshot() RuntimeSnapshot {
 
 func validRuntimeSnapshotRequest() RuntimeSnapshotRequest {
 	identity := validRuntimeSnapshotIdentity()
-	return RuntimeSnapshotRequest{
+	return RuntimeSnapshotRequest{FCVersion: identity.FCVersion,
 		Shape:               api.ExecutionSnapshotShape{Runtime: identity.Runtime, MemoryMB: identity.MemoryMB, EphemeralDiskMB: identity.EphemeralDiskMB},
 		Architecture:        identity.Architecture,
 		KernelDigest:        identity.KernelDigest,
@@ -71,7 +71,7 @@ func TestRuntimeSnapshotIdentityKeyIsCanonical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Key: %v", err)
 	}
-	want := "execution-snapshots/v1/node22/amd64/memory-128/disk-64/kernel-" + strings.Repeat("a", 64) + "/executor-" + strings.Repeat("b", 64) + "/base-" + strings.Repeat("c", 64)
+	want := "execution-snapshots/v2/node22/amd64/firecracker-1.7.0/memory-128/disk-64/kernel-" + strings.Repeat("a", 64) + "/executor-" + strings.Repeat("b", 64) + "/base-" + strings.Repeat("c", 64)
 	if key != want {
 		t.Fatalf("Key = %q, want %q", key, want)
 	}

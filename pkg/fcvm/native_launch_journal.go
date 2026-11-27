@@ -201,6 +201,9 @@ func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err err
 // The incoming binding is durable before this physical record can authorize
 // any native producer. Both writes share the outer incoming-request lock.
 func (j *nativeLaunchJournal) prepareGeneration(ctx context.Context, lease Lease, generation string) (err error) {
+	if err := j.requireExecutionTemplateLaunch(ctx, lease); err != nil {
+		return err
+	}
 	if err := j.requireDataRepairProducer(ctx, lease.Instance); err != nil {
 		return err
 	}

@@ -108,6 +108,9 @@ type JailerVMM struct {
 	// Public CA bundle for the opt-in guest service HTTPS endpoint. Never a
 	// private key and never the daemon-to-daemon mTLS root.
 	serviceProxyCAPEM []byte
+	// Public, operator-configured PostgreSQL CA used only for trusted Data API
+	// inspection requests; it is delivered over the host-to-guest channel.
+	dataAPIInspectionCAPEM []byte
 	// storage is the artifact backend where snapshot blobs live per
 	// #96 / ADR-025 axis 2. Restore resolves StorageKey → local tmp;
 	// Snapshot Streams the produced mem blob back through Storage.Put.
@@ -191,7 +194,8 @@ type JailerVMM struct {
 	// per-VMM *http.Client the waitReady HTTP probe reuses across
 	// its 200ms-cadence loop. Lazily created by healthcheckClient
 	// under mu; nil = first probe. 2s per-probe timeout bounds
-	// the probe within the readyTimeout deadline.
+	// the probe within the readyTimeout deadline. Its transport never
+	// keeps a connection open into a guest (newHealthcheckClient).
 	hcClient *http.Client
 	recs     map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
 	// consoleOpens are console files Restore and boot start creating before
@@ -266,6 +270,10 @@ type JailerVMM struct {
 	// fileConsole launches guests with their console file as stdout and
 	// stderr (console_file.go). Guarded by mu.
 	fileConsole bool
+	// bootFailedConsoles holds instances whose cold boot never became
+	// ready; Kill keeps their console (console_file.go) instead of deleting
+	// it, so the guest's own account of the slow boot survives cleanup.
+	bootFailedConsoles sync.Map
 	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
 	// the Manager. Optional; every observation site is nil-safe.
 	wakePhaseMetrics *WakePhaseMetrics
@@ -802,6 +810,10 @@ func firecrackerControlLine(line []byte) bool {
 		// IOError(Os { code: 32, kind: BrokenPipe … }))". It reached a
 		// function's customer log on production-us rc.336 (Hunt 32 H32-69).
 		"vsock: error ",
+		// Firecracker's logger rate limiter summarising lines it dropped:
+		// "3 messages were suppressed due to rate limiting". It reached a
+		// Node app's followed log on production rc.369 (prod hunt r25).
+		"messages were suppressed due to rate limiting",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -1126,6 +1138,17 @@ func (v *JailerVMM) WithServiceProxyCA(pem []byte) *JailerVMM {
 	return v
 }
 
+// WithDataAPIInspectionCA configures only the task-inspection trust anchor.
+func (v *JailerVMM) WithDataAPIInspectionCA(pem []byte) *JailerVMM {
+	v.dataAPIInspectionCAPEM = append([]byte(nil), pem...)
+	return v
+}
+
+// DataAPIInspectionCA supplies a private copy to the app-task dispatcher.
+func (v *JailerVMM) DataAPIInspectionCA() []byte {
+	return append([]byte(nil), v.dataAPIInspectionCAPEM...)
+}
+
 // PrepareJailHelper stages the release-matched helper in the chroot base before
 // vmmd starts serving wake requests. Keeping this work on the daemon startup
 // path prevents the first Boot or Restore after a restart from paying for the
@@ -1293,7 +1316,7 @@ func (v *JailerVMM) resolveDriveImage(instance string) (string, error) {
 	}
 	var found string
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") || entry.Name() == buildkitSeedImageName {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ext4") || entry.Name() == buildkitSeedImageName || entry.Name() == sandboxVolumeImageName {
 			continue
 		}
 		if found != "" {
@@ -1400,7 +1423,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 		v.logColdBootBreakdown(ctx, l, breakdown)
 		return nil
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.WorkerPushDelivery, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
+	if err = v.boot(withProbeHost(ctx, spec.ProbeHost), l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.WorkerPushDelivery, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -1487,6 +1510,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if len(l.SandboxManifest) > 0 {
 		if err := v.stageSandboxManifestForOwner(ctx, stagingOwner, l.Instance, []byte(l.SandboxManifest)); err != nil {
 			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
+		}
+	}
+	if len(l.cacheExportManifest) > 0 {
+		if err := v.stageCacheExportRunForOwner(ctx, stagingOwner, l.Instance, []byte(l.cacheExportManifest)); err != nil {
+			return fmt.Errorf("vmm: stage cache export run: %w", err)
 		}
 	}
 	stagedRuntimeAt := time.Now()
@@ -1600,6 +1628,27 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		readinessStartedAt := time.Now()
 		err = v.waitApplicationReady(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS, executionMode, workerPushDelivery, imageHealthcheckRequired, characterization)
 		if err != nil {
+			// The wake's own phase log reports one opaque bring_up span,
+			// and cleanup deleted the console: concurrent Bank of Anthos
+			// cold boots failed at ~30 s with nothing left to say where
+			// the time went (2026-11-21). Split host setup from the wait
+			// for the app, and keep this guest's console.
+			slog.Default().Warn("vmm: cold boot never became ready; boot breakdown",
+				"instance", l.Instance, "err", err,
+				"chroot_ms", chrootReadyAt.Sub(bootStartedAt).Milliseconds(),
+				"provision_ms", provisionedAt.Sub(chrootReadyAt).Milliseconds(),
+				"stage_runtime_ms", stagedRuntimeAt.Sub(provisionedAt).Milliseconds(),
+				"prepare_config_ms", preparedConfigAt.Sub(stagedRuntimeAt).Milliseconds(),
+				"helper_ms", helperReadyAt.Sub(preparedConfigAt).Milliseconds(),
+				"start_jailer_ms", startedJailerAt.Sub(helperReadyAt).Milliseconds(),
+				"bind_tun_ms", boundTunAt.Sub(startedJailerAt).Milliseconds(),
+				"cgroup_ms", cgroupReadyAt.Sub(boundTunAt).Milliseconds(),
+				"write_config_ms", configWrittenAt.Sub(cgroupReadyAt).Milliseconds(),
+				"pre_ready_ms", readinessStartedAt.Sub(bootStartedAt).Milliseconds(),
+				"wait_ready_ms", time.Since(readinessStartedAt).Milliseconds())
+			if v.fileConsoleEnabled() {
+				v.bootFailedConsoles.Store(l.Instance, struct{}{})
+			}
 			return fmt.Errorf("vmm: readiness: %w", err)
 		}
 		readyAt = time.Now()
@@ -1887,7 +1936,7 @@ func serviceDiscoveryResolverContents(ip netip.Addr) []byte {
 // bypass.
 func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) error {
 	if l.IsBuilder {
-		if err := writeBuildCgroup(l.Instance, l.MemoryMaxMiB); err != nil {
+		if err := writeBuildCgroup(builderCgroupParent(l), l.Instance, l.MemoryMaxMiB); err != nil {
 			return err
 		}
 		return v.trackCgroupFence(l)
@@ -2303,6 +2352,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 			return fmt.Errorf("vmm: stage input: %w", err)
 		}
 	}
+	if spec.SandboxVolume != "" {
+		// The capture refers to the volume by its jail name; the same file
+		// is bound in again (ADR-20261122132055 §4).
+		if _, err := v.stageEphemeralWritableAsForOwner(ctx, stagingOwner, root, spec.SandboxVolume, sandboxVolumeImageName, l.UID, l.GID, l.Instance); err != nil {
+			return fmt.Errorf("vmm: stage sandbox volume: %w", err)
+		}
+	}
 	// PR-B: stage each sidecar drive as read-only (the upper/writable
 	// overlay is shared with main; sidecars never get their own rw
 	// path, which is the load-bearing invariant — a runaway sidecar
@@ -2473,7 +2529,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tResume := time.Now()
 	if !spec.KeepPaused && !spec.SkipReady {
-		if err = v.waitApplicationReady(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", false, spec.ImageHealthcheckRequired, nil); err != nil {
+		if err = v.waitApplicationReady(withProbeHost(ctx, spec.ProbeHost), l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", false, spec.ImageHealthcheckRequired, nil); err != nil {
 			return fmt.Errorf("vmm: readiness after restore: %w", err)
 		}
 	}
@@ -5798,6 +5854,15 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		}
 		return fmt.Errorf("vmm: start jailer: %w", startErr)
 	}
+	if l.BorrowedBuilder() {
+		// ADR-20261118154632: if the host still runs out of memory, the
+		// kernel kills a borrowed build before any tenant VM or daemon. The
+		// jailer keeps the value across its exec of Firecracker. builderd's
+		// and vmmd's give-backs still protect tenants if the write fails.
+		if err := writeOOMScoreAdj("/proc", cmd.Process.Pid, api.BorrowedBuilderOOMScoreAdj); err != nil {
+			slog.Default().Warn("vmm: borrowed builder keeps the default OOM priority", "instance", l.Instance, "err", err)
+		}
+	}
 	// Capture before starting Wait: even an immediately exiting child retains
 	// its PID until reaped, so a reused PID cannot enter this checkpoint.
 	v.mu.Lock()
@@ -5957,6 +6022,10 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		var err error
 		if d.DriveID == DriveAgentInput {
 			name, err = v.stageAgentInputForOwner(ctx, owner, root, d.PathOnHost, agentInputStagingDir(cfg.Drives), instanceID)
+		} else if d.DriveID == DriveSandboxVolume {
+			// A session's volume is its own and outlives the VM: bound in,
+			// never copied (ADR-20261122132055 §4).
+			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, sandboxVolumeImageName, uid, gid, instanceID)
 		} else if d.IsReadOnly {
 			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
@@ -6599,10 +6668,21 @@ func (v *JailerVMM) waitForJailerChroot(ctx context.Context, instance string) (i
 // a fresh /dev and /dev/kvm for the jailed uid. Executions and agent runs
 // have no network, so their Firecracker must never be able to open
 // /dev/net/tun. Under native process recovery the journaled helper owns jail
-// devices, and networkless boots there are left as they were.
+// devices through a KVM-only receipt, without inheriting or creating TUN.
 func (v *JailerVMM) prepareNetworklessJailDevices(ctx context.Context, root, instance string, uid, gid int) error {
 	if v.nativeRecovery != nil {
-		return nil
+		if !v.nativeRecovery.journal.owners {
+			return errors.New("native jail device setup: networkless guests require native launch owner records")
+		}
+		owner, err := v.nativeRecovery.journal.read(instance)
+		if err != nil {
+			return err
+		}
+		if !owner.Lease.Networkless {
+			return errors.New("native jail device setup: networkless owner required")
+		}
+		_, err = v.bindNativeJailDevices(ctx, owner, root, instance, uid, gid)
+		return err
 	}
 	pid, _, err := v.waitForJailerChroot(ctx, instance)
 	if err != nil {
@@ -7317,6 +7397,17 @@ func (v *JailerVMM) NoteWorkloadOOM(instance string, peakMB, planMB int) {
 	}
 }
 
+// StartupOOMKilled reports whether the guest has reported a workload OOM kill
+// (ADR-121) for instance. Read when a wake completes: a kill reported before
+// the wake returns means the app's own memory exhaustion is part of the wake
+// latency, so the gateway keeps that wake out of the platform wake SLO.
+func (v *JailerVMM) StartupOOMKilled(instance string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec := v.recs[instance]
+	return rec != nil && rec.oomKilled
+}
+
 // startupOOMProblem explains a failed startup as app_runtime_oom when the
 // guest reported that the kernel killed a workload process for memory before
 // readiness (ADR-121 amendment). It returns nil when no OOM was reported.
@@ -7508,7 +7599,7 @@ var supervisedWorkloadMarkers = []string{
 const guestCleanExitMarker = " exited cleanly (status 0, policy="
 
 // cleanExitDetail explains a workload that ended on its own with status 0.
-const cleanExitDetail = "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+const cleanExitDetail = "; " + api.StartupCleanExitMarker + ". Keep the server process running in the foreground and listening on $PORT"
 
 // cleanExitHint is cleanExitDetail when guest-init's clean-exit line is among
 // lines.
@@ -7878,6 +7969,7 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 	if err != nil {
 		return 0, nil, err
 	}
+	applyProbeHost(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		// Transport error (connection refused, dial timeout,
@@ -7890,14 +7982,13 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 		// away mid-probe — both must be retried).
 		return 0, err, nil
 	}
-	// Drain the body (capped) before close so the cached
-	// transport's keep-alive can reuse the connection. Without
-	// this, every probe opens a fresh TCP socket and TIME_WAIT
-	// accumulates under sustained probing. The 64 KiB cap is a
-	// safety net — production customers' healthcheck responses
-	// are status-only — but bounded drain is required so a
-	// misbehaving runner that streams a 1 GB body can't OOM
-	// the host.
+	// Drain the body (capped) before close so the app finishes its
+	// response and closes the connection itself (the readiness
+	// client sends Connection: close), rather than seeing vmmd
+	// reset it mid-write. The 64 KiB cap is a safety net —
+	// production customers' healthcheck responses are status-only
+	// — but bounded drain is required so a misbehaving runner that
+	// streams a 1 GB body can't OOM the host.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 	return resp.StatusCode, nil, nil
@@ -7910,14 +8001,39 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 // returns a fresh client when the receiver or the cache is nil.
 func (v *JailerVMM) healthcheckClient() *http.Client {
 	if v == nil {
-		return &http.Client{Timeout: 2 * time.Second}
+		return newHealthcheckClient()
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.hcClient == nil {
-		v.hcClient = &http.Client{Timeout: 2 * time.Second}
+		v.hcClient = newHealthcheckClient()
 	}
 	return v.hcClient
+}
+
+// newHealthcheckClient builds the readiness probe client. Keep-alive is off:
+// each probe asks the app to close its connection after the response, so
+// readiness never leaves a connection of vmmd's open in the guest.
+//
+// With http.DefaultTransport the last successful probe stayed idle in the
+// pool for up to 90 s against any app that honours keep-alive (gunicorn
+// gthread, uvicorn, Node, Go). Restore runs readiness inside bringUp, and
+// releaseInheritedConnections right after it took that fresh probe socket for
+// one inherited from the snapshot and destroyed it; the release before a
+// capture or destroy did the same to the cold-boot probe's socket.
+// SOCK_DESTROY fails the app's socket with ECONNABORTED, which gunicorn logs
+// as "Socket error processing request" with a traceback on every deploy and
+// wake (agent eval rc.357, Django task; vmmd "released inherited guest
+// connections after restore" reset=1 on gregale-compute-2).
+func newHealthcheckClient() *http.Client {
+	return &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			Proxy:             nil, // probes dial the guest's host IP directly
+			DialContext:       (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
+			DisableKeepAlives: true,
+		},
+	}
 }
 
 // VsockCharacterizationHostPort is the AF_VSOCK port the host's

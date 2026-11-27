@@ -2,6 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APISandboxLibraryScenario } from '../models/APISandboxLibraryScenario.js';
+import type { APISandboxLibraryScenarioSaveRequest } from '../models/APISandboxLibraryScenarioSaveRequest.js';
+import type { APISandboxScenarioDraft } from '../models/APISandboxScenarioDraft.js';
+import type { APISandboxScenarioLibraryResponse } from '../models/APISandboxScenarioLibraryResponse.js';
+import type { APISandboxSuiteResponse } from '../models/APISandboxSuiteResponse.js';
+import type { APISandboxSuiteSaveRequest } from '../models/APISandboxSuiteSaveRequest.js';
 import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppChangeTimelineResponse } from '../models/AppChangeTimelineResponse.js';
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
@@ -61,6 +67,7 @@ import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssue
 import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
 import type { CreateProfileCaptureRequest } from '../models/CreateProfileCaptureRequest.js';
 import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
+import type { CreateRouteSplitRequest } from '../models/CreateRouteSplitRequest.js';
 import type { CreateSLORequest } from '../models/CreateSLORequest.js';
 import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
@@ -130,6 +137,7 @@ import type { ListIssueTrackerLinksResponse } from '../models/ListIssueTrackerLi
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
+import type { MCPToolInsightsResponse } from '../models/MCPToolInsightsResponse.js';
 import type { MigrationCutover } from '../models/MigrationCutover.js';
 import type { MigrationCutoverActionRequest } from '../models/MigrationCutoverActionRequest.js';
 import type { MigrationCutoverList } from '../models/MigrationCutoverList.js';
@@ -161,6 +169,7 @@ import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSource
 import type { PutIssueSavedViewRequest } from '../models/PutIssueSavedViewRequest.js';
 import type { PutIssueTeamRequest } from '../models/PutIssueTeamRequest.js';
 import type { PutIssueTrackerLinkRequest } from '../models/PutIssueTrackerLinkRequest.js';
+import type { PutVerificationContractRequest } from '../models/PutVerificationContractRequest.js';
 import type { QueueBindingCanary } from '../models/QueueBindingCanary.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
@@ -200,6 +209,9 @@ import type { RouteRemovalApproval } from '../models/RouteRemovalApproval.js';
 import type { RouteRemovalCheck } from '../models/RouteRemovalCheck.js';
 import type { RouteRemovalPolicy } from '../models/RouteRemovalPolicy.js';
 import type { RouteRequirementsCheck } from '../models/RouteRequirementsCheck.js';
+import type { RouteResourcesResponse } from '../models/RouteResourcesResponse.js';
+import type { RouteSplit } from '../models/RouteSplit.js';
+import type { RouteSplitsResponse } from '../models/RouteSplitsResponse.js';
 import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
@@ -239,6 +251,7 @@ import type { UpdateNativeLinearIssueTrackerStatusRequest } from '../models/Upda
 import type { UpdateSyntheticCheckRequest } from '../models/UpdateSyntheticCheckRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
+import type { VerificationContract } from '../models/VerificationContract.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -3848,6 +3861,286 @@ export class AppsService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Which routes the app's memory and CPU peaks come from.
+   * Joins each instance's per-minute memory and CPU with the routes that
+   * instance served in the same minutes. A memory peak is a minute whose
+   * memory rose by at least high_memory_rise_mb above where it started; a
+   * CPU peak is a minute whose busiest second reached 80% of the CPU limit.
+   * For each route the response gives the share of peaks it was in flight
+   * for, how often it ran at all, and the p95 peak in minutes with and
+   * without it. This is a correlation over minutes, not a per-request
+   * measurement: a route that runs in every minute shares every peak.
+   * Available only where route resource peaks are enabled for the account.
+   *
+   * @returns RouteResourcesResponse Route attribution of the app's memory and CPU peaks.
+   * @throws ApiError
+   */
+  public static getAppRouteResources({
+    slug,
+    since = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration, at least 1m and at most 336h.
+     */
+    since?: string,
+  }): CancelablePromise<RouteResourcesResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics/route-resources',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Apply the suggested route split.
+   * Moves one heavy route to its own app. The body repeats the split the
+   * route-resources read suggested; Gregale recomputes it over the same
+   * window and answers route_split_changed when it moved. It then creates
+   * the route's app from the app's live build with its variables, secrets
+   * and runtime and security settings, and in the background routes the
+   * path to it with an edge rule once it is live and, for a memory split,
+   * sizes the app down. A split that fails before traffic moves deletes
+   * the route's app and ends rolled_back. Apps in a project, previews,
+   * apps with managed or service bindings, apps with app-wide (@app)
+   * edge rules, apps with a static egress IP, and apps with a route,
+   * rewrite, redirect, respond, async or throttle rule whose path may
+   * overlap the route are refused with route_split_unsupported. The
+   * route's app is reachable only through the app: its own hostnames get
+   * an ip rule that denies every request, so the account must be able to
+   * create ip rules.
+   * Available only where route resource peaks are enabled for the
+   * account.
+   *
+   * @returns RouteSplit The split started; follow its phase.
+   * @throws ApiError
+   */
+  public static createAppRouteSplit({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateRouteSplitRequest,
+  }): CancelablePromise<RouteSplit> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/route-splits',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The suggestion changed (route_split_changed), a split is in flight (route_split_in_flight), or the app has no live build.`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * The app's route splits, newest first.
+   * @returns RouteSplitsResponse The app's route splits.
+   * @throws ApiError
+   */
+  public static listAppRouteSplits({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<RouteSplitsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-splits',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * One route split.
+   * @returns RouteSplit The split.
+   * @throws ApiError
+   */
+  public static getAppRouteSplit({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The route split's ID.
+     */
+    id: string,
+  }): CancelablePromise<RouteSplit> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-splits/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Reverse a finished route split.
+   * Gives the app its previous size back, removes the split's edge rules
+   * and deletes the route's app. A split that is still in flight is
+   * refused with route_split_in_flight; a rolled-back or undone split is
+   * returned as it is.
+   *
+   * @returns RouteSplit The undone split.
+   * @throws ApiError
+   */
+  public static undoAppRouteSplit({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The route split's ID.
+     */
+    id: string,
+  }): CancelablePromise<RouteSplit> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/route-splits/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The split is still in flight (route_split_in_flight).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Per-tool MCP calls, failures, argument mismatches and estimated compute.
+   * Reads the last hour of the app's per-tool MCP telemetry. Execution
+   * seconds are converted to GB-seconds at the app's plan RAM + 8 MB, and
+   * estimated_millicents is an upper bound at the overage rate: usage
+   * inside the plan's included GB-hours costs nothing extra. telemetry is
+   * not_observed (with no tools) when the app reported nothing in the
+   * window. Available only where MCP tool insights are enabled for the
+   * account.
+   *
+   * @returns MCPToolInsightsResponse Per-tool MCP insights for the last hour.
+   * @throws ApiError
+   */
+  public static getMcpToolInsights({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<MCPToolInsightsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/mcp-tool-insights',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -8287,6 +8580,48 @@ export class AppsService {
     });
   }
   /**
+   * Draft an API sandbox scenario from a retained request.
+   * Read-only endpoint for the serving release, method, and any matching declared route. Supply synthetic inputs and the desired expected status before saving.
+   * @returns APISandboxScenarioDraft Starting metadata for a private scenario draft.
+   * @throws ApiError
+   */
+  public static getDebugApiSandboxScenarioDraft({
+    slug,
+    reqId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Public request ID or internal telemetry row UUID.
+     */
+    reqId: string,
+  }): CancelablePromise<APISandboxScenarioDraft> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/debug/requests/{req_id}/sandbox-scenario-draft',
+      path: {
+        'slug': slug,
+        'req_id': reqId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `The caller may not access the source app.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Request evidence or scenario storage is unavailable.`,
+      },
+    });
+  }
+  /**
    * Active regression observations.
    * Returns regression observations written by the
    * debug_regression_observations table — surfaces per-route
@@ -9738,6 +10073,117 @@ export class AppsService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an app's stored verification contract.
+   * Returns the gregale.verify.yaml contract (as JSON) that production deployments of the app are checked against before they take traffic. 404 when no contract is stored or the verification-contracts capability is not released to the account. Requires app read access.
+   * @returns VerificationContract The app's current verification contract.
+   * @throws ApiError
+   */
+  public static getVerificationContract({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<VerificationContract> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/verification-contract',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Store or replace an app's verification contract.
+   * Validates and stores the contract. Every later production deployment runs its HTTP, MCP and read-only SQL checks against the candidate; a failing required check blocks promotion. expected_revision makes the write conditional: 0 creates only, a positive revision replaces only that revision, and a mismatch answers 409. Requires deploy write access.
+   * @returns VerificationContract The verification contract after the write.
+   * @throws ApiError
+   */
+  public static setVerificationContract({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PutVerificationContractRequest,
+  }): CancelablePromise<VerificationContract> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/verification-contract',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an app's verification contract.
+   * Removes the stored contract; later deployments promote on the platform smoke alone. expected_revision makes the delete conditional and a mismatch answers 409. Requires deploy write access.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteVerificationContract({
+    slug,
+    expectedRevision,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Delete only if the stored contract is at this revision.
+     */
+    expectedRevision?: number,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/verification-contract',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'expected_revision': expectedRevision,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });
@@ -11309,6 +11755,237 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the app's saved API regression suite.
+   * @returns APISandboxSuiteResponse Saved suite configuration.
+   * @throws ApiError
+   */
+  public static getApiSandboxSuite({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APISandboxSuiteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-suite',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Save the app's API regression suite.
+   * Choose up to five scenarios from this app's library. Their order controls the run order. An empty list clears the selection.
+   * @returns APISandboxSuiteResponse Updated suite configuration.
+   * @throws ApiError
+   */
+  public static putApiSandboxSuite({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: APISandboxSuiteSaveRequest,
+  }): CancelablePromise<APISandboxSuiteResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/api-sandbox-suite',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List reusable sandbox scenarios for this app.
+   * @returns APISandboxScenarioLibraryResponse Names and current revisions of app library scenarios.
+   * @throws ApiError
+   */
+  public static listApiSandboxLibraryScenarios({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<APISandboxScenarioLibraryResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a reusable sandbox scenario and its private provenance.
+   * @returns APISandboxLibraryScenario Current scenario definition.
+   * @throws ApiError
+   */
+  public static getApiSandboxLibraryScenario({
+    slug,
+    scenario,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+  }): CancelablePromise<APISandboxLibraryScenario> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Save a reusable sandbox scenario.
+   * Use a new UUID and an empty expected_revision to create, or the existing UUID and current revision to edit. A Debugger source request can be supplied when creating. Names are unique within the app.
+   * @returns APISandboxLibraryScenario Saved scenario and its current revision.
+   * @throws ApiError
+   */
+  public static putApiSandboxLibraryScenario({
+    slug,
+    scenario,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+    requestBody: APISandboxLibraryScenarioSaveRequest,
+  }): CancelablePromise<APISandboxLibraryScenario> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a scenario from the app's library.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteApiSandboxLibraryScenario({
+    slug,
+    scenario,
+    expectedRevision,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable, app-scoped scenario UUID.
+     */
+    scenario: string,
+    /**
+     * Latest scenario revision required to delete the saved scenario.
+     */
+    expectedRevision: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/api-sandbox-scenarios/{scenario}',
+      path: {
+        'slug': slug,
+        'scenario': scenario,
+      },
+      query: {
+        'expected_revision': expectedRevision,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
         `,
       },
     });

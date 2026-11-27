@@ -137,8 +137,9 @@ func (p *Provider) observeSnapshotCopyTargetTopology(ctx context.Context, spec m
 			return snapshotCopyTargetTopology{}, managedpostgres.ErrConflict
 		}
 	}
-	if p.observedSpec(actual, endpoint) != spec || actual.DefaultEndpointSettings != endpointSettingsForSpec(spec) ||
-		endpoint.SuspendTimeoutSecond != endpointSettingsForSpec(spec).SuspendTimeoutSecond {
+	want := p.endpointSettingsForSpec(spec)
+	if p.observedSpec(actual, endpoint) != spec || !sameEndpointSettings(actual.DefaultEndpointSettings, want) ||
+		!sameSuspendPolicy(endpoint.SuspendTimeoutSecond, want.SuspendTimeoutSecond) {
 		return snapshotCopyTargetTopology{}, managedpostgres.ErrConflict
 	}
 	return snapshotCopyTargetTopology{observation: managedpostgres.SnapshotCopyTargetObservation{ProviderResourceID: id, CreatedAt: created.UTC(), Spec: spec,

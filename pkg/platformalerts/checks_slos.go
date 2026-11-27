@@ -67,7 +67,7 @@ func (c *ruleCover) covered(ctx context.Context, accountID string, match func(st
 		c.rules[accountID] = rules
 	}
 	for _, r := range rules {
-		if r.Enabled && match(r) {
+		if r.Enabled && r.EnvironmentID == "" && match(r) {
 			return true, nil
 		}
 	}
@@ -88,12 +88,15 @@ func (w *Worker) DetectFailingChecks(ctx context.Context) error {
 	}
 	cover := &ruleCover{w: w}
 	for _, c := range runnable {
+		if w.CheckReleased != nil && !w.CheckReleased(ctx, c) {
+			continue
+		}
 		runs, err := checks.ListSyntheticCheckRuns(ctx, c.ID, api.SyntheticCheckFailingRuns)
 		if err != nil {
 			w.log().Warn("platform alerts: read check runs", "check_id", c.ID, "err", err)
 			continue
 		}
-		if !allFailed(runs, api.SyntheticCheckFailingRuns) {
+		if !allFailed(runs, api.SyntheticCheckFailingRuns) || staleRuns(runs, c.IntervalSeconds, w.now()) {
 			continue
 		}
 		covered, err := cover.covered(ctx, c.AccountID, func(r state.AlertRule) bool { return r.SyntheticCheckID == c.ID })
@@ -115,6 +118,22 @@ func (w *Worker) DetectFailingChecks(ctx context.Context) error {
 		w.queue(ctx, state.PlatformAlertNotice{AccountID: c.AccountID, AppID: c.AppID, Kind: state.PlatformAlertCheckFailing, SubjectID: c.ID, Detail: detail})
 	}
 	return nil
+}
+
+// staleRuns reports runs whose newest is older than the check's staleness
+// bound, the same bound the synthetic alert rule applies (a check that stopped
+// running is unknown, not failing).
+func staleRuns(runs []state.SyntheticCheckRun, intervalSeconds int, now time.Time) bool {
+	if len(runs) == 0 || intervalSeconds <= 0 {
+		return false
+	}
+	newest := runs[0].StartedAt
+	for _, r := range runs[1:] {
+		if r.StartedAt.After(newest) {
+			newest = r.StartedAt
+		}
+	}
+	return now.Sub(newest) > time.Duration(api.SyntheticCheckStaleIntervals*intervalSeconds)*time.Second
 }
 
 func allFailed(runs []state.SyntheticCheckRun, want int) bool {
@@ -147,6 +166,9 @@ func (w *Worker) DetectBurningSLOs(ctx context.Context) error {
 	}
 	cover := &ruleCover{w: w}
 	for _, def := range defs {
+		if w.SLOReleased != nil && !w.SLOReleased(ctx, def) {
+			continue
+		}
 		burn, err := slo.MultiWindowBurn(ctx, prom, def)
 		if err != nil || math.IsNaN(burn) || math.IsInf(burn, 0) || burn < api.PlatformAlertSLOBurnRate {
 			continue

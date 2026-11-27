@@ -162,6 +162,28 @@ groups:
           summary: "Commit relay observations are unavailable"
           description: "No reporting scheduler can read the shared Commit health ledger. Check the platform PostgreSQL connection and scheduler health; backlog totals are unavailable."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitReceiptUsageReconciliationStalled
+        expr: max(schedd_commit_receipt_usage_reconciliation_current) == 0
+        for: 1h
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit receipt usage reconciliation is incomplete"
+          description: "Receipt usage backfill is incomplete, a reconciliation is overdue, or the usage ledger cannot be sampled. Check scheduler health and PostgreSQL before trusting receipt usage metrics."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
+      - alert: FaasCommitReceiptStorageGrowing
+        expr: (max(delta(schedd_commit_receipt_payload_json_bytes[6h])) > 10485760) and (max(min_over_time(schedd_commit_receipt_storage_sample_success[6h])) == 1)
+        for: 1h
+        labels:
+          severity: warn
+          component: schedd
+          family: commit
+        annotations:
+          summary: "Commit receipt payload storage is growing"
+          description: "Receipt payload JSON text grew by more than 10 MiB over six hours. Review receipt growth and capacity. The measurement excludes other columns and indexes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommit.md"
   - name: faas_realtime_callbacks
     interval: 30s
     rules:
@@ -1191,9 +1213,11 @@ groups:
   - name: gcp_ops_agent
     interval: 30s
     rules:
+      # Only GCE hosts run the GCP agent: node_exporter's DMI vendor is
+      # "Google" there. The OVHcloud fleet (2026-11-20) has no agent to miss.
       - alert: FaasGCPOpsAgentMissing
         expr: |
-          up{job="node-compute"} == 1
+          (up{job="node-compute"} == 1 and on(instance) node_dmi_info{job="node-compute",system_vendor="Google"})
           unless on(instance)
           node_systemd_unit_state{job="node-compute",name="google-cloud-ops-agent.service",state="active"} == 1
         for: 5m
@@ -2584,11 +2608,17 @@ groups:
       # tunnel connection. A connector that is down exports no connection
       # series at all, so the expression counts serving nodes instead of
       # summing connections, which is empty, not 0, once every connector stops.
+      # A cell on public_edge.entry direct (ADR-20261102081618 step 6) scrapes
+      # no connector at all; there a node serves while its edge answers.
       - alert: FaasComputeEdgeUnavailable
         expr: |
           count(up{job="gatewayd-public-edge"})
             unless on()
-          (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
+          (
+            (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
+              or on()
+            ((count(up{job="gatewayd-public-edge"} == 1) > 0) unless on() (count(up{job="cloudflared"}) or count(cloudflared_tunnel_ha_connections{job="cloudflared"})))
+          )
         for: 2m
         labels:
           severity: page
@@ -2597,7 +2627,7 @@ groups:
           public_status: internal
         annotations:
           summary: "No compute-node app edge is serving"
-          description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
+          description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
       - alert: FaasComputeEdgeDown
@@ -2924,6 +2954,10 @@ groups:
         annotations:
           summary: "Prometheus dropped alerts before Alertmanager delivery"
           description: "Prometheus has dropped one or more notifications during the last 10m. The page path is losing alerts before Alertmanager receives them; check Alertmanager reachability, the notifier queue, and Prometheus logs immediately."
+          first_action: "Check the Prometheus notifier queue and Alertmanager readiness from the control plane."
+          customer_impact: "Operator alerts were dropped before delivery. Customer impact is unknown."
+          failure_stage: "Prometheus notification queue"
+          dashboard_path: '/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now'
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
 
       - alert: FaasPrometheusNotificationQueueBacklog
@@ -2953,6 +2987,10 @@ groups:
         annotations:
           summary: "Alertmanager notification delivery is failing"
           description: "Alertmanager has recorded failed notifications during the last 10m. One or more configured page or ticket integrations may be unreachable; inspect the integration label, receiver configuration, and provider response before assuming pages are delivered."
+          first_action: "Open Notification Receiver Failures and check the failing integration in the Alertmanager journal."
+          customer_impact: "Operator pages or warnings may be delayed or lost. Customer impact is unknown."
+          failure_stage: 'Alertmanager delivery ({{ if $labels.integration }}{{ $labels.integration }}{{ else }}unknown integration{{ end }})'
+          dashboard_path: '/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now'
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
 
       - alert: FaasAlertmanagerConfigReloadFailed
@@ -3231,7 +3269,7 @@ groups:
     interval: 5m
     rules:
       - record: faas_slo_api_eligible_requests:rate5m
-        expr: sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))
+        expr: (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0)))
       - record: faas_slo_api_platform_errors:rate5m
         expr: sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)
       - record: faas_slo_wakes:rate5m
@@ -3536,7 +3574,7 @@ groups:
           family: build_queue
         annotations:
           summary: "Build queue p95 wait > 5m"
-          description: "Builds are queueing > 300s at p95. Builder admission is intentionally limited to one VM under the 5 GiB parent slice; check whether arrival rate exceeds that safe drain rate."
+          description: "Builds are queueing > 300s at p95. Builder admission is intentionally limited to each node's reserved builder slots (builder_reserved_slots), the builders its build slice is sized for; check whether arrival rate exceeds that safe drain rate."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       - alert: FaasBuilderSliceOOMKill
@@ -3549,8 +3587,25 @@ groups:
           public_status: internal
         annotations:
           summary: "The builder parent cgroup OOM-killed an active build"
-          description: "builderd attributed a new faas-cp-build.slice oom_kill to the active build. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
+          description: "builderd attributed a new faas-cp-build.slice oom_kill to the build that was the slice's only builder. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
+
+      # Elastic builder slots (ADR-20261118154632): a node that keeps giving
+      # borrowed builds back to tenants has a builder_slots max too high for
+      # its tenant load. Tenants are not at risk (that is what the give-back
+      # is for); builds restart and wait longer.
+      - alert: FaasBuildPreemptionsHigh
+        expr: sum by (instance) (increase(builderd_build_preemptions_total[1h])) > 6
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: builder_memory
+          public_status: internal
+        annotations:
+          summary: "A node gave more than 6 borrowed builds back to tenants in the last hour"
+          description: "Borrowed builder slots on {{ $labels.instance }} keep giving their memory back to tenants, so builds restart. Lower that node's max in builder_slots, or turn builder_elastic_slots off."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildPreemptionsHigh.md"
 
       - alert: FaasHostOOMKill
         expr: increase(node_vmstat_oom_kill[10m]) > 0
@@ -3645,7 +3700,10 @@ groups:
       #
       # Eligible platform outcomes are 2xx and 5xx. Client/application 4xx
       # responses do not consume the fleet availability budget, and neither
-      # does a 5xx the customer's app returned itself: the error numerator is
+      # does a service-to-service call (gateway_service_requests_total is
+      # subtracted: a public request fanning out to N internal calls diluted
+      # the figure, and a service call's platform failure is never counted)
+      # or a 5xx the customer's app returned itself: the error numerator is
       # gateway_platform_errors_total (5xx produced before any guest response
       # byte). Counting app-authored 5xx let one tenant's failing handler
       # page on-call (production-us hunt #9: 554 deliberate 500s from a test
@@ -3659,9 +3717,9 @@ groups:
         expr: |
           (1 - ((sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0))
             /
-          sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))))
+          (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0)))))
             < 0.995
-          and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
+          and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[5m])) or vector(0))) > 0
         for: 10m
         labels:
           severity: warn
@@ -3677,17 +3735,17 @@ groups:
           (
             (
               (sum(rate(gateway_platform_errors_total{app!="-"}[1h])) or vector(0))
-              / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h]))
+              / (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[1h])) or vector(0)))
             ) > 0.072
-            and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) > 0
+            and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[1h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[1h])) or vector(0))) > 0
           )
           and
           (
             (
               (sum(rate(gateway_platform_errors_total{app!="-"}[6h])) or vector(0))
-              / sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h]))
+              / (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[6h])) or vector(0)))
             ) > 0.03
-            and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) > 0
+            and (sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[6h])) - (sum(rate(gateway_service_requests_total{app!="-",code=~"2..|5.."}[6h])) or vector(0))) > 0
           )
         for: 10m
         labels:
@@ -3697,6 +3755,10 @@ groups:
         annotations:
           summary: "API availability is consuming its monthly error budget rapidly"
           description: "The platform-produced 5xx rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
+          first_action: "Open API Availability and compare the onset with recent deploys. Check gateway errors for the affected routes and nodes."
+          customer_impact: "Platform-generated 5xx accounted for {{ $value | humanizePercentage }} of eligible requests over the last hour."
+          failure_stage: "Request serving before the guest returned a response"
+          dashboard_path: '/d/faas-fleet-m8?viewPanel=11&from=now-2h&to=now'
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
 
       - alert: FaasBuildSuccessLow
@@ -5156,6 +5218,18 @@ groups:
           summary: "{{ $value }} held {{ $labels.meter }} usage hours leave the billing lookback within 72 h ({{ $labels.reason }})"
           description: "meterd holds usage back while its subject is suspended, being deleted, has no complete billing identity or is unknown, and retries it every pass, but only within the billing lookback. These hours fall out of it within 72 hours and are then never billed (ADR-20261103121407). Clear the reason (reactivate, finish checkout) or accept the loss."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdPaidSubjectWithoutIdentity
+        expr: sum by (plan) (meterd_billing_paid_subjects_without_identity) > 0
+        for: 6h
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "{{ $value }} {{ $labels.plan }} subjects have no billing identity and are never billed"
+          description: "A subject on a paid plan that is not complimentary has no complete billing identity for the configured provider, so meterd never bills its usage and the held-usage gauges do not list it (metering review 2026-11-23). Grant it complimentary (ADR-20261111140000), return it to Free, or have it complete checkout. meterd logs each one as 'billing identity incomplete'."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
       - alert: FaasMeterdSampleFailing
         expr: increase(meterd_ops_total{op="sample",code="err"}[15m]) >= 5
         for: 15m
@@ -5523,6 +5597,30 @@ groups:
           description: "gatewayd-public POST /v1/otel/v1/traces is receiving spans but every write fails (db_error) and none has been inserted for 15m. The OTLP writer ships customer spans into request_telemetry.spans_summary (ADR-127 PR-D); a stall means the debugger's per-request span view is going dark. Check gatewayd-public logs for `otel_spans: apid RPC failed` (auth.sock unreachable), `otel_spans: rate_limited` (customer's per-account token bucket exhausted), or `otel_spans: shape_invalid` (malformed OTLP body). Drill-down: `rate(gatewayd_public_otel_spans_ingested_total[5m]) by (outcome)` distinguishes the four outcomes (inserted/rate_limited/db_error/shape_invalid)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDebugTelemetryIngestStalled.md"
 
+      - alert: FaasRequestTelemetryLoss
+        # Request telemetry rows lost on their way to apid: given up by the
+        # gateway publisher (retries, a full backlog, the shutdown deadline),
+        # evicted from a full ring, or refused by apid as malformed or failed
+        # to insert. Lost rows lower analytics totals and hold release guards
+        # (canary, 5xx rollback) until coverage returns, and none of it
+        # alerted (2026-11-24 telemetry audit). A customer's ingest quota
+        # stays out: apid's rate_limited outcome is not read, and the gateway
+        # counts rows apid refused apart from platform drops.
+        expr: |
+          (sum(increase(gateway_request_telemetry_platform_dropped_total[15m])) or vector(0))
+          + (sum(increase(gateway_request_telemetry_overwritten_total[15m])) or vector(0))
+          + (sum(increase(apid_request_telemetry_recorded_total{outcome=~"db_error|invalid"}[15m])) or vector(0))
+          > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: request_telemetry
+        annotations:
+          summary: "Request telemetry rows are being lost"
+          description: "Gateways or apid lost request telemetry rows in the last 15m. Analytics for the affected apps read incomplete, and canaries and 5xx rollbacks hold over windows that lost rows. Drill-down: `sum by (instance) (increase(gateway_request_telemetry_platform_dropped_total[15m]))` (publisher gave up: apid unreachable or slow), `increase(gateway_request_telemetry_overwritten_total[15m])` (ring full: publisher behind), `sum by (outcome) (increase(apid_request_telemetry_recorded_total[15m]))` (db_error: insert failures; invalid: rows apid will never take, logged as `request telemetry row refused`)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryLoss.md"
+
       # request_telemetry is range-partitioned by received_at. meterd
       # reconciles the current month and two future months at startup and
       # hourly so normal writes never accumulate in the catch-all default.
@@ -5796,7 +5894,7 @@ groups:
           public_status: internal
         annotations:
           summary: "builderd build queue > 50 queued builds for 10m"
-          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
+          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to each node's reserved builder slots (builder_reserved_slots), sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       - alert: FaasBuildQueueTelemetryUnavailable
@@ -7045,6 +7143,14 @@ groups:
     rules:
       - record: faas_managed_postgres_reconcile_failures:rate10m
         expr: sum(rate(apid_managed_postgres_reconcile_total{outcome="failed"}[10m]))
+
+      # Share of scale-to-zero compute held idle before a suspend (suspend
+      # timeout x minimum CU per suspend), over a day of collected windows.
+      # Tunes the suspend timeout and the class minimums; never billed.
+      - record: faas_managed_postgres_idle_tail_share:ratio24h
+        expr: |
+          sum by (class) (increase(apid_managed_postgres_idle_tail_compute_unit_seconds_total[24h]))
+            / (sum by (class) (increase(apid_managed_postgres_scale_to_zero_compute_unit_seconds_total[24h])) > 0)
 
       - record: faas_managed_postgres_usage_deferred:rate15m
         expr: sum(rate(apid_managed_postgres_usage_collection_sweeps_total{outcome=~"degraded|error"}[15m]))
@@ -9076,6 +9182,68 @@ groups:
           description: "More than half of the requests app {{ $labels.app }}'s attack mode decided in 15m were refused with 403 challenge_required (not browser navigations, no verified credential). Either a script flood is being turned away, or the app's own API clients are locked out."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
 
+  - name: faas_runtime_collector
+    interval: 30s
+    rules:
+      # Use observed refusals rather than sampled occupancy. Hold for a full
+      # lookback window so a single burst can age out without firing.
+      - alert: FaasRuntimeCollectorCapacityRefusals
+        expr: |
+          increase(apid_operator_runtime_refused_collections_total{job="apid"}[5m]) >= 3
+          and on (job, instance) (up{job="apid"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: runtime_collector
+          public_status: internal
+        annotations:
+          summary: "Runtime collector on {{ $labels.instance }} repeatedly refuses collections"
+          description: "At least three capacity refusals per five-minute window have persisted for five minutes. Open Gregale Runtime Diagnostics and check overlapping verifiers on this apid."
+          runtime_dashboard_path: '/d/faas-runtime-diagnostics?var-apid_instance={{ $labels.instance | urlquery }}&from=now-2h&to=now'
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorCapacityRefusals.md"
+      # Count report deadlines once per collection. One expired collection
+      # can produce deadline outcomes for several source-read invocations.
+      - alert: FaasRuntimeCollectorDeadlines
+        expr: |
+          increase(apid_operator_runtime_reports_total{job="apid",outcome="deadline_exceeded"}[5m]) >= 3
+          and on (job, instance) (up{job="apid"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: runtime_collector
+          public_status: internal
+        annotations:
+          summary: "Runtime collections on {{ $labels.instance }} repeatedly time out"
+          description: "At least three collections per five-minute window hit their deadline for five minutes. Open Gregale Runtime Diagnostics and check source read duration and outcomes by group."
+          runtime_dashboard_path: '/d/faas-runtime-diagnostics?var-apid_instance={{ $labels.instance | urlquery }}&from=now-2h&to=now'
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorDeadlines.md"
+      - alert: FaasRuntimeCollectorIncompleteCoreEvidence
+        expr: |
+          (
+            sum by (job, instance, group) (
+              increase(apid_operator_runtime_group_evaluations_total{job="apid",group=~"identity|readiness|process|loop_health",outcome="incomplete"}[30m])
+            )
+            / (
+              sum by (job, instance, group) (
+                increase(apid_operator_runtime_group_evaluations_total{job="apid",group=~"identity|readiness|process|loop_health",outcome=~"complete|incomplete"}[30m])
+              ) >= 10
+            )
+          ) >= 0.5
+          and on (job, instance) (up{job="apid"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: runtime_collector
+          public_status: internal
+        annotations:
+          summary: "Runtime {{ $labels.group }} evidence on {{ $labels.instance }} is repeatedly incomplete"
+          description: "{{ $value | humanizePercentage }} of this core group's evaluations were incomplete in the last 30 minutes. The group has had at least 10 evaluations and an incomplete rate of at least 50% for 15 consecutive minutes."
+          runtime_dashboard_path: '/d/faas-runtime-diagnostics?var-apid_instance={{ $labels.instance | urlquery }}&var-evidence_group={{ $labels.group | urlquery }}&from=now-2h&to=now'
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorIncompleteCoreEvidence.md"
+
   # ─────────────────────────────────────────────────────────────────
   # Spec §12 operator signals (ADR-1235). These rows of the §12 table
   # promised alerts that no rule implemented. All ship as warn,
@@ -10168,7 +10336,7 @@ groups:
       - alert: FaasMCPProtocolHighErrorRate
         expr: |
           (
-            sum by (app_id) (increase(vmmd_mcp_protocol_requests_total{outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))
+            sum by (app_id) (increase(vmmd_mcp_protocol_requests_total{outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout|invalid_params"}[5m]))
             / sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m]))
           ) > 0.1
           and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m])) >= 20)
@@ -10517,6 +10685,40 @@ groups:
         annotations:
           summary: "Alert notifications to a channel kind are failing platform-wide"
           description: "meterd could not unseal a channel's credentials, or every Slack, PagerDuty or email delivery failed for 30 minutes (at least three attempts, none delivered). One customer's broken destination does not fire this while others deliver; a platform failure such as the unseal key, the mail relay or egress does."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # ADR-20261115194000: platform alert emails tell an account its app is
+      # down, its check is failing, its SLO is burning or its cron was paused.
+      # A notice that ran out of attempts was failing silently (Observe audit
+      # 2026-11-21, finding 14).
+      - alert: FaasPlatformAlertEmailsFailing
+        expr: |
+          sum by (job, instance, kind) (increase(meterd_platform_alert_notices_total{outcome="failed"}[1h])) > 0
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Platform alert emails ({{ $labels.kind }}) gave up without being delivered"
+          description: "meterd exhausted its attempts on at least one platform alert notice in the last hour. The account was not told its app is failing, its check is failing, its SLO is burning or its cron was paused."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # Guest spans (vmmd -> apid) write into request_telemetry.spans_summary
+      # through apid's spans writer. FaasDebugTelemetryIngestStalled covers
+      # only the public OTLP path on gatewayd-public.
+      - alert: FaasGuestSpansWritesFailing
+        expr: |
+          sum by (job, instance) (rate(apid_otel_spans_writes_total{outcome="db_error"}[10m])) > 0
+          unless on (job, instance)
+          sum by (job, instance) (rate(apid_otel_spans_writes_total{outcome="inserted"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: debug_telemetry
+          public_status: internal
+        annotations:
+          summary: "apid's spans writer has failed every write for 15 minutes"
+          description: "Guest and OTLP spans reach apid but every UPDATE of request_telemetry.spans_summary fails (db_error) and none succeeded. Traces, span evidence and dependency breakdowns go dark for every traced app."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
       # ADR-20261028101615: accounts are evaluated in parallel with a tick
       # budget each, so a slow tick means many accounts are slow at once, and

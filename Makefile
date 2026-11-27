@@ -80,7 +80,11 @@ BINDIR  := bin
 # the operator invokes make.
 ANSIBLE_CONFIG ?= $(CURDIR)/deploy/ansible/ansible.cfg
 ANSIBLE_INVENTORY ?= deploy/ansible/inventory/hosts.ini
-ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
+# ANSIBLE_VARS_FILE: operator variables kept outside the repository (what CD
+# passes as --ansible-vars-file from CP_ANSIBLE_VARS_B64), e.g. for a control
+# plane rebuilt from backups (docs/runbooks/ControlPlaneStateBackup.md).
+ANSIBLE_VARS_FILE ?=
+ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook $(if $(ANSIBLE_VARS_FILE),-e @$(ANSIBLE_VARS_FILE))
 
 .DEFAULT_GOAL := help
 
@@ -92,6 +96,14 @@ test-data-repair: ## Run strict internal repair PostgreSQL, SDK and isolated ope
 
 test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit
 	@GO="$(GO)" sh scripts/test-commit.sh
+
+.PHONY: test-commit-load
+test-commit-load: ## Run isolated sustained Commit relay and reconciliation recovery qualification
+	@GO="$(GO)" sh scripts/test-commit-load.sh
+
+.PHONY: test-commit-consumer-load
+test-commit-consumer-load: ## Run sustained Commit producer-to-consumer recovery acceptance
+	@GO="$(GO)" sh scripts/test-commit-consumer-load.sh
 
 .PHONY: test-commit-native
 test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
@@ -248,7 +260,7 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@case "$(VERSION)" in unit-*) ;; *) echo "VERSION=$(VERSION) must be unit-<commit>"; exit 2;; esac
 	@mkdir -p $(BINDIR)
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
-	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
+	  -ldflags '$(LDFLAGS) -s -w -buildid=' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
 # Issue #295: images.yml attests an SPDX SBOM for every platform image,
 # release.yml one for the CLI archives, and the release ships release.sbom.json
@@ -370,8 +382,8 @@ test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^Tes
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
 .PHONY: monetization-sandbox
-monetization-sandbox: ## API monetization end to end against real Stripe/Paddle/Lago sandboxes; keys in GREGALE_SANDBOX_* (docs/ops/api-monetization-release.md)
-	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '^TestMonetizationSandbox' ./pkg/apid/apidserver/
+monetization-sandbox: ## API monetization against real provider sandboxes; RUN narrows the tests; keys in GREGALE_SANDBOX_*
+	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '$(or $(RUN),^TestMonetizationSandbox)' ./pkg/apid/apidserver/
 
 .PHONY: product-control-provider-qualification
 product-control-provider-qualification: ## Qualify Product Control exports against real Stripe test mode, Paddle sandbox and a Lago test org; set FAAS_QUALIFY_* (docs/ops/product-control.md)
@@ -1739,6 +1751,10 @@ docs-links-check: ## Verify every Gregale docs URL maps to a customer page sourc
 	@$(GO) run ./cmd/docs-links-check
 	@python3 scripts/ops/check_live_docs_test.py
 
+.PHONY: docs-commands-check
+docs-commands-check: ## Verify every gregale command in the customer docs runs as written, in the command tree's names
+	@$(GO) test -count=1 -run '^(TestDocsCommandsRunAsWritten|TestDocsSpellCommandsInTheTree)$$' ./cmd/gregale
+
 .PHONY: docs-live-check
 docs-live-check: ## Verify deployed docs headings and require real 404s (DOCS_BASE_URL optional)
 	@python3 scripts/ops/check_live_docs.py $(if $(DOCS_BASE_URL),--base-url "$(DOCS_BASE_URL)")
@@ -1857,13 +1873,16 @@ auth-staging-check: ## Application Auth canary harness contracts without provide
 auth-staging-canary: ## Opt-in application Auth native acceptance through Gregale's remote builder (ADR-1190)
 	@bash scripts/ci/run-auth-staging-canary.sh
 
-.PHONY: data-api-staging-check data-api-staging-canary
+.PHONY: data-api-staging-check data-api-staging-canary data-api-staging-smoke
 data-api-staging-check: ## Staging canary harness contracts without provider calls
 	@npm run build --prefix sdk/data
 	@node --test tests/data-api/staging/*.test.mjs
 
 data-api-staging-canary: ## Opt-in isolated Data API deployment through Gregale's remote builder
 	@bash scripts/ci/run-data-api-staging-canary.sh
+
+data-api-staging-smoke: ## Opt-in Data API staging check for candidate readiness, schema sync and SDK behavior
+	@bash scripts/ci/run-data-api-staging-canary.sh --mode smoke
 
 .PHONY: sdk-gen-python
 sdk-gen-python: ## Regenerate sdk/python/faas_sdk from api/openapi.yaml

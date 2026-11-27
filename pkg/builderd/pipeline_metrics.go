@@ -16,6 +16,9 @@ const (
 	// requeueIdenticalBuild defers a build behind an identical one that is
 	// already building (ADR-20261102100000).
 	requeueIdenticalBuild = "identical_build"
+	// requeuePreempted returns a build its borrowed slot gave back to
+	// tenants (ADR-20261118154632).
+	requeuePreempted = "preempted"
 )
 
 // PipelineMetrics observes admission without owning it. Slot gauges read the
@@ -23,16 +26,22 @@ const (
 type PipelineMetrics struct {
 	builder                     *Builderd
 	used, limit                 *prometheus.Desc
+	reserved, active            *prometheus.Desc
 	claims, admission, requeues *prometheus.CounterVec
+	preemptions                 *prometheus.CounterVec
 }
 
 // WithPipelineMetrics attaches queue diagnostics before processing starts.
 // It does not change the single-slot fence, claim selection, or requeue policy.
 func (b *Builderd) WithPipelineMetrics(reg prometheus.Registerer) *Builderd {
 	m := &PipelineMetrics{
-		builder:   b,
-		used:      prometheus.NewDesc("builderd_build_slots_in_use", "Process-local reserved VM build slots, read from the allocator. Excludes cache hits and preparation outside the slot.", nil, nil),
-		limit:     prometheus.NewDesc("builderd_build_slots_limit", "Enforced process-local VM build slot limit, not opportunistic eligibility.", nil, nil),
+		builder:  b,
+		used:     prometheus.NewDesc("builderd_build_slots_in_use", "Process-local reserved VM build slots, read from the allocator. Excludes cache hits and preparation outside the slot.", nil, nil),
+		limit:    prometheus.NewDesc("builderd_build_slots_limit", "Enforced process-local VM build slot limit, not opportunistic eligibility. With builder_elastic_slots on, this node's applied builder_slots max (ADR-20261118154632).", nil, nil),
+		reserved: prometheus.NewDesc("builderd_build_slots_reserved", "Reserved builder slots this node applies while builder_elastic_slots is on, else the one guaranteed slot (ADR-20261118154632).", nil, nil),
+		active:   prometheus.NewDesc("builderd_build_slots_active", "Builds holding a builder slot by kind: reserved (faas-cp-build.slice) or borrowed (faas-borrowed.slice, ADR-20261118154632).", []string{"kind"}, nil),
+		preemptions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "builderd_build_preemptions_total",
+			Help: "Builds a borrowed builder slot gave back to the queue because tenants needed the memory, by who stopped the VM: builderd's give-back or vmmd's forced one (ADR-20261118154632)."}, []string{"actor"}),
 		claims:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "builderd_build_claims_total", Help: "Completed claim calls by source (poll or notification) and outcome (claimed, not_claimed, error, canceled). Not_claimed does not establish an empty fleet queue."}, []string{"source", "outcome"}),
 		admission: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "builderd_build_slot_decisions_total", Help: "Slot allocation decisions by outcome (granted, limit, policy). Limit denial is normal saturation, not a build failure."}, []string{"outcome"}),
 		requeues:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "builderd_build_requeues_total", Help: "Completed requeue calls by fixed reason and outcome (accepted, not_requeued, error, canceled). Not_requeued includes fenced stale claims; accepted means the store call succeeded."}, []string{"reason", "outcome"}),
@@ -45,7 +54,10 @@ func (b *Builderd) WithPipelineMetrics(reg prometheus.Registerer) *Builderd {
 	for _, outcome := range []string{"granted", "limit", "policy", "memory"} {
 		m.admission.WithLabelValues(outcome)
 	}
-	for _, reason := range []string{requeueNoSlot, requeueSource, requeueCancellation, requeueLookup, requeueIdenticalBuild} {
+	for _, actor := range []string{"builderd", "vmmd"} {
+		m.preemptions.WithLabelValues(actor)
+	}
+	for _, reason := range []string{requeueNoSlot, requeueSource, requeueCancellation, requeueLookup, requeueIdenticalBuild, requeuePreempted} {
 		for _, outcome := range []string{"accepted", "not_requeued", "error", "canceled"} {
 			m.requeues.WithLabelValues(reason, outcome)
 		}
@@ -58,6 +70,9 @@ func (b *Builderd) WithPipelineMetrics(reg prometheus.Registerer) *Builderd {
 func (m *PipelineMetrics) Describe(ch chan<- *prometheus.Desc) {
 	ch <- m.used
 	ch <- m.limit
+	ch <- m.reserved
+	ch <- m.active
+	m.preemptions.Describe(ch)
 	m.claims.Describe(ch)
 	m.admission.Describe(ch)
 	m.requeues.Describe(ch)
@@ -66,12 +81,27 @@ func (m *PipelineMetrics) Describe(ch chan<- *prometheus.Desc) {
 func (m *PipelineMetrics) Collect(ch chan<- prometheus.Metric) {
 	m.builder.slotMu.Lock()
 	used := m.builder.activeSlots
+	borrowed := m.builder.activeBorrowed
 	m.builder.slotMu.Unlock()
+	reserved := m.builder.reservedSlots()
+	if m.builder.elastic.Enabled() {
+		reserved = m.builder.elastic.Applied().Reserved
+	}
 	ch <- prometheus.MustNewConstMetric(m.used, prometheus.GaugeValue, float64(used))
-	ch <- prometheus.MustNewConstMetric(m.limit, prometheus.GaugeValue, float64(maxBuilderSlots))
+	ch <- prometheus.MustNewConstMetric(m.limit, prometheus.GaugeValue, float64(m.builder.slotLimit()))
+	ch <- prometheus.MustNewConstMetric(m.reserved, prometheus.GaugeValue, float64(reserved))
+	ch <- prometheus.MustNewConstMetric(m.active, prometheus.GaugeValue, float64(used-borrowed), "reserved")
+	ch <- prometheus.MustNewConstMetric(m.active, prometheus.GaugeValue, float64(borrowed), "borrowed")
+	m.preemptions.Collect(ch)
 	m.claims.Collect(ch)
 	m.admission.Collect(ch)
 	m.requeues.Collect(ch)
+}
+
+func (m *PipelineMetrics) observePreemption(actor string) {
+	if m != nil {
+		m.preemptions.WithLabelValues(actor).Inc()
+	}
 }
 
 func (m *PipelineMetrics) observeClaim(ctx context.Context, source string, err error) {

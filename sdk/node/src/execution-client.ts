@@ -16,6 +16,7 @@ export function bindExecutionHelpers(getConfig: () => ClientConfig): ExecutionHe
     const config = getConfig();
     return {
       runs: bindService(RunsService, () => config),
+      idempotencyKey: config.idempotencyKey,
       async fetchEvents(path, signal) {
         const headers = await getHeaders(config, {
           method: 'GET', url: path, headers: { Accept: 'text/event-stream' },

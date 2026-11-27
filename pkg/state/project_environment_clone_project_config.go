@@ -13,6 +13,10 @@ type projectCloneProjectConfig struct {
 	Hash         string                    `json:"hash"`
 	Values       json.RawMessage           `json:"values"`
 	FeatureFlags *projectCloneFeatureFlags `json:"feature_flags,omitempty"`
+	// SharedSecrets are the source environment's shared secrets as sealed
+	// envelopes, with every project app's references and suppressions
+	// (ADR-20261104120000 amendment 2026-11-21).
+	SharedSecrets *projectCloneSharedSecrets `json:"shared_secrets,omitempty"`
 }
 
 func normalizeCloneProjectConfig(config projectCloneProjectConfig) (projectCloneProjectConfig, error) {
@@ -30,6 +34,13 @@ func normalizeCloneProjectConfig(config projectCloneProjectConfig) (projectClone
 			return projectCloneProjectConfig{}, err
 		}
 		config.FeatureFlags = &snapshot
+	}
+	if config.SharedSecrets != nil {
+		secrets, err := normalizeCloneSharedSecrets(*config.SharedSecrets)
+		if err != nil {
+			return projectCloneProjectConfig{}, err
+		}
+		config.SharedSecrets = &secrets
 	}
 	return config, nil
 }
@@ -49,7 +60,8 @@ func capturedCloneProjectConfig(records []projectCloneWorkloadRecord) (projectCl
 		}
 		_, hash, err := api.NormalizeProjectEnvironmentConfig(record.snapshot.ProjectConfig.Values)
 		normalized, normalizeErr := normalizeCloneProjectConfig(*record.snapshot.ProjectConfig)
-		if err != nil || hash != expectedValuesHash || normalizeErr != nil || cloneFeatureFlagsHash(normalized.FeatureFlags) != cloneFeatureFlagsHash(captured.FeatureFlags) {
+		if err != nil || hash != expectedValuesHash || normalizeErr != nil || cloneFeatureFlagsHash(normalized.FeatureFlags) != cloneFeatureFlagsHash(captured.FeatureFlags) ||
+			cloneSharedSecretsHash(normalized.SharedSecrets) != cloneSharedSecretsHash(captured.SharedSecrets) {
 			return projectCloneProjectConfig{}, ErrConflict
 		}
 	}

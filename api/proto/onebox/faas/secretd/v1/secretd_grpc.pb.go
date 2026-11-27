@@ -33,6 +33,8 @@ const (
 	Secretd_RegistryFetch_FullMethodName            = "/onebox.faas.secretd.v1.Secretd/RegistryFetch"
 	Secretd_MintInternalServiceToken_FullMethodName = "/onebox.faas.secretd.v1.Secretd/MintInternalServiceToken"
 	Secretd_MintWorkflowIdentity_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/MintWorkflowIdentity"
+	Secretd_GrantStorageObjects_FullMethodName      = "/onebox.faas.secretd.v1.Secretd/GrantStorageObjects"
+	Secretd_OpenVerificationSecrets_FullMethodName  = "/onebox.faas.secretd.v1.Secretd/OpenVerificationSecrets"
 )
 
 // SecretdClient is the client API for Secretd service.
@@ -97,6 +99,18 @@ type SecretdClient interface {
 	// that app's account (slice 3k-2). outboundd still checks the run, attempt
 	// and request template against the database before it acts.
 	MintWorkflowIdentity(ctx context.Context, in *MintWorkflowIdentityRequest, opts ...grpc.CallOption) (*MintWorkflowIdentityResponse, error)
+	// GrantStorageObjects signs short-lived URLs for shared-store objects
+	// (ADR-20261117190000): the caller names keys and operations, secretd
+	// resolves each key to its owner and signs only when that owner is placed
+	// on the caller. All or nothing: one refused key refuses the request.
+	GrantStorageObjects(ctx context.Context, in *GrantStorageObjectsRequest, opts ...grpc.CallOption) (*GrantStorageObjectsResponse, error)
+	// OpenVerificationSecrets opens app secrets that a verification contract's
+	// check headers reference (ADR-20261122220000 amendment 2). The caller
+	// holds the unexpired verification lease of deployment_id, a deployment of
+	// app_id that is not live or terminal; every key must be referenced by the
+	// app's stored contract. secretd reads app_secrets in the deployment's
+	// scope itself. Keys the scope does not hold come back in missing.
+	OpenVerificationSecrets(ctx context.Context, in *OpenVerificationSecretsRequest, opts ...grpc.CallOption) (*OpenVerificationSecretsResponse, error)
 }
 
 type secretdClient struct {
@@ -226,6 +240,26 @@ func (c *secretdClient) MintWorkflowIdentity(ctx context.Context, in *MintWorkfl
 	return out, nil
 }
 
+func (c *secretdClient) GrantStorageObjects(ctx context.Context, in *GrantStorageObjectsRequest, opts ...grpc.CallOption) (*GrantStorageObjectsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GrantStorageObjectsResponse)
+	err := c.cc.Invoke(ctx, Secretd_GrantStorageObjects_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *secretdClient) OpenVerificationSecrets(ctx context.Context, in *OpenVerificationSecretsRequest, opts ...grpc.CallOption) (*OpenVerificationSecretsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OpenVerificationSecretsResponse)
+	err := c.cc.Invoke(ctx, Secretd_OpenVerificationSecrets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretdServer is the server API for Secretd service.
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
@@ -288,6 +322,18 @@ type SecretdServer interface {
 	// that app's account (slice 3k-2). outboundd still checks the run, attempt
 	// and request template against the database before it acts.
 	MintWorkflowIdentity(context.Context, *MintWorkflowIdentityRequest) (*MintWorkflowIdentityResponse, error)
+	// GrantStorageObjects signs short-lived URLs for shared-store objects
+	// (ADR-20261117190000): the caller names keys and operations, secretd
+	// resolves each key to its owner and signs only when that owner is placed
+	// on the caller. All or nothing: one refused key refuses the request.
+	GrantStorageObjects(context.Context, *GrantStorageObjectsRequest) (*GrantStorageObjectsResponse, error)
+	// OpenVerificationSecrets opens app secrets that a verification contract's
+	// check headers reference (ADR-20261122220000 amendment 2). The caller
+	// holds the unexpired verification lease of deployment_id, a deployment of
+	// app_id that is not live or terminal; every key must be referenced by the
+	// app's stored contract. secretd reads app_secrets in the deployment's
+	// scope itself. Keys the scope does not hold come back in missing.
+	OpenVerificationSecrets(context.Context, *OpenVerificationSecretsRequest) (*OpenVerificationSecretsResponse, error)
 	mustEmbedUnimplementedSecretdServer()
 }
 
@@ -330,6 +376,12 @@ func (UnimplementedSecretdServer) MintInternalServiceToken(context.Context, *Min
 }
 func (UnimplementedSecretdServer) MintWorkflowIdentity(context.Context, *MintWorkflowIdentityRequest) (*MintWorkflowIdentityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MintWorkflowIdentity not implemented")
+}
+func (UnimplementedSecretdServer) GrantStorageObjects(context.Context, *GrantStorageObjectsRequest) (*GrantStorageObjectsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GrantStorageObjects not implemented")
+}
+func (UnimplementedSecretdServer) OpenVerificationSecrets(context.Context, *OpenVerificationSecretsRequest) (*OpenVerificationSecretsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method OpenVerificationSecrets not implemented")
 }
 func (UnimplementedSecretdServer) mustEmbedUnimplementedSecretdServer() {}
 func (UnimplementedSecretdServer) testEmbeddedByValue()                 {}
@@ -543,6 +595,42 @@ func _Secretd_MintWorkflowIdentity_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Secretd_GrantStorageObjects_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrantStorageObjectsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).GrantStorageObjects(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_GrantStorageObjects_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).GrantStorageObjects(ctx, req.(*GrantStorageObjectsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Secretd_OpenVerificationSecrets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OpenVerificationSecretsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).OpenVerificationSecrets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_OpenVerificationSecrets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).OpenVerificationSecrets(ctx, req.(*OpenVerificationSecretsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Secretd_ServiceDesc is the grpc.ServiceDesc for Secretd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -589,6 +677,14 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MintWorkflowIdentity",
 			Handler:    _Secretd_MintWorkflowIdentity_Handler,
+		},
+		{
+			MethodName: "GrantStorageObjects",
+			Handler:    _Secretd_GrantStorageObjects_Handler,
+		},
+		{
+			MethodName: "OpenVerificationSecrets",
+			Handler:    _Secretd_OpenVerificationSecrets_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

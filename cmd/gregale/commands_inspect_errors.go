@@ -81,7 +81,9 @@ func cmdInspectErrors(slug string) int {
 		message := fmt.Sprintf("no failed deployment for %s — try `gregale logs %s --explain` if the live build is failing", slug, slug)
 		if jsonOutput || *asJSON {
 			problem := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "No failed deployment", message)
-			_ = writeJSONProblem(*problem)
+			// RFC 9457: an unnamed problem class is about:blank, not "" (prod 2026-11-19).
+			problem.Type = "about:blank"
+			_ = writeJSONProblemTo(osStderr, *problem)
 			return 1
 		}
 		PrintFail(osStderr, "%s", message)

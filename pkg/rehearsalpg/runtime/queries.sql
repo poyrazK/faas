@@ -27,12 +27,88 @@ ORDER BY r.rolname LIMIT 16;
 -- name: ConfigureTaskGrantTransaction :exec
 SELECT pg_catalog.set_config('search_path','pg_catalog',true);
 
--- name: TaskGrantTablesReady :one
-SELECT count(*)=cardinality(sqlc.arg(table_names)::text[])
+-- name: TaskGrantObjectsReady :one
+SELECT (count(*) FILTER (WHERE c.relkind='r' AND c.relname::text=ANY(sqlc.arg(table_names)::text[]))
+ =cardinality(sqlc.arg(table_names)::text[])
+ AND (NOT sqlc.arg(require_claim_order)::boolean OR count(*) FILTER (
+   WHERE c.relkind='S' AND c.relname='gregale_mcp_task_claim_order_seq'
+ )=1))::boolean
 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
 JOIN pg_catalog.pg_roles owner ON owner.oid=c.relowner
-WHERE n.nspname='public' AND c.relkind='r' AND c.relpersistence='p'
- AND owner.rolname=sqlc.arg(owner_role)::text AND c.relname::text=ANY(sqlc.arg(table_names)::text[]);
+WHERE n.nspname='public' AND c.relpersistence='p' AND owner.rolname=sqlc.arg(owner_role)::text;
+
+-- name: TaskParticipantPrivileges :one
+-- Inspect effective ACLs after the fixture is frozen. Never assume the
+-- provisioned grants survived a candidate's migrations.
+WITH relations AS (
+  SELECT c.oid,c.relname,c.relkind,c.relpersistence,c.relowner,n.nspname
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+), claim_order AS (
+  SELECT oid,relowner FROM relations
+  WHERE nspname='public' AND relname='gregale_mcp_task_claim_order_seq' AND relkind='S' AND relpersistence='p'
+), public_schema AS (
+  SELECT oid,nspowner FROM pg_catalog.pg_namespace WHERE nspname='public'
+)
+SELECT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_roles r, public_schema s, pg_catalog.pg_roles owner
+  WHERE r.rolname=sqlc.arg(role_name)::text AND owner.rolname=sqlc.arg(owner_role)::text
+    AND owner.rolname=current_user AND s.nspowner=owner.oid AND r.oid<>owner.oid
+    AND r.rolcanlogin AND NOT (r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid)
+    AND pg_catalog.has_database_privilege(r.oid,current_database(),'CONNECT')
+    AND NOT pg_catalog.has_database_privilege(r.oid,current_database(),'CREATE,TEMPORARY')
+    AND pg_catalog.has_schema_privilege(r.oid,s.oid,'USAGE')
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_namespace n
+      WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_schema_privilege(r.oid,n.oid,'CREATE')
+    )
+    AND cardinality(sqlc.arg(read_tables)::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relkind='r' AND c.relpersistence='p' AND c.relowner=owner.oid
+        AND c.relname::text=ANY(sqlc.arg(read_tables)::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT')
+    )
+    AND cardinality(sqlc.arg(write_tables)::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relname::text=ANY(sqlc.arg(write_tables)::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'UPDATE')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'DELETE')
+    )
+    -- Runtime roles advance the starter's claim counter. The observer has no sequence access.
+    AND (cardinality(sqlc.arg(write_tables)::text[])=0 OR EXISTS (
+      SELECT 1 FROM claim_order c
+      WHERE c.relowner=owner.oid AND pg_catalog.has_sequence_privilege(r.oid,c.oid,'USAGE')
+    ))
+    AND NOT EXISTS (
+      SELECT 1 FROM relations c
+      WHERE CASE WHEN c.relkind='S' THEN
+        pg_catalog.has_sequence_privilege(r.oid,c.oid,CASE
+          WHEN cardinality(sqlc.arg(write_tables)::text[])>0 AND c.relowner=owner.oid
+            AND c.oid IN (SELECT oid FROM claim_order)
+          THEN 'SELECT,UPDATE,USAGE WITH GRANT OPTION'
+          ELSE 'SELECT,USAGE,UPDATE' END)
+      WHEN c.relkind IN ('r','p','v','m','f') THEN
+        c.relowner=r.oid
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'TRUNCATE,REFERENCES,TRIGGER')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'REFERENCES')
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION,DELETE WITH GRANT OPTION')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION')
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL(sqlc.arg(read_tables)::text[]))
+          AND pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT'))
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL(sqlc.arg(write_tables)::text[]))
+          AND (pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE')
+            OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE')))
+      ELSE false END
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE p.prosecdef AND n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_function_privilege(r.oid,p.oid,'EXECUTE')
+    )
+)::boolean AS valid;
 
 -- name: FormatConfigureTaskSchema :one
 SELECT pg_catalog.format(
@@ -51,14 +127,14 @@ SELECT pg_catalog.format(
 SELECT pg_catalog.format('GRANT CONNECT ON DATABASE %I TO %I; GRANT USAGE ON SCHEMA public TO %I',
  sqlc.arg(database_name)::text,sqlc.arg(role_name)::text,sqlc.arg(role_name)::text)::text;
 
--- name: FormatGrantTaskTables :one
+-- name: FormatGrantTaskObjects :one
 SELECT (pg_catalog.format('GRANT SELECT ON TABLE %s TO %I',
  (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest(sqlc.arg(read_tables)::text[]) AS name),
  sqlc.arg(role_name)::text) ||
  CASE WHEN cardinality(sqlc.arg(write_tables)::text[])>0 THEN
- pg_catalog.format('; GRANT INSERT,UPDATE,DELETE ON TABLE %s TO %I',
+ pg_catalog.format('; GRANT INSERT,UPDATE,DELETE ON TABLE %s TO %I; GRANT USAGE ON SEQUENCE public.gregale_mcp_task_claim_order_seq TO %I',
  (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest(sqlc.arg(write_tables)::text[]) AS name),
- sqlc.arg(role_name)::text) ELSE '' END)::text;
+ sqlc.arg(role_name)::text,sqlc.arg(role_name)::text) ELSE '' END)::text;
 -- name: FormatCreateDatabase :one
 SELECT pg_catalog.format('CREATE DATABASE %I TEMPLATE template0 ENCODING ''UTF8''',sqlc.arg(database_name)::text)::text;
 -- name: FormatConfigureDatabase :one
@@ -175,3 +251,33 @@ SELECT pg_catalog.set_config('search_path','pg_catalog',true),pg_catalog.set_con
  pg_catalog.set_config('IntervalStyle','postgres',true),pg_catalog.set_config('bytea_output','hex',true),
  pg_catalog.set_config('extra_float_digits','3',true),pg_catalog.set_config('statement_timeout','5000',true),
  pg_catalog.set_config('enable_indexscan','off',true),pg_catalog.set_config('enable_indexonlyscan','off',true),pg_catalog.set_config('enable_bitmapscan','off',true);
+
+-- name: ObserveTaskClaim :one
+SELECT EXISTS (
+  SELECT 1
+    FROM public.gregale_mcp_tasks AS task
+    JOIN public.gregale_mcp_task_worker_handlers AS handler
+      ON handler.namespace = task.namespace AND handler.tool_name = task.tool_name
+     AND handler.handler_version = task.handler_version
+    JOIN public.gregale_mcp_task_workers AS worker
+      ON worker.namespace = handler.namespace AND worker.worker_id = handler.worker_id
+   WHERE task.namespace = sqlc.arg(namespace)::text AND task.task_id = sqlc.arg(task_id)::uuid
+     AND task.tool_name = 'build_report' AND task.status = 'running' AND task.attempt_count = sqlc.arg(attempt)::integer
+     AND task.lease_expires_at > clock_timestamp() AND task.expires_at > clock_timestamp()
+     AND task.cancel_requested_at IS NULL
+     AND encode(sha256(convert_to(task.lease_token::text, 'UTF8')), 'hex') = sqlc.arg(lease_sha256)::text
+     AND worker.worker_id = sqlc.arg(worker_id)::uuid AND NOT worker.draining AND worker.expires_at > clock_timestamp()
+     AND handler.deployment_id = sqlc.arg(deployment_id)::text
+);
+
+
+-- name: ObserveTaskResult :one
+-- Read only counts and the exact completed Task attempt, never its payload.
+SELECT count(*) AS task_rows,
+       count(*) FILTER (WHERE status = 'completed' AND result_encrypted IS NOT NULL) AS completed_result_rows,
+       coalesce(max(attempt_count) FILTER (
+           WHERE task_id = sqlc.arg(task_id)::uuid AND tool_name = 'build_report'
+             AND status = 'completed' AND result_encrypted IS NOT NULL AND expires_at > clock_timestamp()
+       ), 0)::integer AS attempt
+  FROM public.gregale_mcp_tasks
+ WHERE namespace = sqlc.arg(namespace)::text;

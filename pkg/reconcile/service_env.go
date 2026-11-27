@@ -38,7 +38,30 @@ func serviceEnvForWorkloadWithAvailable(base map[string]string, w reposcan.Workl
 }
 
 func serviceEnvForWorkloadWithTransport(base map[string]string, w reposcan.Workload, available map[string]struct{}, transport api.ServiceBindingTransport) map[string]string {
-	return api.ServiceBindingEnvForTransport(base, serviceBindingsForWorkloadWithAvailable(w, available), transport)
+	env := api.ServiceBindingEnvForTransport(base, serviceBindingsForWorkloadWithAvailable(w, available), transport)
+	return workloadCredentialEnv(env, w)
+}
+
+// workloadCredentialEnv points AWS SDKs at the guest's workload S3
+// credential endpoint when the service holds exactly one bucket grant
+// (ADR-20261122191423 slice 2), and removes the platform's value otherwise.
+// The endpoint without ?bucket= serves only a single grant; a service with
+// several names the bucket per S3 client
+// (api.WorkloadObjectCredentialsEndpoint + "?bucket=NAME"). A value the
+// customer set themselves is left alone.
+func workloadCredentialEnv(env map[string]string, w reposcan.Workload) map[string]string {
+	granted := w.Uses != nil && len(w.Uses.Normalized().Buckets) == 1
+	current, set := env[api.WorkloadCredentialsEnv]
+	switch {
+	case granted && !set:
+		if env == nil {
+			env = map[string]string{}
+		}
+		env[api.WorkloadCredentialsEnv] = api.WorkloadObjectCredentialsEndpoint
+	case !granted && set && current == api.WorkloadObjectCredentialsEndpoint:
+		delete(env, api.WorkloadCredentialsEnv)
+	}
+	return env
 }
 
 func serviceBindingsForWorkloadWithAvailable(w reposcan.Workload, available map[string]struct{}) []api.AppServiceBinding {
@@ -206,10 +229,24 @@ func serviceEnvEqual(actual, expected map[string]string) bool {
 			}
 		}
 	}
+	if actual[api.WorkloadCredentialsEnv] == api.WorkloadObjectCredentialsEndpoint && expected[api.WorkloadCredentialsEnv] == "" {
+		return false
+	}
 	for key, value := range expected {
+		if key == api.WorkloadCredentialsEnv && customerWorkloadCredentialEnv(actual) {
+			// Apply leaves a customer's own value alone, so it is not drift.
+			continue
+		}
 		if actual[key] != value {
 			return false
 		}
 	}
 	return true
+}
+
+// customerWorkloadCredentialEnv reports whether env carries a credentials
+// endpoint the customer set rather than the platform's.
+func customerWorkloadCredentialEnv(env map[string]string) bool {
+	value, set := env[api.WorkloadCredentialsEnv]
+	return set && value != api.WorkloadObjectCredentialsEndpoint
 }

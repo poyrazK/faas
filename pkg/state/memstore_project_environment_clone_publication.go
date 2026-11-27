@@ -113,7 +113,13 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 	if err := m.verifyCloneEventSubscriptionPublicationLocked(op, records); err != nil {
 		return err
 	}
+	if err := m.verifyCloneBucketNotificationPublicationLocked(op, records); err != nil {
+		return err
+	}
 	if err := validateCloneProjectConfigProof(op, resources, records, m.projectEnvironmentConfigLatestLocked(op.ProjectID, op.TargetEnvironment)); err != nil {
+		return err
+	}
+	if err := m.verifyCloneSharedSecretsPublicationLocked(op, records); err != nil {
 		return err
 	}
 	if len(records) == 0 {

@@ -15,6 +15,131 @@ does not require suspend/resume gates, the metal pause prerequisite or its image
 environment variables. Native KVM, matching installed source, the shared lock,
 independent app deletion and clean leakchecks remain required.
 
+## Hosted Task fixture and receipt
+
+### Prepare the fixture and check the runner
+
+Prepare the reviewed Node web and worker archives offline with the
+[hosted Task rehearsal plan](adr/20261118062934-hosted-task-rehearsal-plan.md). Use
+the same source revision as the acceptance installation and a private evidence
+root outside the checkout.
+
+```bash
+evidence_root=$(mktemp -d /var/tmp/gregale-hosted-task.XXXXXX)
+python3 scripts/ci/rehearsal-native.py --journey hosted-task --prepare-only \
+  --out "$evidence_root/prepared"
+```
+
+The `prepared` directory contains `fixture/web.tar.gz`, `fixture/worker.tar.gz` and
+`preparation.json` with the archive and reviewed source tree SHA-256s and the
+exact `build_report` invocation. Both archives use the pinned Node starter
+and dependency lockfile. The web process accepts Tasks and the dedicated
+worker executes them. The worker archive also carries the stock Task
+migration command.
+
+Before the owner approves a plan, complete this checklist on the dedicated
+acceptance host.
+
+- Follow [Native host setup](#native-host-setup). For this journey, include
+  the active local compute node UUID as `node_id` in the root-owned enrollment
+  marker. The enrolled node must resolve to `/run/faas/schedd.sock` and
+  `/run/faas/vmmd.sock`.
+- Stage the dedicated single-box APID configuration, the rehearsal admission
+  settings and the disposable PostgreSQL fixture cluster. Confirm that
+  `faas-apid` can read the account seal identity, credential lookup policy,
+  runtime seal recipient and value-fingerprint key through the installed service
+  configuration described in the [hosted Task ADR](adr/20261118062934-hosted-task-rehearsal-plan.md).
+- Load the dedicated `FAAS_API` and the approving owner's unscoped personal
+  administrator credential in `FAAS_TOKEN` through the normal host credential
+  mechanism. Run the preflight as root from the clean installed checkout.
+
+```bash
+GREGALE_REHEARSAL_NATIVE_ACCEPTANCE=1 \
+  python3 scripts/ci/rehearsal-native.py --journey hosted-task --check-runner
+```
+
+The preflight checks native KVM access, required tools, the installed revision,
+the enrollment marker and whether the credential resolves to the dedicated
+account. The acceptance child checks personal administrator authority and the
+local daemon sockets before invoking the private recovery runner.
+
+Use the prepared archives for hosted source review and binding checks. Match
+the retained review's web and worker source digests to `source_sha256` in
+`preparation.json`, then have the owner approve a fresh recovery plan. Keep the
+approved source intent ID and the plan SHA-256 for the native invocation.
+
+### Run hosted Task recovery
+
+The private smoke entry in `pkg/apid/toolregistry` checks the host through
+its in-process adapter before consuming the owner's approval. It scopes the
+smoke run to the exact contained deployments and their original lease, and
+cleans up an owned run even if the smoke is cancelled. Claim replay returns
+the reserved run identity.
+
+The first-claim entry is `StartHostedTaskRehearsal`. The operator wires its
+adapter with `pkg/tasktoolrehearsal/native.Startup` and checks the enrolled
+account, node and platform revision before spending the approval. Supply the
+`source_sha256` values from trusted offline preparation. The private entry
+compares both with the retained review before claiming the run.
+
+The ordinary deployment pipeline starts the worker. The adapter wakes the
+exact web deployment and forwards MCP only to that instance using the
+private gateway forwarder. Both deployments stay at zero traffic. The worker
+fixture logs a digest of the claim token, and the scheduler attributes the
+line to the VM. The restricted observer checks the live lease, Task, worker
+registration and deployment in PostgreSQL. The entry then disposes of the
+fixture. It returns first-claim evidence and leaves full acceptance to the
+recovery run.
+
+Use a new output path under the private evidence root. Set `intent_id` and
+`plan_sha256` to the approved 64-character lowercase hexadecimal values.
+
+```bash
+GREGALE_REHEARSAL_NATIVE_ACCEPTANCE=1 \
+  python3 scripts/ci/rehearsal-native.py --journey hosted-task \
+  --out "$evidence_root/native" \
+  --hosted-task-intent "$intent_id" --hosted-task-plan "$plan_sha256"
+```
+
+The root wrapper acquires the shared native acceptance lock and checks for
+leaks before and after the run. It prepares the fixture again from the clean
+checkout and passes the four source and archive digests to the one-shot
+acceptance child under `faas-apid`. The recovery runner stops the original
+worker through the scheduler and observes a replacement lease. The wrapper
+publishes `hosted-task-receipt.json` after receipt validation, the final leak
+check and a second host identity check.
+
+### Verify and retain the evidence
+
+Check the runner's `qualification.json` for `status: passed`,
+`scope: hosted-task-journey`, and the expected platform commit, account and
+node. Verify that its artifact digests match the retained files. The published
+`hosted-task-receipt.json` records the following observations.
+
+| Field | Source and expected value |
+| --- | --- |
+| `version`, `archive_sha256`, `run_id`, `task_id` | Version 1, the prepared archive hashes, the reserved run UUID and the Task UUID returned by MCP |
+| `initial`, `recovered` | Each records `task_id`, `status: running`, `attempt` (1 and 2), `deployment_id` and `instance_id`. Both observations use the same worker deployment and distinct VM instances. |
+| `stopped_instance_id` | The original worker instance confirmed stopped by the platform |
+| `result` | The submitted `task_id`, `status: completed` and expected `text` from the MCP result |
+| `observer` | Read-only PostgreSQL observation with `namespace: rehearsal-<run_id>`, the submitted `task_id`, `attempt: 2`, `task_rows: 1` and `completed_result_rows: 1`. Count all Task rows in the isolated namespace and completed rows with a stored result. |
+| `cleanup` | `workloads_remaining: 0`, `database_present: false`, `logins_remaining: 0`, `secrets_remaining: 0`, and `sources_remaining: 0` from independent cleanup checks on the reserved resources |
+
+```bash
+cmp "$evidence_root/prepared/preparation.json" "$evidence_root/native/preparation.json"
+python3 scripts/ci/rehearsal-native.py --verify-hosted-task "$evidence_root/native"
+```
+
+The verifier checks the consistency of these observations and the prepared
+archive hashes and reports `receipt_verified: true` with `native_qualified: false`.
+Use the enrolled run's passing qualification journal and leakcheck logs as the
+native acceptance evidence. Keep the private evidence directory for each run.
+If the run fails, retain its journal, logs and any pending receipt for
+investigation. Once the owner approval is consumed, a repeat run requires a
+fresh approval and a new evidence directory.
+
+## Native host setup
+
 Use a dedicated native x86_64 Linux KVM acceptance host with root, no customer
 workloads, a Pro acceptance account, and a complete installation of the exact
 clean checkout being qualified. The public API origin must route to that

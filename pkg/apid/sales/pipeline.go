@@ -28,11 +28,11 @@ func (s *Service) pipeline(w http.ResponseWriter, r *http.Request, acct state.Ac
 	return store, scope, ok
 }
 func (s *Service) team(ctx context.Context, store referrals.PipelineStore) ([]referrals.Rep, error) {
-	emails := make([]string, 0, len(s.Config.Members))
-	for email := range s.Config.Members {
-		emails = append(emails, email)
+	team, err := s.roster(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return store.SalesTeam(ctx, emails)
+	return store.SalesTeam(ctx, team.emails())
 }
 func (s *Service) Team(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, scope, ok := s.pipeline(w, r, acct)
@@ -46,7 +46,7 @@ func (s *Service) Team(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		pipelineError(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"actor_id": acct.ID, "manager": scope.All, "members": team, "stages": referrals.ProspectStages(), "close_reasons": referrals.OutcomeReasons(), "refresh_seconds": api.SalesTaskRefreshSeconds})
+	writeJSON(w, map[string]any{"actor_id": acct.ID, "manager": scope.All, "role": scope.Role, "members": team, "stages": referrals.ProspectStages(), "close_reasons": referrals.OutcomeReasons(), "refresh_seconds": api.SalesTaskRefreshSeconds})
 }
 func validID(id string) bool {
 	v, err := uuid.Parse(id)

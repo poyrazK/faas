@@ -175,7 +175,7 @@ keep working.
 
 If you asked for this, sign in and set up two-factor authentication again.
 
-If you did not, contact security@gregale.dev at once: someone may be
+If you did not, contact gregale@gregale.dev at once: someone may be
 trying to take over your account.
 
 — Gregale
@@ -197,7 +197,7 @@ sign-in links sent meanwhile stopped working.
 Next: use "Forgot password" to set a new password, review Account → Sign-in
 methods and Account → API keys, and remove anything you do not recognise.
 
-If you did not ask for this, contact security@gregale.dev at once.
+If you did not ask for this, contact gregale@gregale.dev at once.
 
 — Gregale
 `, mailTime(at), safeRecipient(email), maskEmail(removedEmail))
@@ -267,4 +267,44 @@ func maskEmail(email string) string {
 		return "***"
 	}
 	return email[:1] + "***" + email[at:]
+}
+
+// ClaimConfirmBody asks the person claiming an anonymous deploy to confirm
+// their address (ADR-20261124080000).
+func ClaimConfirmBody(link string, expiresAt time.Time) (subject, body string) {
+	subject = "Confirm to claim your Gregale app"
+	body = fmt.Sprintf(`Hi,
+
+Someone asked to claim an app an agent deployed on Gregale without an
+account, using this address. To claim it, open this link before %s:
+
+  %s
+
+The app becomes yours on the Free plan and you are signed in. The link can be
+used once. If you did not ask for this, ignore this email.
+
+— Gregale
+`, mailTime(expiresAt), link)
+	return subject, body
+}
+
+// ClaimAddressTakenBody answers a claim with an address that already has a
+// Gregale account: the claim moves the app only into a new account.
+func ClaimAddressTakenBody(email string) (subject, body string) {
+	subject = "Claiming a Gregale app"
+	body = fmt.Sprintf(`Hi,
+
+Someone asked to claim an app an agent deployed on Gregale without an
+account, using %s. That address already has a Gregale account, and an
+anonymous deploy can only be claimed into a new account.
+
+To keep the app, open the claim link again and use a different address, or
+sign in with gregale login where the agent runs and deploy again: the app
+is then created in your account.
+
+If you did not ask for this, ignore this email.
+
+— Gregale
+`, safeRecipient(email))
+	return subject, body
 }

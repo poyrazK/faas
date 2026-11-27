@@ -244,6 +244,15 @@ type Config struct {
 	// FAAS_IDLE_LADDER_IDLE_OUT overrides it.
 	IdleLadderIdleOut bool `toml:"idle_ladder_idle_out"`
 
+	// CronPrewake (ADR-20261107122928 §4, amendment 3) files a prewarm
+	// intent for an app with no resident instance one minute before its
+	// next HTTP cron fire, so the run finds the app awake instead of
+	// waiting on a snapshot restore. Like the idle-out it applies only to
+	// accounts the quiet_pause_unbilled platform flag releases, and it needs
+	// the prewarm drain (FAAS_PREWARM_ENABLED=1). Off by default;
+	// FAAS_CRON_PREWAKE overrides it.
+	CronPrewake bool `toml:"cron_prewake"`
+
 	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
 	// place at its idle timeout instead of parking it: vmmd keeps the VM
 	// paused in memory, unbilled, and the next request thaws it. Off by
@@ -251,6 +260,13 @@ type Config struct {
 	// turning it off drains the tier within FrozenTTL. FAAS_FROZEN_TIER
 	// overrides it.
 	FrozenTier bool `toml:"frozen_tier"`
+	// ReadinessProbeAppHost (ADR-20261119140000) makes vmmd's readiness and
+	// prime GETs for a production deployment send the app's public host
+	// (`<slug>.<apps_domain>`) and X-Forwarded-Proto: https instead of the
+	// instance address, so apps that allow-list their host names pass
+	// readiness. Off by default until prod-tested.
+	// FAAS_READINESS_PROBE_APP_HOST overrides it.
+	ReadinessProbeAppHost bool `toml:"readiness_probe_app_host"`
 	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
 	// functions to request-mode apps whose declared pause is not never.
 	// On by default (ADR-1151 amendment 2026-10-27) and ignored unless
@@ -656,6 +672,23 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_IDLE_LADDER_IDLE_OUT must be a boolean (got %q)", v)
 		}
 		c.IdleLadderIdleOut = enabled
+	}
+	// ADR-20261107122928 amendment 3: FAAS_CRON_PREWAKE overrides cron_prewake.
+	if v := os.Getenv("FAAS_CRON_PREWAKE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_CRON_PREWAKE must be a boolean (got %q)", v)
+		}
+		c.CronPrewake = enabled
+	}
+	// ADR-20261119140000: FAAS_READINESS_PROBE_APP_HOST overrides
+	// readiness_probe_app_host.
+	if v := os.Getenv("FAAS_READINESS_PROBE_APP_HOST"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_READINESS_PROBE_APP_HOST must be a boolean (got %q)", v)
+		}
+		c.ReadinessProbeAppHost = enabled
 	}
 	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
 	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {

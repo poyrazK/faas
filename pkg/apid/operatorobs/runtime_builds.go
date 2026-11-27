@@ -68,7 +68,7 @@ func RuntimeBuildLimitations() []string {
 // RuntimeBuilds never sends probes or changes deployment/notification state.
 // All queries use original timestamps and one pinned evaluation time.
 func RuntimeBuilds(ctx context.Context, client *promql.Client, registry RuntimeBuildRegistry, selected RuntimeBuildSelection, now time.Time) api.ObsRuntimeBuilds {
-	ctx, cancel := context.WithTimeout(ctx, api.ObsRuntimeBuildBudget)
+	ctx, cancel := context.WithTimeout(ctx, runtimeCollectionBudget)
 	defer cancel()
 	out, _ := collectRuntimeBuilds(ctx, client, registry, selected, now)
 	return out
@@ -81,6 +81,7 @@ func collectRuntimeBuilds(ctx context.Context, client *promql.Client, registry R
 		return out, nil
 	}
 	nodes, inventoryOK := runtimeBuildNodes(ctx, registry, selected.role)
+	coreStarted := time.Now()
 	results := make([]runtimeBuildJobResult, len(specs))
 	var wg sync.WaitGroup
 	for i, spec := range specs {
@@ -125,6 +126,7 @@ func collectRuntimeBuilds(ctx context.Context, client *promql.Client, registry R
 	}
 	out.Counts.DistinctRevisions = len(revisions)
 	out.State, out.Reason = runtimeBuildState(out.Counts, incomplete)
+	runtimeObservation(ctx).observePhase(ctx, runtimePhaseCoreEvidence, coreStarted)
 	return out, results
 }
 
@@ -147,11 +149,24 @@ func runtimeBuildNodes(ctx context.Context, registry RuntimeBuildRegistry, role 
 	if role != "control-plane-v1" && role != "control-plane-v2" {
 		return nil, true
 	}
+	observation := runtimeObservation(ctx)
+	started := time.Now()
+	outcome := "success"
+	defer func() { observation.recordInventory(ctx, started, outcome) }()
 	if registry == nil {
+		outcome = "not_configured"
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			outcome = runtimeReadOutcome(ctxErr)
+		}
 		return nil, false
 	}
 	nodes, err := registry.ListComputeNodes(ctx, false)
-	if err != nil || ctx.Err() != nil {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		outcome = runtimeReadOutcome(ctxErr)
+		return nil, false
+	}
+	if err != nil {
+		outcome = runtimeReadOutcome(err)
 		return nil, false
 	}
 	out := []state.ComputeNode{}
@@ -161,11 +176,13 @@ func runtimeBuildNodes(ctx context.Context, registry RuntimeBuildRegistry, role 
 			continue
 		}
 		if !ServingProbeNodeValid(node.Name) || node.ID == "" || names[node.Name] || ids[node.ID] {
+			outcome = "invalid_inventory"
 			return nil, false
 		}
 		names[node.Name], ids[node.ID] = true, true
 		out = append(out, node)
 		if len(out) > api.ObsRuntimeBuildNodesMax {
+			outcome = "invalid_inventory"
 			return nil, false
 		}
 	}

@@ -34,6 +34,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -237,6 +238,41 @@ func TestPg_ListRunningInstancesOnDeadNodes_RecoveryManagedAppRowsExcluded(t *te
 			}
 			if err := s.FailRunningInstanceOnDeadNode(ctx, insID, nodeID, threshold); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("FailRunningInstanceOnDeadNode err=%v, want ErrConflict", err)
+			}
+		})
+	}
+}
+
+// A recovery-managed node silent past api.DeadNodeRecoveryHandoffMaxSeconds
+// can no longer hand its rows off, so the sweep fails them instead of leaving
+// billable ghosts (account usage audit 2026-11-21).
+func TestPg_DeadNodeReconciler_RecoveryManagedRowsEligibleAfterHandoffBound(t *testing.T) {
+	s, ctx, pool := pgWithPool(t)
+	for _, lifecycle := range []state.NodeLifecycle{
+		state.NodeLifecycleDraining,
+		state.NodeLifecycleForceDraining,
+		state.NodeLifecycleUnavailable,
+	} {
+		t.Run(string(lifecycle), func(t *testing.T) {
+			nodeID, insID := pgTestDeadNodeWithRunningInstance(t, ctx, s, lifecycle)
+			silent := time.Now().UTC().Add(-time.Duration(api.DeadNodeRecoveryHandoffMaxSeconds)*time.Second - time.Minute)
+			if _, err := pool.Exec(ctx, `update compute_nodes set last_heartbeat_at = $2 where id = $1`, nodeID, silent); err != nil {
+				t.Fatal(err)
+			}
+			threshold := time.Now().UTC().Add(-2 * time.Minute)
+			rows, err := s.ListRunningInstancesOnDeadNodes(ctx, threshold, 500)
+			if err != nil {
+				t.Fatalf("ListRunningInstancesOnDeadNodes: %v", err)
+			}
+			found := false
+			for _, row := range rows {
+				found = found || row.ID == insID
+			}
+			if !found {
+				t.Fatalf("row on a %s node silent past the handoff bound was not listed", lifecycle)
+			}
+			if err := s.FailRunningInstanceOnDeadNode(ctx, insID, nodeID, threshold); err != nil {
+				t.Fatalf("FailRunningInstanceOnDeadNode: %v", err)
 			}
 		})
 	}

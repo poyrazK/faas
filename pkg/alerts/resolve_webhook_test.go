@@ -6,6 +6,7 @@ package alerts_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -72,5 +73,65 @@ func TestEvaluator_NotifyResolvedSendsResolveToWebhook(t *testing.T) {
 				t.Fatalf("stats = %+v, want one resolve delivered", stats)
 			}
 		})
+	}
+}
+
+func TestEvaluator_ObserveOnlySendsSignedStandDownToOriginalWebhook(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	rule, ident, secret := seedRule(t, store, state.AlertMetricRequestCount, state.AlertAboveBaseline, 3)
+	observe, err := store.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{
+		ObserveOnly: new(true), EnvironmentScope: new("production"), NotifyResolved: new(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err = store.UpdateAlertRule(ctx, observe.ID, state.UpdateAlertRuleParams{ObserveOnly: new(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := rule.UpdatedAt.Add(time.Minute)
+	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200}}
+	eval := func() *alerts.Evaluator {
+		return alerts.NewEvaluator(alerts.EvaluatorOptions{
+			Store: store, Identity: func() *age.X25519Identity { return ident },
+			PromQL:     &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
+			Dispatcher: dispatch, Now: func() time.Time { return now }, Log: discardLog(),
+		})
+	}
+	if stats, err := eval().RunOnce(ctx); err != nil || stats.Fired != 1 || dispatch.callCount() != 1 {
+		t.Fatalf("initial fire: stats=%+v calls=%d err=%v", stats, dispatch.callCount(), err)
+	}
+	changed, err := store.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{
+		ObserveOnly: new(true), EnvironmentScope: new("staging"), NotifyResolved: new(false),
+		Name: new("staging rule"), WebhookURL: new("https://example.com/staging"), WebhookSecretSealed: new([]byte("rotated")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	dispatch.result = webhookout.Result{StatusCode: 503, Err: errors.New("receiver unavailable")}
+	if stats, err := eval().RunOnce(ctx); err != nil || stats.ResolvesFailed != 1 || dispatch.callCount() != 2 {
+		t.Fatalf("first terminal attempt: stats=%+v calls=%d err=%v", stats, dispatch.callCount(), err)
+	}
+	now = now.Add(time.Minute)
+	dispatch.result = webhookout.Result{StatusCode: 200}
+	if stats, err := eval().RunOnce(ctx); err != nil || stats.ResolvesDelivered != 1 || dispatch.callCount() != 3 {
+		t.Fatalf("retried terminal attempt: stats=%+v calls=%d err=%v", stats, dispatch.callCount(), err)
+	}
+	first, resolved := dispatch.calls[1], dispatch.calls[2]
+	if resolved.URL != rule.WebhookURL || resolved.EventID == "" || resolved.EventID != first.EventID ||
+		resolved.Payload["event"] != "alert.resolved" || resolved.Payload["rule_name"] != rule.Name ||
+		resolved.Payload["environment_scope"] != "production" || resolved.Payload["reason"] != state.StandDownDisabled ||
+		resolved.Payload["resolved_at"] != changed.UpdatedAt.UTC().Format(time.RFC3339Nano) || resolved.Signer == nil {
+		t.Fatalf("stand-down did not preserve the original webhook and episode: %+v", resolved)
+	}
+	want := webhookout.NewSigner(secret).Sign(1, resolved.EventID, nil)
+	if got := resolved.Signer.Sign(1, resolved.EventID, nil); got != want {
+		t.Fatal("stand-down must be signed with the previous webhook secret")
+	}
+	now = now.Add(time.Minute)
+	if _, err := eval().RunOnce(ctx); err != nil || dispatch.callCount() != 3 {
+		t.Fatalf("delivered terminal event was queued again: calls=%d err=%v", dispatch.callCount(), err)
 	}
 }

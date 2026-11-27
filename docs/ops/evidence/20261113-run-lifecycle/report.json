@@ -1,0 +1,137 @@
+{
+  "auxiliary_regressions": {
+    "harness-checks": {
+      "package_elapsed_seconds": 1.32,
+      "passed_tests": [
+        "TestFirstDeadDaemonDetectsUnreapedExit",
+        "TestFirstDeadDaemon_DetectsAnExitedProcess",
+        "TestFirstDeadDaemon_AcceptsARunningProcess",
+        "TestFirstDeadDaemon_ToleratesEmptyAndUnstarted/no_daemons",
+        "TestFirstDeadDaemon_ToleratesEmptyAndUnstarted/nil_entry",
+        "TestFirstDeadDaemon_ToleratesEmptyAndUnstarted/never_started",
+        "TestFirstDeadDaemon_ToleratesEmptyAndUnstarted",
+        "TestRequireDaemonsAliveSkipsDeliberateKills",
+        "TestSessionListens_RequiresALISTEN"
+      ]
+    },
+    "job-materialization-checks": {
+      "package_elapsed_seconds": 2.884,
+      "passed_tests": [
+        "TestMaterializeJobCannotPublishBeforeBootBase",
+        "TestMaterializeJobPublishesResolvedArtifact",
+        "TestMaterializeJobStaleAttemptCannotReplaceOrDeleteWinner",
+        "TestMaterializeJobRenewsLeaseDuringLongBuild",
+        "TestMaterializePendingJobsRenewsLeasesWhileBatchWaits",
+        "TestMaterializeJobCancelsWhenLeaseRenewalLosesClaim",
+        "TestMaterializeJobUsesJobRegistryCredential",
+        "TestMaterializeJobRecordsImageConfigForImageRuns"
+      ]
+    }
+  },
+  "bare_metal_host": false,
+  "fixture_hashes": {
+    "base_sha256": "59ab9f82b30d7c866bf57e89e457592f700f79df92dc9b5d1a0b36b2f1dac1a6",
+    "guest_init_sha256": "ea5aa16f47e4735f6354483a8e6558eaad06b6ae21c3c85db6dd90468d2c78d9",
+    "kernel_sha256": "178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b"
+  },
+  "functional_pass": true,
+  "host": {
+    "acceptance_marker": true,
+    "architecture": "x86_64",
+    "host_kernel": "7.0.0-1014-gcp",
+    "hostname": "gregale-internal-test-1.us-east1-b.c.gregale-prod.internal",
+    "kvm": true,
+    "virtualization": "google"
+  },
+  "limits": [
+    "source: node24 standard cold boot only",
+    "fixture scan is not vulnerability evidence",
+    "sanitized source snapshot restore, OOM and other runtime/profile cohorts remain unqualified",
+    "Google virtualization does not satisfy the repository native acceptance requirement",
+    "restart checks enable version-7 journal adoption; default quarantine-only recovery and native_process_recovery remain unqualified",
+    "OCI noninteractive cancellation starts after dispatch claim; interactive disconnect cancellation starts after guest output",
+    "isolated-schema source execution-ledger reconciliation is not invoice or public usage_daily qualification",
+    "production image provenance and rollout remain separate gates"
+  ],
+  "oci_tests": [
+    "TestImageRunProcessMetal",
+    "TestImageRunsMetal",
+    "TestInteractiveImageRunMetal",
+    "TestInteractiveImageRunMetal/disconnect_cancels_the_run",
+    "TestInteractiveImageRunMetal/pipes",
+    "TestInteractiveImageRunMetal/tty"
+  ],
+  "p0_3_complete": false,
+  "package_elapsed_seconds": {
+    "oci": 288.837,
+    "source": 92.553
+  },
+  "process_exits": {
+    "leakcheck_after": 0,
+    "leakcheck_before": 0,
+    "oci": 0,
+    "source": 0
+  },
+  "raw_evidence_sha256": {
+    "artifacts.sha256": "8485321e3399b3e8c7fa916363843cc14a8435034efebb4a775e215439297e1c",
+    "build.log": "2d8a1557eae771ad1b7e8be36b2642d4deeed610087056bc689a22f6be711686",
+    "harness-checks.jsonl": "fd01f4009a544d468ec88817cfc36b5909fe8b4235f16f6a5db459f65b7c397d",
+    "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+    "job-materialization-checks.jsonl": "7b8845eeeeb5dc3471b455215b7cdba5bc52a515db30c0a7d723016e3cfde8c2",
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "linux-lint-2-result.json": "8ad63994ae748b34faf64b24184c4bada8b4b940918b3b3266b7449affd59ff1",
+    "linux-lint-2.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "oci-fixture.sha256": "4e449eac452cd56486531c1e854fde5e00d7ecbccded9cda879ae5eadeb7ca19",
+    "oci.jsonl": "6666890431863f19e5b5d872e87834c2646ca5fa6109bc6671d8dd55db80f3f3",
+    "process-exits.json": "3f3d5529980cd8c65070cb5e3635fc9274230222f4fe752245966fb4e2cf9de3",
+    "report.json": "bdd5a570e6d64d9c6a0ea361a42d9be7bd9503a70cf2f53d854bb6098c7457f6",
+    "source.json": "369bcea2ba7ab7cd8a6e8090b05cf13c745bceac9ca3c4bbaa256b4941468be7",
+    "source.jsonl": "67deaf53b5990d6055c3125188d0511c37f13efaa7f64164a0ef3f33ae4bf099"
+  },
+  "raw_report_schema": "gregale.run-lifecycle-functional/v1",
+  "runtime_release_eligibility": false,
+  "schema": "gregale.run-lifecycle-summary/v1",
+  "source": {
+    "base_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+    "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+    "go_version": "go version go1.26.11 linux/amd64",
+    "local_reproduction_ref": "refs/codex/run-lifecycle-qualification-20261113",
+    "parent_commit": "0ea8f5b63e6faabb9caaff9aa290c19f533b1e96",
+    "snapshot_commit": "8105ab70a1a14f06d2a71b4694d26c79efeea064",
+    "tree": "cdf2dac3ecc982175f5368c255c094ebf7eac2ad"
+  },
+  "source_pre_teardown_leakcheck": true,
+  "source_recovery_profile": "journal_adoption_v7",
+  "source_tests": [
+    "TestSourceRunLifecycleMetal",
+    "TestSourceRunLifecycleMetal/apid_restart_replays_original_receipt",
+    "TestSourceRunLifecycleMetal/deadline_does_not_extend",
+    "TestSourceRunLifecycleMetal/fresh_guest_and_network_isolation",
+    "TestSourceRunLifecycleMetal/guest_error_is_terminal",
+    "TestSourceRunLifecycleMetal/output_is_bounded",
+    "TestSourceRunLifecycleMetal/payload_erasure_and_single_usage_entry",
+    "TestSourceRunLifecycleMetal/queued_expiry_never_dispatches",
+    "TestSourceRunLifecycleMetal/running_cancel_tears_down",
+    "TestSourceRunLifecycleMetal/schedd_restart_never_reexecutes_running_work",
+    "TestSourceRunLifecycleMetal/source_result_artifact_and_usage",
+    "TestSourceRunLifecycleMetal/vmmd_restart_never_reexecutes_running_work"
+  ],
+  "validation": {
+    "linux_changed_code_lint": {
+      "exit_code": 0,
+      "new_issues": 0,
+      "packages": [
+        "./pkg/e2etest",
+        "./pkg/e2etest/runlifecycle",
+        "./pkg/imaged",
+        "./cmd/e2e"
+      ],
+      "patch_sha256": "7df5c83c1c02722791100675e48b722b2ecb7775c8e2d918a584075a27a90941",
+      "tool": "golangci-lint v2.14.0 via pinned go tool"
+    },
+    "portable_verdict_unit_tests": 6,
+    "runner_bash_syntax": "passed",
+    "runner_shellcheck": "passed"
+  }
+}

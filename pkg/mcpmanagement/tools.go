@@ -73,15 +73,55 @@ func (m *management) connection(ctx context.Context, _ noArgs) (any, error) {
 		toolsets = selected
 	}
 	return map[string]any{
-		"profile": m.opts.Profile, "api_base": m.opts.APIBase, "read_only": !m.opts.AllowWrites,
+		"profile": m.opts.Profile, "api_base": m.publicAPIBase(), "read_only": !m.opts.AllowWrites,
 		"toolsets":                toolsets,
 		"connection_capabilities": m.opts.Capabilities,
 		"account":                 map[string]string{"id": account.ID, "plan": account.Plan, "status": account.Status},
-		"capabilities":            capabilities,
+		"capabilities":            summarizeCapabilities(capabilities),
 		"allowed_apps":            m.opts.AllowedApps,
 		"environment_access":      m.opts.Environments,
 		"request_access":          m.requestAccessMetadata(),
 	}, nil
+}
+
+// capabilitySummary is the platform capability registry by key. The full
+// registry (descriptions, docs links, plans, acceptance tests) was 95 KB, so
+// gregale_context, the first call many agents make, cost about 49k tokens.
+type capabilitySummary struct {
+	Plan               string   `json:"plan"`
+	RegistryVersion    int      `json:"registry_version"`
+	ConditionalParking bool     `json:"conditional_parking"`
+	Enabled            []string `json:"enabled"`
+	Disabled           []string `json:"disabled"`
+	// NotGA are enabled capabilities still in preview or beta.
+	NotGA  []string `json:"not_ga,omitempty"`
+	Hidden []string `json:"hidden,omitempty"`
+	Docs   string   `json:"docs"`
+}
+
+func summarizeCapabilities(c api.CapabilitiesResponse) capabilitySummary {
+	out := capabilitySummary{Plan: c.Plan, RegistryVersion: c.RegistryVersion, ConditionalParking: c.ConditionalParking, Enabled: []string{}, Disabled: []string{}, Hidden: c.HiddenCapabilities,
+		Docs: "Search a capability's documentation with gregale_search_docs."}
+	for _, cap := range c.Capabilities {
+		if !cap.Enabled {
+			out.Disabled = append(out.Disabled, cap.Key)
+			continue
+		}
+		out.Enabled = append(out.Enabled, cap.Key)
+		if cap.Maturity == api.CapabilityMaturityPreview || cap.Maturity == api.CapabilityMaturityBeta {
+			out.NotGA = append(out.NotGA, cap.Key)
+		}
+	}
+	return out
+}
+
+// publicAPIBase is the API origin an agent can reach: the hosted bridge talks
+// to apid on loopback, which means nothing outside the control plane.
+func (m *management) publicAPIBase() string {
+	if m.opts.LogsAPIBase != "" {
+		return m.opts.LogsAPIBase
+	}
+	return m.opts.APIBase
 }
 
 func (m *management) listApps(ctx context.Context, args appsArgs) (any, error) {

@@ -95,6 +95,7 @@ func TestStatusForCode_KnownCodes(t *testing.T) {
 	// caught here.
 	cases := map[string]int{
 		"plan_limit_apps":                     http.StatusForbidden,
+		"application_standards_pending":       http.StatusServiceUnavailable, // prod 2026-11-19: a mesh call got 500
 		"plan_log_archive_not_allowed":        http.StatusPaymentRequired,
 		"app_layer_too_large":                 http.StatusForbidden,
 		"app_not_listening":                   http.StatusUnprocessableEntity,

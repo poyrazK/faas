@@ -123,6 +123,9 @@ func (v *JailerVMM) captureEnvironmentQualificationSnapshot(ctx context.Context,
 	if err := v.controlNativeQualificationSnapshotLocked(ctx, lease, permit, owner, nativeSnapshotPause); err != nil {
 		return info, fmt.Errorf("native snapshot capture: pause original VM: %w", err)
 	}
+	if err := nativeExecutionTemplateCheckpoint(ctx, "paused", lease); err != nil {
+		return info, err
+	}
 	if _, err := v.checkNativeSnapshotPublicationOwner(ctx, lease); err != nil {
 		return info, err
 	}
@@ -254,6 +257,11 @@ func (v *JailerVMM) publishNativeSnapshotCohort(ctx context.Context, lease Lease
 			return err
 		}); err != nil {
 			return SnapshotInfo{}, err
+		}
+		if kind == "mem" {
+			if err := nativeExecutionTemplateCheckpoint(ctx, "memory_published", lease); err != nil {
+				return SnapshotInfo{}, err
+			}
 		}
 	}
 	driveReceipt, err := v.publishNativeSnapshotReader(ctx, lease, publication, publication.intent.Keys.Drive, drive)

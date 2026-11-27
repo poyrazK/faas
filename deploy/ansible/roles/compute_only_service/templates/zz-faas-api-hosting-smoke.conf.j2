@@ -4,6 +4,13 @@
 # deployment. The public gateway uses the apps domain for tenant Host routing;
 # keep the origin configurable through gatewayd_apps_domain while preserving
 # the same URL shape in the smoke verifier.
-Environment=FAAS_API_HOSTING_SMOKE_URL=https://{{ gatewayd_apps_domain | default('gregale.dev') }}
+#
+# The origin is a label under the apps domain, never its bare apex: tenants
+# are served at <slug>.<apps domain>, so every label resolves to the public
+# edge, but the apex need not resolve at all. gregale.app has no apex record,
+# and the rc.367 rollout failed every candidate verification with a DNS error
+# once this rendered https://gregale.app (2026-11-22). The verifier still
+# sends the candidate's own <slug>.<apps domain> as the Host header.
+Environment=FAAS_API_HOSTING_SMOKE_URL=https://hosting-smoke.{{ gatewayd_apps_domain | default('gregale.dev') }}
 Environment=FAAS_APPS_DOMAIN={{ gatewayd_apps_domain | default('gregale.dev') }}
 Environment=FAAS_API_HOSTING_SMOKE_REQUIRED=1

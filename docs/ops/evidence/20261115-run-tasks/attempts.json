@@ -1,0 +1,19 @@
+[
+  {
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "tasks": 1
+    },
+    "result": "refused before Run admission: default stored-output budget did not fit the frozen scratch envelope",
+    "snapshot": "a5b43b0ac062ad7e446b6471dc539c7092eed8c5031fdaf4a2ccdb89b219a944"
+  },
+  {
+    "result": "portable checks exposed a billing-trigger schema-layout dependency and two test/CLI integration issues; no VM journey started",
+    "snapshot": "4a839e721f6073ae76e28edb3df58b8817589c150955889a0deb77c4f5d31c63"
+  },
+  {
+    "result": "passed VM restart, retirement, writer rollback, result/artifact and one-record continuation journey; portable and Linux lint checks passed",
+    "snapshot": "ecba7df18ffabcbae8c6675927e7cd82da8e60a8ef94f8004b1311dd249349eb"
+  }
+]

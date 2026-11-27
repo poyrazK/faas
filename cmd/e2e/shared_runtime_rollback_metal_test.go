@@ -183,10 +183,24 @@ func newSharedRuntimeApp(t *testing.T, slug, deployBody string) *sharedRuntimeAp
 
 	h := e2etest.Start(t, pool, e2etest.All)
 	t.Cleanup(func() { h.DumpLogs(t) })
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	return addSharedRuntimeApp(t, h, pool, api.PlanHobby, slug)
+}
+
+// addSharedRuntimeApp creates slug in its own account (labelled slug) on plan,
+// in the harness a newSharedRuntimeApp started.
+func addSharedRuntimeApp(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, plan api.Plan, slug string) *sharedRuntimeApp {
+	t.Helper()
+	key := h.SeedAccount(context.Background(), plan, slug)
 	falsy := false
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
+	}
+	// require_authn alone left a Pro app answering 401 (metal run
+	// 2026-11-25). Open the gateway's public auth too, as createOpenApp
+	// does: the tests GET the app without a key.
+	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &falsy,
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open app auth: status=%d", status)
 	}
 	app := &sharedRuntimeApp{h: h, pool: pool, store: state.NewPgStore(pool), key: key, slug: slug, appID: mustGetAppID(t, h, key, slug)}
 	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)

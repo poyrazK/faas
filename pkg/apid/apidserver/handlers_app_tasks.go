@@ -58,6 +58,14 @@ func appTaskResponse(row state.AppTask) api.AppTaskResponse {
 		CreatedAt:           row.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:           row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	// Artifacts and inspection metadata have dedicated, scoped readers even
+	// though the app-task transport carries their output.
+	if api.IsDataAPIContractArtifactTask(row.Command, row.CommandShell) || api.IsDataAPIWriteInspectionCommand(row.Command, row.CommandShell) {
+		resp.StdoutTail = ""
+	}
+	if api.IsDataAPIWriteInspectionCommand(row.Command, row.CommandShell) {
+		resp.StderrTail = ""
+	}
 	if row.ExitCode != nil {
 		value := *row.ExitCode
 		resp.ExitCode = &value
@@ -144,6 +152,9 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 	if problem != nil {
 		return state.AppTask{}, problem
 	}
+	if problem := functionAppTaskUnavailable(app, deployment); problem != nil {
+		return state.AppTask{}, problem
+	}
 	pin, pinErr := s.captureBindingVerificationPin(r, acct, app, deployment, resolved)
 	if pinErr != nil {
 		var problem *api.Problem
@@ -192,6 +203,21 @@ func declaresSmokeService(app state.App, service string) bool {
 		}
 	}
 	return false
+}
+
+// functionAppTaskUnavailable refuses an app task on a function release.
+// prod 2026-11-20: `app exec` on a live function said it needed "a live
+// deployment with a materialized runtime image". A function runs on the
+// shared runner and its release has no image to start a task VM from, so
+// app tasks, in-app binding verification (`app binding verify --all`) and
+// queue canaries cannot run there; the same refusal, said plainly.
+func functionAppTaskUnavailable(app state.App, deployment state.Deployment) *api.Problem {
+	if app.Type != state.AppTypeFunction || deployment.ImageDigest != "" {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "App task deployment unavailable",
+		"app exec, app tasks and in-app binding verification start a VM from the app's image, and a function's release has none; "+
+			"verify bindings through an invocation instead (gregale invocation run "+app.Slug+")")
 }
 
 func writeAppTaskDeploymentUnavailable(w http.ResponseWriter) {

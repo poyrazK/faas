@@ -133,8 +133,8 @@ func TestAgentPostgresStandingMillicents(t *testing.T) {
 		{"production", true, 0},
 		{"development", false, quarter},
 		{"burstable", false, quarter},
-		{"production", false, 4 * quarter},
-		{"unknown", false, 4 * quarter},
+		{"production", false, 2 * quarter},
+		{"unknown", false, 2 * quarter},
 	} {
 		if got := api.AgentPostgresStandingMillicents(tc.class, tc.scaleToZero); got != tc.want {
 			t.Errorf("%s scale_to_zero=%v = %d, want %d", tc.class, tc.scaleToZero, got, tc.want)

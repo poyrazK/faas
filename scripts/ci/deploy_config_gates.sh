@@ -42,6 +42,8 @@ promtool_install() {
 rules() {
   PROMTOOL=promtool python3 scripts/ops/obs_gate_test.py
   PROMTOOL=promtool python3 scripts/ops/serving_probe_coverage_test.py
+  PROMTOOL=promtool python3 scripts/ops/runtime_diagnostics_dashboard_test.py
+  promtool test rules pkg/promqlrules/testdata/runtime_collector.test.yml
   promtool check rules \
     deploy/ansible/roles/prometheus/files/faas.rules.yml \
     deploy/ansible/roles/prometheus/files/data_repair.rules.yml \
@@ -77,6 +79,8 @@ syntax() {
   ansible-playbook --syntax-check scale_check.yml
   # Gate-D: keep the trusted deployment-runner bootstrap parseable.
   ansible-playbook --syntax-check fleet_runner.yml
+  # ADR-20261122170000: the unit-release build runner bootstrap.
+  ansible-playbook --syntax-check build_runner.yml
   # ADR-143: the post-activation verify playbook is production
   # tooling (`make verify-fleet`) and must stay parseable.
   ansible-playbook --syntax-check verify.yml

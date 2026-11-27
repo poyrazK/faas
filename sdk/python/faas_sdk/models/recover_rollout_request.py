@@ -39,6 +39,10 @@ class RecoverRolloutRequest:
     """Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a
     service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding
     policies check this exact recipient before routing can change."""
+    expected_step: int | Unset = UNSET
+    """For advance and promote: the canary step the caller observed. The recovery is refused with
+    canary_step_conflict when the running canary is at another step, and with 404 when no canary is running. Not
+    allowed with abort or deployment_id."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +62,8 @@ class RecoverRolloutRequest:
         if not isinstance(self.expected_predecessor_deployment_id, Unset):
             expected_predecessor_deployment_id = str(self.expected_predecessor_deployment_id)
 
+        expected_step = self.expected_step
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,6 +79,8 @@ class RecoverRolloutRequest:
             field_dict["deployment_id"] = deployment_id
         if expected_predecessor_deployment_id is not UNSET:
             field_dict["expected_predecessor_deployment_id"] = expected_predecessor_deployment_id
+        if expected_step is not UNSET:
+            field_dict["expected_step"] = expected_step
 
         return field_dict
 
@@ -106,12 +114,15 @@ class RecoverRolloutRequest:
         else:
             expected_predecessor_deployment_id = UUID(_expected_predecessor_deployment_id)
 
+        expected_step = d.pop("expected_step", UNSET)
+
         recover_rollout_request = cls(
             action=action,
             expected_review=expected_review,
             reason=reason,
             deployment_id=deployment_id,
             expected_predecessor_deployment_id=expected_predecessor_deployment_id,
+            expected_step=expected_step,
         )
 
         recover_rollout_request.additional_properties = d

@@ -60,7 +60,7 @@ func TestAtCapacityWithVisibleInstancesIsTheLimit(t *testing.T) {
 	h, b, _ := newTestHandler(t)
 	b.app.MaxConcurrency = 1
 	b.AddTarget(Target{NodeID: b.upstream, InstanceID: "live-1", AddedAt: time.Now()})
-	_, err := h.settleAtCapacity(t.Context(), b.app, api.MustLimitsFor(b.app.Plan), 1, func() PickResult { return PickResult{} })
+	_, err := h.settleAtCapacity(t.Context(), b.app, "", api.MustLimitsFor(b.app.Plan), 1, func() PickResult { return PickResult{} })
 	var problem *api.Problem
 	if !errors.As(err, &problem) || problem.Code != api.CodeAppConcurReached || problem.Observed == nil || *problem.Observed != 1 {
 		t.Fatalf("err=%v, want app_concurrency_reached observing 1", err)

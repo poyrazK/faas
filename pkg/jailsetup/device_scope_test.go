@@ -47,3 +47,48 @@ func TestDeviceScopeStrictDecodingAndReceiptIdentity(t *testing.T) {
 		t.Fatal("device presence substituted for jail UID access")
 	}
 }
+
+// adr: 20261114010000 — version-2 KVM-only scope cannot inherit or publish a TUN capability.
+func TestDeviceScopeKVMOnlyRequiresAbsentTUN(t *testing.T) {
+	s := deviceScopeFixture()
+	s.Version, s.Tun, s.TunMountID, s.TunMode = 2, s.Root, s.RootMountID, 0
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got DeviceSetupScope
+	if err := json.Unmarshal(data, &got); err != nil || got != s {
+		t.Fatalf("KVM-only scope roundtrip: %v", err)
+	}
+	r := DeviceSetupReceipt{Scope: s, DevMountID: 25, KVM: DeviceFDIdentity{Device: 27, Inode: 28}, KVMAPI: 12}
+	if err := r.Validate(s); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*DeviceSetupScope){
+		"version":   func(x *DeviceSetupScope) { x.Version = 3 },
+		"legacy":    func(x *DeviceSetupScope) { x.Version = 0 },
+		"TUN mode":  func(x *DeviceSetupScope) { x.TunMode = 0o666 },
+		"TUN input": func(x *DeviceSetupScope) { x.Tun.Inode++ },
+		"TUN mount": func(x *DeviceSetupScope) { x.TunMountID++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := s
+			change(&bad)
+			if bad.Validate() == nil {
+				t.Fatal("invalid KVM-only scope accepted")
+			}
+		})
+	}
+	r.TunAccessible = true
+	if r.Validate(s) == nil {
+		t.Fatal("KVM-only receipt accepted TUN access")
+	}
+	r.TunAccessible = false
+	r.TunMountID = 26
+	if r.Validate(s) == nil {
+		t.Fatal("KVM-only receipt accepted TUN mount")
+	}
+}

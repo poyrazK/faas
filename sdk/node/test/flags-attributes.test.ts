@@ -44,6 +44,15 @@ test('gateway attributes and withAttributes feed attribute rules', async () => {
   assert.equal(eu.value, true);
   assert.equal(eu.rule_id, 'eu');
 
+  // ADR 20261119102741 §4: the gateway's cohort header is gregale.cohort.
+  assert.match(seen.capabilities, /cohort-targeting-v1/);
+  const power = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Flag-Cohorts': 'beta,onboarded' }, () => flags.boolean('power-tools', false));
+  assert.equal(power.rule_id, 'power');
+  const none = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Flag-Cohorts': '-' }, () => flags.boolean('power-tools', false));
+  assert.equal(none.rule_id, 'newcomers');
+  const forged = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Flag-Cohorts': 'Not A Key' }, () => flags.boolean('power-tools', false));
+  assert.equal(forged.reason, 'default');
+
   // A malformed gateway value is ignored rather than matched.
   const malformed = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Client-Country': 'de' }, () => flags.boolean('eu-checkout', false));
   assert.equal(malformed.value, false);

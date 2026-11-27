@@ -15,7 +15,7 @@ from uuid import UUID
 import httpx
 
 from .._sse import SseEvent, aiter_sse, iter_sse
-from .api.runs import create_execution, get_execution
+from .api.runs import create_execution, create_execution_v2, get_execution
 from .models.execution_artifact import ExecutionArtifact
 from .models.execution_response import ExecutionResponse
 from .types import UNSET, Unset
@@ -241,9 +241,9 @@ def run_execution(
     if idempotency_key is None:
         idempotency_key = UNSET
     created = _require_execution_response(
-        create_execution.sync(
+        _admission_api(body).sync(
             client=client.inner,
-            body=body,
+            body=body.to_dict() if hasattr(body,"to_dict") else body,
             idempotency_key=idempotency_key,
         ),
         "create_execution",
@@ -286,9 +286,9 @@ async def arun_execution(
     if idempotency_key is None:
         idempotency_key = UNSET
     created = _require_execution_response(
-        await create_execution.asyncio(
+        await _admission_api(body).asyncio(
             client=client.inner,
-            body=body,
+            body=body.to_dict() if hasattr(body,"to_dict") else body,
             idempotency_key=idempotency_key,
         ),
         "create_execution",
@@ -330,7 +330,90 @@ def decode_execution_artifact(artifact: ExecutionArtifact) -> bytes:
     import base64
     import hashlib
 
+    if getattr(artifact,"file_id",None) and not isinstance(getattr(artifact,"file_id",None),Unset) or not isinstance(artifact.content,str):
+        raise ValueError("stored artifact bytes require authenticated download_execution_file")
     content = base64.b64decode(artifact.content, validate=True)
     if len(content) != artifact.size_bytes or "sha256:" + hashlib.sha256(content).hexdigest() != artifact.sha256:
         raise ValueError("execution artifact content failed integrity verification")
     return content
+
+
+def _admission_api(body: Any) -> Any:
+    data = body.to_dict() if hasattr(body, "to_dict") else body
+    extended = isinstance(data, dict) and (bool(data.get("environment_id")) or (data.get("limits") or {}).get("execution_class") == "extended" or "input_schema" in data or "result_schema" in data or data.get("input_files") or data.get("artifact_storage") == "stored")
+    return create_execution_v2 if extended else create_execution
+
+
+def prepare_execution_file(client: FaaSClient, source: Any) -> Any:
+    """Hash a seekable binary input incrementally; prepare without reserving quota.
+
+    The caller retains the source and must keep its contents unchanged until
+    upload. Use the returned ID in a v2 Run admission probe before uploading,
+    so an existing admission key can replay without using new storage quota.
+    """
+    import hashlib
+    from .models.execution_file_response import ExecutionFileResponse
+
+    position = source.tell()
+    size = 0
+    digest = hashlib.sha256()
+    try:
+        while chunk := source.read(64 * 1024):
+            size += len(chunk)
+            if size > 64 * 1024 * 1024:
+                raise ValueError("Run file exceeds the 64 MiB hard limit")
+            digest.update(chunk)
+    finally:
+        source.seek(position)
+    response = client.inner.get_httpx_client().post("/v1/execution-files", json={"size_bytes": size, "sha256": "sha256:" + digest.hexdigest()})
+    response.raise_for_status()
+    return ExecutionFileResponse.from_dict(response.json())
+
+
+def upload_execution_file(client: FaaSClient, metadata: Any, source: Any) -> Any:
+    """Stream a prepared immutable file. No automatic execution retry occurs."""
+    from .models.execution_file_response import ExecutionFileResponse
+
+    size = metadata.size_bytes
+    if not isinstance(size, int) or size < 0 or size > 64 * 1024 * 1024:
+        raise ValueError("Invalid Run file size")
+    def chunks() -> Iterator[bytes]:
+        remaining = size
+        while remaining:
+            chunk = source.read(min(64 * 1024, remaining))
+            if not chunk:
+                raise ValueError("Run file source ended before its declared size")
+            remaining -= len(chunk)
+            yield chunk
+    response = client.inner.get_httpx_client().put(f"/v1/execution-files/{quote(str(metadata.id), safe='')}/content", content=chunks(), headers={"Content-Type": "application/octet-stream", "Content-Length": str(size), "X-Content-SHA256": metadata.sha256}, timeout=120.0)
+    response.raise_for_status()
+    return ExecutionFileResponse.from_dict(response.json())
+
+
+def download_execution_file(client: FaaSClient, file_id: ExecutionID, destination: Any) -> Any:
+    """Stream retained data and verify it before the caller publishes its file."""
+    import hashlib
+    from .models.execution_file_response import ExecutionFileResponse
+
+    path = f"/v1/execution-files/{quote(str(file_id), safe='')}"
+    transport = client.inner.get_httpx_client()
+    response = transport.get(path)
+    response.raise_for_status()
+    metadata = ExecutionFileResponse.from_dict(response.json())
+    if not isinstance(metadata.size_bytes, int) or metadata.size_bytes < 0 or metadata.size_bytes > 64 * 1024 * 1024:
+        raise ValueError("Invalid Run file size")
+    digest = hashlib.sha256()
+    size = 0
+    with transport.stream("GET", path + "/content", timeout=120.0) as response:
+        response.raise_for_status()
+        for chunk in response.iter_bytes(64 * 1024):
+            size += len(chunk)
+            if size > metadata.size_bytes:
+                raise ValueError("Run file download exceeds declared size")
+            digest.update(chunk)
+            written = destination.write(chunk)
+            if written is not None and written != len(chunk):
+                raise OSError("Run file destination accepted a partial write")
+    if size != metadata.size_bytes or "sha256:" + digest.hexdigest() != metadata.sha256:
+        raise ValueError("Run file checksum or length mismatch")
+    return metadata

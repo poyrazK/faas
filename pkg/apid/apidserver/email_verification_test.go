@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -122,10 +123,49 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 		t.Fatalf("replay status = %d, want 410", replayRec.Code)
 	}
 
-	// A fresh terminal code can now be approved under the recovered session.
+	// The old CLI approval can expire while the browser is signing in again.
+	const expiredCode = "cafe1234"
+	if err := store.IssueCliAuthCode(t.Context(), api.HashToken(mustHex(t, expiredCode)), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	retryURL := "/cli-auth?code=" + expiredCode
+	reauthForm := url.Values{
+		"email": {acct.Email}, "password": {"correct-horse-battery-staple"}, "next": {retryURL},
+	}
+	reauthReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(reauthForm.Encode()))
+	reauthReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reauthReq.Header.Set("Accept", "text/html")
+	reauthReq.AddCookie(cookie)
+	reauth := httptest.NewRecorder()
+	h.ServeHTTP(reauth, reauthReq)
+	if reauth.Code != http.StatusSeeOther || reauth.Header().Get("Location") != retryURL {
+		t.Fatalf("reauth did not return to the old approval link: %d", reauth.Code)
+	}
+	var reauthenticated *http.Cookie
+	for _, c := range reauth.Result().Cookies() {
+		if c.Name == apidserver.SessionCookie {
+			reauthenticated = c
+		}
+	}
+	if reauthenticated == nil {
+		t.Fatal("reauth did not issue a session")
+	}
+	retryReq := httptest.NewRequest(http.MethodGet, retryURL, nil)
+	retryReq.AddCookie(reauthenticated)
+	retryRec := httptest.NewRecorder()
+	h.ServeHTTP(retryRec, retryReq)
+	body := retryRec.Body.String()
+	if retryRec.Code != http.StatusOK || !strings.Contains(body, "Code unavailable") ||
+		!strings.Contains(body, acct.Email) || !strings.Contains(body, "<code>gregale login</code>") ||
+		!strings.Contains(body, "Open the new link in this browser") ||
+		strings.Contains(body, expiredCode) || strings.Contains(body, `name="code"`) {
+		t.Fatalf("expired approval did not offer recovery in the signed-in browser: %d %s", retryRec.Code, body)
+	}
+
+	// A fresh terminal code can be approved under the same reauthenticated session.
 	const cliCode = "a1b2c3d4"
 	pendingCliCode(t, store, cliCode)
-	approveCliCode(t, srv, cookie, acct.ID, cliCode)
+	approveCliCode(t, srv, reauthenticated, acct.ID, cliCode)
 	if _, approver, err := store.PeekCliAuthCode(t.Context(), api.HashToken(mustHex(t, cliCode))); err != nil || approver != acct.ID {
 		t.Fatalf("verified account could not approve the fresh CLI code: %v", err)
 	}

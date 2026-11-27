@@ -1,0 +1,27 @@
+=== RUN   TestMemExecutionFinishedDelivery
+=== RUN   TestMemExecutionFinishedDelivery/succeeded
+=== RUN   TestMemExecutionFinishedDelivery/failed
+=== RUN   TestMemExecutionFinishedDelivery/timed_out
+=== RUN   TestMemExecutionFinishedDelivery/out_of_memory
+=== RUN   TestMemExecutionFinishedDelivery/cancelled
+=== RUN   TestMemExecutionFinishedDelivery/queued_cancel
+=== RUN   TestMemExecutionFinishedDelivery/queued_expiry
+=== RUN   TestMemExecutionFinishedDelivery/owner_loss
+--- PASS: TestMemExecutionFinishedDelivery (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/succeeded (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/failed (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/timed_out (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/out_of_memory (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/cancelled (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/queued_cancel (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/queued_expiry (0.00s)
+    --- PASS: TestMemExecutionFinishedDelivery/owner_loss (0.00s)
+=== RUN   TestMemPipelineCompletionAndAgentObligation
+--- PASS: TestMemPipelineCompletionAndAgentObligation (1.10s)
+=== RUN   TestMemExecutionPipelineFences
+--- PASS: TestMemExecutionPipelineFences (0.00s)
+=== RUN   TestMemVersionedRunTasks
+--- PASS: TestMemVersionedRunTasks (0.00s)
+=== RUN   TestMemRunCustomerControls
+--- PASS: TestMemRunCustomerControls (0.00s)
+PASS

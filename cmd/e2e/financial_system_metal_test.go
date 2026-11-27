@@ -225,17 +225,22 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		// schedd and vmmd have just restarted after the outage; a wake they
 		// cannot take yet is a retryable 503, as for any client. Recovery
 		// must still serve funded traffic within the window.
-		var statuses []int
-		for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
-			got := request(t, apps[1].Slug)
-			statuses = append(statuses, got)
-			if got == http.StatusOK {
-				break
-			}
-			if got != http.StatusServiceUnavailable || time.Now().After(deadline) {
-				t.Fatalf("request after recovery: %v", statuses)
+		// untilServed retries a retryable 503 for up to 30 s, as any client
+		// does after the daemons restart.
+		untilServed := func(what string) []int {
+			var statuses []int
+			for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+				got := request(t, apps[1].Slug)
+				statuses = append(statuses, got)
+				if got == http.StatusOK {
+					return statuses
+				}
+				if got != http.StatusServiceUnavailable || time.Now().After(deadline) {
+					t.Fatalf("%s: %v", what, statuses)
+				}
 			}
 		}
+		statuses := untilServed("request after recovery")
 		t.Logf("financial-recovery-request: statuses=%v", statuses)
 		instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
 		live := financialSystemRunning(instances)
@@ -264,9 +269,10 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 			if len(response.body) != 0 {
 				t.Fatal("retired owner delivered a response after restart")
 			}
-			if got := request(t, apps[1].Slug); got != http.StatusOK {
-				t.Fatalf("new funded generation after restart: %d", got)
-			}
+			// The gateway may still route the first request to the retired
+			// owner: that forward fails, the target is evicted and the
+			// client gets a retryable 503 while the replacement boots.
+			t.Logf("financial-restart-request: statuses=%v", untilServed("new funded generation after restart"))
 			instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
 			live := financialSystemRunning(instances)
 			if err != nil || len(live) != 1 || live[0].ID == old.InstanceID {

@@ -14,16 +14,22 @@
 // (optional; GET /threads is off without it), TOOL_URL (optional, tools.js),
 // GREGALE_API_URL (defaults to https://api.gregale.dev).
 import { timingSafeEqual } from "node:crypto";
-import { parseRecord, runSlice } from "./agent.js";
+import { handleSlice, parseRecord } from "./agent.js";
 import { scriptedModel } from "./model.js";
 import { GregalePlatform } from "./platform.js";
 import { PostgresStore } from "./store.js";
-import { HTTPTools } from "./tools.js";
+import { HTTPTools, GregaleTaskTools } from "./tools.js";
 
 let deps;
 
 function dependencies() {
-  deps ??= { store: new PostgresStore(), model: scriptedModel, platform: new GregalePlatform(), tools: new HTTPTools() };
+  if (!deps) {
+    const platform = new GregalePlatform();
+    const httpTools = new HTTPTools();
+    const taskTools = new GregaleTaskTools({ platform });
+    deps = { store: new PostgresStore(), model: scriptedModel, platform,
+      tools: { dispatch: (threadID, call) => (call.tool === "gregale_task" ? taskTools : httpTools).dispatch(threadID, call) } };
+  }
   return deps;
 }
 
@@ -64,8 +70,13 @@ export async function handler(event, ctx) {
     ctx.log.warn("ignored a record that is not an agent-inbox message");
     return json(200, { ignored: true });
   }
-  const turn = await runSlice(message, dependencies());
-  ctx.log.info("slice", { thread_id: message.threadId, message_id: message.messageId,
-    skipped: turn.skipped === true, tool_call: Boolean(turn.pending), final: turn.final === true });
+  const turn = await handleSlice(message, dependencies(), { log: ctx.log });
+  if (turn.failed) {
+    ctx.log.error("slice failed on its last attempt; the thread is closed", { thread_id: message.threadId,
+      message_id: message.messageId, attempt: message.attempt, reason: turn.reason });
+  } else {
+    ctx.log.info("slice", { thread_id: message.threadId, message_id: message.messageId, attempt: message.attempt,
+      skipped: turn.skipped === true, tool_call: Boolean(turn.pending), final: turn.final === true });
+  }
   return json(200, { ok: true });
 }

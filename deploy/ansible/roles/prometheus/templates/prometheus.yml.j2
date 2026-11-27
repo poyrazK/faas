@@ -122,12 +122,15 @@ scrape_configs:
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+{% if faas_edge_tunnel | default(true) | bool %}
+  # public_edge.entry direct runs no connector (ADR-20261102081618 step 6).
   - job_name: "cloudflared"
     http_sd_configs:
       - url: "{{ prom_compute_cloudflared_discovery_url }}"
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+{% endif %}
 {% endif %}
 {% if faas_object_gateway_on_compute_nodes | default(false) | bool %}
   # ADR-20261031122757 §2: the S3 gateway on every active compute node —

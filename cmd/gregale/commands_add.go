@@ -86,7 +86,7 @@ func cmdAddBucket(args []string) int {
 	// Flags may follow NAME, as the help shows; Go's flag parsing stopped at
 	// NAME and dropped them (Hunt 14 H14-13).
 	fs := newFlagSet("add bucket", flag.ContinueOnError)
-	appSlug := fs.String("app", "", "app slug (required)")
+	appSlug := fs.String("app", "", "app slug (defaults to the linked app)")
 	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
 	fs.Var(newStringAlias(scope), "scope", "environment scope (alias for --env)")
 	region := fs.String("region", "", "object-storage region (uses the account default when omitted)")
@@ -101,12 +101,15 @@ func cmdAddBucket(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	// In the app's checkout --app defaults to the linked app, like the
+	// other app-scoped commands; add printed usage there (prod hunt r51).
+	fillLinkedApp(appSlug)
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--object-lock] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
+	usage := "usage: gregale add bucket NAME [--app APP] [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--object-lock] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--key-prefix KEYS/] [--wait-timeout DURATION]"
 	// A standalone app reads the default scope, so --env defaults to it once
 	// the app is known; only a project app outside a linked checkout needs
 	// --env (Snapbox SB-2). The CLI named the answer and still made the user
@@ -322,12 +325,12 @@ func waitForObjectBucket(ctx context.Context, client interface {
 func cmdAddPostgres(args []string) int {
 	// Flags may follow NAME (Hunt 14 H14-13).
 	fs := newFlagSet("add postgres", flag.ContinueOnError)
-	appSlug := fs.String("app", "", "app slug (required)")
+	appSlug := fs.String("app", "", "app slug (defaults to the linked app)")
 	scope := fs.String("env", "", "environment scope (defaults to linked project environment)")
 	fs.Var(newStringAlias(scope), "scope", "environment scope (alias for --env)")
 	environmentKey := fs.String("environment-key", "DATABASE_URL", "connection environment variable name")
 	databaseRef := fs.String("database", "", "existing database ID or name")
-	region := fs.String("region", "", "provider-neutral region (required when creating)")
+	region := fs.String("region", "", "region for a new database (default: the platform default)")
 	major := fs.Int("postgres-major", api.ManagedPostgresDefaultMajor, "PostgreSQL major version")
 	serviceClass := fs.String("class", "development", "service class: development|burstable|production")
 	availability := fs.String("availability", "single_zone", "availability: single_zone|high_availability")
@@ -339,12 +342,15 @@ func cmdAddPostgres(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	// In the app's checkout --app defaults to the linked app, like the
+	// other app-scoped commands; add printed usage there (prod hunt r51).
+	fillLinkedApp(appSlug)
 	resolvedScope, resolveErr := resolveEnvironmentFlagOrContext(*scope)
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|session] [--wait-timeout DURATION]"
+	usage := "usage: gregale add postgres [NAME] [--app APP] [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|session] [--wait-timeout DURATION]"
 	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1
@@ -409,13 +415,8 @@ func cmdAddPostgres(args []string) int {
 		if strings.TrimSpace(*databaseRef) != "" {
 			return printErr("Could not find managed PostgreSQL database", fmt.Errorf("no managed database named or identified %q", reference))
 		}
-		if strings.TrimSpace(*region) == "" {
-			// The compacted usage line drops the optional --region, so a bare
-			// usage here never named the missing flag (Hunt 14 H14-41).
-			printCommandValidation(os.Stderr, "add postgres: no managed database named %q exists yet; pass --region REGION to create it, or --database REF to attach an existing one\n", name)
-			return 1
-		}
-		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, true); err != nil {
+		*region = defaultPostgresRegion(ctx, client, *region)
+		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, *serviceClass, true); err != nil {
 			return printErr("Cannot create managed PostgreSQL database", err)
 		}
 		// Every create field joins the key: a retry after a refused request
@@ -448,7 +449,7 @@ func cmdAddPostgres(args []string) int {
 		return printErr("Managed PostgreSQL database is not ready", err)
 	}
 	if !databaseCreated {
-		if err := addPostgresUnsupported(ctx, client, database.Region, *access, *availability, false); err != nil {
+		if err := addPostgresUnsupported(ctx, client, database.Region, *access, *availability, database.ServiceClass, false); err != nil {
 			return printErr("Cannot attach managed PostgreSQL database", err)
 		}
 	}

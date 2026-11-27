@@ -27,8 +27,7 @@ func EnabledFromEnv(getenv func(string) string) bool {
 // to answer with when interactive sessions are not enabled.
 func Mint(enabled bool) (string, *api.Problem) {
 	if !enabled {
-		return "", api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented,
-			"Interactive sessions unavailable", "interactive app tasks are not enabled on this control-plane host")
+		return "", api.ErrInteractiveSessionsNotEnabled()
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

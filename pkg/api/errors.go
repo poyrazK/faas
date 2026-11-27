@@ -88,6 +88,7 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
+	RunBudget        *RunBudgetRefusal   `json:"run_budget,omitempty"`
 	ConditionField   string              `json:"condition_field,omitempty"`
 	ConditionIndex   *int                `json:"condition_index,omitempty"`
 	FieldExists      *bool               `json:"field_exists,omitempty"`
@@ -103,6 +104,8 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// ActiveOperationID identifies the running project rollback behind a conflict.
+	ActiveOperationID string `json:"active_operation_id,omitempty"`
 	// AgentApproval is the request behind approval_required: the link a
 	// person opens to approve it (ADR-20261104140058).
 	AgentApproval *AgentApprovalPendingInfo `json:"agent_approval,omitempty"`
@@ -146,6 +149,9 @@ type Problem struct {
 	// upgrade. PaddleCheckoutURL remains below for backwards compatibility
 	// with older SDKs that only know the Paddle-specific field.
 	CheckoutURL string `json:"checkout_url,omitempty"`
+	// UpgradeURL opens the API's hosted upgrade page for the consumer that
+	// reached its plan's limit (ADR-20261124094745).
+	UpgradeURL string `json:"upgrade_url,omitempty"`
 	// BillingPortalURL is set on payment_required (CodePayment) errors
 	// when the customer must manage an existing subscription. It may be a
 	// provider-created session URL or an operator-controlled URL with the
@@ -216,6 +222,16 @@ type Problem struct {
 	// secret-scan specific. Optional + omitempty so every other
 	// problem+json site keeps its existing flat shape unchanged.
 	RelevantLogs []LogExcerpt `json:"relevant_logs,omitempty"`
+	// FixCommands are the runnable commands from Fix with this failure's
+	// values (app, deployment) filled in, in order. A command that still
+	// needs a value nobody knew is left out rather than shown with a
+	// placeholder. Optional + omitempty (ADR-20261123230000).
+	FixCommands []string `json:"fix_commands,omitempty"`
+	// Retryable reports whether repeating the same request can succeed
+	// without changing anything: true for rate limits and transient
+	// platform errors, false when the request or the app must change.
+	// Absent when unknown. Optional + omitempty (ADR-20261123230000).
+	Retryable *bool `json:"retryable,omitempty"`
 	// extraHeaders are non-JSON response headers attached via WithHeader.
 	// Kept unexported so the wire body (RFC 9457 problem+json) is
 	// exactly the spec; WriteProblem flushes these onto the wire
@@ -715,6 +731,10 @@ const (
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
 	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
+	// CodePublicSourceFetchRateLimited marks an account past
+	// PublicSourceFetchesPerHour reads of public repositories without a
+	// GitHub installation (ADR-20261126164847).
+	CodePublicSourceFetchRateLimited = "public_source_fetch_rate_limited"
 	// CodeNotificationChannelInUse marks a channel delete refused because the
 	// channel is the only destination of alert rules (ADR-20261029203000).
 	CodeNotificationChannelInUse = "notification_channel_in_use"
@@ -742,6 +762,8 @@ const (
 	// CodeAPIRateLimited is the 429 an account gets past its plan's
 	// APIRequestsPerMinute.
 	CodeAPIRateLimited = "api_rate_limited"
+	// CodeObsRuntimeBusy refuses a runtime collection before any source work.
+	CodeObsRuntimeBusy = "obs_runtime_busy"
 	// CodeColdWakeRateLimited is the 429 a client gets past the number of
 	// different parked apps it may wake through one gateway a minute (H75).
 	CodeColdWakeRateLimited = "cold_wake_rate_limited"
@@ -750,6 +772,13 @@ const (
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
 	CodeForbidden = "insufficient_scope"
+	// CodeWorkloadBucketRequired refuses a workload credential request that
+	// names no bucket from an app holding several bucket grants
+	// (ADR-20261122191423); the detail lists the buckets it may name.
+	CodeWorkloadBucketRequired = "workload_bucket_required"
+	// CodeWorkloadBucketNotFound refuses a workload credential for a granted
+	// bucket that does not exist, or is not ready, in its owner's production.
+	CodeWorkloadBucketNotFound = "workload_bucket_not_found"
 	// CodeChallengeRequired is returned by gatewayd for a request on a
 	// kind=challenge route that carries no valid pass and is not a browser
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
@@ -780,10 +809,24 @@ const (
 	CodeStoredWorkflowVersionConflict   = "stored_workflow_version_conflict"
 	CodeStoredWorkflowOwnershipConflict = "stored_workflow_ownership_conflict"
 	CodeStoredWorkflowInvalid           = "stored_workflow_invalid"
+	// CodeStoredWorkflowEventsUnavailable refuses publishing or enabling a
+	// stored workflow whose event trigger matches custom events while the
+	// account has custom events off.
+	CodeStoredWorkflowEventsUnavailable = "stored_workflow_events_unavailable"
 	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
 	CodeConflict                        = "conflict"
+	// CodeRouteSplitChanged (409, ADR-20261121170000 amendment 2): the
+	// split suggestion is no longer the one the request repeats; read the
+	// route resources again.
+	CodeRouteSplitChanged = "route_split_changed"
+	// CodeRouteSplitInFlight (409): the app already has a split in flight.
+	CodeRouteSplitInFlight = "route_split_in_flight"
+	// CodeRouteSplitUnsupported (422): the app has something a split does
+	// not carry (a project, a preview, a binding not ready, an app that admits
+	// it as a caller by name).
+	CodeRouteSplitUnsupported = "route_split_unsupported"
 	// CodeProjectServicesCallEachOther (409, ADR-20261104221217): deleting the
 	// project would detach services that still call each other by service
 	// name. Pass detach_services=true once they no longer do.
@@ -947,6 +990,11 @@ const (
 	// that its lease or `gregale dev --stop` is already tearing down. The
 	// environment comes back on the first start after the teardown finishes.
 	CodeDevSessionTearingDown = "dev_session_tearing_down"
+	// CodeDevPostgresDatabaseURLSecret refuses `gregale dev --postgres` while
+	// the developer environment holds a DATABASE_URL or MIGRATION_DATABASE_URL
+	// secret of its own (from an earlier --env-file or by hand): the managed
+	// binding cannot replace it, so the app would keep the old database.
+	CodeDevPostgresDatabaseURLSecret = "dev_postgres_database_url_secret"
 	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
 	// freeze an instance whose traffic or lifecycle does not allow it (warm
 	// pool, job, app task, builder, private network member, pending waitUntil
@@ -1951,6 +1999,11 @@ const (
 	// Public candidate verification stayed unavailable within the durable
 	// recovery window. This does not establish an application health verdict.
 	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
+	// CodeDeploymentVerificationContractFailed means a required check of the
+	// app's gregale.verify.yaml failed against the candidate, so it was not
+	// promoted (ADR-20261122220000). The deployment's hosting receipt holds
+	// the full report.
+	CodeDeploymentVerificationContractFailed = "deployment_verification_contract_failed"
 	// CodePromotionRolledBack means an environment promotion was rolled back
 	// and this release, the first in its environment, had no earlier release
 	// to restore, so it was retired. The release itself did not fail.
@@ -2300,12 +2353,21 @@ func StatusForCode(code string) int {
 		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired,
 		CodeBillingEmailInUse, CodeBillingContactMember, CodeBillingSubscriptionEnding, CodeDevDebugNotDeveloperEnvironment:
 		return http.StatusConflict
-	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
+	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending,
+		CodeGitHubRepoNotAccessible:
 		return http.StatusForbidden
-	case CodeGitHubAppNotInstalled, CodeWorkflowFunctionNotInvocable:
+	case CodeGitHubAppNotInstalled, CodeWorkflowFunctionNotInvocable, CodeGitHubInstallNotFound:
 		return http.StatusNotFound
+	// githubd's source-ref streams return these through gRPC; without them
+	// apid answered a missing ref or an unreachable GitHub with HTTP 500.
+	case CodeInvalidRef:
+		return http.StatusBadRequest
+	case CodeSourceRefUnavailable:
+		return http.StatusServiceUnavailable
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
+	case CodeStoredWorkflowEventsUnavailable:
+		return http.StatusConflict
 	case CodeStoredWorkflowInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
@@ -2351,6 +2413,11 @@ func StatusForCode(code string) int {
 		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled, CodeEventsPaused:
+		return http.StatusServiceUnavailable
+	case CodeApplicationStandardsPending:
+		// A busy runtime-state fence or a policy update in flight; both
+		// details say to retry. Across gRPC it had no status and became a
+		// 500 on a mesh call (prod 2026-11-19).
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -2489,6 +2556,7 @@ func StatusForCode(code string) int {
 		CodeFunctionInitFailed,
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
+		CodeDeploymentVerificationContractFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable,
 		CodeReleaseOutcomeUncertain:
@@ -2722,6 +2790,12 @@ func StatusForCode(code string) int {
 		return http.StatusUnauthorized
 	case CodeEmailVerificationRequired:
 		return http.StatusForbidden
+	case CodeClaimRequired:
+		return http.StatusForbidden
+	case CodeAnonymousDeploysUnavailable:
+		return http.StatusTooManyRequests
+	case CodeClaimExpired:
+		return http.StatusGone
 	case CodePasswordTooWeak, CodeAccountExists:
 		return http.StatusBadRequest
 	case CodeResetTokenInvalid, CodeResetTokenExpired, CodeVerificationLinkInvalid:
@@ -2885,6 +2959,17 @@ func ErrDevSessionTearingDown() *Problem {
 		WithDocs(docsBase + "/dev")
 }
 
+// ErrDevPostgresDatabaseURLSecret is returned when `gregale dev --postgres`
+// meets a DATABASE_URL or MIGRATION_DATABASE_URL secret the developer
+// environment already holds; key names which.
+func ErrDevPostgresDatabaseURLSecret(appSlug, key string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDevPostgresDatabaseURLSecret,
+		"A database variable is already set in this developer environment",
+		fmt.Sprintf("--postgres provides DATABASE_URL and MIGRATION_DATABASE_URL, but this environment already has a %s secret (from an earlier --env-file or set by hand), and the app would keep using that database", key)).
+		WithHint(fmt.Sprintf("Remove it with `gregale env unset --app %s %s` and run gregale dev --postgres again, or drop --postgres to keep your own database.", appSlug, key)).
+		WithDocs(docsBase + "/dev")
+}
+
 // ErrPlanLimitDeveloperLease is returned when a developer session requests a
 // lease longer than the plan's `gregale dev --ttl` ceiling. Limit and observed
 // values are whole hours; the observed value rounds up so it always exceeds
@@ -2967,7 +3052,8 @@ func ErrBillingContactMember() *Problem {
 // to select the plan default; an update pointer is always explicit.
 func ErrInvalidAppRAM(requestedMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidAppRAM,
-		"Invalid RAM", fmt.Sprintf("ram_mb must be greater than zero; requested %d MB.", requestedMB))
+		"Invalid RAM", fmt.Sprintf("ram_mb must be at least %d MB, the smallest guest that boots; requested %d MB.", AppMinRAMMB, requestedMB)).
+		WithLimit(int64(AppMinRAMMB), int64(requestedMB)).WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // ErrInvalidCPURAMPair rejects an explicit guest vCPU count that is not its
@@ -3405,6 +3491,16 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
+}
+
+// ErrObsRuntimeBusy describes process-wide runtime collection saturation.
+// The retry interval is a hint; it does not reserve capacity or cause a retry.
+func ErrObsRuntimeBusy(observed int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeObsRuntimeBusy,
+		"Runtime collection busy", "The runtime collector is at capacity. Retry after the indicated delay.").
+		WithLimit(ObsRuntimeBuildCollectionsMax, observed).
+		WithHeader("Retry-After", strconv.Itoa(int(ObsRuntimeBuildBusyRetryAfter/time.Second))).
+		WithDocs("https://github.com/poyrazK/faas/blob/main/docs/ops/post-deployment-monitoring.md#runtime-collector-overload")
 }
 
 // ErrAPIRateLimited refuses an authenticated API request past the account's
@@ -5453,6 +5549,14 @@ func ErrInboundWebhookBadSignature() *Problem {
 		"Invalid webhook signature", "the Stripe-Signature header did not verify")
 }
 
+// ErrInboundWebhookBadGenericSignature is the generic provider's refusal; it
+// used the Stripe wording and named the Stripe-Signature header (prod
+// 2026-11-20).
+func ErrInboundWebhookBadGenericSignature() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeInboundWebhookBadSignature,
+		"Invalid webhook signature", "the X-Gregale-Signature header did not verify; send sha256= and the hex HMAC-SHA256, keyed with the signing secret, of X-Gregale-Timestamp, X-Gregale-Event-ID and X-Gregale-Event-Type each followed by a newline, then the raw body; the timestamp must be within 5 minutes")
+}
+
 func ErrInboundWebhookTooLarge() *Problem {
 	return NewProblem(http.StatusRequestEntityTooLarge, CodeInboundWebhookTooLarge,
 		"Webhook body too large", "the webhook body exceeds 1 MiB")
@@ -5477,7 +5581,7 @@ func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem
 
 func ErrAppLogDrainInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppLogDrainInvalid,
-		"Invalid log drain", reason)
+		"Invalid log drain", reason).WithDocs(docsBase + "/logs#log-drains")
 }
 
 // ErrTenantSurfacesNotAllowed is returned by apid's createTenantSurface
@@ -5963,7 +6067,7 @@ func ErrPlanLimitEnvVars(l Limits, observed int) *Problem {
 func ErrAPIKeyExpired() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
 		"API key expired",
-		"the bearer key has expired; rotate it and use the new plaintext").
+		"this API key has expired; create a new one with `gregale key create`, or rotate keys before they expire with `gregale key rotate`").
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
@@ -5975,7 +6079,25 @@ func ErrAPIKeyExpired() *Problem {
 func ErrAPIKeyRevoked() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
 		"API key revoked",
-		"the bearer key has been revoked; mint a new one via POST /v1/keys").
+		"this API key has been revoked; create a new one with `gregale key create`").
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
+}
+
+// ErrDeployTokenExpired and ErrDeployTokenRevoked keep the API key codes
+// clients match on but name the deploy-token commands: a revoked deploy token
+// in CI was told to "create a new one with `gregale key create`", an
+// account-wide key (prod hunt r26).
+func ErrDeployTokenExpired() *Problem {
+	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
+		"Deploy token expired",
+		"this deploy token has expired; mint a new one with `gregale app deploy-token create --app APP`, or rotate tokens before they expire with `gregale app deploy-token rotate`").
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
+}
+
+func ErrDeployTokenRevoked() *Problem {
+	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
+		"Deploy token revoked",
+		"this deploy token has been revoked; mint a new one with `gregale app deploy-token create --app APP` and update the CI secret").
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
@@ -6451,6 +6573,23 @@ func ErrTrafficChangeDuringCanary() *Problem {
 		WithDocs(docsBase + "/rollouts#how-a-rollout-proceeds")
 }
 
+// ErrTrafficChangeDuringCanaryFor is ErrTrafficChangeDuringCanary naming the
+// running canary and the exact commands that move it on. The refusal pointed
+// only at `release traffic status`, so a caller replacing a broken baseline
+// needed a second call to learn the step (boa multi-service deploy,
+// 2026-11-21). An empty deploymentID returns the generic refusal.
+func ErrTrafficChangeDuringCanaryFor(appSlug, deploymentID string, step int) *Problem {
+	problem := ErrTrafficChangeDuringCanary()
+	if deploymentID == "" {
+		return problem
+	}
+	hint := fmt.Sprintf("Advance canary %s one step: gregale deployment advance %s --expected-step %d.", deploymentID, deploymentID, step)
+	if appSlug != "" {
+		hint += fmt.Sprintf(" Or send it all traffic now: gregale rollouts recover %s --action promote --expected-step %d.", appSlug, step)
+	}
+	return problem.WithHint(hint)
+}
+
 // ErrMCPTaskCompatibilityGate returns a conflict with the observer detail so
 // operators can see which task handler version blocks promotion.
 func ErrMCPTaskCompatibilityGate(detail string) *Problem {
@@ -6882,7 +7021,7 @@ func ErrAccountEgressAllowlistExtraOutOfRange(got, maxExtra int) *Problem {
 func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
 		"Invalid egress allowlist entry",
-		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
+		fmt.Sprintf("entry %q is refused: %v.", entry, reason)).
 		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
@@ -7324,6 +7463,21 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 		"Source-ref fetch unavailable",
 		reason).
 		WithDocs(docsBase + "/deploy-from-source#failure-modes")
+}
+
+// ErrPublicSourceFetchRateLimited is the 429 for an account past
+// PublicSourceFetchesPerHour reads of public repositories without an
+// installation (ADR-20261126164847).
+func ErrPublicSourceFetchRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodePublicSourceFetchRateLimited,
+		"Public repository reads rate limited",
+		fmt.Sprintf("This account has read %d public GitHub repositories without a GitHub installation in the last hour. Connect GitHub to deploy without this limit.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/deploy-from-source")
 }
 
 // PreviewDatabaseRetryAfter is the Retry-After of
@@ -7967,7 +8121,7 @@ func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
 		"Custom metrics not available on this plan",
 		fmt.Sprintf("custom application metrics are not included in the %s plan. "+
 			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
-			"queue_depth, queue_lag) or upgrade.", plan))
+			"queue_depth, queue_lag) or upgrade.", plan)).WithDocs(docsBase + "/plans")
 }
 
 const CodeUDPListenerLimit = "udp_listener_limit"

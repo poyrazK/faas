@@ -420,7 +420,7 @@ func (o *Orchestrator) closeDeletedAppRollout(ctx context.Context, d state.Deplo
 		s := *d.RolloutStartedAt
 		startedAt = &s
 	}
-	const reason = "app deleted during rollout"
+	const reason = state.RolloutAbortedAppDeleted
 	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "aborted", startedAt, nil, &abortedAt, reason); err != nil {
 		if o.stampSuperseded(d, err) {
 			return

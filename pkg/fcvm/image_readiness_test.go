@@ -170,3 +170,23 @@ func TestImageHealthcheckProbeCancellation(t *testing.T) {
 		t.Fatal("canceled probe passed")
 	}
 }
+
+// TestImageHealthcheckLeavesTheGuestTimeToAnswer pins the agent eval of
+// 2026-11-23 (voting-app P2): a HEALTHCHECK that never passed reported
+// "fresh guest command result unavailable" because the guest's budget was the
+// host's whole deadline, so its "deadline" answer arrived after the host gave
+// up. The budget keeps a margin, and the answer says the command never passed.
+func TestImageHealthcheckLeavesTheGuestTimeToAnswer(t *testing.T) {
+	budgets := make(chan int64, 16)
+	v, l := imageReadinessVMM(t, func(req healthcheckproto.Request) healthcheckproto.Response {
+		budgets <- req.BudgetMS
+		return healthcheckproto.Response{Nonce: req.Nonce, Error: "deadline"}
+	})
+	err := v.WaitImageHealthcheck(t.Context(), l, 5)
+	if err == nil || !strings.Contains(err.Error(), "had not passed by the startup deadline") {
+		t.Fatalf("error = %v", err)
+	}
+	if budget := <-budgets; budget > 5000-imageHealthcheckReplyMarginMS || budget < 3000 {
+		t.Fatalf("guest budget = %d ms of a 5 s deadline, want a %d ms margin", budget, imageHealthcheckReplyMarginMS)
+	}
+}

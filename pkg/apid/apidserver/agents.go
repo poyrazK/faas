@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
+	"github.com/onebox-faas/faas/pkg/apid/runtasks"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -43,6 +44,25 @@ func (s *server) configureAgents(pool *pgxpool.Pool) {
 // signing key derives from the session key, which every apid replica shares;
 // a callback's account must have the agents capability when it posts.
 func (s *server) configureAgentCallbacks(h *agents.Handler) {
+	h.PipelineCallbacks, _ = s.store.(state.ExecutionPipelineCallbackStore)
+	h.PipelineToolEnabled = s.executionPipelinesEnabled && s.executionTasksEnabled && s.executionAPIEnabled && s.executionV2Enabled
+	h.StartPipeline = func(ctx context.Context, acct state.Account, request api.CreateManagedExecutionWorkflowRequest, fileGrants map[string][]string, callback *state.ExecutionTaskCallback) (state.ExecutionWorkflowJob, bool, error) {
+		submit := s.executionPipelineSubmitter(nil, acct)
+		submit.Callback = callback
+		submit.AgentFileGrants = fileGrants
+		if len(fileGrants) != 0 {
+			submit.AgentFiles = s.agentFileSigner()
+			submit.FileReader = executionStoreAdmissionReader{s.store}
+		}
+		principal := acct.ID
+		return submit.Submit(ctx, acct.ID, &principal, true, true, request)
+	}
+	h.TaskCallbacks, _ = s.store.(state.ExecutionTaskStore)
+	h.TaskExecutions = s.store
+	h.TaskToolEnabled = s.executionTasksEnabled && s.executionAPIEnabled && s.executionV2Enabled
+	h.StartTask = func(ctx context.Context, acct state.Account, request api.InvokeExecutionTaskRequest, key string, callback *state.ExecutionTaskCallback) (state.Execution, bool, error) {
+		return s.executionTaskService(nil).Invoke(ctx, runtasks.Access{Account: acct, Wide: true}, request, key, callback)
+	}
 	if inbox, ok := s.store.(agents.CallbackInbox); ok {
 		h.Inbox = inbox
 	}
@@ -351,6 +371,18 @@ func (s *server) closeAgentToolThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.agentAPI.CloseThread(w, r)
+}
+
+func (s *server) listAgentRunApprovals(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if h, ok := s.agentHandlers(w); ok {
+		h.ListRunApprovals(w, r, acct)
+	}
+}
+
+func (s *server) decideAgentRunApproval(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if h, ok := s.agentHandlers(w); ok {
+		h.DecideRunApproval(w, r, acct)
+	}
 }
 
 func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct state.Account) {

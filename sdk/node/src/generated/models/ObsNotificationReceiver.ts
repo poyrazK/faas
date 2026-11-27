@@ -11,7 +11,7 @@ import type { ObsNotificationSignal } from './ObsNotificationSignal.js';
  *
  */
 export type ObsNotificationReceiver = {
-  receiver: 'faas-heartbeat' | 'faas-page' | 'faas-warn';
+  receiver: 'faas-delivery-page' | 'faas-heartbeat' | 'faas-page' | 'faas-warn';
   integration: 'email' | 'pushover' | 'slack' | 'webhook' | 'pagerduty' | 'opsgenie' | 'victorops' | 'wechat' | 'telegram' | 'discord' | 'webex' | 'sns' | 'msteams' | 'msteamsv2' | 'rocketchat' | 'jira';
   expected: boolean | null;
   state: 'healthy' | 'partial' | 'degraded';

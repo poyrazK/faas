@@ -18,6 +18,13 @@
   <p><a href="{{.Data.BaseURL}}/setup">Guided product setup</a> · <a href="{{.Data.BaseURL}}/onboarding">Onboard a customer</a> · <a href="{{.Data.BaseURL}}/plan-policy">Self-service plans</a> · <a href="{{.Data.BaseURL}}/team-policy">Team roles</a> · <a href="{{.Data.BaseURL}}/access">Customer permissions</a> · <a href="{{.Data.BaseURL}}/doctor{{if .Data.TenantID}}?tenant={{.Data.TenantID}}{{end}}">Check readiness</a></p>
   {{if .Data.Error}}<p class="alert" role="alert">{{.Data.Error}}</p>{{end}}
   {{if .Data.Notice}}<p class="notice" role="status">{{.Data.Notice}}</p>{{end}}
+  {{with .Data.InvoiceQueueURL}}<p><a href="{{.}}">Return to month-end billing</a></p>{{end}}
+  {{with .Data.PaymentQueueURL}}<p><a href="{{.}}">Return to payment follow-up</a></p>{{end}}
+  {{with .Data.BalancesReturnURL}}<p><a href="{{.}}">Return to outstanding balances</a></p>{{end}}
+  {{if and .Data.ReviewRunsURL (not .Data.Main)}}
+    {{with .Data.Billing}}{{template "product-control-review-billing" .}}{{end}}
+    <p><a href="{{.Data.ReviewRunsURL}}">View runs needing review</a></p>
+  {{end}}
   {{if .Data.TenantID}}<p><a href="{{.Data.BaseURL}}?tenant={{.Data.TenantID}}&amp;period={{.Data.Period}}">Return to customer {{if .Data.TenantName}}{{.Data.TenantName}}{{else}}{{.Data.TenantID}}{{end}}</a></p>{{end}}
 
   {{with .Data.EmailOptOuts}}
@@ -247,7 +254,60 @@
   <section aria-labelledby="confirmation"><h2 id="confirmation">{{.Title}}</h2><p>{{.Description}}</p>
     {{if $.Data.TenantID}}<p>Customer <code>{{$.Data.TenantID}}</code> · UTC month <code>{{$.Data.Period}}</code></p>{{else}}<p>Product <code>{{$.Data.AppSlug}}</code></p>{{end}}
     <div class="scroll"><table><thead><tr><th>Item</th><th>Current</th><th>Proposed</th></tr></thead><tbody>{{range .Details}}<tr><th scope="row">{{.Feature}}</th><td>{{.Before}}</td><td>{{.After}}</td></tr>{{end}}</tbody></table></div>
-    <form method="post" action="{{if .ActionURL}}{{.ActionURL}}{{else}}{{$.Data.BaseURL}}/confirm{{end}}"><input type="hidden" name="csrf_token" value="{{.Token}}"><input type="hidden" name="payload" value="{{.Payload}}"><button type="submit">Confirm {{.Title}}</button><a href="{{$.Data.BaseURL}}">Cancel</a></form>
+    <form method="post" action="{{if .ActionURL}}{{.ActionURL}}{{else}}{{$.Data.BaseURL}}/confirm{{end}}"><input type="hidden" name="csrf_token" value="{{.Token}}"><input type="hidden" name="payload" value="{{.Payload}}"><button type="submit">{{if .SubmitLabel}}{{.SubmitLabel}}{{else}}Confirm {{.Title}}{{end}}</button><a href="{{$.Data.BaseURL}}">Cancel</a></form>
+  </section>
+  {{end}}
+
+  {{with .Data.BulkPlans}}{{$bulk := .}}
+  <section aria-labelledby="bulk-plans">
+    {{if .Results}}
+    <h2 id="bulk-plans">Plan migration results</h2>
+    <p>Plan <code>{{.Plan}}</code> · target revision <code>{{.Target}}</code></p>
+    <div class="scroll"><table><thead><tr><th scope="col">Customer</th><th scope="col">Outcome</th><th scope="col">Receipt</th></tr></thead><tbody>
+      {{range .Results}}<tr><th scope="row"><a href="{{$.Data.BaseURL}}?tenant={{.TenantID}}">{{if .Name}}{{.Name}}{{else}}{{.TenantID}}{{end}}</a></th><td>{{.Message}}</td><td>{{if .ReceiptID}}<code>{{.ReceiptID}}</code><br>{{.EffectiveAt}}{{else}}—{{end}}</td></tr>{{end}}
+    </tbody></table></div>
+    {{if .Payload}}
+    <form method="post" action="{{$.Data.BaseURL}}/bulk-plans/confirm">
+      <input type="hidden" name="csrf_token" value="{{.Token}}"><input type="hidden" name="payload" value="{{.Payload}}">
+      <button>Retry this confirmation</button>
+    </form>
+    {{end}}
+    <p><a href="{{$.Data.BaseURL}}/bulk-plans">Select customers for a new review</a></p>
+    {{else if .Reviews}}
+    <h2 id="bulk-plans">Review plan revision changes</h2>
+    <p>Plan <code>{{.Plan}}</code> · <code>{{.Source}}</code> → <code>{{.Target}}</code></p>
+    <p>Changes apply immediately to future runs. Accepted runs keep their original terms and used starts carry over. Plan fees exclude run charges.</p>
+    {{range .Reviews}}<article class="card">
+      <h3>{{if .Name}}{{.Name}}{{else}}{{.TenantID}}{{end}}</h3>
+      {{if .Message}}<p role="status">{{.Message}}</p>{{else}}
+      {{if .Warnings}}<ul class="alert">{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>{{end}}
+      <div class="scroll"><table><thead><tr><th scope="col">Term</th><th scope="col">Current</th><th scope="col">Proposed</th></tr></thead><tbody>
+        {{range .Details}}<tr><th scope="row">{{.Feature}}</th><td>{{.Before}}</td><td>{{.After}}</td></tr>{{end}}
+      </tbody></table></div>
+      {{end}}
+    </article>{{end}}
+    {{if .ConfirmCount}}
+    <form method="post" action="{{$.Data.BaseURL}}/bulk-plans/confirm">
+      <input type="hidden" name="csrf_token" value="{{.Token}}"><input type="hidden" name="payload" value="{{.Payload}}">
+      <button>Confirm {{.ConfirmCount}} {{if eq .ConfirmCount 1}}change{{else}}changes{{end}}</button>
+      <a href="{{$.Data.BaseURL}}/bulk-plans">Cancel</a>
+    </form>
+    {{else}}<p><a href="{{$.Data.BaseURL}}/bulk-plans">Select customers again</a></p>{{end}}
+    {{else}}
+    <h2 id="bulk-plans">Move customers to the current plan revision</h2>
+    <p>Target catalog <code>{{.Target}}</code>. Select up to {{.MaxCustomers}} customers who share a plan and revision.</p>
+    {{range .Groups}}
+    <form method="post" action="{{$.Data.BaseURL}}/bulk-plans/review">
+      <input type="hidden" name="csrf_token" value="{{$bulk.Token}}"><input type="hidden" name="plan" value="{{.Plan}}">
+      <input type="hidden" name="source" value="{{.Source}}"><input type="hidden" name="target" value="{{$bulk.Target}}">
+      <fieldset><legend>{{.Label}} · <code>{{.Plan}}</code> · revision <code>{{.Source}}</code></legend>
+        <ul>{{range .Customers}}<li><label><span><input type="checkbox" name="tenant" value="{{.TenantID}}"> {{.Name}}{{if .Suspended}} · access suspended{{end}}</span></label></li>{{end}}</ul>
+      </fieldset>
+      <button>Review selected customers</button>
+    </form>
+    {{else}}<p>No customers on this page can move to the current revision of their plan.</p>{{end}}
+    {{if .NextURL}}<p><a href="{{.NextURL}}">More customers</a></p>{{end}}
+    {{end}}
   </section>
   {{end}}
 
@@ -280,18 +340,206 @@
   </section>
   {{end}}
 
+  {{with .Data.StripeSendBatch}}
+  <section aria-labelledby="stripe-send-batch">
+    <h2 id="stripe-send-batch">{{if .Confirmed}}Stripe send results{{else}}Review selected Stripe drafts{{end}} · {{.Period}}</h2>
+    {{if .Mode}}<p>{{.Mode}} mode{{if not .Confirmed}} · Manual payment{{end}}</p>{{end}}
+    {{if .Error}}<p class="alert" role="alert">{{.Error}}</p>{{end}}
+    <div class="scroll"><table>
+      <thead><tr><th>Workspace</th>{{if not .Confirmed}}<th>Recipient</th><th>Amount due</th><th>Due date</th>{{end}}<th>Status</th></tr></thead>
+      <tbody>{{range .Rows}}
+        <tr><th scope="row"><a href="{{.URL}}">{{if .Name}}{{.Name}}{{else}}<code>{{.TenantID}}</code>{{end}}</a><br><code>{{if .InvoiceID}}{{.InvoiceID}}{{else}}{{.DocumentID}}{{end}}</code></th>
+          {{if not $.Data.StripeSendBatch.Confirmed}}<td>{{.Recipient}}</td><td>{{.Amount}}</td><td>{{.DueAt}}</td>{{end}}
+          <td>{{.Status}}</td>
+        </tr>
+      {{end}}</tbody>
+    </table></div>
+    {{if .Token}}
+    <form method="post" action="{{$.Data.BaseURL}}/payments/stripe-send-batch/confirm">
+      <input type="hidden" name="csrf_token" value="{{.Token}}">
+      <input type="hidden" name="payload" value="{{.Payload}}">
+      <button>{{if .Confirmed}}Retry unfinished sends{{else}}Send {{.Ready}} Stripe {{if eq .Ready 1}}invoice{{else}}invoices{{end}}{{end}}</button>
+    </form>
+    {{end}}
+    <p><a href="{{.QueueURL}}">Back to Payment follow-up</a></p>
+  </section>
+  {{end}}
+
+  {{with .Data.InvoiceBatch}}
+  <section aria-labelledby="invoice-batch">
+    <h2 id="invoice-batch">{{if .Confirmed}}Invoice export results{{else}}Review selected exports{{end}} · {{.Period}}</h2>
+    <p>{{.Provider}}{{if not .Confirmed}} · Leave invoices as drafts{{end}}</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Workspace</th><th>Provider customer</th><th>Mode</th><th>Subtotal</th><th>Status</th></tr></thead>
+      <tbody>{{range .Rows}}
+        <tr><th scope="row"><a href="{{.URL}}">{{if .Name}}{{.Name}}{{else}}<code>{{.TenantID}}</code>{{end}}</a><br><code>{{.DocumentID}}</code></th>
+          <td>{{if .Customer}}<code>{{.Customer}}</code>{{end}}</td><td>{{.Mode}}</td>
+          <td>{{.Subtotal}}{{if .AutomaticTax}}<br><small>Provider calculates tax</small>{{end}}</td>
+          <td>{{.Status}}{{if .InvoiceID}}<br><code>{{.InvoiceID}}</code>{{end}}</td>
+        </tr>
+      {{end}}</tbody>
+    </table></div>
+    {{if .Token}}
+    <form method="post" action="{{$.Data.BaseURL}}/invoice-batch/confirm">
+      <input type="hidden" name="csrf_token" value="{{.Token}}">
+      <input type="hidden" name="payload" value="{{.Payload}}">
+      <button>{{if .Confirmed}}Retry unfinished exports{{else}}Export {{.Ready}} invoice {{if eq .Ready 1}}draft{{else}}drafts{{end}}{{end}}</button>
+    </form>
+    {{end}}
+    <p><a href="{{.QueueURL}}">Back to awaiting invoice</a>{{if .Confirmed}} · <a href="{{.PaymentURL}}">Payment follow-up</a>{{end}}</p>
+  </section>
+  {{end}}
+
+  {{with .Data.BillingBatch}}
+  <section aria-labelledby="billing-batch">
+    <h2 id="billing-batch">{{if .Confirmed}}Statement finalization results{{else}}Review selected statements{{end}} · {{.Period}}</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Workspace</th>{{if not .Confirmed}}<th>Plan fee</th><th>Run charges</th>{{end}}<th>Statement total</th><th>Status</th></tr></thead>
+      <tbody>{{range .Rows}}
+        <tr><th scope="row">{{if .Name}}{{.Name}}<br>{{end}}<code>{{.TenantID}}</code></th>
+          {{if not $.Data.BillingBatch.Confirmed}}<td>{{.PlanFee}}</td><td>{{.RunCharges}}</td>{{end}}
+          <td>{{.Total}}</td><td>{{if .URL}}<a href="{{.URL}}">{{.Status}}</a>{{else}}{{.Status}}{{end}}</td>
+        </tr>
+      {{end}}</tbody>
+    </table></div>
+    {{if .Token}}
+    <form method="post" action="{{$.Data.BaseURL}}/billing-batch/confirm">
+      <input type="hidden" name="csrf_token" value="{{.Token}}">
+      <input type="hidden" name="payload" value="{{.Payload}}">
+      <button>{{if .Confirmed}}Retry batch confirmation{{else}}Finalize {{.Ready}} {{if eq .Ready 1}}statement{{else}}statements{{end}}{{end}}</button>
+    </form>
+    {{end}}
+    <p><a href="{{.QueueURL}}">Back to month-end billing</a>{{if .Confirmed}} · <a href="{{.InvoiceURL}}">Awaiting invoice</a>{{end}}</p>
+  </section>
+  {{end}}
+
+  {{with .Data.OutstandingBalances}}
+  <section aria-labelledby="outstanding-balances">
+    <h2 id="outstanding-balances">Outstanding balances</h2>
+    <nav aria-label="Invoice mode">
+      <a href="{{.LiveURL}}"{{if eq .Mode "live"}} aria-current="page"{{end}}>Live invoices</a>
+      <a href="{{.TestURL}}"{{if eq .Mode "test"}} aria-current="page"{{end}}>Test invoices</a>
+    </nav>
+    <p>Balances reflect the last successful provider sync. Age uses UTC due dates.</p>
+    <div class="scroll"><table>
+      <thead><tr><th scope="col">Currency</th><th scope="col">Total outstanding</th>{{range .BucketLabels}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
+      <tbody>{{range .Currencies}}
+        <tr><th scope="row">{{.Currency}}</th><td>{{.Total}}<br>{{.InvoiceCount}} {{if eq .InvoiceCount 1}}invoice{{else}}invoices{{end}}{{if .UnknownCount}} · {{.UnknownCount}} unknown{{end}}</td>
+          {{range .Buckets}}<td>{{if .URL}}<a href="{{.URL}}">{{.Balance}} · {{.InvoiceCount}} {{if eq .InvoiceCount 1}}invoice{{else}}invoices{{end}}</a>{{if .RefreshCount}}<br>{{.RefreshCount}} {{if eq .RefreshCount 1}}needs{{else}}need{{end}} refresh{{end}}{{if .UnknownCount}}<br>{{.UnknownCount}} unknown{{end}}{{else}}—{{end}}</td>{{end}}
+        </tr>
+      {{else}}<tr><td colspan="7">No outstanding {{$.Data.OutstandingBalances.Mode}} invoices.</td></tr>{{end}}</tbody>
+    </table></div>
+    {{with .Invoices}}
+    <h3>{{$.Data.OutstandingBalances.Currency}} · {{$.Data.OutstandingBalances.Group}}</h3>
+    {{with $.Data.OutstandingBalances.RefreshResults}}
+    <h4>Payment refresh results</h4>
+    <div class="scroll"><table>
+      <thead><tr><th scope="col">Workspace</th><th scope="col">Result</th><th scope="col">Balance remaining</th></tr></thead>
+      <tbody>{{range .}}
+        <tr><th scope="row"><a href="{{.URL}}">{{if .Name}}{{.Name}}{{else}}{{.TenantID}}{{end}}</a>{{if .InvoiceID}}<br><code>{{.InvoiceID}}</code>{{end}}</th>
+          <td>{{.Status}}{{if .Detail}}<br>{{.Detail}}{{end}}</td><td>{{.Balance}}</td></tr>
+      {{end}}</tbody>
+    </table></div>
+    {{end}}
+    {{with $.Data.OutstandingBalances}}
+    {{if .RefreshToken}}
+    <form id="refresh-selected-balances" method="post" action="{{$.Data.BaseURL}}/payments/refresh-selected#outstanding-balances">
+      <input type="hidden" name="csrf_token" value="{{.RefreshToken}}">
+      <input type="hidden" name="payload" value="{{.RefreshPayload}}">
+      <button>Refresh selected balances</button>
+      <span>Select up to {{.RefreshLimit}} invoices on this page.</span>
+    </form>
+    {{end}}
+    {{end}}
+    {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+    {{if .Error}}<p class="alert" role="alert">{{.Error}}</p>{{end}}
+    {{template "product-payment-table" $.Data}}
+    <p><a href="{{$.Data.OutstandingBalances.SummaryURL}}">Back to balances summary</a></p>
+    {{end}}
+  </section>
+  {{end}}
+
   {{if .Data.Main}}
   <section aria-labelledby="attention"><h2 id="attention">Needs attention</h2>
-    <p>Closed months without statements and runs whose outcome needs review. Ordinary running work is excluded from the current month's queue.</p>
+    {{with .Data.BillingQueue}}
+    <h3 id="month-end">Month-end billing</h3>
+    <form method="get" action="{{$.Data.BaseURL}}#month-end">
+      <label>Closed UTC month<input type="month" name="billing_month" value="{{.Period}}" max="{{.LatestPeriod}}" required></label>
+      <button>View billing queue</button>
+    </form>
+    {{if .CanReviewBatch}}
+    <form method="post" action="{{$.Data.BaseURL}}/billing-batch/review">
+      <input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}">
+      <input type="hidden" name="period" value="{{.Period}}">
+    {{end}}
+    <div class="scroll"><table><thead><tr>{{if .CanReviewBatch}}<th scope="col">Select</th>{{end}}<th>Workspace</th><th>Plan fee</th><th>Run charges</th><th>Unresolved runs</th><th>Next step</th></tr></thead><tbody>
+      {{range .Items}}<tr>
+        {{if $.Data.BillingQueue.CanReviewBatch}}<td>{{if not .Unresolved}}<input type="checkbox" name="tenant" value="{{.TenantID}}" aria-label="Select {{.Name}}">{{end}}</td>{{end}}
+        <td>{{.Name}}<br><code>{{.TenantID}}</code></td><td>{{.PlanFee}}</td><td>{{.RunCharges}}</td><td>{{.Unresolved}}</td><td><a href="{{.URL}}">{{if .Unresolved}}Review outcomes{{else}}Review statement{{end}}</a></td>
+      </tr>
+      {{else}}<tr><td colspan="5">No workspaces awaiting a statement on this page.</td></tr>{{end}}
+    </tbody></table></div>
+    {{if .CanReviewBatch}}
+      <button>Review selected statements</button>
+    </form>
+    {{end}}
+    {{if .NextURL}}<a href="{{.NextURL}}">More workspaces awaiting statements →</a>{{end}}
+    {{with .Invoices}}
+    <h3 id="awaiting-invoice">Awaiting invoice</h3>
+    {{if .DraftProviders}}
+    <form method="post" action="{{$.Data.BaseURL}}/invoice-batch/review">
+      <input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}">
+      <input type="hidden" name="period" value="{{$.Data.BillingQueue.Period}}">
+    {{end}}
+    <div class="scroll"><table><thead><tr>{{if .DraftProviders}}<th scope="col">Select</th>{{end}}<th>Workspace</th><th>Statement total</th><th>Status</th><th>Next step</th></tr></thead><tbody>
+      {{range .Items}}<tr>
+        {{if $.Data.BillingQueue.Invoices.DraftProviders}}<td><input type="checkbox" name="statement" value="{{.TenantID}}/{{.DocumentID}}" aria-label="Select {{.Name}}"></td>{{end}}
+        <td><a href="{{.DocumentURL}}">{{.Name}}</a><br><code>{{.TenantID}}</code></td><td>{{.Amount}}</td>
+        <td>{{if .Provider}}Export started in {{.Provider}}{{else}}Ready for invoicing{{end}}</td>
+        <td>{{if .ExportURL}}<a href="{{.ExportURL}}">{{if .Provider}}Resume export{{else}}Review export{{end}}</a>{{end}}{{if and .ExportURL .HandoffURL}} · {{end}}{{if .HandoffURL}}<a href="{{.HandoffURL}}">Record external invoice</a>{{end}}{{if not (or .ExportURL .HandoffURL)}}<a href="{{.DocumentURL}}">View statement</a>{{end}}</td>
+      </tr>
+      {{else}}<tr><td colspan="4">No statements awaiting invoicing on this page.</td></tr>{{end}}
+    </tbody></table></div>
+    {{if .DraftProviders}}
+      <label>Draft invoice provider<select name="provider" required><option value="">Choose a provider</option>{{range .DraftProviders}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+      <button>Review selected exports</button>
+    </form>
+    {{end}}
+    {{if .NextURL}}<a href="{{.NextURL}}">More statements awaiting invoicing →</a>{{end}}
+    {{end}}
+    <h3>Across all months</h3>
+    {{end}}
+    <p>Review uncertain outcomes and closed months without statements. Active runs appear when they block a closed month.</p>
     <div class="scroll"><table><thead><tr><th>Customer</th><th>UTC month</th><th>Unresolved</th><th>Runs needing review</th><th>Next step</th></tr></thead><tbody>{{range .Data.Attention}}<tr><td><code>{{.TenantID}}</code></td><td>{{.Period}}</td><td>{{.Unresolved}}</td><td>{{.NeedsReview}}</td><td><a href="{{.URL}}">{{if .Unresolved}}Review outcomes{{else}}Review billing{{end}}</a></td></tr>{{else}}<tr><td colspan="5">No items on this page.</td></tr>{{end}}</tbody></table></div>
     {{if .Data.NextAttentionURL}}<a href="{{.Data.NextAttentionURL}}">More attention items →</a>{{end}}
     <h3>Latest catalog bindings</h3><p>Revision <code>{{.Data.LatestRevision}}</code>. Customer revisions are checked separately below. <a href="/dashboard/apps/{{.Data.AppSlug}}/customer-operations">Inspect Operations</a>.</p><ul>{{range .Data.LatestFeatures}}<li>{{.Label}} (<code>{{.Name}}</code>): {{.Binding}}</li>{{end}}</ul>
   </section>
   <section aria-labelledby="customers"><h2 id="customers">Customers</h2>
+    <p><a href="{{.Data.BaseURL}}/bulk-plans">Move customers to the current plan revision</a></p>
     <form method="get" action="{{.Data.BaseURL}}"><label>Existing platform tenant UUID<input name="tenant" value="{{.Data.TenantID}}" required></label><label>UTC month<input type="month" name="period" value="{{.Data.Period}}" required></label><button>Open customer</button></form>
     <div class="scroll"><table><thead><tr><th>Customer</th><th>Plan</th><th>Product access</th><th>Tenant status</th></tr></thead><tbody>{{range .Data.Customers}}<tr><td><a href="{{.URL}}">{{.Name}}</a><br><code>{{.TenantID}}</code></td><td>{{.Plan}}</td><td>{{if .Suspended}}Suspended{{else}}Enabled{{end}}</td><td>{{.Status}}</td></tr>{{else}}<tr><td colspan="4">No assigned customers on this page. Open an existing platform tenant to assign a plan.</td></tr>{{end}}</tbody></table></div>
     {{if .Data.NextCustomersURL}}<a href="{{.Data.NextCustomersURL}}">More customers →</a>{{end}}
   </section>
+  {{with .Data.PaymentQueue}}
+  <section aria-labelledby="payment-follow-up">
+    <h2 id="payment-follow-up">Payment follow-up</h2>
+    <p><a href="{{$.Data.BaseURL}}/outstanding-balances">Outstanding balances</a></p>
+    {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+    {{if .Error}}<p class="alert" role="alert">{{.Error}}</p>{{end}}
+    {{if .StripeBatchMonths}}
+    <p>Select up to {{.StripeBatchMax}} Stripe drafts from the same statement month.</p>
+    {{range .StripeBatchMonths}}
+    <form id="stripe-drafts-{{.}}" method="post" action="{{$.Data.BaseURL}}/payments/stripe-send-batch/review">
+      <input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}">
+      <input type="hidden" name="period" value="{{.}}">
+      {{with $.Data.PaymentQueue.Cursor}}<input type="hidden" name="payment_cursor" value="{{.}}">{{end}}
+      <button>Review selected Stripe drafts · {{.}}</button>
+    </form>
+    {{end}}
+    {{end}}
+    {{template "product-payment-table" $.Data}}
+  </section>
+  {{end}}
   {{with .Data.Overdue}}<section aria-labelledby="overdue"><h2 id="overdue">Overdue invoices</h2><p>{{.Policy}}</p>
     <p>Change it with <code>gregale product billing overdue-policy set --block-overdue-after-days N --app {{$.Data.AppSlug}}</code> or remove it with <code>overdue-policy clear</code>, which lifts every hold. Holds are recomputed every few minutes and lift when the invoice is paid; they are separate from suspending a customer.</p>
     <div class="scroll"><table><thead><tr><th>Held customer</th><th>Invoice due</th><th>Held since</th><th>Invoice</th></tr></thead><tbody>{{range .Holds}}<tr><td><a href="{{.URL}}"><code>{{.TenantID}}</code></a></td><td>{{.DueAt}}</td><td>{{.Since}}</td><td>{{if .InvoiceURL}}<a href="{{.InvoiceURL}}" target="_blank" rel="noopener noreferrer">Customer's hosted invoice</a>{{end}}</td></tr>{{else}}<tr><td colspan="4">No customer is held.</td></tr>{{end}}</tbody></table></div>
@@ -301,12 +549,21 @@
     <p><a href="{{.Data.BaseURL}}/onboarding?tenant={{.Data.TenantID}}">Onboarding and activation</a></p>
     <p><code>{{.Data.TenantID}}</code> · tenant status {{.Data.TenantStatus}}</p>
     {{with .Data.Customer}}<dl><dt>Plan</dt><dd>{{.Plan}}</dd><dt>Revision</dt><dd><code>{{.Revision}}</code></dd><dt>Product access</dt><dd>{{if .Suspended}}Suspended{{else}}Enabled{{end}}</dd>{{if $.Data.CustomerHold}}<dt>Payment hold</dt><dd>{{$.Data.CustomerHold}}</dd>{{end}}<dt>Auth organization</dt><dd>{{if .AuthOrganizationID}}<code>{{.AuthOrganizationID}}</code>{{else}}No customer portal identity linked{{end}}</dd></dl>{{else}}<p>This platform tenant has no Product Control plan assigned.</p>{{end}}
+    {{with .Data.PlanSchedule}}
+    <h3>Scheduled plan change</h3>
+    <dl><dt>Plan</dt><dd>{{.After.Plan}}</dd><dt>Revision</dt><dd><code>{{.After.Revision}}</code></dd><dt>Scheduled start</dt><dd>{{.EffectiveAt.Format "2006-01-02 15:04 UTC"}}</dd><dt>Status</dt><dd>{{if eq .Status "pending"}}Pending{{else if eq .Status "applied"}}Applied{{else if eq .Status "cancelled"}}Cancelled{{else}}Needs review{{end}}</dd></dl>
+    {{if eq .Status "pending"}}<form method="post" action="{{$.Data.BaseURL}}/review">
+      <input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="cancel_schedule"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="id" value="{{.ID}}">
+      <button>Review cancellation</button>
+    </form>{{end}}
+    {{end}}
     <h3>{{if .Data.Customer}}Change plan or access{{else}}Assign first plan{{end}}</h3>
     <form method="post" action="{{.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{.Data.ReviewToken}}"><input type="hidden" name="action" value="plan"><input type="hidden" name="tenant" value="{{.Data.TenantID}}"><input type="hidden" name="period" value="{{.Data.Period}}">
       <label>Plan<input name="plan" list="product-plans" value="{{if .Data.Customer}}{{.Data.Customer.Plan}}{{end}}" required><datalist id="product-plans">{{range .Data.Plans}}<option value="{{.Name}}">{{.Label}}</option>{{end}}</datalist></label>
       <label>Catalog revision<input name="revision" value="{{.Data.LatestRevision}}" required size="30"></label>
       <label>Product access<select name="suspended"><option value="false">Enabled</option><option value="true" {{if .Data.Customer}}{{if .Data.Customer.Suspended}}selected{{end}}{{end}}>Suspended</option></select></label>
       {{if not .Data.Customer}}<label>Auth organization UUID (optional)<input name="organization"></label>{{end}}
+      {{if .Data.Customer}}<label><input type="checkbox" name="next_month" value="true"> Start plan at midnight UTC on the first of next month</label>{{end}}
       <button>Preview plan change</button>
     </form>
     <p>Existing customer identity links are preserved. Change the revision to an older immutable catalog when needed; preview validates its plans.</p>
@@ -323,20 +580,113 @@
     <h3>Statements and credit notes</h3><p>Credits are separate documents. Document pages may contain only part of the month; no partial-page net total is shown.</p>
     {{range $.Data.Documents}}<article class="card" id="document-{{.ID}}"><h4>{{.Kind}} · {{.Amount}}</h4><p><code>{{.ID}}</code> · {{.CreatedAt}}</p>{{if .StatementID}}<p>Statement <code>{{.StatementID}}</code> · run <code>{{.OperationID}}</code> · {{.Reason}}</p>{{end}}
       {{if .Invoice}}<p>{{.Invoice}}</p>{{if or .DashboardURL .InvoiceURL}}<p>{{if .DashboardURL}}<a href="{{.DashboardURL}}" target="_blank" rel="noopener noreferrer">Open in provider dashboard</a>{{end}}{{if and .DashboardURL .InvoiceURL}} · {{end}}{{if .InvoiceURL}}<a href="{{.InvoiceURL}}" target="_blank" rel="noopener noreferrer">Customer's hosted invoice</a>{{end}}</p>{{end}}{{end}}
-      {{if .Exported}}{{else if .Reference}}<p>Invoice handoff recorded: <code>{{.Reference}}</code></p>{{else}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="handoff"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="document" value="{{.ID}}"><label>Existing external invoice / credit reference<input name="reference" required maxlength="255"></label><button>Review invoice handoff</button></form>{{end}}
+      {{if .CanReviewExport}}
+      <form id="export-{{.ID}}" method="post" action="{{$.Data.BaseURL}}/review">
+        <input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="export_invoice"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="document" value="{{.ID}}">
+        {{if .ExportProvider}}<input type="hidden" name="provider" value="{{.ExportProvider}}"><input type="hidden" name="invoice_customer" value="{{.ExportCustomer}}">
+        {{else}}<label>Billing provider<select name="provider"><option value="stripe">Stripe</option><option value="paddle">Paddle</option><option value="lago">Lago</option></select></label>
+        <label>Provider customer ID (optional)<input name="invoice_customer" maxlength="255" placeholder="Use the workspace reference"></label>{{end}}
+        <button>{{if .ExportProvider}}Review and resume export{{else}}Review invoice export{{end}}</button>
+      </form>
+      {{end}}
+      {{if .Exported}}{{else if .Reference}}<p>Invoice handoff recorded: <code>{{.Reference}}</code></p>{{else}}<form id="handoff-{{.ID}}" method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="handoff"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="document" value="{{.ID}}"><label>Existing external invoice / credit reference<input name="reference" required maxlength="255"></label><button>Review invoice handoff</button></form>{{end}}
     </article>{{else}}<p>No documents on this page.</p>{{end}}
     {{if $.Data.NextDocumentsURL}}<a href="{{$.Data.NextDocumentsURL}}">More documents →</a>{{end}}
   </section>
-  <section aria-labelledby="runs"><h2 id="runs">Recent runs · {{.Period}}</h2>
-    <p>Newest admissions first. Receipts survive execution result expiry; unresolved outcomes remain uncharged until verified or explicitly waived.</p>
-    {{range $.Data.Runs}}<article class="card"><h3>{{.Feature}} · {{.State}}</h3><p><a href="{{.URL}}"><code>{{.ID}}</code></a> · {{.AdmittedAt}}</p><p>Original success price {{.Price}} · credited {{.Credited}}.</p>
+  <section aria-labelledby="runs"><h2 id="runs">{{if $.Data.ReviewRuns}}Runs needing review{{else}}Recent runs{{end}} · {{.Period}}</h2>
+    {{if $.Data.ReviewRuns}}
+    {{template "product-control-review-billing" .}}
+    <p><a href="#billing">Review billing</a> · <a href="{{$.Data.AllRunsURL}}">Show all runs</a></p>
+    {{else}}
+    <p>Newest admissions first. Receipts survive execution result expiry. A charge awaits a verified success unless it was waived.</p>
+    <p><a href="{{$.Data.ReviewRunsURL}}">Show runs needing review</a></p>
+    {{end}}
+    {{range $.Data.Runs}}<article class="card"><h3>{{.Feature}} · {{.State}}</h3><p><a href="{{.URL}}"><code>{{.ID}}</code></a> · {{.AdmittedAt}}{{if .Age}} · Age {{.Age}}{{end}}</p><p>Original success price {{.Price}}{{if not $.Data.ReviewRuns}} · credited {{.Credited}}{{end}}.</p>
+      {{if $.Data.ReviewRuns}}
+        <p>{{if .Active}}Execution is still active. <a href="{{.ExecutionURL}}">View active execution</a>{{else if .ExecutionURL}}<a href="{{.ExecutionURL}}">Inspect retained execution</a>{{else}}No retained execution evidence.{{end}}</p>
+        {{if and .ExecutionURL (eq .State "requires_reconciliation")}}<p>Inspect recovery options with <code>gregale customer-operations inspect {{.ID}} --app {{$.Data.AppSlug}}</code>.</p>{{end}}
+      {{end}}
       {{if .CanWaive}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="waive"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="operation" value="{{.ID}}"><label>Reason for permanently waiving charge<input name="reason" required maxlength="512"></label><button>Review charge waiver</button></form>{{end}}
       {{if .CanCredit}}<form method="post" action="{{$.Data.BaseURL}}/review"><input type="hidden" name="csrf_token" value="{{$.Data.ReviewToken}}"><input type="hidden" name="action" value="credit"><input type="hidden" name="tenant" value="{{$.Data.TenantID}}"><input type="hidden" name="period" value="{{$.Data.Period}}"><input type="hidden" name="operation" value="{{.ID}}"><label>Credit amount in millicents<input name="amount" type="number" min="1" max="1000000000" step="1" required></label><label>Credit reason<input name="reason" required maxlength="512"></label><button>Review credit</button></form><p class="muted">100,000 millicents = 1 currency unit. The remaining balance is rechecked on confirmation.</p>{{end}}
-    </article>{{else}}<p>No admissions on this page.</p>{{end}}
-    {{if $.Data.NextRunsURL}}<a href="{{$.Data.NextRunsURL}}">Older runs →</a>{{end}}
+    </article>{{else}}<p>{{if $.Data.ReviewRuns}}No runs need review on this page.{{else}}No admissions on this page.{{end}}</p>{{end}}
+    {{if $.Data.NextRunsURL}}<a href="{{$.Data.NextRunsURL}}">{{if $.Data.ReviewRuns}}Older runs needing review{{else}}Older runs{{end}} →</a>{{end}}
   </section>
   {{end}}
   {{end}}
   <p class="muted">All periods and times use UTC. Input and result bodies, storage locations, and runtime credentials are excluded.</p>
 </main><footer>Gregale · Product Control</footer>
 </body></html>
+
+{{define "product-control-review-billing"}}
+  <p>{{if .Finalized}}Statement finalized for {{.Period}} UTC.
+  {{else if not .Closed}}{{.Unresolved}} unresolved {{if eq .Unresolved 1}}run{{else}}runs{{end}} for {{.Period}} UTC. The billing period is still open.
+  {{else if .Unresolved}}{{if eq .Unresolved 1}}1 unresolved run blocks{{else}}{{.Unresolved}} unresolved runs block{{end}} finalization for {{.Period}} UTC.
+  {{else}}All run charges are resolved. The statement for {{.Period}} UTC is ready for finalization.{{end}}</p>
+{{end}}
+
+
+{{define "product-payment-table"}}
+  {{$data := .}}
+  {{$queue := .PaymentQueue}}
+  {{with .OutstandingBalances}}{{$queue = .Invoices}}{{end}}
+  {{with $queue}}
+    <div class="scroll"><table><thead><tr><th>Workspace</th><th>Statement month (UTC)</th><th>Status</th><th>Balance remaining</th><th>Due date (UTC)</th><th>Last successful sync</th><th>Invoice</th></tr></thead><tbody>
+      {{range .Items}}<tr><td>{{.Name}}<br><code>{{.TenantID}}</code></td><td>{{.Period}}</td><td>{{.Action}}{{if .NeedsRefresh}}<br>Needs refresh{{end}}{{with .StripeReminderStatus}}<br>{{.}}{{end}}</td><td>{{.Remaining}}</td><td>{{.DueAt}}</td><td>{{.LastSync}}</td><td><a href="{{.DocumentURL}}">View invoice</a>{{if .HostedURL}}<br><a href="{{.HostedURL}}" target="_blank" rel="noopener noreferrer">Open hosted invoice</a>{{end}}
+        {{if $data.OutstandingBalances}}{{if $data.OutstandingBalances.RefreshToken}}<br><label><input type="checkbox" form="refresh-selected-balances" name="statement" value="{{.TenantID}}/{{.DocumentID}}"> Select for refresh</label>{{end}}{{end}}
+        {{if .CanBatchSendStripe}}<br><label><input type="checkbox" form="stripe-drafts-{{.Period}}" name="statement" value="{{.TenantID}}/{{.DocumentID}}"> Include in Stripe batch</label>{{end}}
+        {{if .StripeDashboardURL}}<br><a href="{{.StripeDashboardURL}}" target="_blank" rel="noopener noreferrer">Open invoice in Stripe</a>{{end}}
+        {{if or .CanRefresh .CanCheckStripeSend}}
+        <form method="post" action="{{$data.BaseURL}}/payments/{{if .CanCheckStripeSend}}check-stripe-send{{else}}refresh{{end}}#{{if $data.OutstandingBalances}}outstanding-balances{{else}}payment-follow-up{{end}}">
+          <input type="hidden" name="csrf_token" value="{{$data.ReviewToken}}">
+          <input type="hidden" name="tenant" value="{{.TenantID}}">
+          <input type="hidden" name="period" value="{{.Period}}">
+          <input type="hidden" name="document" value="{{.DocumentID}}">
+          {{with $data.OutstandingBalances}}{{template "product-balance-form-fields" .}}{{end}}
+          {{with $data.BillingQueue}}<input type="hidden" name="billing_month" value="{{.Period}}">{{end}}
+          {{with $queue.Cursor}}<input type="hidden" name="payment_cursor" value="{{.}}">{{end}}
+          <button>{{if .CanCheckStripeSend}}Check Stripe send{{else}}Refresh payment status{{end}}</button>
+        </form>
+        {{end}}
+        {{if .CanIssue}}
+        <form method="post" action="{{$data.BaseURL}}/review">
+          <input type="hidden" name="csrf_token" value="{{$data.ReviewToken}}">
+          <input type="hidden" name="action" value="issue_invoice">
+          <input type="hidden" name="tenant" value="{{.TenantID}}">
+          <input type="hidden" name="period" value="{{.Period}}">
+          <input type="hidden" name="document" value="{{.DocumentID}}">
+          <button>Review and issue</button>
+        </form>
+        {{end}}
+        {{if .CanSendStripeReminder}}
+        <form method="post" action="{{$data.BaseURL}}/review">
+          <input type="hidden" name="csrf_token" value="{{$data.ReviewToken}}">
+          <input type="hidden" name="action" value="send_stripe_reminder">
+          {{with $data.OutstandingBalances}}{{template "product-balance-form-fields" .}}{{end}}
+          <input type="hidden" name="tenant" value="{{.TenantID}}">
+          <input type="hidden" name="period" value="{{.Period}}">
+          <input type="hidden" name="document" value="{{.DocumentID}}">
+          <button>Review and send reminder</button>
+        </form>
+        {{end}}
+        {{if .CanSendStripe}}
+        <form method="post" action="{{$data.BaseURL}}/review">
+          <input type="hidden" name="csrf_token" value="{{$data.ReviewToken}}">
+          <input type="hidden" name="action" value="send_stripe_invoice">
+          <input type="hidden" name="tenant" value="{{.TenantID}}">
+          <input type="hidden" name="period" value="{{.Period}}">
+          <input type="hidden" name="document" value="{{.DocumentID}}">
+          <button>Review and send</button>
+        </form>
+        {{end}}</td></tr>
+      {{else}}<tr><td colspan="7">{{if $data.OutstandingBalances}}No outstanding invoices in this group on this page.{{else}}No invoices need payment follow-up on this page.{{end}}</td></tr>{{end}}
+    </tbody></table></div>
+    {{if .NextURL}}<a href="{{.NextURL}}">{{if $data.OutstandingBalances}}More outstanding invoices{{else}}More invoices to follow up{{end}} →</a>{{end}}
+  {{end}}
+{{end}}
+
+{{define "product-balance-form-fields"}}
+  <input type="hidden" name="balance_mode" value="{{.Mode}}">
+  <input type="hidden" name="balance_currency" value="{{.Currency}}">
+  <input type="hidden" name="balance_bucket" value="{{.Bucket}}">
+  {{if .Cursor}}<input type="hidden" name="balance_cursor" value="{{.Cursor}}">{{end}}
+{{end}}

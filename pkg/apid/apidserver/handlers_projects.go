@@ -61,6 +61,19 @@ func (s *server) getProject(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
+	if r.URL.Query().Get("include_rollback") == "true" {
+		store, ok := s.store.(state.ProjectDeployRollbackStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("project deployment membership is unavailable"))
+			return
+		}
+		batch, err := store.LatestProjectRollbackBatch(r.Context(), project.AccountID, project.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read project deployment membership"))
+			return
+		}
+		response.RollbackBatch = batch
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -302,6 +315,9 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 		if deployErr == nil {
 			workload.DeploymentStatus = string(deployment.Status)
 			workload.RolloutState = deployment.RolloutState
+			if deployment.Status == state.DeployLive {
+				workload.TrafficPercent = deployment.TrafficPercent
+			}
 			if deployment.BuildID != "" {
 				if build, buildErr := s.store.BuildByID(r.Context(), deployment.BuildID); buildErr == nil {
 					workload.BuildStatus = string(build.Status)

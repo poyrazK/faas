@@ -1,0 +1,285 @@
+{
+  "approved_cache_eviction": {
+    "approved_files": 84,
+    "manifest_sha256": "16f1ab0b23a829c39a2e16f21d08536374df9736bcdcf5b3a6fa42a37ae5dcbe",
+    "removed_bytes": 6520837080,
+    "removed_files": 84,
+    "skipped_files": 0,
+    "source_or_module_or_evidence_files_removed": false
+  },
+  "binary_archives": [
+    {
+      "archive": "/var/tmp/gregale-run-controls-0fac111285fd-qualified-bin.tar.gz",
+      "archive_bytes": 468059612,
+      "archive_sha256": "2f4de8c41512ad1b793741bb1df580e90190528f266714882c15f6a5d0b91dff",
+      "files": {
+        "apid": {
+          "bytes": 241168483,
+          "mode": 493,
+          "sha256": "6bb62746aa15059f13e5f92539be378c438cb6fe5d2156d9401b75fe7a816e08"
+        },
+        "builderd": {
+          "bytes": 140198334,
+          "mode": 493,
+          "sha256": "ca61a255e206702ec2c3c1315c4a30c70c9ed72c69a11f6b1791e68fd535f234"
+        },
+        "gatewayd-internal": {
+          "bytes": 159801166,
+          "mode": 493,
+          "sha256": "2734c30521f573e2c764ecd207822b5f2d193ebfa3afdb61a4441cc035eb6ff0"
+        },
+        "gatewayd-public": {
+          "bytes": 89956666,
+          "mode": 493,
+          "sha256": "dc1109697a708e859a22991728f20f5fd5c7060bae7b3f4b76494149543a2609"
+        },
+        "gregale": {
+          "bytes": 130108036,
+          "mode": 493,
+          "sha256": "642d87ea3c6ecd7037182ec6b6c3791b40ec51cd7bc13b3fd709d8c6658f34bc"
+        },
+        "guest-init": {
+          "bytes": 32797447,
+          "mode": 493,
+          "sha256": "8b40fc0b8d215c5303864fc17bc27d811f551c0c826c83fde34ce1eaf9564f2d"
+        },
+        "imaged": {
+          "bytes": 150537928,
+          "mode": 493,
+          "sha256": "61282b3a53a15360fce57b8510a75b64d76e4da5ebd3456227cbe53762a55794"
+        },
+        "meterd": {
+          "bytes": 151273631,
+          "mode": 493,
+          "sha256": "1d6b39e37deb3d33b43980eb6d1fdd633848670434f5be0f9625bbcf23e4ce63"
+        },
+        "schedd": {
+          "bytes": 165166099,
+          "mode": 493,
+          "sha256": "9e44e3dce6a7db9fb93a68c6eaf2cbe09c90f8fbca67129478d2b5c6cab8741f"
+        },
+        "vmmd": {
+          "bytes": 134506154,
+          "mode": 493,
+          "sha256": "b2748c942ce7efa34ae9e82c0d0f5211ef75285965688a57c6d377ffb3476980"
+        },
+        "vmmd-guestdisk": {
+          "bytes": 2345877,
+          "mode": 493,
+          "sha256": "8181b0c08f8f069305302896eda6d5156854981b432b064b5d246315be8d7e44"
+        },
+        "vmmd-jail-helper": {
+          "bytes": 2639899,
+          "mode": 493,
+          "sha256": "1e6a4c04e12bbd7e021eef99977bee2813d144627ab384f58bc89ad4e187a363"
+        },
+        "vmmd-raw-bridge": {
+          "bytes": 8622029,
+          "mode": 493,
+          "sha256": "9919858482f69182758eb78d174cacedb4d924f049c56fb0f9d43ae4d0fc0a41"
+        },
+        "vmmd-stream-bridge": {
+          "bytes": 12071664,
+          "mode": 493,
+          "sha256": "1f833ee67a96cc5dd704c42e42907fb5d3287e3b68a249d914f8f029a5d2b783"
+        },
+        "vmmd-tcp-bridge": {
+          "bytes": 8613092,
+          "mode": 493,
+          "sha256": "d6b05d085f496de6f5359c2ca6bd17d76a56b66d6b18c06127f8f3ca267385bb"
+        },
+        "vmmd-udp-bridge": {
+          "bytes": 8559836,
+          "mode": 493,
+          "sha256": "8b0d55d1e5a2b5eaaabc4ae9943754d70faa0c4bce8d1f7c876a611c818f99a9"
+        }
+      },
+      "original_bytes": 1438366341,
+      "verified_byte_and_mode": true
+    },
+    {
+      "archive": "/var/tmp/gregale-run-controls-preserved-files-prefix3-20261116.tar.gz",
+      "archive_bytes": 466868585,
+      "archive_sha256": "d45cc79f541033270056ceb91f8caef60933ac3f47175aa5a64498f160d29af9",
+      "files": {
+        "apid": {
+          "bytes": 240474278,
+          "mode": 493,
+          "sha256": "b4e6a37fc9d1ec151baf1bde2cc2fceee6eadd55f543ef3f834a5021f39c4484"
+        },
+        "builderd": {
+          "bytes": 139749950,
+          "mode": 493,
+          "sha256": "0174a5077c2f65fa87506176bf59360fff616c3a56fd336bc6a92d05c019dca1"
+        },
+        "gatewayd-internal": {
+          "bytes": 159414413,
+          "mode": 493,
+          "sha256": "79d512a0842151d2de89569f4749f91274c9e6c7cedb7e4679206f2142844426"
+        },
+        "gatewayd-public": {
+          "bytes": 89941404,
+          "mode": 493,
+          "sha256": "d86d67de409b28328c6d2ff1e8fb883026a448d17436525c177e37e6bf19a756"
+        },
+        "gregale": {
+          "bytes": 129881273,
+          "mode": 493,
+          "sha256": "66d374a717936f628aab41e48bac1a24c6d65876e54a478e1cc9d3d27181bd97"
+        },
+        "guest-init": {
+          "bytes": 32786482,
+          "mode": 493,
+          "sha256": "07fbb0fd5f18d0c7277ad9a2f63fb85e9776b080f17f245ef7efabb648b6ddd9"
+        },
+        "imaged": {
+          "bytes": 150070098,
+          "mode": 493,
+          "sha256": "f204a35490605d356aa85c10092345d987e0d9e86e330251ae474eab0de3a788"
+        },
+        "meterd": {
+          "bytes": 150860565,
+          "mode": 493,
+          "sha256": "ab3f11c6502b94cff33651eb3ece9a2bc05a8e6a097833511a78d2d31a11a095"
+        },
+        "schedd": {
+          "bytes": 164730465,
+          "mode": 493,
+          "sha256": "188e6a401c119ba66ce2227a06036f14b58d095faea3f17d2861b9fb0c73ecad"
+        },
+        "vmmd": {
+          "bytes": 134133992,
+          "mode": 493,
+          "sha256": "974ff6e2fcf0cacac9898ca16f7feca4fa819d51243822031695a59b37d4fa3d"
+        },
+        "vmmd-guestdisk": {
+          "bytes": 2345877,
+          "mode": 493,
+          "sha256": "8181b0c08f8f069305302896eda6d5156854981b432b064b5d246315be8d7e44"
+        },
+        "vmmd-jail-helper": {
+          "bytes": 2639899,
+          "mode": 493,
+          "sha256": "1e6a4c04e12bbd7e021eef99977bee2813d144627ab384f58bc89ad4e187a363"
+        },
+        "vmmd-raw-bridge": {
+          "bytes": 8621755,
+          "mode": 493,
+          "sha256": "0a6a97f4d013b85e7e41dd60bfa03fe3ecada6f48677e5a6e4b3a8055e1bd86b"
+        },
+        "vmmd-stream-bridge": {
+          "bytes": 12071390,
+          "mode": 493,
+          "sha256": "601e089fcb4223da94f4c784f53069fb30a0d9fc4448808f37b78aabc12059a0"
+        },
+        "vmmd-tcp-bridge": {
+          "bytes": 8612818,
+          "mode": 493,
+          "sha256": "56f01204ae6ebf2ea24fe19d76a36904bbe25e54fa34c7b024e78135b6f46221"
+        },
+        "vmmd-udp-bridge": {
+          "bytes": 8555466,
+          "mode": 493,
+          "sha256": "1f34352602c39794f7c6fcb18eefc61767e70d4adbaa17abf72e4608fba70e2d"
+        }
+      },
+      "original_bytes": 1434890125,
+      "verified_byte_and_mode": true
+    },
+    {
+      "archive": "/var/tmp/gregale-run-controls-preserved-recovery-432e6058-20261116.tar.gz",
+      "archive_bytes": 423092182,
+      "archive_sha256": "185711b187c1d7a17c395ad774786d91fb361c458aa42d9dfb9f70da473514ac",
+      "files": {
+        "apid": {
+          "bytes": 240207613,
+          "mode": 493,
+          "sha256": "034cfe60cf428580c2921ef86f910bfad9e606c7a80d37a4d889b2ed4ec77d6f"
+        },
+        "builderd": {
+          "bytes": 139622276,
+          "mode": 493,
+          "sha256": "7f8cf8274f01b767ff76d27997ab1ab113c2ca1b2f784cb335c056c2c2523303"
+        },
+        "gatewayd-internal": {
+          "bytes": 159277223,
+          "mode": 493,
+          "sha256": "36d3ae3681dfd81d8dd23fce47c5747d222f1a85c883a5be1a958c9c0180bf71"
+        },
+        "gatewayd-public": {
+          "bytes": 89931863,
+          "mode": 493,
+          "sha256": "89f34e78e50d2fa6ffceedcd99111d00d75032c70392d35578a59ef79f9732c5"
+        },
+        "guest-init": {
+          "bytes": 32760268,
+          "mode": 493,
+          "sha256": "2d76624b8d8c8726c5c6e6d547385a317d1d194b3829d029a92605d8e57e94b7"
+        },
+        "imaged": {
+          "bytes": 149921944,
+          "mode": 493,
+          "sha256": "699db8d5e2c13f1783f43f6284eed22ecbf341a5a56c57aaa91894149406a678"
+        },
+        "meterd": {
+          "bytes": 150711253,
+          "mode": 493,
+          "sha256": "a01ce0050cb6d8f796dbbad1d8c605d817ea7468f3fcfa9567d784a6b7340c97"
+        },
+        "schedd": {
+          "bytes": 164581095,
+          "mode": 493,
+          "sha256": "890fe022e69acfa26a34d80d6f58d09d8a0902857a16176a7bcfec34e7f7792d"
+        },
+        "vmmd": {
+          "bytes": 133879990,
+          "mode": 493,
+          "sha256": "1046a9451f83f16dc2695c9513dd785b63276a6b6929d7b7bf86acbe4affb49e"
+        },
+        "vmmd-guestdisk": {
+          "bytes": 2345877,
+          "mode": 493,
+          "sha256": "8181b0c08f8f069305302896eda6d5156854981b432b064b5d246315be8d7e44"
+        },
+        "vmmd-jail-helper": {
+          "bytes": 2639899,
+          "mode": 493,
+          "sha256": "1e6a4c04e12bbd7e021eef99977bee2813d144627ab384f58bc89ad4e187a363"
+        },
+        "vmmd-raw-bridge": {
+          "bytes": 8621755,
+          "mode": 493,
+          "sha256": "8c75200358fc0a55f9d9dae98a7785e86e9e725eefde9918fc1874ededa34466"
+        },
+        "vmmd-stream-bridge": {
+          "bytes": 12071390,
+          "mode": 493,
+          "sha256": "ae17fb359915f2df1c47ac3dc4d0db5f8a826b4397ca230f1d7595b526eaa93a"
+        },
+        "vmmd-tcp-bridge": {
+          "bytes": 8612818,
+          "mode": 493,
+          "sha256": "2557b3a8b2849672713e143dcd8a4b15d31e8ef29aa9b8e595fa0f8ebc8a3c48"
+        },
+        "vmmd-udp-bridge": {
+          "bytes": 8555466,
+          "mode": 493,
+          "sha256": "254f1661174f7b84295b8c3e79946a51ff8ce4d57151b629453e9f1cf8d11d31"
+        }
+      },
+      "original_bytes": 1303740730,
+      "verified_byte_and_mode": true
+    }
+  ],
+  "source_archives": [
+    {
+      "archive": "/var/tmp/gregale-run-controls-preserved-source-5fd17086-20261116.tar.gz",
+      "archive_bytes": 113383437,
+      "archive_sha256": "6611ce73de6aedaf7d192374f78e6c5bca55b732a44697874a5ab53df8e6b195",
+      "entries": 57011,
+      "files_manifest_sha256": "a30339d1c063a9c038e0934140531014009c4a57e9ccef4c6ee3ef2d9e9d5839",
+      "original_bytes": 380310515,
+      "verified_byte_and_mode": true
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/agentpresets"
@@ -54,10 +55,6 @@ func prepare(claim agentstore.Claim) (Machine, agentrunproto.Request, error) {
 	if len(command) == 0 {
 		return Machine{}, agentrunproto.Request{}, errors.New("the agent version has no command")
 	}
-	args := make([]string, len(command))
-	for i, arg := range command {
-		args[i] = strings.ReplaceAll(arg, agentpresets.PromptPlaceholder, prompt)
-	}
 	event := []byte(claim.Inputs)
 	if len(event) == 0 {
 		event = []byte(`{}`)
@@ -68,7 +65,19 @@ func prepare(claim agentstore.Claim) (Machine, agentrunproto.Request, error) {
 			env[name] = value
 		}
 	}
-	modelEnv(env, claim.Harness.Models, claim.Integrations)
+	var basePaths map[string]string
+	if isPreset {
+		basePaths = presetModelBasePaths[preset.Name]
+	}
+	modelEnv(env, claim.Harness.Models, claim.Integrations, basePaths)
+	capabilityEnv(env, claim.CapabilityPolicy)
+	presetCommand := isPreset && slices.Equal(command, preset.Run)
+	command = wireCapabilities(env, command, preset, isPreset)
+	command = wireModels(env, command, preset, presetCommand)
+	args := make([]string, len(command))
+	for i, arg := range command {
+		args[i] = strings.ReplaceAll(arg, agentpresets.PromptPlaceholder, prompt)
+	}
 	if len(env) == 0 {
 		env = nil
 	}
@@ -99,18 +108,46 @@ var modelProviders = map[string]struct{ basePath, keyVar string }{
 // relayPlaceholderKey satisfies SDKs that require a key to be set.
 const relayPlaceholderKey = "gregale-relay"
 
+// presetModelBasePaths overrides a provider's base path for a preset
+// harness that reads the same variable with a different meaning. OpenCode's
+// AI SDK takes ANTHROPIC_BASE_URL to include /v1 and posts to .../messages,
+// where the Anthropic SDK (Claude Code) appends /v1/messages itself; the
+// integration allows only /v1 paths (metal check 2026-11-20).
+var presetModelBasePaths = map[string]map[string]string{
+	"opencode": {api.AgentModelAnthropic: "/v1"},
+}
+
 // modelEnv points each provider's base-URL variable at its integration
 // through the relay (ADR-20261027090010 §3). A provider with no integration gets
 // nothing, so the harness fails fast instead of reaching a provider directly.
-func modelEnv(env, models, integrations map[string]string) {
+// basePaths, when set, replaces a provider's base path for the harness.
+func modelEnv(env, models, integrations, basePaths map[string]string) {
 	for provider, id := range integrations {
 		variable, shape := models[provider], modelProviders[provider]
 		if variable == "" || id == "" {
 			continue
 		}
+		if path, ok := basePaths[provider]; ok {
+			shape.basePath = path
+		}
 		env[variable] = agentrunproto.OutboundRelayEndpoint + "/i/" + id + shape.basePath
 		if shape.keyVar != "" && env[shape.keyVar] == "" {
 			env[shape.keyVar] = relayPlaceholderKey
+		}
+	}
+}
+
+// capabilityEnv points the harness at the capability gateway's MCP endpoint
+// when the version's policy allows a tool (ADR-20261027090016 amendment 1).
+// The gateway lists only the tools that are allowed and switched on.
+func capabilityEnv(env map[string]string, policy *api.AgentCapabilityPolicy) {
+	if policy == nil {
+		return
+	}
+	for _, tool := range policy.Tools {
+		if tool.Mode == api.AgentCapabilityAllow || tool.Mode == api.AgentCapabilityApprove {
+			env[api.AgentCapabilityMCPURLEnv] = agentrunproto.OutboundRelayEndpoint + api.AgentCapabilityMCPPath
+			return
 		}
 	}
 }

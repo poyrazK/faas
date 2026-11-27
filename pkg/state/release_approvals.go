@@ -22,21 +22,41 @@ const (
 	ReleaseApproverRolePersonal = "personal"
 )
 
+// ReleasePhaseStartedAt is when d entered its current pipeline stage (for a
+// release waiting before its release command, its release phase), or its
+// creation when the stage has no start.
+func ReleasePhaseStartedAt(d Deployment) time.Time {
+	started := d.CreatedAt
+	var stages StageState
+	if len(d.StageState) == 0 || json.Unmarshal(d.StageState, &stages) != nil || stages.CurrentStartedAt == nil {
+		return started
+	}
+	if stages.CurrentStartedAt.After(started) {
+		return *stages.CurrentStartedAt
+	}
+	return started
+}
+
 // ReleaseApprovalPolicy is an app's approval policy.
 type ReleaseApprovalPolicy struct {
-	AppID             string
-	AccountID         string
-	RequiredApprovals int
-	AfterStage        int
-	TimeoutMinutes    int
-	Approvers         string
-	AllowSelfApproval bool
+	RequirePassingSandboxSuite *bool
+	AppID                      string
+	AccountID                  string
+	RequiredApprovals          int
+	AfterStage                 int
+	TimeoutMinutes             int
+	Approvers                  string
+	AllowSelfApproval          bool
 	// NotifyChannelIDs are the notification channels told about the app's
 	// approvals; empty sends nothing.
 	NotifyChannelIDs []string
 	UpdatedBy        string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+func (p ReleaseApprovalPolicy) RequiresSandboxSuite() bool {
+	return p.RequirePassingSandboxSuite != nil && *p.RequirePassingSandboxSuite
 }
 
 // ReleaseApproval is one person's decision on a release.
@@ -194,6 +214,13 @@ func (m *MemStore) SetReleaseApprovalPolicy(_ context.Context, p ReleaseApproval
 	p.NotifyChannelIDs = append([]string{}, p.NotifyChannelIDs...)
 	if existing, ok := m.releaseApprovalPolicies[p.AppID]; ok {
 		p.CreatedAt = existing.CreatedAt
+		if p.RequirePassingSandboxSuite == nil {
+			p.RequirePassingSandboxSuite = existing.RequirePassingSandboxSuite
+		}
+	}
+	if p.RequirePassingSandboxSuite != nil {
+		value := *p.RequirePassingSandboxSuite
+		p.RequirePassingSandboxSuite = &value
 	}
 	if m.releaseApprovalPolicies == nil {
 		m.releaseApprovalPolicies = map[string]ReleaseApprovalPolicy{}
@@ -208,6 +235,10 @@ func (m *MemStore) ReleaseApprovalPolicy(_ context.Context, appID string) (Relea
 	p, ok := m.releaseApprovalPolicies[appID]
 	if !ok {
 		return ReleaseApprovalPolicy{}, ErrNotFound
+	}
+	if p.RequirePassingSandboxSuite != nil {
+		value := *p.RequirePassingSandboxSuite
+		p.RequirePassingSandboxSuite = &value
 	}
 	return p, nil
 }

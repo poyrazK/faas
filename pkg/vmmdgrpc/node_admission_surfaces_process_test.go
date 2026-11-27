@@ -127,7 +127,10 @@ func nodeAdmissionSurfaceRequest(ctx context.Context, process *nodeAdmissionProc
 
 func nodeAdmissionSurfaceRefusal(t *testing.T, f nodeAdmissionProcessFixture, process *nodeAdmissionProcess, surface string, untrusted, upgrade bool) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	// A trusted refusal is re-forwarded for the Scale app's whole warm-queue
+	// wait before the gateway relays it, so the client must outlast that
+	// wait; a 2 s client against the 2 s wait timed out under -race.
+	ctx, cancel := context.WithTimeout(t.Context(), api.ConcurrencyQueuePaidDefaultWait+5*time.Second)
 	defer cancel()
 	request, err := nodeAdmissionSurfaceRequest(ctx, process, surface, "/work", untrusted, upgrade)
 	if err != nil {
@@ -153,8 +156,13 @@ func nodeAdmissionSurfaceRefusal(t *testing.T, f nodeAdmissionProcessFixture, pr
 	if !untrusted && (problem.Limit == nil || *problem.Limit != 4 || problem.Observed == nil || *problem.Observed != 5) {
 		t.Fatalf("%s refusal lost trusted capacity: %+v", surface, problem)
 	}
-	if f.rpcCalls.Load() != beforeRPC+1 || f.guestCalls.Load() != beforeGuest {
-		t.Fatalf("%s refusal replayed or reached guest: RPCs=%d -> %d guests=%d -> %d", surface,
+	// A trusted capacity refusal is the app's warm saturation: the gateway
+	// re-forwards it within the app's queue wait before relaying it (#7665),
+	// so it may reach vmmd more than once. An untrusted refusal is not
+	// retried. Neither ever reaches the guest.
+	rpcs := f.rpcCalls.Load() - beforeRPC
+	if rpcs < 1 || (untrusted && rpcs != 1) || f.guestCalls.Load() != beforeGuest {
+		t.Fatalf("%s untrusted=%v refusal replayed or reached guest: RPCs=%d -> %d guests=%d -> %d", surface, untrusted,
 			beforeRPC, f.rpcCalls.Load(), beforeGuest, f.guestCalls.Load())
 	}
 }

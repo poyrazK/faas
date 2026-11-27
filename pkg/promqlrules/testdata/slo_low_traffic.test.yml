@@ -123,6 +123,10 @@ tests:
             exp_annotations:
               summary: "API availability is consuming its monthly error budget rapidly"
               description: "The platform-produced 5xx rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
+              first_action: "Open API Availability and compare the onset with recent deploys. Check gateway errors for the affected routes and nodes."
+              customer_impact: "Platform-generated 5xx accounted for 100% of eligible requests over the last hour."
+              failure_stage: "Request serving before the guest returned a response"
+              dashboard_path: '/d/faas-fleet-m8?viewPanel=11&from=now-2h&to=now'
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
       - eval_time: 25m
         alertname: FaasSLOBurnRateHigh

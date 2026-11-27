@@ -135,6 +135,9 @@ func (s *Server) serveExecutionBrokerStream(stream vmmdpb.Vmmd_ExecuteExecutionB
 	if err != nil {
 		return grpcerr.ToStatus(toProblem(err))
 	}
+	if err := s.configureExecutionFiles(start.GetInstance(), &wireReq); err != nil {
+		return err
+	}
 	if !wireReq.OutboundEnabled {
 		return status.Error(codes.InvalidArgument, "outbound_enabled is required for the execution broker stream")
 	}

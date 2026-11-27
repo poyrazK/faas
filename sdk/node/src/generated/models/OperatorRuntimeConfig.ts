@@ -10,7 +10,7 @@ export type OperatorRuntimeConfig = {
   label: string;
   description: string;
   category: string;
-  kind: 'boolean' | 'integer' | 'duration' | 'string' | 'enum' | 'secret_reference' | 'platform_flag' | 'platform_flag_groups' | 'platform_flag_opt_ins';
+  kind: 'boolean' | 'integer' | 'duration' | 'string' | 'enum' | 'secret_reference' | 'platform_flag' | 'platform_flag_groups' | 'platform_flag_opt_ins' | 'builder_slots';
   default_value: any;
   desired_value: any;
   effective_value: any;

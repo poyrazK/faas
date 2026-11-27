@@ -6,7 +6,7 @@ import http from 'node:http'
 import assert from 'node:assert/strict'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, stat, rm, unlink, rename } from 'node:fs/promises'
+import { mkdtemp, mkdir, cp, writeFile, readFile, readdir, stat, rm, unlink, rename, symlink } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,6 +19,19 @@ const enabled = Boolean(runtime && starter)
 const dev = runtime ? await import(pathToFileURL(join(runtime, 'dev.mjs'))) : undefined
 const containers = async () => (await execute('docker', ['container', 'ls', '--all', '--filter', 'label=gregale.data-api.dev=true', '--format', '{{.Names}}'])).stdout.trim().split('\n').filter(Boolean).sort()
 const volumes = async () => (await execute('docker', ['volume', 'ls', '--format', '{{.Name}}'])).stdout.trim().split('\n').filter(Boolean).sort()
+
+test('development entrypoint executes when invoked through a symlinked directory', { skip: !runtime }, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gregale-dev-entrypoint-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await symlink(runtime, join(root, 'runtime'), 'dir')
+  for (const flags of [[], ['--preserve-symlinks-main']]) {
+    await assert.rejects(execute(process.execPath, [...flags, join(root, 'runtime/dev.mjs'), join(root, 'missing.json')]), error => {
+      assert.equal(error.code, 1)
+      assert.match(error.stderr, /Local Data API failed/)
+      return true
+    })
+  }
+})
 
 test('local compatibility approvals accept exact breaks and reject stale candidates without overwriting files', { skip: !enabled, timeout: 240000 }, async t => {
   const beforeContainers = await containers(), beforeVolumes = await volumes()
@@ -1026,6 +1039,32 @@ test('opt-in validators refresh on migrations, prevent form transport and suppor
   await assert.rejects(execute(options.cli,args,{timeout:90000}),error=>error.code!==0&&/stale/.test(error.stderr))
   assert.equal(await readFile(options.output,'utf8'),generated+'\n// stale validators\n')
   assert.deepEqual(await containers(),before);assert.deepEqual(await volumes(),beforeVolumes)
+})
+
+test('write-check qualifies paired local writes and rejects an incorrect denial with cleanup', {skip:!enabled,timeout:240000},async t=>{
+ const before=await containers(),beforeVolumes=await volumes()
+ const {ready,options,close}=await runningFixture(t,{check:false})
+ const fingerprint=ready.fingerprint
+ await close()
+ const fixtureFile=join(options.directory,'write-qualification-fixture.sql')
+ await writeFile(fixtureFile,"INSERT INTO api.notes(id,subject,body) OVERRIDING SYSTEM VALUE VALUES (1001,'alice','write-check-private'); SELECT pg_catalog.setval('api.notes_id_seq',1001);")
+ const operation=(name,identity,method,fixture,body,status,rows,outcome)=>({name,identity,method,fixture,body,expect:{status,rows,outcome}})
+ const checks={version:4,status:'reviewed',view:{name:'Notes',fingerprint,steps:[{schema:'api',table:'notes',columns:['id'],filter:null,sort:null,via:null}]},fixtures:[{name:'owned',schema:'api',table:'notes',keys:{id:1001,subject:'alice'}}],checks:[{identity:'alice',steps:[{fixture:'owned',rows:1}]},{identity:'bob',steps:[{fixture:'owned',rows:0}]}],mutationFixtures:[{name:'created',schema:'api',table:'notes',keys:{subject:'alice',body:'write-check-created'}}],mutations:[
+  operation('Denied_create','bob','POST','created',{subject:'alice',body:'write-check-created'},403,0,'unchanged'),operation('Create','alice','POST','created',{subject:'alice',body:'write-check-created'},201,1,'created'),
+  operation('Denied_update','bob','PATCH','owned',{body:'write-check-denied'},204,0,'unchanged'),operation('Update','alice','PATCH','owned',{body:'write-check-updated'},204,1,'updated'),
+  operation('Denied_delete','bob','DELETE','owned',null,204,0,'unchanged'),operation('Delete','alice','DELETE','owned',null,204,1,'deleted')
+ ]}
+ const accessFile=join(options.directory,'write-check.json');await writeFile(accessFile,JSON.stringify(checks))
+ const args=['--json','data-api','write-check','--directory',options.directory,'--schema','api','--table','notes','--operations','insert,update,delete','--access-checks',accessFile,'--fixture',fixtureFile]
+ const result=await execute(options.cli,args,{timeout:90000})
+ assert.notEqual(result.stdout.trim(),'',`write-check returned no report: ${result.stderr}`)
+ const report=JSON.parse(result.stdout)
+ assert.equal(report.status,'passed');assert.equal(report.cleanup,'passed');assert.equal(report.command,'data-api write-check')
+ assert.equal(report.write_qualification.hosted_authorization,'not_tested');assert.match(report.write_qualification.manifest_sha256,/^[a-f0-9]{64}$/);assert.match(report.write_qualification.fixture_sha256,/^[a-f0-9]{64}$/)
+ assert.ok(!JSON.stringify(report).includes('write-check-created'))
+ checks.mutations[2].expect.status=403;await writeFile(accessFile,JSON.stringify(checks))
+ await assert.rejects(execute(options.cli,args,{timeout:90000}),error=>{const result=JSON.parse(error.stdout);assert.equal(result.status,'failed');assert.equal(result.cleanup,'passed');assert.equal(result.access_checks.find(check=>!check.passed&&!check.skipped).name,'Denied_update');return true})
+ assert.deepEqual(await containers(),before);assert.deepEqual(await volumes(),beforeVolumes)
 })
 
 test('guided lifecycle checkpoints enforce downgrades and revocation with existing JWTs and preserve peers', {skip:!enabled,timeout:240000},async t=>{

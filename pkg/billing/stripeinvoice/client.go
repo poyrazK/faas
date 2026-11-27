@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +80,10 @@ func DashboardURL(livemode bool, invoiceID string) string {
 }
 
 func (c *Client) do(ctx context.Context, key, method, path, idempotencyKey string, form url.Values, out any) error {
+	return c.doVersion(ctx, key, APIVersion, method, path, idempotencyKey, form, out)
+}
+
+func (c *Client) doVersion(ctx context.Context, key, version, method, path, idempotencyKey string, form url.Values, out any) error {
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -88,7 +93,7 @@ func (c *Client) do(ctx context.Context, key, method, path, idempotencyKey strin
 		return fmt.Errorf("stripe request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Stripe-Version", APIVersion)
+	req.Header.Set("Stripe-Version", version)
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
@@ -128,6 +133,35 @@ func (c *Client) do(ctx context.Context, key, method, path, idempotencyKey strin
 // them can always do.
 func (c *Client) CheckKey(ctx context.Context, key string) error {
 	return c.do(ctx, key, http.MethodGet, "/v1/invoices?limit=1", "", nil, nil)
+}
+
+var accountIDPattern = regexp.MustCompile(`^acct_[A-Za-z0-9]+$`)
+
+// AccountID returns the identity of the Stripe account authenticated by key.
+func (c *Client) AccountID(ctx context.Context, key string) (string, error) {
+	var account struct {
+		ID string `json:"id"`
+	}
+	if err := c.do(ctx, key, http.MethodGet, "/v1/account", "", nil, &account); err != nil {
+		return "", err
+	}
+	if !accountIDPattern.MatchString(account.ID) {
+		return "", errors.New("stripe returned an invalid account ID")
+	}
+	return account.ID, nil
+}
+
+// VerifyCustomer reads only the fields needed to verify a customer link.
+func (c *Client) VerifyCustomer(ctx context.Context, key, id string, livemode bool) (bool, error) {
+	var customer struct {
+		ID       string `json:"id"`
+		Deleted  bool   `json:"deleted"`
+		Livemode *bool  `json:"livemode"`
+	}
+	if err := c.do(ctx, key, http.MethodGet, "/v1/customers/"+url.PathEscape(id), "", nil, &customer); err != nil {
+		return false, err
+	}
+	return customer.ID == id && !customer.Deleted && customer.Livemode != nil && *customer.Livemode == livemode, nil
 }
 
 // InvoiceParams describe a draft invoice. Pending items already on the
@@ -254,30 +288,55 @@ func (c *Client) FinalizeInvoice(ctx context.Context, key, idempotencyKey, invoi
 // InvoiceState is the payment state of an invoice (ADR-1504). Deleted is
 // true when Stripe no longer has the invoice (a deleted draft).
 type InvoiceState struct {
-	Status          string
-	AmountPaid      int64
-	AmountRemaining int64
-	DueDate         *time.Time
-	PaidAt          *time.Time
-	HostedURL       string
-	Deleted         bool
+	ID               string
+	Livemode         *bool
+	Customer         string
+	CustomerEmail    string
+	CollectionMethod string
+	AutoAdvance      *bool
+	StatementID      string
+	SourceKind       string
+	SendExportID     string
+	Total            int64
+	AmountDue        int64
+	HasTotals        bool
+	FinalizedAt      *time.Time
+	Status           string
+	AmountPaid       int64
+	AmountRemaining  int64
+	DueDate          *time.Time
+	PaidAt           *time.Time
+	HostedURL        string
+	Deleted          bool
 	// Currency is the invoice's lowercase ISO 4217 code.
 	Currency string
 }
 
-// GetInvoice reads an invoice's payment state.
+type invoiceStateResponse struct {
+	ID                string            `json:"id"`
+	Livemode          *bool             `json:"livemode"`
+	Customer          string            `json:"customer"`
+	CustomerEmail     string            `json:"customer_email"`
+	CollectionMethod  string            `json:"collection_method"`
+	AutoAdvance       *bool             `json:"auto_advance"`
+	Metadata          map[string]string `json:"metadata"`
+	Total             *int64            `json:"total"`
+	AmountDue         *int64            `json:"amount_due"`
+	Status            string            `json:"status"`
+	Currency          string            `json:"currency"`
+	AmountPaid        int64             `json:"amount_paid"`
+	AmountRemaining   int64             `json:"amount_remaining"`
+	DueDate           *int64            `json:"due_date"`
+	HostedInvoiceURL  string            `json:"hosted_invoice_url"`
+	StatusTransitions struct {
+		PaidAt      *int64 `json:"paid_at"`
+		FinalizedAt *int64 `json:"finalized_at"`
+	} `json:"status_transitions"`
+}
+
+// GetInvoice reads an invoice's payment state and the terms of its draft.
 func (c *Client) GetInvoice(ctx context.Context, key, invoiceID string) (InvoiceState, error) {
-	var out struct {
-		Status            string `json:"status"`
-		Currency          string `json:"currency"`
-		AmountPaid        int64  `json:"amount_paid"`
-		AmountRemaining   int64  `json:"amount_remaining"`
-		DueDate           *int64 `json:"due_date"`
-		HostedInvoiceURL  string `json:"hosted_invoice_url"`
-		StatusTransitions struct {
-			PaidAt *int64 `json:"paid_at"`
-		} `json:"status_transitions"`
-	}
+	var out invoiceStateResponse
 	err := c.do(ctx, key, http.MethodGet, "/v1/invoices/"+url.PathEscape(invoiceID), "", nil, &out)
 	var stripeErr *Error
 	if errors.As(err, &stripeErr) && stripeErr.Status == http.StatusNotFound {
@@ -286,8 +345,63 @@ func (c *Client) GetInvoice(ctx context.Context, key, invoiceID string) (Invoice
 	if err != nil {
 		return InvoiceState{}, err
 	}
-	state := InvoiceState{Status: out.Status, AmountPaid: out.AmountPaid, AmountRemaining: out.AmountRemaining, HostedURL: out.HostedInvoiceURL,
-		Currency: out.Currency}
+	return out.invoiceState(), nil
+}
+
+// SetManualInvoiceTerms updates a Stripe draft in place without advancing it.
+func (c *Client) SetManualInvoiceTerms(ctx context.Context, key, idempotencyKey, invoiceID string, dueAt time.Time) error {
+	return c.prepareInvoiceSend(ctx, key, idempotencyKey, invoiceID, "", dueAt)
+}
+
+// SendExportMetadataKey links a reviewed Product Control send to its export.
+const SendExportMetadataKey = "gregale_send_export_id"
+
+func (c *Client) PrepareInvoiceSend(ctx context.Context, key, idempotencyKey, invoiceID, exportID string, dueAt time.Time) error {
+	return c.prepareInvoiceSend(ctx, key, idempotencyKey, invoiceID, exportID, dueAt)
+}
+
+func (c *Client) prepareInvoiceSend(ctx context.Context, key, idempotencyKey, invoiceID, exportID string, dueAt time.Time) error {
+	form := url.Values{"collection_method": {"send_invoice"}, "auto_advance": {"false"},
+		"due_date": {strconv.FormatInt(dueAt.Unix(), 10)}}
+	if exportID != "" {
+		form.Set("metadata["+SendExportMetadataKey+"]", exportID)
+	}
+	return c.do(ctx, key, http.MethodPost, "/v1/invoices/"+url.PathEscape(invoiceID), idempotencyKey, form, nil)
+}
+
+// FinalizeManualInvoice makes the reviewed invoice payable without an
+// automatic send or charge.
+func (c *Client) FinalizeManualInvoice(ctx context.Context, key, idempotencyKey, invoiceID string) (InvoiceState, error) {
+	return c.updateInvoiceState(ctx, key, idempotencyKey, invoiceID, "/finalize", url.Values{"auto_advance": {"false"}})
+}
+
+// SendInvoice asks Stripe to deliver the open invoice for manual payment.
+func (c *Client) SendInvoice(ctx context.Context, key, idempotencyKey, invoiceID string) (InvoiceState, error) {
+	return c.updateInvoiceState(ctx, key, idempotencyKey, invoiceID, "/send", nil)
+}
+
+func (c *Client) updateInvoiceState(ctx context.Context, key, idempotencyKey, invoiceID, action string, form url.Values) (InvoiceState, error) {
+	var out invoiceStateResponse
+	if err := c.do(ctx, key, http.MethodPost, "/v1/invoices/"+url.PathEscape(invoiceID)+action, idempotencyKey, form, &out); err != nil {
+		return InvoiceState{}, err
+	}
+	return out.invoiceState(), nil
+}
+
+func (out invoiceStateResponse) invoiceState() InvoiceState {
+	state := InvoiceState{
+		ID: out.ID, Livemode: out.Livemode, Customer: out.Customer, CustomerEmail: out.CustomerEmail,
+		CollectionMethod: out.CollectionMethod, AutoAdvance: out.AutoAdvance, StatementID: out.Metadata["gregale_statement_id"],
+		SourceKind: out.Metadata["gregale_source"], SendExportID: out.Metadata[SendExportMetadataKey], Status: out.Status,
+		AmountPaid: out.AmountPaid, AmountRemaining: out.AmountRemaining, HostedURL: out.HostedInvoiceURL, Currency: out.Currency,
+	}
+	state.HasTotals = out.Total != nil && out.AmountDue != nil
+	if out.Total != nil {
+		state.Total = *out.Total
+	}
+	if out.AmountDue != nil {
+		state.AmountDue = *out.AmountDue
+	}
 	if out.DueDate != nil {
 		due := time.Unix(*out.DueDate, 0).UTC()
 		state.DueDate = &due
@@ -296,5 +410,9 @@ func (c *Client) GetInvoice(ctx context.Context, key, invoiceID string) (Invoice
 		paid := time.Unix(*out.StatusTransitions.PaidAt, 0).UTC()
 		state.PaidAt = &paid
 	}
-	return state, nil
+	if out.StatusTransitions.FinalizedAt != nil {
+		finalized := time.Unix(*out.StatusTransitions.FinalizedAt, 0).UTC()
+		state.FinalizedAt = &finalized
+	}
+	return state
 }

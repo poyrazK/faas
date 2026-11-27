@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -38,6 +39,8 @@ type Store interface {
 	Runs(ctx context.Context, accountID string, f agentstore.RunFilter) ([]agentstore.Run, error)
 	CancelRun(ctx context.Context, accountID, id string) (agentstore.Run, error)
 	RunOutputs(ctx context.Context, accountID, id string) (agentstore.Outputs, error)
+	RunApprovals(ctx context.Context, accountID, runID string) ([]agentstore.Approval, error)
+	DecideRunApproval(ctx context.Context, accountID, runID, approvalID, decision, note, decidedBy string) (agentstore.Approval, error)
 }
 
 // Handler serves the agent routes.
@@ -70,7 +73,18 @@ type Handler struct {
 	Sleeps SleepSchedules
 	// RunCallbacks lists and settles finished gregale_run runs (run_tool.go);
 	// without it no apid delivers them.
-	RunCallbacks RunCallbackStore
+	RunCallbacks           RunCallbackStore
+	PipelineCallbacks      state.ExecutionPipelineCallbackStore
+	StartPipeline          PipelineStarter
+	PipelineToolEnabled    bool
+	pipelineDeliveryMu     sync.Mutex
+	pipelineCallbackCursor string
+	TaskCallbacks          TaskCallbackStore
+	TaskExecutions         TaskExecutionReader
+	StartTask              TaskStarter
+	TaskToolEnabled        bool
+	taskDeliveryMu         sync.Mutex
+	taskCallbackCursor     string
 	// GitHubSubscriptions holds gregale_github_subscribe's subscriptions
 	// (github_subscribe_tool.go); nil leaves the tool unavailable.
 	GitHubSubscriptions GitHubSubscriptionStore
@@ -411,6 +425,9 @@ func notFound(operation string) *api.Problem {
 	switch operation {
 	case "agent_run.get", "agent_run.cancel", "agent_run.list":
 		return api.NewProblem(http.StatusNotFound, api.CodeAgentRunNotFound, "Agent run not found", "the account has no such agent run")
+	case "agent_run.approval":
+		return api.NewProblem(http.StatusNotFound, api.CodeAgentRunApprovalNotFound, "Approval not found",
+			"the account has no such agent run, or the run has no such approval")
 	}
 	return api.NewProblem(http.StatusNotFound, api.CodeAgentNotFound, "Agent not found", "the account has no such agent or version")
 }

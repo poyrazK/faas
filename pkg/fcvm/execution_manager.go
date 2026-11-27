@@ -61,7 +61,7 @@ func (m *Manager) ExecuteExecutionWithBroker(ctx context.Context, instance strin
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	m.mu.Unlock()
-	if !ok || inst == nil || !inst.ExecutionOnly || inst.DataRepairOnly || inst.AgentRunOnly || inst.SandboxID != "" {
+	if !ok || inst == nil || !inst.ExecutionOnly || inst.executionTemplateOnly || inst.DataRepairOnly || inst.AgentRunOnly || inst.SandboxID != "" {
 		return zero, ErrExecutionInstanceNotFound
 	}
 	if req.OutboundEnabled && len(inst.ExecutionOutboundIntegrationIDs) == 0 {
@@ -120,4 +120,18 @@ func (m *Manager) ExecuteExecutionWithBroker(ctx context.Context, instance strin
 		return zero, errors.Join(errs...)
 	}
 	return result, nil
+}
+
+// ExecutionFileIdentity binds private file access to a live disposable Run.
+func (m *Manager) ExecutionFileIdentity(instance string) (string, string, error) {
+	if m == nil {
+		return "", "", ErrExecutionInstanceNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || inst == nil || !inst.ExecutionOnly || inst.executionTemplateOnly || inst.ExecutionID == "" || inst.AgentRunOnly || inst.DataRepairOnly || inst.SandboxID != "" {
+		return "", "", ErrExecutionInstanceNotFound
+	}
+	return inst.AccountID, inst.ExecutionID, nil
 }

@@ -34,6 +34,11 @@ func (p *S3) PutBucketVersioning(ctx context.Context, bucket, status string) err
 	if !state.ValidObjectBucketVersioningStatus(status) {
 		return ErrInvalid
 	}
+	if p.unversioned {
+		// Its version IDs are read as "null"; versioning there would keep
+		// history no listing could tell apart (ADR-20261121150000).
+		return ErrUnsupported
+	}
 	_, err := p.client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{Bucket: aws.String(bucket), VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatus(status)}}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	return normalizeVersionHistoryError(err)
 }

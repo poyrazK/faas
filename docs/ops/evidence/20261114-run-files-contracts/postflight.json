@@ -1,0 +1,11 @@
+{
+  "ephemeral_artifacts_removed_after_leakcheck": [
+    "run-node24.ext4"
+  ],
+  "functional_log_hashes_rechecked": 4,
+  "functional_pass": true,
+  "retained_artifacts_rehashed": 19,
+  "runtime_release_eligibility": false,
+  "source_files_rehashed": 198,
+  "source_manifest_sha256": "528cfc964eba6855df9c54c4fcf154dfd47e9dbc79f227749c32f51e2ec347a4"
+}

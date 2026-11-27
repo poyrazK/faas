@@ -15,25 +15,10 @@
     },
     "resource_scopes": {
       "greeting://welcome": [],
-      "customer://records/{recordId}": [],
-      "task://tasks/{taskId}": []
+      "customer://records/{recordId}": []
     },
     "prompt_scopes": {
       "summarize": []
     }
-  },
-  "tasks": {
-    "enabled": false,
-    "database_url_env": "DATABASE_URL",
-    "owner_key_env": "MCP_TASK_OWNER_KEY",
-    "namespace_env": "FAAS_APP_ID",
-    "ttl_seconds": 86400,
-    "poll_interval_ms": 2000,
-    "max_outstanding": 1000,
-    "max_outstanding_per_owner": 100,
-    "owner_key_id": "initial",
-    "payload_encryption_version": 1,
-    "previous_owner_keys": [],
-    "worker_concurrency": 1
   }
 }

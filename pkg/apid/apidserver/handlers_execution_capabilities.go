@@ -35,6 +35,35 @@ func (s *server) getExecutionCapabilities(w http.ResponseWriter, _ *http.Request
 		},
 		NetworkModes: []api.ExecutionNetworkMode{api.ExecutionNetworkNone},
 	}
+	response.RunControls = &api.RunControlCapabilities{ConfigurationAvailable: planEntitled && s.executionAPIEnabled && s.executionV2Enabled, MaxCustomers: api.RunCustomersByPlan[acct.Plan.PlanIndex()], MaxBindings: api.RunBindingsByPlan[acct.Plan.PlanIndex()], HistoryPageSize: api.RunHistoryPageMax}
+	response.TaskPipelines = planEntitled && s.executionAPIEnabled && s.executionV2Enabled && s.executionTasksEnabled && s.executionPipelinesEnabled
+	response.ExtendedAdmissions = planEntitled && s.executionAPIEnabled && s.executionV2Enabled
+	response.ArtifactDeliveries = response.ExtendedAdmissions && s.object.ObjectStorageEnabled()
+	if response.ExtendedAdmissions {
+		limits := acct.Plan.ExecutionFileLimits()
+		response.FileLimits = &limits
+		response.MaxContractSchemaBytes = api.ExecutionContractSchemaMaxBytes
+	}
+	response.CustomEnvironments = response.ExtendedAdmissions && s.executionEnvironmentsEnabled && len(s.executionEnvironmentBases) > 0
+	if response.CustomEnvironments {
+		for _, runtime := range response.Runtimes {
+			if s.executionEnvironmentBases[runtime] != "" {
+				response.EnvironmentRuntimes = append(response.EnvironmentRuntimes, runtime)
+			}
+		}
+		limits := acct.Plan.ExecutionEnvironmentLimits()
+		response.EnvironmentLimits = &limits
+	}
+	if planEntitled {
+		for _, class := range []api.ExecutionClass{api.ExecutionClassStandard, api.ExecutionClassExtended} {
+			limits := planLimits.ForClass(class)
+			available := response.AdmissionAvailable
+			if class == api.ExecutionClassExtended {
+				available = available && s.executionV2Enabled && s.executionExtendedEnabled
+			}
+			response.ExecutionClasses = append(response.ExecutionClasses, api.ExecutionClassCapability{Class: class, DefaultTimeoutMS: limits.DefaultTimeoutMS, MaxTimeoutMS: limits.MaxTimeoutMS, MaxConcurrent: limits.MaxConcurrent, AdmissionAvailable: available})
+		}
+	}
 	if !planEntitled {
 		response.UnavailableReasons = append(response.UnavailableReasons, "plan_not_entitled")
 	}

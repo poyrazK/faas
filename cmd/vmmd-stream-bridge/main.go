@@ -215,7 +215,10 @@ func main() {
 	// without truncating an in-flight stream.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	srv, guestPool := buildServerWithGuestPool(guestIP, uint16(port), deadline)
+	// The bridge counts the instance's activity and serves it on a control
+	// socket when vmmd asks for one (connection-survival ADR §2, P1d).
+	counters := startControl(ctx)
+	srv, guestPool := buildCountingServer(guestIP, uint16(port), deadline, counters)
 	if currentBridgeFramingFrom(os.Getenv("FAAS_BRIDGE_PROTOCOL")) == framingH2C {
 		go func() {
 			prewarmCtx, prewarmCancel := context.WithTimeout(ctx, guestH2CPrewarmTimeout)
@@ -228,7 +231,7 @@ func main() {
 
 	// Raw, TCP and UDP sessions share the socket (connection-survival ADR
 	// §2, P1b): each starts with a hello, HTTP connections never do.
-	httpLn := instancebridge.Split(ctx, ln, &instancebridge.Sessions{GuestIP: guestIP, Dial: dialGuest})
+	httpLn := instancebridge.Split(ctx, ln, &instancebridge.Sessions{GuestIP: guestIP, Dial: dialGuest, Counters: counters})
 	errc := make(chan error, 1)
 	go func() {
 		err := srv.Serve(httpLn)
@@ -316,7 +319,19 @@ func buildServer(guestIP string, guestPort uint16, deadline time.Time) *http.Ser
 }
 
 func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Time) (*http.Server, *guestTransportPool) {
+	return buildCountingServer(guestIP, guestPort, deadline, nil)
+}
+
+// buildCountingServer is buildServerWithGuestPool whose requests counters
+// counts (P1d; nil counts nothing). The count wraps the per-request handler
+// inside h2c, never h2c itself: h2c serves a whole prior-knowledge
+// connection in one call, and vmmd keeps pooled connections open while idle.
+func buildCountingServer(guestIP string, guestPort uint16, deadline time.Time, counters *instancebridge.Counters) (*http.Server, *guestTransportPool) {
 	guestPool := newGuestTransportPool(guestIP)
+	handler := newHandlerWithPool(guestIP, guestPort, deadline, guestPool)
+	if counters != nil {
+		handler = countRequests(handler, counters)
+	}
 	srv := &http.Server{
 		//nolint:staticcheck // ADR-127 §D2 (Layer 9) — the inner Handler is wrapped with
 		// h2c.NewHandler so the listener negotiates H2C prior-knowledge
@@ -328,7 +343,7 @@ func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Ti
 		// wrapped handler. See the import-block comment for the same
 		// rationale; once stdlib exposes a Protocols.Get indirection,
 		// both annotations can be removed in lockstep.
-		Handler: h2c.NewHandler(newHandlerWithPool(guestIP, guestPort, deadline, guestPool), &http2.Server{
+		Handler: h2c.NewHandler(handler, &http2.Server{
 			MaxConcurrentStreams: h2cMaxConcurrentStreams, // 100
 			MaxReadFrameSize:     h2cMaxReadFrameSize,     // 1 MiB
 			// MaxHeaderListSize is a client-side SETTINGS capability
@@ -501,7 +516,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	outboundURL := "http://" + net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)) + url
 	outboundReq, err := newGuestRequest(roundTripCtx, method, outboundURL, r)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("build outbound request: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "build outbound request", err)
 		return
 	}
 	for _, h := range extraHeaders {
@@ -521,11 +536,11 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	}
 	outboundReq.Host = sanitizeCRLF(host)
 
-	resp, err := transport.RoundTrip(outboundReq)
+	resp, err := roundTripGuestH1(transport, outboundReq)
 	headerTimer.Stop()
 	if err != nil {
 		markGuestTransportError(w, r, roundTripCtx)
-		http.Error(w, fmt.Sprintf("guest h1 roundtrip: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "guest h1 roundtrip", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -561,7 +576,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 	d := net.Dialer{Timeout: guestDialTimeout()}
 	conn, err := netns.DialBridgeContext(ctx, &d, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 	if err != nil {
-		http.Error(w, fmt.Sprintf("dial guest: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "dial guest", err)
 		return
 	}
 	defer func() { _ = conn.Close() }()
@@ -577,7 +592,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 	}()
 
 	if err := writeH1RequestHead(conn, method, url, host, guestIP, guestPort, extraHeaders); err != nil {
-		http.Error(w, fmt.Sprintf("write request head: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "write request head", err)
 		return
 	}
 
@@ -591,7 +606,7 @@ func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Co
 	resp, err := http.ReadResponse(br, r)
 	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil {
-		http.Error(w, fmt.Sprintf("read guest response: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "read guest response", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()

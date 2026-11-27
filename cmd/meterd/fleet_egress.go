@@ -28,7 +28,7 @@ type activeComputeNodeSource interface {
 }
 
 type gatewayUsageEventStore interface {
-	AppendGatewayUsageEvent(context.Context, string, string, string, time.Time, int64, int64, int32) error
+	AppendGatewayUsageEvent(context.Context, string, string, string, time.Time, int64, int64, int32, bool) error
 	// AppendGatewayEdgeUsageEvent persists an edge frame: bytes a gateway
 	// served for an app without an instance (ADR-20261104132753).
 	AppendGatewayEdgeUsageEvent(ctx context.Context, nodeID, eventID, appID string, minute time.Time, txBytes int64) error
@@ -88,6 +88,11 @@ type fleetGatewayEgressAdapter struct {
 	now     func() time.Time
 	log     *slog.Logger
 	metrics *fleetEgressMetrics
+	// gatewayResponseEgress ([meter] gateway_response_egress,
+	// ADR-20261121210517) bills each instance frame's response bytes as app
+	// egress, for compute nodes whose public responses never cross the
+	// instance veth.
+	gatewayResponseEgress bool
 
 	mu      sync.Mutex
 	active  map[string]*fleetEgressEntry
@@ -173,6 +178,7 @@ func (a *fleetGatewayEgressAdapter) reconcile(ctx context.Context) {
 					err = a.store.AppendGatewayUsageEvent(
 						persistCtx, nodeID, frame.GetEventId(), frame.GetInstanceId(), frame.GetMinute().AsTime(),
 						int64(frame.GetRequests()), int64(frame.GetBytes()), int32(frame.GetColdBoots()),
+						a.gatewayResponseEgress,
 					)
 				}
 				if err != nil {

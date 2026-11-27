@@ -1,0 +1,13 @@
+# Managed by compute_only_service (ADR-20261117190000): {{ item }} reaches the
+# shared artifact store only through per-object grants secretd signs for
+# tenants placed on this node; its deletes are requests the control plane's
+# object GC decides (ADR-20261115180000). It uses the node's secretd client
+# leaf; the key is root-only, so systemd hands it over as a credential.
+[Service]
+LoadCredential=storage_grants_secretd_key:/etc/faas/tls/secretd-client/vmmd.key
+Environment=FAAS_STORAGE_DELETE_MODE=defer
+Environment=FAAS_STORAGE_ACCESS=secretd
+Environment=FAAS_SECRETD_TARGET={{ faas_secretd_target }}
+Environment=FAAS_SECRETD_TLS_CERT_PATH=/etc/faas/tls/secretd-client/vmmd.crt
+Environment=FAAS_SECRETD_TLS_KEY_PATH=%d/storage_grants_secretd_key
+Environment=FAAS_SECRETD_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt

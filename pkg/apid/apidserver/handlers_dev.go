@@ -125,7 +125,14 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 	}
 	slug := devSessionSlug(acct.ID, project, req.WorkspaceID)
 	expiresAt := time.Now().UTC().Add(lease)
-	app, prob := s.buildApp(acct, api.CreateAppRequest{Slug: slug, Type: req.Type, Runtime: req.Runtime}, limits)
+	createReq := api.CreateAppRequest{Slug: slug, Type: req.Type, Runtime: req.Runtime}
+	if watch != nil {
+		// A development server needs more memory than the app's production
+		// server; the 512 MB default leaves it swapping through its first
+		// compile. An existing environment keeps its size.
+		createReq.RAMMB = api.DevWatchRAMMB(limits)
+	}
+	app, prob := s.buildApp(acct, createReq, limits)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -325,7 +332,7 @@ func (s *server) listDevSessions(w http.ResponseWriter, r *http.Request, acct st
 	}
 	out := api.DevSessionListResponse{Sessions: []api.DevSessionSummary{}}
 	for _, app := range rows {
-		if app.AccountID != acct.ID || !state.IsDeveloperApp(app) {
+		if app.AccountID != acct.ID || !state.IsDeveloperApp(app) || state.IsAPISandbox(app) {
 			continue
 		}
 		item := api.DevSessionSummary{

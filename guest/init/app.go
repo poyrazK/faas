@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -219,6 +220,34 @@ func StampDefaultHomeEnv(env []string, imageHome string) []string {
 }
 
 const defaultWorkloadHome = "/tmp"
+
+// railpackMiseCacheDir is the MISE_CACHE_DIR Railpack bakes into every image
+// it builds. It is root-owned in the image and read-only for the workload.
+const railpackMiseCacheDir = "/mise/cache"
+
+// StampMiseCacheEnv moves mise's cache under the workload's HOME when the
+// image points it at Railpack's root-owned /mise/cache. Every start of a
+// Railpack app through a mise shim (pnpm, yarn, bun) printed "mise WARN
+// failed to write cache file: /mise/cache/…: Permission denied" several times
+// (prod hunt r28). A customer-chosen MISE_CACHE_DIR is kept. Call it after
+// StampDefaultHomeEnv so HOME is writable.
+func StampMiseCacheEnv(env []string) []string {
+	cacheDir, home := "", ""
+	for _, kv := range env {
+		if k, v, ok := cut(kv); ok {
+			switch k {
+			case "MISE_CACHE_DIR":
+				cacheDir = v
+			case "HOME":
+				home = v
+			}
+		}
+	}
+	if cacheDir != railpackMiseCacheDir || home == "" || home == "/" {
+		return env
+	}
+	return append(env, "MISE_CACHE_DIR="+strings.TrimRight(home, "/")+"/.cache/mise")
+}
 
 // StampPlatformIdentityEnv copies only Gregale-owned identity keys from the
 // shared app env map onto a workload's environment. Sidecars intentionally do

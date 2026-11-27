@@ -11,7 +11,7 @@ import (
 )
 
 func TestOTLPPayloadCarriesRecordAttributes(t *testing.T) {
-	payload := makeOTLPPayload(Record{AppID: "app-1", AccountID: "acct-1", InstanceID: "ai-gateway", Sequence: 7, Stream: "ai_gateway",
+	payload := makeOTLPPayload("", Record{AppID: "app-1", AccountID: "acct-1", InstanceID: "ai-gateway", Sequence: 7, Stream: "ai_gateway",
 		Line: `{"source":"ai_gateway"}`, WrittenAt: time.Unix(1, 0),
 		Attributes: map[string]string{"gen_ai.system": "openai", "gen_ai.response.model": "gpt-5"}})
 	attrs := payload.ResourceLogs[0].ScopeLogs[0].LogRecords[0].Attributes

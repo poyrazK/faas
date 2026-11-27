@@ -1,6 +1,6 @@
 # ADR-20261116213000: Custom Postgres group roles
 
-Status: Proposed
+Status: Accepted (beta since ADR-20261125232048)
 Amends: ADR-1027 (customer role attributes)
 
 ## Context
@@ -227,3 +227,46 @@ Firecracker databases are owned by the schema owner, which already holds
 The grant is applied by `initializeCredentialSchema`, which runs on every
 credential issue or rotation and every custom-role apply, so existing Neon
 databases pick it up the next time any of those runs.
+
+## Amendment 2 (2026-11-19): default custom roles
+
+With the migrations applied (release command, amendment 1), Windmill served
+on the `read_write` login but could not log a user in:
+
+```
+new row violates row-level security policy for table "audit_partitioned"
+```
+
+Windmill's own connection must bypass row-level security: on a usual install
+it owns the tables, or connects as `windmill_admin`. A Gregale login is never
+the owner and never `BYPASSRLS`, and it cannot start as `windmill_admin`
+through the connection string: Neon's pooler refuses the `role` startup
+option ("unsupported startup parameter in options: role"), and session
+(direct) bindings are not available on every database.
+
+A role can now be the **default role** of access modes:
+
+```
+gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user --default-for read_write
+gregale postgres roles grant  windmill-db windmill_admin --to read_write --default
+```
+
+- `default_for` lists `read_write` (session logins too) and `read_only`, each
+  one the role is granted to. A database has at most one default role per
+  access mode (`postgres_custom_role_default_taken`). `migration` is never
+  allowed: its login already starts as the schema owner.
+- Gregale runs `ALTER ROLE <login> SET role TO <custom role>` on every login
+  of those modes, the mechanism that already starts the `migration` login as
+  the schema owner. A role-level setting applies to every new server
+  connection, pooled or direct, so no connection-string option is needed.
+- It adds no capability: the login could already `SET ROLE` to the role in
+  any transaction. It changes which role a session starts as. Applications
+  can still `RESET ROLE` back to the login.
+- Credential `Ensure` sets the default on issue and rotation once the role
+  exists, and accepts a login whose only setting is `role=<one of its custom
+  roles>`. The custom-role apply sets it on every login of the mode and
+  resets it when the declaration drops it, before a role is dropped. Only a
+  `role` setting that names a custom role is ever replaced or reset.
+- `PUT` without `default_for` keeps the role's current defaults that are
+  still granted, so an older CLI's `grant`/`revoke` never clears them.
+  Revoking an access mode removes it from `default_for`.

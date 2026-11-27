@@ -191,10 +191,11 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	// The account's other apps' rules whose host pattern covers this host
 	// apply too (ADR-091 amendment 2026-10-31).
-	rules, err := client.ListCoveringEdgeRulesForApp(context.Background(), input.App)
+	covering, err := client.ListCoveringEdgeRulesForApp(context.Background(), input.App)
 	if err != nil {
 		return printErr("List failed", err)
 	}
+	rules := edgeruletrace.CoveringRulesForHost(covering, app.ID, input.Host)
 	if app.PreviewOfSlug != "" {
 		// A preview also applies its production app's app-wide rules.
 		production, prodErr := client.ListEdgeRulesForApp(context.Background(), app.PreviewOfSlug)

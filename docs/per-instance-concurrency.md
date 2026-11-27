@@ -9,10 +9,9 @@ to cmd/gregale/cli_meta.go and the usage lines, and delete this page.
 
 ## Requests per instance
 
-By default the gateway sends an instance up to your plan's concurrency per VM
-(Free 4, Hobby 5, Pro 25, Scale 80) before it tries another one. A server that
-handles fewer requests at once queues the rest itself, and the platform cannot
-see that it is full. `gunicorn --workers 2`, for example, serves two requests
+By default the gateway sends an instance up to 80 requests at once, on every
+plan, before it tries another one. A server that handles fewer requests at
+once queues the rest itself, and the platform cannot see that it is full. `gunicorn --workers 2`, for example, serves two requests
 at a time. Tell the platform how many your server handles:
 
 ```yaml
@@ -46,8 +45,10 @@ at the gateway in the warm queue.
   until none holds more than your value. Your server should tolerate a short
   backlog: keep its listen backlog at the default rather than refusing
   connections above the worker count.
-- `0`, or leaving it out, uses the plan's concurrency per VM. The value can be
-  at most that.
+- `0`, or leaving it out, uses the default of 80. The value can be at most
+  1,000; `gregale app APP_ID --concurrency` shows the maximum.
+- An app that holds many long-lived connections (server-sent events,
+  WebSockets) can raise it above 80, up to that maximum.
 - Set it to what your server really serves at once: gunicorn `--workers`
   (times `--threads` for threaded workers), uvicorn `--workers`, puma workers
   × threads. Node, Go and asyncio servers usually handle many requests at once

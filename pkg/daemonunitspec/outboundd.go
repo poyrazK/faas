@@ -25,6 +25,9 @@ func UnitOutboundd() daemonunit.Unit {
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/outboundd/outboundd.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_FLEET_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
+			// ADR-489: authorize stored workflow integration steps that
+			// schedd sends (beta, 2026-11-21).
+			{Key: "FAAS_WORKFLOW_OUTBOUND_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},

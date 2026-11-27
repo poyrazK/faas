@@ -344,3 +344,52 @@ func (c ObjectWriteConditions) Valid() bool {
 	}
 	return true
 }
+
+// ObjectWorkloadCredentialRequest asks for a short-lived credential for one
+// bucket the calling app's gregale.yaml `uses:` grants (ADR-20261122191423).
+// Bucket may be empty when the app holds exactly one bucket grant.
+type ObjectWorkloadCredentialRequest struct {
+	Bucket string `json:"bucket,omitempty"`
+}
+
+// ObjectWorkloadCredentialResponse is a workload S3 credential in the AWS
+// container credential shape, so AWS SDKs read it unchanged through
+// AWS_CONTAINER_CREDENTIALS_FULL_URI. Bucket, KeyPrefix, Endpoint and Region
+// tell the workload where it may write.
+type ObjectWorkloadCredentialResponse struct {
+	AccessKeyID     string    `json:"AccessKeyId"`
+	SecretAccessKey string    `json:"SecretAccessKey"`
+	Token           string    `json:"Token"`
+	Expiration      time.Time `json:"Expiration"`
+	Bucket          string    `json:"Bucket"`
+	KeyPrefix       string    `json:"KeyPrefix,omitempty"`
+	Endpoint        string    `json:"Endpoint,omitempty"`
+	Region          string    `json:"Region,omitempty"`
+}
+
+// WorkloadObjectCredentialsPath is the guest-init loopback route that serves
+// workload S3 credentials (ADR-20261122191423 slice 2); a `bucket` query
+// parameter selects one of several bucket grants.
+const WorkloadObjectCredentialsPath = "/v1/credentials/object-storage"
+
+// WorkloadObjectCredentialsEndpoint is the full loopback URL project apply
+// stamps as AWS_CONTAINER_CREDENTIALS_FULL_URI for services with a bucket
+// grant. AWS SDKs accept http container-credential URIs on loopback.
+const WorkloadObjectCredentialsEndpoint = "http://127.0.0.1:2773" + WorkloadObjectCredentialsPath
+
+// WorkloadCredentialsEnv is the AWS SDK variable project apply sets to
+// WorkloadObjectCredentialsEndpoint for a service with a bucket grant.
+const WorkloadCredentialsEnv = "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+
+// WorkloadS3EndpointEnv is the AWS SDKs' service-specific endpoint variable,
+// which schedd sets beside WorkloadCredentialsEnv (with AWS_REGION) so an
+// SDK reaches the platform's S3 API without code. The gateway serves
+// path-style addressing only, so clients still set forcePathStyle.
+const WorkloadS3EndpointEnv = "AWS_ENDPOINT_URL_S3"
+
+// DefaultObjectStoragePublicEndpoint and DefaultObjectStoragePublicRegion
+// are the public S3 API's address when the installation configures none.
+const (
+	DefaultObjectStoragePublicEndpoint = "https://s3.gregale.dev"
+	DefaultObjectStoragePublicRegion   = "us-east-1"
+)

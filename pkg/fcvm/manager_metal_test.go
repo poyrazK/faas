@@ -179,7 +179,7 @@ func TestMetalParkWakeCycle(t *testing.T) {
 	if productionDefaults {
 		v = v.WithFreePageReporting(!except["fpr"] && FreePageReportingSupported(fcVersion)).
 			WithRestorePrefetch(!except["prefetch"]).WithRestoreConcurrency(3)
-		if !except["pmem"] && PmemBaseSupported(fcVersion) {
+		if _, hostOK := pmemHostSupported(); !except["pmem"] && PmemBaseSupported(fcVersion) && hostOK {
 			v = v.WithPmemBase(PmemBaseDirAuto)
 		}
 		account = "acct-cycle"

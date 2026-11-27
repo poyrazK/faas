@@ -20,7 +20,7 @@ Environment=FAAS_EDGE_CLIENT_LIMITS=1
 Environment=FAAS_EDGE_OVERLOAD={{ faas_edge_overload | string | lower }}
 {% endif %}
 {% endif %}
-{% if (faas_edge_entry | default('tunnel') | string | lower) == 'both' %}
+{% if (faas_edge_entry | default('tunnel') | string | lower) in ['both', 'direct'] %}
 {% set faas_edge_no_front = (faas_edge_public_front | default('cloudflare') | string | lower) == 'none' %}
 # ADR-20261102081618: Cloudflare also connects to this edge directly. The edge
 # binds the TLS port itself and reads its TLS material as credentials.

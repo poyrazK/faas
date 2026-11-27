@@ -18,6 +18,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 )
 
+type fakePaddleDraftBilling struct {
+	address, business string
+	updatedAt         time.Time
+}
+
 // fakePaddle keeps transactions, and customers' addresses and businesses,
 // like Paddle Billing would.
 type fakePaddle struct {
@@ -27,9 +32,17 @@ type fakePaddle struct {
 	// addresses are customers' active addresses; billed records the
 	// address each transaction was billed with (ADR-20261019100333), and
 	// billedBusiness its business (ADR-20261020120000).
-	addresses      map[string]string
-	billed         map[string]string
-	billedBusiness map[string]string
+	addresses       map[string]string
+	billed          map[string]string
+	billedBusiness  map[string]string
+	billedAt        *time.Time
+	checkoutURL     string
+	totalMinor      string
+	prepared        map[string]fakePaddleDraftBilling
+	totalByAddress  map[string]string
+	prepareAttempts int
+	billAttempts    int
+	loseBillReply   bool
 	// entities holds addresses and businesses written through the API by
 	// "customer/kind"; writes counts POSTs and PATCHes.
 	entities map[string][]map[string]any
@@ -141,18 +154,45 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Status     string `json:"status"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.Status != "billed" || body.AddressID == "" {
+		if body.Status == "" && body.AddressID != "" {
+			if f.prepared == nil {
+				f.prepared = map[string]fakePaddleDraftBilling{}
+			}
+			f.prepareAttempts++
+			f.prepared[id] = fakePaddleDraftBilling{
+				address: body.AddressID, business: body.BusinessID,
+				updatedAt: time.Date(2026, 11, 1, 0, 0, f.prepareAttempts, 0, time.UTC),
+			}
+			response, _ := f.transaction(id)
+			_, _ = fmt.Fprint(w, response)
+			return
+		}
+		if body.Status != "billed" || (f.totalByAddress != nil && (body.AddressID != "" || body.BusinessID != "")) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
+		}
+		if body.AddressID == "" {
+			prepared := f.prepared[id]
+			if prepared.address == "" || body.BusinessID != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			body.AddressID, body.BusinessID = prepared.address, prepared.business
 		}
 		if f.billed == nil {
 			f.billed = map[string]string{}
 		}
+		f.billAttempts++
 		f.billed[id] = body.AddressID
 		if f.billedBusiness == nil {
 			f.billedBusiness = map[string]string{}
 		}
 		f.billedBusiness[id] = body.BusinessID
+		if f.loseBillReply {
+			f.loseBillReply = false
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
 		_, _ = fmt.Fprintf(w, `{"data":{"id":%q,"status":"billed"}}`, id)
 	default:
 		w.WriteHeader(http.StatusNotFound)
@@ -162,15 +202,36 @@ func (f *fakePaddle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // transaction answers GET for a created transaction: a draft until it is
 // billed.
 func (f *fakePaddle) transaction(id string) (string, bool) {
-	for i := range f.created {
+	for i, created := range f.created {
 		if fmt.Sprintf("txn_%d", i+1) != id {
 			continue
 		}
-		status := "draft"
-		if _, billed := f.billed[id]; billed {
-			status = "billed"
+		prepared := f.prepared[id]
+		total := f.totalByAddress[prepared.address]
+		if total == "" {
+			total = f.totalMinor
 		}
-		return fmt.Sprintf(`{"data":{"id":%q,"status":%q,"currency_code":"EUR","details":{"totals":{"grand_total":"0","balance":"0"}}}}`, id, status), true
+		if total == "" {
+			total = "0"
+		}
+		data := map[string]any{
+			"id": id, "status": "draft", "currency_code": created["currency_code"],
+			"customer_id": created["customer_id"], "collection_mode": created["collection_mode"],
+			"custom_data": created["custom_data"], "billing_details": created["billing_details"],
+			"details": map[string]any{"totals": map[string]string{"grand_total": total, "balance": total}},
+		}
+		if prepared.address != "" {
+			data["status"], data["address_id"], data["business_id"] = "ready", prepared.address, prepared.business
+			data["updated_at"] = prepared.updatedAt
+			if f.checkoutURL != "" {
+				data["checkout"] = map[string]string{"url": f.checkoutURL}
+			}
+		}
+		if _, billed := f.billed[id]; billed {
+			data["status"], data["billed_at"] = "billed", f.billedAt
+		}
+		raw, _ := json.Marshal(map[string]any{"data": data})
+		return string(raw), true
 	}
 	return "", false
 }
@@ -285,12 +346,12 @@ func (f *fakeLago) invoiceJSON(i int) string {
 		i+1, inv.status, inv.paymentStatus, fees, fees, paid, fees-paid, i+1, metadata)
 }
 
-func exportStatement(t *testing.T, f billingRunFixture, path string, req api.CreateStatementInvoiceRequest, want int) api.StatementInvoiceExportResponse {
+func exportStatement(t *testing.T, f billingRunFixture, path string, req any, want int) api.StatementInvoiceExportResponse {
 	t.Helper()
 	res := f.e.Do(t, http.MethodPost, path, req, nil)
 	var out api.StatementInvoiceExportResponse
 	if res.Code != want || (want == http.StatusOK && json.Unmarshal(res.Body.Bytes(), &out) != nil) {
-		t.Fatalf("export %s via %s: %d %s, want %d", path, req.Provider, res.Code, res.Body, want)
+		t.Fatalf("export %s: %d %s, want %d", path, res.Code, res.Body, want)
 	}
 	return out
 }

@@ -441,6 +441,10 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 				return
 			}
 			if _, err := stdinW.Write(chunk); err != nil {
+				if guestStoppedReadingBody(err) {
+					bodyErrCh <- nil
+					return
+				}
 				bodyErrCh <- err
 				return
 			}
@@ -982,6 +986,22 @@ func rawBridgeCommand(ctx context.Context, id bridgeIdentity, instancePID int, b
 // (nil) and surfaces OK for a truncated response. The
 // combination WaitGroup + stream.Context() makes the disconnect
 // detection deterministic.
+// guestStoppedReadingBody reports a request-body write that failed because the
+// bridge stopped reading: the guest answered without consuming the whole upload
+// (a handler that ignores the body, or a 413 from its own size cap) and the
+// bridge closed its end. That is not a client error, so the body loop ends as
+// if the body were complete and the RPC finishes with the guest's answer; the
+// gateway discards the rest of the client's upload (#7917). Reporting it
+// instead returned InvalidArgument "body stream: io: read/write on closed pipe"
+// after the response was committed, the gateway aborted the stream, and
+// clients saw HTTP/2 INTERNAL_ERROR for uploads of about 512 KiB and up (prod
+// 2026-11-23). The loop never waits for the rest of the upload, so a client
+// that keeps its stream open cannot hold the RPC. A guest that died mid-upload
+// is still reported: the bridge's exit status or the response read fails.
+func guestStoppedReadingBody(err error) bool {
+	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.EPIPE) || errors.Is(err, os.ErrClosed)
+}
+
 func rawBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse], stdinW io.WriteCloser, maxRequestBytes int64) (chan error, *sync.WaitGroup) {
 	maxBody := api.RawStreamMaxRequestBytes
 	if maxRequestBytes > 0 && maxRequestBytes < maxBody {
@@ -1811,6 +1831,10 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 				return
 			}
 			if _, err := bodyPw.Write(chunk); err != nil {
+				if guestStoppedReadingBody(err) {
+					bodyErrCh <- nil
+					return
+				}
 				bodyErrCh <- err
 				return
 			}

@@ -102,6 +102,7 @@ func (m *MemStore) reviewProductBillingLocked(scope ProductBillingScope) (api.Pr
 	if err != nil {
 		return api.ProductBillingReview{}, err
 	}
+	m.applyDueProductPlanLocked(scope.AccountID, scope.AppID, scope.TenantID, time.Now())
 	if doc, ok := m.productStatementLocked(scope); ok {
 		review := *doc.Snapshot
 		review.Finalized = &doc
@@ -361,6 +362,9 @@ func (m *MemStore) HandoffProductBilling(_ context.Context, scope ProductBilling
 			return existing, ErrConflict
 		}
 		return existing, nil
+	}
+	if export, ok := m.productStatementExportLocked(scope.AccountID, id); ok && export.ProviderInvoiceID != external {
+		return api.ProductInvoiceHandoff{}, ErrConflict
 	}
 	for docID, handoff := range d.handoffs {
 		if d.documents[docID].account == scope.AccountID && handoff.ExternalInvoiceID == external {

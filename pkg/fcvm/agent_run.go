@@ -59,6 +59,11 @@ type AgentRunWakeRequest struct {
 	// once it has waited this long on the relay and nothing else. Zero keeps
 	// it running.
 	ModelWaitPauseAfter time.Duration
+	// Deadline is the seller's timeout when it is below the request's
+	// timeout_sec, which is then only the guest's ceiling
+	// (ADR-20261027090016 amendment 3). vmmd stops the run at Deadline plus
+	// the credit ExtendAgentRun grants. Zero: the request's timeout.
+	Deadline time.Duration
 }
 
 // AgentRunRelay is the agent run principal of a run VM's relay (ADR-20261027090010
@@ -105,6 +110,9 @@ func (m *Manager) WakeAgentRun(ctx context.Context, req AgentRunWakeRequest) (*I
 	if req.Snapshot != nil && !req.Snapshot.Networkless {
 		return nil, errors.New("fcvm: an agent run restores only a networkless snapshot")
 	}
+	if req.Deadline < 0 || req.Deadline > agentrunproto.MaxTimeoutSec*time.Second {
+		return nil, errors.New("fcvm: agent run deadline is out of range")
+	}
 	var relay *AgentRunRelay
 	if req.Relay != nil {
 		if !req.Relay.Valid() {
@@ -128,6 +136,9 @@ func (m *Manager) WakeAgentRun(ctx context.Context, req AgentRunWakeRequest) (*I
 		defer cancel()
 		return nil, errors.Join(errors.New("fcvm: agent run wake did not produce a networkless agent VM"), m.Destroy(destroyCtx, req.Instance))
 	}
+	m.mu.Lock()
+	inst.AgentRunDeadline = req.Deadline
+	m.mu.Unlock()
 	return inst, nil
 }
 
@@ -151,6 +162,10 @@ func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunpro
 	}
 	m.mu.Lock()
 	inst, ok := m.live[instance]
+	var deadline time.Duration
+	if ok && inst != nil {
+		deadline = inst.AgentRunDeadline
+	}
 	m.mu.Unlock()
 	if !ok || inst == nil || !inst.AgentRunOnly {
 		return agentrunproto.Result{}, nil, ErrAgentRunInstanceNotFound
@@ -162,7 +177,13 @@ func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunpro
 	}()
 	// The last sample is taken before the deferred destroy.
 	stopUsage := m.agentUsageRun(instance, inst)
+	cancel, timedOut, stopDeadline := m.agentDeadlineRun(instance, deadline, time.Duration(req.TimeoutSec)*time.Second, cancel)
 	result, err := m.agentRunExchange(ctx, instance, inst, req, receive, cancel)
+	stopDeadline()
+	if err == nil && timedOut() && result.Status == agentrunproto.StatusCancelled {
+		// The guest saw a cancel frame; the run reached its deadline.
+		result.Status = agentrunproto.StatusTimedOut
+	}
 	return result, stopUsage(), err
 }
 

@@ -134,7 +134,12 @@ func (s *Service) PreviewTemplate(w http.ResponseWriter, r *http.Request, acct s
 		templateError(w, err)
 		return
 	}
-	if _, member := s.Config.Member(source.Lead.OwnerEmail); !member {
+	team, err := s.roster(ctx)
+	if err != nil {
+		templateError(w, err)
+		return
+	}
+	if team.role(source.Lead.OwnerEmail) == "" {
 		source.Lead.ReferralCode = ""
 	}
 	preview, err := referrals.PersonalizeMessage(source.Template.MessageTemplateInput, source.Lead)

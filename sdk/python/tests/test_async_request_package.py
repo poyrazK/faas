@@ -41,7 +41,7 @@ import faas_sdk.preview as preview
 from faas_sdk.preview.event_contract import EventContract
 assert preview.EventContract is EventContract
 assert EventContract({"version":1,"type":"example.event","data":{"type":"string"}}).input("hello") == "hello"
-for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction", "PipelineCompensation", "CompensationMCP", "CompensationPlan", "CompensationCommand", "PIPELINE_COMPENSATION_SCHEMA", "PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PostgresPipelineToolStore", "PIPELINE_TOOL_SCHEMA", "StripeWebhookAdapter", "StripeWebhookDelivery", "StripeWebhookStage", "StripeWebhookIgnore", "STRIPE_WEBHOOK_SCHEMA", "stripe_delivery_context_from_headers", "PipelineSchedule", "PipelineScheduleClient", "PipelineSchedulePreview", "ScheduledPipelineRun"):
+for name in ("EventContract", "EventPipeline", "EventPipelineDelivery", "EventPipelineReceipt", "PostgresEventPipelineStore", "EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction", "QueryTool", "QueryResource", "QueryToolMCP", "QueryActor", "QueryPage", "OutboundAction", "OutboundActionMCP", "StripeRefundActionProvider", "OUTBOUND_ACTION_SCHEMA", "PipelineCompensation", "CompensationMCP", "CompensationPlan", "CompensationCommand", "PIPELINE_COMPENSATION_SCHEMA", "PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PostgresPipelineToolStore", "PIPELINE_TOOL_SCHEMA", "StripeWebhookAdapter", "StripeWebhookDelivery", "StripeWebhookStage", "StripeWebhookIgnore", "STRIPE_WEBHOOK_SCHEMA", "stripe_delivery_context_from_headers", "PipelineSchedule", "PipelineScheduleClient", "PipelineSchedulePreview", "ScheduledPipelineRun"):
     assert hasattr(preview,name) and not hasattr(faas_sdk,name)
 for name in ("BuildWaitOptions", "DeploymentWaitOptions", "WaiterError", "WaiterFailureCode", "WaiterOptions", "WaiterProgress", "WaiterTimeoutError", "SourceUploadCheckpoint", "SourceUploadOptions", "SourceUploadError", "save_source_upload_checkpoint", "load_source_upload_checkpoint"):
     assert getattr(preview, name) is getattr(faas_sdk, name)
@@ -215,6 +215,22 @@ async def typed_pipeline_tool(tool:PipelineTool[str,int,str],request:PipelineToo
     await PipelineToolMCP(tool).call("tool",{},"alice",timeout=1)
 from faas_sdk import JobContext
 from faas_sdk.preview import PipelineCompensation,CompensationPlan,CompensationResult,CompensationOutcome,CompensationCommand,CompensationMCP,CompensationTask,CompensationContext
+from faas_sdk.preview import OutboundAction, OutboundActionView, OutboundActionMCP
+from faas_sdk.preview import QueryTool,QueryResource,QueryToolMCP,QueryPage
+async def typed_query(tool:QueryTool[str,int,str],resource:QueryResource[str])->None:
+    page=await tool.page("input","alice",timeout=1)
+    assert_type(page,QueryPage[int])
+    assert_type(page["items"][0],int)
+    async for value in tool.items("input","alice",timeout=1):
+        assert_type(value,int)
+    await QueryToolMCP(tool).call("query",{},"alice",timeout=1)
+    await resource.link("id","alice",timeout=1)
+async def typed_outbound(action:OutboundAction[str,int,str])->None:
+    result=await action.prepare("input","request","alice",timeout=1)
+    assert_type(result,OutboundActionView[int])
+    if "result" in result["outcome"]:
+        assert_type(result["outcome"]["result"],int)
+    await OutboundActionMCP(action).call("tool",{},"alice",timeout=1)
 async def typed_compensation(service:PipelineCompensation[str,int,str],task:CompensationTask,context:JobContext,pool:EventOutboxPool)->None:
     plan=await service.plan("source","alice",timeout=1)
     assert_type(plan,CompensationPlan[str])
@@ -393,6 +409,15 @@ async def invalid_pipeline_tool(tool:PipelineTool[str,int,str])->None:
     await tool.start(7,"request","alice",timeout=1)
     await tool.cancel("request",7,timeout=1)
 from faas_sdk.preview import PipelineCompensation,CompensationCommand,CompensationOutcome
+from faas_sdk.preview import OutboundAction
+from faas_sdk.preview import QueryTool,QueryResource
+async def invalid_query(tool:QueryTool[str,int,str],resource:QueryResource[str])->None:
+    await tool.page(7,"alice",timeout=1)
+    await tool.page("input",7,timeout=1)
+    await resource.read("uri",7,timeout=1)
+async def invalid_outbound(action:OutboundAction[str,int,str])->None:
+    await action.prepare(7,"request","alice",timeout=1)
+    await action.inspect("action",7,timeout=1)
 async def invalid_compensation(service:PipelineCompensation[str,int,str])->None:
     await service.plan("source",7,timeout=1)
     command:CompensationCommand[str]=CompensationCommand(id="one",effect_id="one",description="undo",input=7)
@@ -416,6 +441,8 @@ def invalid_sources(checkpoint: SourceUploadCheckpoint) -> None:
 """)
     result = subprocess.run([*args, str(negative)], cwd=tmp_path, env=env, text=True, capture_output=True, timeout=120)
     assert result.returncode == 1
+    assert 'to "page" of "QueryTool"' in result.stdout
+    assert 'to "read" of "QueryResource"' in result.stdout
     assert result.stdout.count("read-only") == 5
     assert '"max_attempts"' in result.stdout
     assert '"max_items"' in result.stdout

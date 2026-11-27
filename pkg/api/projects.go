@@ -25,7 +25,10 @@ type ProjectWorkloadResponse struct {
 	Status           string `json:"status"`
 	DeploymentStatus string `json:"deployment_status,omitempty"`
 	RolloutState     string `json:"rollout_state,omitempty"`
-	BuildStatus      string `json:"build_status,omitempty"`
+	// TrafficPercent is the latest deployment's share of the service's
+	// traffic while it is live; a canary at 1% read as plain "live".
+	TrafficPercent int    `json:"traffic_percent,omitempty"`
+	BuildStatus    string `json:"build_status,omitempty"`
 	// DependsOn are the project services this one declares it calls
 	// (Compose depends_on), sorted (ADR-20261026193018).
 	DependsOn []string `json:"depends_on,omitempty"`
@@ -38,6 +41,25 @@ type ProjectResponse struct {
 	Exclusions               []string                  `json:"exclusions"`
 	LastReconciliationStatus string                    `json:"last_reconciliation_status,omitempty"`
 	LastBuildStatus          string                    `json:"last_build_status,omitempty"`
+	RollbackBatch            *ProjectRollbackBatch     `json:"rollback_batch,omitempty"`
+}
+
+// ProjectRollbackBatch identifies an exact production fan-out and its recorded lineage.
+type ProjectRollbackBatch struct {
+	ID      string                  `json:"id"`
+	Members []ProjectRollbackMember `json:"members"`
+}
+
+type ProjectRollbackMember struct {
+	Slug                string `json:"slug,omitempty"`
+	DeploymentID        string `json:"deployment_id"`
+	Revision            int    `json:"revision"`
+	Scope               string `json:"scope"`
+	Status              string `json:"status"`
+	PreviouslyServed    bool   `json:"previously_served"`
+	PredecessorID       string `json:"predecessor_id,omitempty"`
+	PredecessorRevision int    `json:"predecessor_revision,omitempty"`
+	Restorable          bool   `json:"-"`
 }
 
 // UpdateProjectRequest changes the customer-managed source binding. Nil fields

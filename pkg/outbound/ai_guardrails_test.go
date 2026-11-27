@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/outbound/aiprices"
 )
 
 type guardrailFixture struct {
@@ -265,5 +266,41 @@ func TestReservationPricesTheEstimate(t *testing.T) {
 	input := int64((len(body) + 3) / 4)
 	if plan.reserve.tokens != input+1000 || plan.reserve.cost != (input*1_000_000+1000*2_000_000+999_999)/1_000_000 {
 		t.Fatalf("reservation = %+v (input %d)", plan.reserve, input)
+	}
+}
+
+// Cost-control review 2026-11-19 (N17): a call that names no output ceiling
+// reserves its model's longest response for its cost, so concurrent calls
+// cannot each settle far past a hard cap. The rate limit keeps reserving the
+// default; a model the catalog does not know reserves the fallback.
+func TestReservationWithoutCeilingReservesTheModelsLongestResponse(t *testing.T) {
+	prices := ResolveAIPrices([]api.OutboundAIPriceEntry{
+		{ModelPrefix: "gpt-4o", InputMillicentsPerMTok: 1_000_000, OutputMillicentsPerMTok: 2_000_000},
+		{ModelPrefix: "private-model", InputMillicentsPerMTok: 1_000_000, OutputMillicentsPerMTok: 2_000_000},
+	})
+	integration := Integration{AIProvider: api.OutboundAIProviderOpenAI, AIPrices: prices}
+	longest, ok := aiprices.Default().MaxOutputTokens(api.OutboundAIProviderOpenAI, "gpt-4o")
+	if !ok || longest <= api.OutboundAIDefaultOutputReserveTokens {
+		t.Fatalf("catalog gpt-4o longest response = %d, %v", longest, ok)
+	}
+	for _, tc := range []struct {
+		model  string
+		output int64
+	}{
+		{"gpt-4o", longest},
+		{"private-model", api.OutboundAIUnknownModelOutputReserveTokens},
+	} {
+		body := `{"model":"` + tc.model + `"}`
+		ai := &aiRequest{body: []byte(body)}
+		request := httptest.NewRequest(http.MethodPost, "http://gateway.test/", strings.NewReader(body))
+		plan, rejection := planAICall(request, integration, "", "/v1/chat/completions", ai, nil)
+		if rejection != nil {
+			t.Fatal(rejection)
+		}
+		input := int64((len(body) + 3) / 4)
+		if plan.reserve.estimate.OutputTokens != tc.output || plan.reserve.tokens != input+api.OutboundAIDefaultOutputReserveTokens ||
+			plan.reserve.cost != (input*1_000_000+tc.output*2_000_000+999_999)/1_000_000 {
+			t.Fatalf("%s reservation = %+v (input %d), want %d output tokens priced", tc.model, plan.reserve, input, tc.output)
+		}
 	}
 }

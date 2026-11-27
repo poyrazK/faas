@@ -6,7 +6,8 @@ that wakes, executes, parks, and forgets. Keep state in
 Store user-uploaded files in object storage so they remain available
 after an instance parks or is replaced.
 
-Managed object storage is in preview and may not be enabled for your account.
+Managed [object storage](object-storage.md) is generally available; its
+versioning, Object Lock, lifecycle, encryption and CORS settings are in preview.
 It does not add persistent VM disks or change runtime storage billing.
 
 ## Why stateless

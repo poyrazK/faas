@@ -204,3 +204,77 @@ def test_decode_execution_artifact_validates_binary_content() -> None:
     artifact.sha256 = "sha256:bad"
     with pytest.raises(ValueError):
         decode_execution_artifact(artifact)
+
+
+def test_extended_run_uses_v2_and_preserves_invalid_contract_receipt() -> None:
+    paths: list[str] = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.method == "POST":
+            assert request.url.path == "/v2/executions"
+            return httpx.Response(202, json=_receipt("queued"))
+        if request.url.path.endswith("/events"):
+            return _stream('id: 1\nevent: terminal\ndata: {"status":"succeeded"}\n\n')
+        return httpx.Response(200, json=_receipt("succeeded", result="debug-value", result_validation={"status": "invalid", "message": "Run result does not match result_schema"}))
+    client = FaaSClient(base_url="https://api.example.test", httpx_args={"transport": httpx.MockTransport(handler)})
+    try:
+        receipt = client.run_execution({"runtime": "node24", "source": "return 42", "result_schema": False}, idempotency_key="contract-key")
+        assert str(receipt.status) == "succeeded"
+        assert receipt.result == "debug-value"
+        assert receipt.result_validation.status == "invalid"
+        assert "/v1/executions" not in paths
+    finally:
+        client.close()
+
+
+def test_file_helpers_stream_and_verify_immutable_content() -> None:
+    import hashlib
+    import io
+    payload = b"run-file-bytes" * 150000
+    digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+    file_id = "01234567-89ab-4def-8123-456789abcdef"
+    meta = {"id": file_id, "status": "ready", "size_bytes": len(payload), "sha256": digest, "content_url": f"/v1/execution-files/{file_id}/content"}
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={**meta, "status": "missing", "upload_required": True})
+        if request.method == "PUT":
+            assert request.headers["x-content-sha256"] == digest
+            assert int(request.headers["content-length"]) == len(payload)
+            assert request.read() == payload
+            return httpx.Response(200, json=meta)
+        if request.url.path.endswith("/content"):
+            return httpx.Response(200, content=payload)
+        return httpx.Response(200, json=meta)
+    client = FaaSClient(base_url="https://api.example.test", httpx_args={"transport": httpx.MockTransport(handler)})
+    try:
+        source = io.BytesIO(payload)
+        prepared = client.prepare_execution_file(source)
+        assert prepared.sha256 == digest and source.tell() == 0
+        client.upload_execution_file(prepared, source)
+        destination = io.BytesIO()
+        client.download_execution_file(file_id, destination)
+        assert destination.getvalue() == payload
+    finally:
+        client.close()
+
+
+def test_five_minute_class_and_environment_use_v2() -> None:
+    import json
+    paths: list[str] = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/events"):
+            return _stream('id: 1\nevent: terminal\ndata: {"status":"succeeded"}\n\n')
+        if request.method != "POST":
+            return httpx.Response(200, json=_receipt("succeeded", result=42))
+        body = json.loads(request.content)
+        assert body["environment_id"] == _EXECUTION_ID
+        assert body["limits"] == {"execution_class": "extended", "timeout_ms": 300000}
+        return httpx.Response(202, json=_receipt("succeeded", result=42))
+    client = FaaSClient(base_url="https://api.example.test", httpx_args={"transport": httpx.MockTransport(handler)})
+    try:
+        result = client.run_execution({"runtime": "node24", "source": "return 42", "environment_id": _EXECUTION_ID, "limits": {"execution_class": "extended", "timeout_ms": 300000}})
+        assert result.result == 42
+        assert paths == ["/v2/executions", f"/v1/executions/{_EXECUTION_ID}/events", f"/v1/executions/{_EXECUTION_ID}"]
+    finally:
+        client.close()

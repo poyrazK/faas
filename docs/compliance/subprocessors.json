@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.gregale.dev/dpa/subprocessors.schema.json",
-  "version": "2.0.0",
-  "effective_date": "2026-11-08",
+  "version": "2.1.0",
+  "effective_date": "2026-11-22",
   "notice_window_days": 30,
   "controller_artifact_path": "docs/compliance/subprocessors.json",
   "rendered_artifact_path": "docs/compliance/subprocessors.md",
@@ -13,43 +13,41 @@
       "id": "hosting-ovhcloud",
       "category": "infrastructure-hosting",
       "vendor": "OVHcloud",
-      "service": "Dedicated bare-metal servers for the control plane, compute nodes, managed Postgres and storage",
+      "service": "Dedicated bare-metal servers and object storage for the control plane, compute nodes, object storage and backups",
       "data_categories": [
         "account and organization data (email, sign-in and security records, audit log)",
         "application source code, build artifacts and container images",
         "application environment variables and secrets (secrets sealed with host keys before storage)",
         "application request logs and metrics",
-        "managed Postgres databases and object storage contents",
+        "object storage contents",
         "backups of the above"
       ],
-      "data_region": "US (OVHcloud US data centres)",
+      "data_region": "Canada (OVHcloud Beauharnois, Quebec)",
       "encryption": "TLS in transit; customer secrets sealed at rest with host keys",
       "retention_days": null,
       "dpa_signed": true,
       "dpa_reference": "OVHcloud Data Processing Agreement (part of the OVHcloud contract terms)",
       "operator_switch_env": null,
-      "rationale": "Primary production hosting for the public release. Gregale runs and administers the servers; OVHcloud provides the hardware, data centres and network."
+      "rationale": "Primary production hosting. Gregale runs and administers the servers in OVHcloud's Beauharnois (Canada) data centre; OVHcloud provides the hardware, data centre, network and object storage."
     },
     {
-      "id": "hosting-google-cloud",
-      "category": "infrastructure-hosting",
-      "vendor": "Google Cloud",
-      "service": "Compute Engine virtual machines and Cloud Storage",
+      "id": "managed-postgres-neon",
+      "category": "managed-database",
+      "vendor": "Neon",
+      "service": "Serverless Postgres that runs the managed Postgres databases customers create",
       "data_categories": [
-        "account and organization data (email, sign-in and security records, audit log)",
-        "application source code, build artifacts and container images",
-        "application environment variables and secrets (secrets sealed with host keys before storage)",
-        "application request logs and metrics",
-        "managed Postgres databases and object storage contents",
-        "backups of the above"
+        "managed Postgres database contents",
+        "database branches, snapshots and point-in-time restore history",
+        "database role names and credentials",
+        "database connection metadata (client IP address, connection times)"
       ],
-      "data_region": "US (us-east1)",
-      "encryption": "Google-managed AES-256 at rest; TLS in transit; customer secrets additionally sealed with host keys",
+      "data_region": "US (AWS us-east-2, Ohio)",
+      "encryption": "Neon-managed encryption at rest; TLS in transit, certificate-verified from Gregale",
       "retention_days": null,
       "dpa_signed": true,
-      "dpa_reference": "Google Cloud Data Processing Addendum (Cloud Data Processing Terms)",
-      "operator_switch_env": null,
-      "rationale": "Hosts the current production fleet during the public beta. After the move to OVHcloud it hosts a standby and test environments."
+      "dpa_reference": "Neon Data Processing Addendum (part of Neon's terms of service)",
+      "operator_switch_env": "FAAS_MANAGED_POSTGRES_CONFIG",
+      "rationale": "Managed Postgres provider. Each customer database is its own Neon project, created and administered by Gregale; Neon runs on Amazon Web Services."
     },
     {
       "id": "network-cloudflare",

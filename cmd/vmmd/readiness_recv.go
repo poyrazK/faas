@@ -79,6 +79,7 @@ func (l *appReadinessProbeLoop) runOne(ctx context.Context) {
 			GRPC:        l.cfg.GRPC,
 			GRPCService: l.cfg.GRPCService,
 			Port:        l.cfg.Port,
+			Host:        l.cfg.Host,
 		},
 		socketPath: l.socketPath,
 	}

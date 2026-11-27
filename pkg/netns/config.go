@@ -432,6 +432,20 @@ func (c Config) RetargetAppPortCommands() [][]string {
 	return append([][]string{nft("flush", "chain", "ip", "faas", "prerouting")}, c.appPortDNATRules(nft)...)
 }
 
+// TenantPortFloodOffCommand keeps other tenant ports' broadcast and multicast
+// off vethHost's br-tenants port. Every new namespace sends IPv6 router
+// solicitations, MLD reports and duplicate address checks, and ARP
+// broadcasts; flooded to every port, they moved each instance's root-side
+// veth counters (vmmd's ingress meter and the idle ladder's activity guard)
+// and resumed paused apps no traffic was meant for (ADR-20261107122928
+// amendment 2). Tenants reach each other only through the host, never over
+// the bridge. The kernel still floods what the bridge device itself sends,
+// such as the host's ARP for this lease, and unknown unicast still floods.
+// It is an ip command so it joins the setup's ip batch.
+func TenantPortFloodOffCommand(vethHost string) []string {
+	return []string{"ip", "link", "set", "dev", vethHost, "type", "bridge_slave", "mcast_flood", "off", "bcast_flood", "off"}
+}
+
 // SetupCommands returns the ordered argv list that creates the namespace, veth
 // pair, tap device, and addressing. Each element is a full command (no shell).
 // The metal layer executes them in order; a failure at step N must trigger
@@ -453,6 +467,7 @@ func (c Config) SetupCommands() [][]string {
 		// veth pair; host end onto the tenant bridge, peer end into the netns.
 		cmd("ip", "link", "add", c.VethHost, "type", "veth", "peer", "name", c.VethPeer),
 		cmd("ip", "link", "set", c.VethHost, "master", TenantBridge),
+		TenantPortFloodOffCommand(c.VethHost),
 		cmd("ip", "link", "set", c.VethHost, "up"),
 		peerIntoNetns,
 		// Lease IPs are reused with new veth MACs. Their bridge neighbor

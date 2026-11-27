@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -14,6 +15,58 @@ import (
 func TestDeploymentSubmissionPG(t *testing.T) {
 	store, _ := pgStore(t)
 	testDeploymentSubmissions(t, store)
+}
+
+func TestDeploymentSubmissionPGScheduleFailureRollsBack(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	acct, err := store.CreateAccount(ctx, "scheduled-submission@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "scheduled-submission"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `CREATE FUNCTION reject_schedule_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'schedule storage fault'; END $$;
+	CREATE TRIGGER reject_schedule_insert BEFORE INSERT ON scheduled_releases FOR EACH ROW EXECUTE FUNCTION reject_schedule_insert();`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := strings.Repeat("b", 32)
+	input := state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, TrafficPercentExplicit: true}
+	schedule := state.ScheduledRelease{
+		AccountID: acct.ID, AppID: app.ID, ReleaseAt: time.Now().UTC().Add(time.Hour),
+		ScheduledBy: acct.Email, ScheduledByAccountID: acct.ID,
+	}
+	commit := func() (state.Deployment, error) {
+		commitCtx, _ := state.ContextWithDeploymentSchedule(state.ContextWithDeploymentSubmission(ctx, attempt), schedule, "replaced", "")
+		return store.CreateDeployment(commitCtx, input)
+	}
+	if _, err := commit(); err == nil || !strings.Contains(err.Error(), "schedule storage fault") {
+		t.Fatalf("create with schedule write fault: %v", err)
+	}
+	if _, err := store.DeploymentSubmission(ctx, app.ID, attempt); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("failed transaction left a receipt: %v", err)
+	}
+	deployments, err := store.ListDeploymentsForApp(ctx, app.ID, 10, 0)
+	if err != nil || len(deployments) != 0 {
+		t.Fatalf("failed transaction left deployments: %v, err=%v", deployments, err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TRIGGER reject_schedule_insert ON scheduled_releases`); err != nil {
+		t.Fatal(err)
+	}
+	created, err := commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := store.DeploymentSubmission(ctx, app.ID, attempt)
+	if err != nil || receipt.DeploymentID != created.ID {
+		t.Fatalf("retry receipt = %+v, err=%v", receipt, err)
+	}
+	sr, err := store.LatestScheduledRelease(ctx, created.ID)
+	if err != nil || sr.State != state.ScheduledReleasePending {
+		t.Fatalf("retry schedule = %+v, err=%v", sr, err)
+	}
 }
 
 func TestDeploymentSubmissionPGReceiptFailureRollsBack(t *testing.T) {

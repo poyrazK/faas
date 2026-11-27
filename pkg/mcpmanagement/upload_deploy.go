@@ -31,7 +31,7 @@ func registerUploadDeploys(s *mcp.Server, m *management) {
 		return
 	}
 	registerTool(s, m, "gregale_create_source_upload", "Get a one-time URL to upload a project as a .tar.gz, valid for 15 minutes. Upload it with the returned command, then call gregale_plan_upload_deploy with upload_id. For a few small files, pass them to gregale_plan_upload_deploy instead.", false, m.createSourceUpload)
-	register(s, m, "gregale_plan_upload_deploy", "Review deploying an uploaded project, or files passed inline, as one app; pins the files and the app's release state for 15 minutes. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment.", m.planUploadDeploy)
+	register(s, m, "gregale_plan_upload_deploy", "Review deploying an uploaded project, or files passed inline, as one app; pins the files and the app's release state for 15 minutes. A native resumable upload commit approval extends the same plan to its approval deadline. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment.", m.planUploadDeploy)
 	registerTool(s, m, "gregale_apply_upload_deploy", "Apply a reviewed upload deploy plan with a stable idempotency key, creating the app if planned. This can incur build/runtime costs. Retry with the same plan ID after ambiguous errors; follow with gregale_wait_deployment.", false, m.applyLocalDeploy)
 }
 
@@ -57,7 +57,7 @@ func (m *management) createSourceUpload(ctx context.Context, args createUploadAr
 		"method":     "PUT",
 		"max_bytes":  limit,
 		"expires_at": up.expires.Format(time.RFC3339),
-		"command":    "tar -czf - --exclude=.git --exclude=node_modules . | curl --fail -T - '" + url + "'",
+		"command":    "tar -czf - --exclude=.git --exclude=.gregale --exclude=node_modules . | curl --fail -T - '" + url + "'",
 		"next":       "Run command in the project directory, then call gregale_plan_upload_deploy with this upload_id. Links, devices and .git are refused.",
 	}, nil
 }

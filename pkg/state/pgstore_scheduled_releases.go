@@ -38,14 +38,27 @@ func scheduledReleaseFromRow(r sqlc.ScheduledRelease, revision int32) ScheduledR
 
 func (s *PgStore) ScheduleRelease(ctx context.Context, sr ScheduledRelease, replacedCode, replacedDetail string, now time.Time) (_ ScheduledRelease, _ []ScheduledRelease, resultErr error) {
 	defer func() { resultErr = mapErr(resultErr) }()
-	if sr.ID == "" {
-		sr.ID = uuid.NewString()
-	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppTrafficMutation(ctx, sr.AppID)
 	if err != nil {
 		return ScheduledRelease{}, nil, fmt.Errorf("state: schedule release begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	created, replaced, err := scheduleReleaseTx(ctx, tx, sr, replacedCode, replacedDetail, now)
+	if err != nil {
+		return ScheduledRelease{}, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ScheduledRelease{}, nil, fmt.Errorf("state: schedule release commit: %w", err)
+	}
+	return created, replaced, nil
+}
+
+// scheduleReleaseTx shares the app lock with deployment creation and manual
+// scheduling so only one of their schedules can replace the pending one.
+func scheduleReleaseTx(ctx context.Context, tx pgx.Tx, sr ScheduledRelease, replacedCode, replacedDetail string, now time.Time) (ScheduledRelease, []ScheduledRelease, error) {
+	if sr.ID == "" {
+		sr.ID = uuid.NewString()
+	}
 	q := sqlc.New()
 	cancelled, err := q.CancelPendingScheduledReleasesForApp(ctx, tx, sqlc.CancelPendingScheduledReleasesForAppParams{
 		OutcomeCode: replacedCode, OutcomeDetail: replacedDetail, Now: pgTimestamptzUTC(now), AppID: mustPgUUID(sr.AppID),
@@ -68,22 +81,19 @@ func (s *PgStore) ScheduleRelease(ctx context.Context, sr ScheduledRelease, repl
 	if err != nil {
 		return ScheduledRelease{}, nil, fmt.Errorf("state: insert scheduled release: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return ScheduledRelease{}, nil, fmt.Errorf("state: schedule release commit: %w", err)
-	}
-	created, err := s.ScheduledRelease(ctx, pgUUIDString(row.ID))
+	created, err := q.GetScheduledRelease(ctx, tx, row.ID)
 	if err != nil {
 		return ScheduledRelease{}, nil, err
 	}
 	replaced := make([]ScheduledRelease, 0, len(cancelled))
 	for _, c := range cancelled {
-		previous, err := s.ScheduledRelease(ctx, pgUUIDString(c.ID))
+		previous, err := q.GetScheduledRelease(ctx, tx, c.ID)
 		if err != nil {
 			return ScheduledRelease{}, nil, err
 		}
-		replaced = append(replaced, previous)
+		replaced = append(replaced, scheduledReleaseFromRow(previous.ScheduledRelease, previous.Revision))
 	}
-	return created, replaced, nil
+	return scheduledReleaseFromRow(created.ScheduledRelease, created.Revision), replaced, nil
 }
 
 func (s *PgStore) ScheduledRelease(ctx context.Context, id string) (ScheduledRelease, error) {

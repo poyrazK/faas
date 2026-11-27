@@ -169,6 +169,8 @@ var registry = []Spec{
 	)},
 	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
+		cols("alert_webhook_stand_downs", "webhook_secret_sealed"),
+		cols("alert_channel_stand_downs", "pagerduty_target_sealed"),
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
@@ -181,6 +183,9 @@ var registry = []Spec{
 	)},
 	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
+		// Short-lived workload credentials (ADR-20261122191423); new
+		// table, so there is no fleet copy.
+		cols("object_storage_workload_credentials", "secret_sealed"),
 	)},
 	// Trigger config envelopes (jsonb leaves, not listed here) belong to
 	// delivery too. apid merges an update without opening the stored config
@@ -189,6 +194,7 @@ var registry = []Spec{
 	{Domain: Delivery, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
 		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
+		cols("api_sandbox_webhook_partners", "signing_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
 	// ADR-20261110210000 slice 3k: the control plane's secretd also opens the
@@ -212,6 +218,10 @@ var registry = []Spec{
 		// apid seals a managed workflow's plan and its workflow worker
 		// opens it; schedd never reads it.
 		cols("agent_execution_workflows", "sealed_plan"),
+		// apid wraps each immutable Run object key; schedd receives only scoped
+		// delegated data keys inside its Delivery envelope (ADR 20261114030000).
+		cols("execution_files", "sealed_key"),
+		cols("execution_task_versions", "sealed_definition"),
 		cols("account_billing_connections", "sealed_secret"),
 		cols("inbound_webhook_endpoints", "signing_secret_sealed", "previous_signing_secret_sealed"),
 		cols("gitlab_oauth_connections", "credentials_sealed"),

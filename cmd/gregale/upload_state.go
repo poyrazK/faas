@@ -64,13 +64,10 @@ func uploadStatePath(identity string) (string, error) {
 }
 
 func uploadStateDir() (string, error) {
-	// XDG_STATE_HOME is the right place on Linux and is also useful in CI.
-	// Fall back to the existing per-user Gregale config directory on macOS
-	// and Windows, where Go does not expose XDG state semantics.
-	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
-		return filepath.Join(dir, "gregale", "uploads"), nil
-	}
-	dir, err := os.UserConfigDir()
+	// XDG_STATE_HOME, else the per-user Gregale config directory (macOS and
+	// Windows have no XDG state semantics), else a private temp directory
+	// when that one is read-only; see gregaleStateHome.
+	dir, _, err := gregaleStateHome()
 	if err != nil {
 		return "", fmt.Errorf("locate Gregale upload state: %w", err)
 	}

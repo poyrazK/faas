@@ -35,12 +35,12 @@ func envResumeAutomation(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	fmt.Println(resumeAutomationSummary(resp.Environment, resp.CronsResumed, resp.EventSubscriptionsResumed))
+	fmt.Println(resumeAutomationSummary(resp.Environment, resp.CronsResumed, resp.EventSubscriptionsResumed, resp.BucketNotificationsResumed))
 	return 0
 }
 
-func resumeAutomationSummary(environment string, crons, subscriptions int) string {
-	if crons == 0 && subscriptions == 0 {
+func resumeAutomationSummary(environment string, crons, subscriptions, buckets int) string {
+	if crons == 0 && subscriptions == 0 && buckets == 0 {
 		return "No paused automation to resume in " + environment + "."
 	}
 	var parts []string
@@ -50,7 +50,14 @@ func resumeAutomationSummary(environment string, crons, subscriptions int) strin
 	if subscriptions > 0 {
 		parts = append(parts, resumeCount(subscriptions, "event subscription", "event subscriptions"))
 	}
-	return "Resumed " + strings.Join(parts, " and ") + " in " + environment + "."
+	if buckets > 0 {
+		parts = append(parts, resumeCount(buckets, "bucket's notifications", "buckets' notifications"))
+	}
+	last := len(parts) - 1
+	if last == 0 {
+		return "Resumed " + parts[0] + " in " + environment + "."
+	}
+	return "Resumed " + strings.Join(parts[:last], ", ") + " and " + parts[last] + " in " + environment + "."
 }
 
 func resumeCount(n int, one, many string) string {

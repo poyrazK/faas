@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,10 @@ type HTTPOptions struct {
 	AllowTaskInspection        bool
 	// Toolsets limits the tools every grant lists; nil lists all.
 	Toolsets []string
+	// MaxListedTools caps each grant's listed catalog (Options.MaxListedTools).
+	MaxListedTools int
+	// HideUnavailableCapabilities is Options.HideUnavailableCapabilities.
+	HideUnavailableCapabilities bool
 	// Onboarding is browser (default) or the explicit api-key fallback.
 	Onboarding  string
 	StateStore  *StateStore
@@ -69,6 +74,10 @@ type HTTPOptions struct {
 	// AgentKeyToolsetSelection lets agent-key requests select a subset of the
 	// operator maximum with Gregale-MCP-Toolsets; omitted selects the default.
 	AgentKeyToolsetSelection bool
+	// LogsAPIBase is the public API origin app log streams use. The compute
+	// gateway serves them behind the public edge and apid's loopback
+	// listener does not, so the hosted bridge defaults it to its own origin.
+	LogsAPIBase string
 }
 
 type remoteServer struct {
@@ -140,7 +149,7 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	}
 	for _, redirect := range opts.RedirectURIs {
 		if !validConfiguredRedirectURI(redirect) {
-			return nil, errors.New("OAuth redirect URIs must be HTTPS or loopback HTTP without credentials or fragments")
+			return nil, errors.New("OAuth redirect URIs must be HTTPS, loopback HTTP or a private-use scheme without credentials or fragments")
 		}
 	}
 	apiURL, err := url.Parse(opts.APIBase)
@@ -171,10 +180,13 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	issuer := origin
 	if opts.Hosted {
 		issuer = opts.ResourceURL
+		if opts.LogsAPIBase == "" {
+			opts.LogsAPIBase = origin
+		}
 	}
 	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}, docs: newDocsLibrary(docsSiteURL, nil)}
 	if opts.Hosted && opts.UploadDir != "" {
-		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
+		if r.uploads, err = openUploadStore(opts.UploadDir, opts.ResourceURL, opts.StateStore); err != nil {
 			return nil, err
 		}
 	}
@@ -194,7 +206,22 @@ func loopbackHost(host string) bool {
 
 func validRedirectURI(value string) bool {
 	u, err := url.Parse(value)
-	return err == nil && len(value) <= 2048 && !strings.Contains(value, "*") && u.Host != "" && u.User == nil && u.Fragment == "" && (u.Scheme == "https" || (u.Scheme == "http" && loopbackHost(u.Hostname())))
+	return err == nil && len(value) <= 2048 && !strings.Contains(value, "*") && u.Host != "" && u.User == nil && u.Fragment == "" && (u.Scheme == "https" || (u.Scheme == "http" && loopbackHost(u.Hostname())) || privateUseScheme(u.Scheme))
+}
+
+// privateUseSchemePattern is an RFC 8252 §7.1 private-use URI scheme. Native
+// agents such as Cursor return to themselves through one
+// (cursor://anysphere.cursor-mcp/oauth/callback); refusing every non-HTTP
+// callback kept them from connecting at all. Like any redirect it is allowed
+// only when the operator lists it exactly, and PKCE binds the code.
+var privateUseSchemePattern = regexp.MustCompile(`^[a-z][a-z0-9.+-]{2,63}$`)
+
+func privateUseScheme(scheme string) bool {
+	switch scheme {
+	case "http", "https", "javascript", "data", "file", "vbscript", "blob", "about", "ws", "wss", "ftp", "mailto", "tel", "intent":
+		return false
+	}
+	return privateUseSchemePattern.MatchString(scheme)
 }
 
 // Codex randomizes its final loopback callback path component. An operator can
@@ -251,6 +278,18 @@ func (r *remoteServer) redirectAllowed(value string) bool {
 	return false
 }
 
+func (r *remoteServer) isPublicDiscoveryMetadataPath(path string) bool {
+	if path == "/.well-known/oauth-protected-resource/mcp" {
+		return true
+	}
+	if r.opts.Hosted {
+		return path == "/.well-known/oauth-authorization-server/mcp" ||
+			path == "/.well-known/openid-configuration/mcp"
+	}
+	return path == "/.well-known/oauth-protected-resource" ||
+		path == "/.well-known/oauth-authorization-server"
+}
+
 func (r *remoteServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", r.resourceMetadata)
@@ -280,7 +319,16 @@ func (r *remoteServer) handler() http.Handler {
 			http.Error(w, "Unrecognized host", http.StatusForbidden)
 			return
 		}
-		if origin := req.Header.Get("Origin"); origin != "" && origin != r.origin {
+		if r.isPublicDiscoveryMetadataPath(req.URL.Path) &&
+			(req.Method == http.MethodGet || req.Method == http.MethodHead || req.Method == http.MethodOptions) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, MCP-Protocol-Version")
+			if req.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		} else if origin := req.Header.Get("Origin"); origin != "" && origin != r.origin {
 			http.Error(w, "Origin is not allowed", http.StatusForbidden)
 			return
 		}

@@ -46,12 +46,16 @@ func TestPhase(t *testing.T) {
 			api.ReleasePhaseBuilding, "Building"},
 		{"failed", releasetimeline.Inputs{Deployment: live(func(d *api.DeploymentResponse) { d.Status, d.ErrorCode = "failed", "build_timeout" })},
 			api.ReleasePhaseFailed, "Build failed: build_timeout"},
+		{"failed after build", releasetimeline.Inputs{Deployment: live(func(d *api.DeploymentResponse) {
+			d.Status, d.ErrorCode, d.ImageDigest = "failed", "stage_snapshot_prepare_timeout", "sha256:402f"
+		})}, api.ReleasePhaseFailed, "Failed before release: stage_snapshot_prepare_timeout"},
 		{"aborted canary", releasetimeline.Inputs{Deployment: live(func(d *api.DeploymentResponse) {
 			d.RolloutState, d.RolloutAbortedAt, d.TrafficPercent = "aborted", ptr(at(9)), 0
 			d.RolloutDecision = decision(api.RolloutDecisionAbort, api.RolloutRuleAbortReleaseGate, "orders fell 41%", 10, at(9))
 		})}, api.ReleasePhaseRolledBack, "Rolled back: orders fell 41%"},
-		{"post-release rollback", releasetimeline.Inputs{AutoRollbackReason: "post-release 5xx", Deployment: live(nil)},
-			api.ReleasePhaseRolledBack, "Rolled back: post-release 5xx"},
+		{"post-release rollback preparing", releasetimeline.Inputs{AutoRollbackReason: "post-release 5xx", Deployment: live(nil),
+			Rollback: &api.RollbackOperation{Status: "preparing"}},
+			api.ReleasePhaseReleased, "Rollback is preparing. This release is still live."},
 		{"scheduled", releasetimeline.Inputs{Deployment: live(func(d *api.DeploymentResponse) {
 			d.TrafficPercent = 0
 			d.ScheduledRelease = &api.ScheduledRelease{State: api.ScheduledReleaseStatePending, ReleaseAt: "2026-10-23T09:00:00Z"}
@@ -153,12 +157,12 @@ func TestEventsTellTheReleaseInOrder(t *testing.T) {
 
 func TestRolledBackReleaseHasNoWatchPassed(t *testing.T) {
 	in := releasetimeline.Inputs{Watched: true, WatchWindow: 30 * time.Minute, Now: at(120), AutoRollbackReason: "post-release 5xx",
-		Stable: &releasetimeline.Release{ID: "d1", Revision: 41},
+		Stable:   &releasetimeline.Release{ID: "d1", Revision: 41},
+		Rollback: &api.RollbackOperation{Status: "complete", CompletedAt: ptr(at(30))},
 		Deployment: live(func(d *api.DeploymentResponse) {
 			d.Status, d.RolloutState, d.RolloutCompletedAt = "superseded", "complete", ptr(at(10))
 		}),
-		Audit: []releasetimeline.AuditRow{auditRow(1, 25, "deploy.rolled_back", "apid:post_release_watch", map[string]any{"action": "abort",
-			"decision": decision(api.RolloutDecisionAbort, api.RolloutRuleAbortPostRelease5xx, "5xx 4% vs 0.2%", 100, at(25))})},
+		Audit: []releasetimeline.AuditRow{auditRow(1, 25, "deploy.rolled_back", "apid:rollback", map[string]any{"phase": "readiness_requested"})},
 	}
 	got := releasetimeline.Build(in)
 	if got.Phase != api.ReleasePhaseRolledBack {
@@ -169,8 +173,15 @@ func TestRolledBackReleaseHasNoWatchPassed(t *testing.T) {
 			t.Fatalf("a rolled-back release passed its watch: %+v", got.Events)
 		}
 	}
-	if last := got.Events[len(got.Events)-1]; last.Kind != api.ReleaseEventRolledBack || last.Summary != "Rolled back: 5xx 4% vs 0.2%" || last.Decision == nil {
+	if last := got.Events[len(got.Events)-1]; last.Kind != api.ReleaseEventRolledBack || last.At != at(30).Format(time.RFC3339) {
 		t.Fatalf("last event = %+v", last)
+	}
+	in.Rollback = &api.RollbackOperation{Status: "preparing"}
+	in.Deployment.Status, in.Deployment.TrafficPercent = "live", 100
+	pending := releasetimeline.Build(in)
+	if pending.Phase != api.ReleasePhaseReleased ||
+		pending.Events[len(pending.Events)-1].Kind != api.ReleaseEventRollbackRequested {
+		t.Fatalf("preparing rollback timeline = %+v", pending)
 	}
 }
 

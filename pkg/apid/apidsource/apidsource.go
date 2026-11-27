@@ -151,6 +151,7 @@ type HostingPhaseObserver interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
+	ProjectDeployGroupID string
 	// IntentID gives durable non-webhook orchestration the same recovery
 	// guarantees as DeliveryID. The two namespaces cannot collide.
 	IntentID            string
@@ -186,8 +187,10 @@ type EnqueueParams struct {
 	ImageCommand        []string
 	FullRootfsAllowAuto bool
 	SourcePath          string
-	SourceBytes         int64
-	SourceRoot          string
+	// ExpectedSourceSHA256 pins privately reviewed bytes before publish.
+	ExpectedSourceSHA256 string
+	SourceBytes          int64
+	SourceRoot           string
 	// DockerfilePath is the explicit Dockerfile selected inside SourceRoot.
 	// It is captured in the deployment's immutable inferred profile.
 	DockerfilePath string
@@ -195,8 +198,11 @@ type EnqueueParams struct {
 	// (ADR-20261019142544), captured in the inferred profile beside the
 	// Dockerfile path.
 	DockerfileBuild *api.DockerfileBuildOptions
-	SourceURL       string
-	CommitSHA       string
+	// UploadedImage marks SourcePath as an already built single-image OCI
+	// archive (ADR-20261127120000); Kind must be DeploymentKindDockerfile.
+	UploadedImage *UploadedImage
+	SourceURL     string
+	CommitSHA     string
 	// GitHubSourceRef is populated when a GitHub deployment was resolved from
 	// a mutable branch (source-ref request or webhook push). Imaged rechecks
 	// it immediately before promotion.
@@ -431,6 +437,9 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.SourcePath == "" {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: SourcePath is required")
 	}
+	if p.ExpectedSourceSHA256 != "" && (p.OperationID == "" || p.RetryOf != "" || p.ImageRef != "") {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source requires a source operation")
+	}
 	if len(p.ReleaseCommand) > 0 || p.ReleaseCommandShell {
 		resolved, problem := (api.CreateAppTaskRequest{
 			Command:      p.ReleaseCommand,
@@ -527,6 +536,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			if existing.AppID != p.AppID || existing.Kind != p.Kind || workflowScope(existing.Scope) != workflowScope(p.Scope) {
 				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: workflow deployment identity changed")
 			}
+			if p.ExpectedSourceSHA256 != "" && existing.SourceSHA256 != p.ExpectedSourceSHA256 {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source checksum changed")
+			}
 			build, buildErr := reader.BuildByID(ctx, buildID)
 			if buildErr == nil {
 				if build.DeploymentID != existing.ID {
@@ -561,8 +573,21 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		if err != nil {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source integrity: %w", err)
 		}
+		if p.ExpectedSourceSHA256 != "" && sourceSHA256 != p.ExpectedSourceSHA256 {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source checksum changed")
+		}
 		profileStart := time.Now()
-		profile, profileErr := frameworkprofile.AnalyzeTarballAtRoot(p.SourcePath, p.SourceRoot)
+		var profile frameworkprofile.Profile
+		var profileErr error
+		if p.UploadedImage != nil {
+			// A prebuilt image has no source tree to analyze.
+			if p.Kind != state.DeploymentKindDockerfile || p.DockerfilePath != "" || p.SourceRoot != "" {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: uploaded image must be a rootless Dockerfile-kind deployment")
+			}
+			profile = frameworkprofile.ForUploadedImage(p.UploadedImage.ManifestDigest, p.UploadedImage.Name, p.UploadedImage.Port)
+		} else {
+			profile, profileErr = frameworkprofile.AnalyzeTarballAtRoot(p.SourcePath, p.SourceRoot)
+		}
 		if p.HostingObserver != nil {
 			outcome := "completed"
 			if profileErr != nil {
@@ -663,6 +688,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	input := state.Deployment{
+		ProjectDeployGroupID: p.ProjectDeployGroupID,
 		BuildDependencies:    p.BuildDependencies,
 		ExpectedReview:       p.ExpectedReview,
 		ReviewedRolloutMode:  p.ReviewedRolloutMode,
@@ -752,6 +778,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		}
 		if d.AppID != p.AppID {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: deployment id collision %s", deploymentID)
+		}
+		if p.ExpectedSourceSHA256 != "" && d.SourceSHA256 != p.ExpectedSourceSHA256 {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source checksum changed")
 		}
 		// The original create already performed any supersede transition.
 		// Do not emit a false supersede notification for the recovered row.

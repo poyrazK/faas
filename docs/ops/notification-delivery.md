@@ -123,14 +123,26 @@ version and verifies the SHA-256 pinned by the Alertmanager role. The check
 launches isolated processes on random loopback ports with disposable state,
 then stops only its own processes. It never contacts deployed services.
 
-The drill reuses the production route tree and watchdog rule. It replaces
-provider transports with a local webhook receiver and compresses timing. It
-requires matching run IDs and verifies per-alert firing and recovery receipts,
-a receiver returning HTTP 503 while the other route delivers, retry recovery,
-and per-receiver completed request observations. Finally it stops Prometheus
-and Alertmanager while the receiver stays alive and verifies a missed watchdog
-deadline. Page and warn test families differ so the production page-over-warn
-inhibition does not suppress the warning test.
+The drill reuses the production route tree and watchdog rule with local
+webhook endpoints and shorter timers. It requires matching run IDs and
+verifies per-alert firing and recovery receipts, a receiver returning HTTP
+503 while the other route delivers, retry recovery, and per-receiver completed
+request observations. Page and warn test families differ so the production
+page-over-warn inhibition allows the warning test to deliver.
+
+Alertmanager sends the two delivery failures to a local Events API v2
+fixture with one incident key. The drill clears them one at a time, verifies
+resolution after both clear, and checks that the labeled qualification alert
+uses a separate key. It also verifies that the regular page route receives
+the delivery failures.
+
+The shipped runtime collection deadline rule runs against two simulated apid
+replicas. The local Slack-compatible warning receiver verifies a grouped
+firing message, separate replica recoveries, and the per-replica Grafana and
+runbook links produced by the shipped template. Each resolved Grafana link
+covers the two hours ending at that replica's recovery. Finally the drill stops
+Prometheus and Alertmanager and verifies a missed watchdog deadline while
+the receiver stays alive.
 
 The JSON report explicitly records `scope=local_webhook_routing_drill`,
 `production_providers=not_exercised` and `human_acknowledgement=not_assessed`.
@@ -144,6 +156,10 @@ monitor still require the established on-call procedure.
 Use the manual [production qualification workflow](monitoring-qualification.md)
 for test-bound firing/recovery receipts and a separate external deadline test.
 It retains operator attestations and keeps unverified groups unknown.
+If the delivery escalation pilot is configured, the exercise includes an
+isolated test incident for `faas-delivery-page/pagerduty`. The
+[escalation procedure](escalation.md#enable-delivery-escalation-for-a-fleet)
+covers verifying the primary and secondary device notifications.
 
 Converge the Alertmanager role with its service feature flag, receiver metrics
 role and inventory, along with Prometheus rules and Grafana provisioning.

@@ -44,7 +44,7 @@ func TestChargeBySpan(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			spans := []AllowanceSpan{{End: change, Allowance: tt.before * hour}, {End: at, Allowance: tt.after * hour}}
 			reader := usageBefore{change: tt.atChange * hour}
-			got, err := chargeBySpan(context.Background(), reader, "acct", month, spans, UsageSnapshot{ComputeUnitSeconds: tt.total * hour}, false)
+			got, err := chargeBySpan(context.Background(), reader, "acct", month, spans, UsageSnapshot{ComputeUnitSeconds: tt.total * hour}, false, false)
 			if err != nil {
 				t.Fatal(err)
 			}

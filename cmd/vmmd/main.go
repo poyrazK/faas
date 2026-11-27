@@ -39,6 +39,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -66,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -302,6 +304,9 @@ type runDeps struct {
 	detectFC    func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	readHostCPU func() (fcvm.HostCPU, error)                                                                          // defaults to fcvm.ReadHostCPU (ADR-20261024225612)
 	listen      func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
+	// readPhysBits is the host's physical address width, which gates pmem
+	// (ADR-908). nil reads /proc/cpuinfo.
+	readPhysBits func() (int, error)
 	// databaseLeases overrides the jail uid allocator of a database node;
 	// nil uses the whole range (tests share a host with a compute vmmd).
 	databaseLeases dbvm.Leaser
@@ -560,6 +565,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if caErr != nil {
 		return caErr
 	}
+	dataAPIInspectionCAPEM, caErr := loadDataAPIInspectionCA(cfg.DataAPIInspectionCAPath)
+	if caErr != nil {
+		return caErr
+	}
 	// Keep the :443 admission rule coupled to trust delivery. Both remain
 	// disabled unless the operator explicitly configures the private CA.
 	netns.SetDefaultServiceProxyHTTPS(len(serviceProxyCAPEM) > 0)
@@ -575,6 +584,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		netns.SetDefaultDatabaseRouteAddress(api.DatabaseRouteAddress())
 	} else {
 		netns.SetDefaultDatabaseRouteAddress(netip.Addr{})
+	}
+	// ADR-20261114100000 amendment 2026-11-23: public destinations that are
+	// Gregale's own count as internal egress in every namespace from here on.
+	if err := seedInternalEgressDestinations(ctx, cfg.ComputeNode, log); err != nil {
+		return err
 	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
@@ -933,6 +947,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else if deferred {
 		log.Info("vmmd: shared-store deletes deferred to the control plane")
 	}
+	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
+	// store credential; each object is reached through a secretd grant.
+	if _, closeGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "vmmd", log); err != nil {
+		return err
+	} else {
+		defer closeGrants()
+	}
 	// issue #517 / PR-C / ADR-064 — Ops constructed ABOVE the
 	// Manager wiring so the wake-timeline fan-out (vmmd's canonical
 	// emit site for wake.readiness_200) can capture them at
@@ -1053,17 +1074,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// parked time. Firecracker 1.16+ only, and only where KVM records the
 	// realtime clock flag in captures (a tsc host clocksource).
 	restoreClockRealtime := !cfg.DisableRestoreClockRealtime && fcvm.ClockRealtimeSupported(fcVersion) && fcvm.HostClocksourceTSC()
-	// ADR-908: pmem needs Firecracker 1.16+, and native recovery stages
-	// images through its own journal, which has no pmem slot yet.
-	pmemBaseDir := ""
-	if cfg.PmemBaseDir != "" && fcvm.PmemBaseSupported(fcVersion) && !cfg.NativeProcessRecovery {
-		pmemBaseDir = cfg.PmemBaseDir
+	// ADR-908: pmem needs Firecracker 1.16+, a host with at least 40 physical
+	// address bits, and no native recovery, whose image journal has no pmem
+	// slot yet.
+	pmemBaseDir, pmemOffReason := resolvePmemBaseDir(cfg.PmemBaseDir, fcVersion, cfg.NativeProcessRecovery, deps.readPhysBits, log)
+	if pmemOffReason != "" {
+		log.Warn("vmmd: pmem base disabled; app bases boot from virtio-blk", "reason", pmemOffReason)
 	}
 	protocolMetrics := mcpprotocol.New(ops.Registry())
 	protocolCoverage := mcpprotocol.NewCoverage(ops.Registry())
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
+		WithDataAPIInspectionCA(dataAPIInspectionCAPEM).
 		WithLogCommitCallback(func(appID string, line logbuf.Line) { protocolMetrics.Observe(appID, line.Line, line.WrittenAt) }).
 		WithInstanceLogObserver(protocolCoverage.Start).
 		WithInstancePauseObserver(protocolCoverage.Pause).
@@ -1566,15 +1589,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// refuses on without quiet pause.
 	if cfg.IdleLadder != idleLadderOff {
 		on := cfg.IdleLadder == idleLadderOn
+		// A paused app resumes on IPv4 packets addressed to its namespace,
+		// not on the bridge's broadcasts and floods (amendment 4).
+		var addressed *fcvm.NetnsIngressReader
+		if on && cfg.IdleLadderApps {
+			addressed = fcvm.NewNetnsIngressReader("/proc")
+			go runNetnsIngressPoll(ctx, mgr.SnapshotLive, addressed, 0)
+		}
 		mgr.WithIdleLadder(fcvm.IdleLadderConfig{
 			Activity: activityTracker,
 			Metrics:  fcvm.NewIdleLadderMetrics(ops.Registry()),
 			On:       on,
 			Apps:     cfg.IdleLadderApps,
 			// The activity guard (ADR §6) watches apps quiet pause does not
-			// pause: their VM CPU and veth bytes.
+			// pause: their VM CPU, veth bytes and addressed packets.
 			CPU: agentWaitCPU{cache: cpuCache},
-			Net: idleLadderNet{cache: netCache},
+			Net: idleLadderNet{cache: netCache, addressed: addressed},
 			// L3/L4: compress quiet-paused VMs' cold pages (LoadConfig
 			// refuses it without on).
 			Compress:        cfg.IdleLadderCompress,
@@ -1836,6 +1866,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		recv = nil
 	}
 	if recv != nil {
+		startResourceMinutes(ctx, log, mgr, recv)
 		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
 			record := func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
 				runtimeName string, warmupMS int64) error {
@@ -2201,7 +2232,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1").
 		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
 		// sessions start from, this node's artifact store.
-		WithSandboxWorkspaces(storageBackend)
+		WithExecutionFileStorage(storageBackend).
+		WithSandboxWorkspaces(storageBackend).
+		// ADR-20261122132055 §4: persistent sessions' workspace volumes.
+		WithSandboxVolumes(fcvm.NewSandboxVolumes(fcvm.DefaultSandboxVolumeRoot))
+	// ADR-20261122132055 §2, §4: pause captures and volume backups a restart
+	// left on this node alone reach the shared store.
+	go impl.PublishPendingSandboxCaptures(ctx)
+	go impl.PublishPendingSandboxVolumeBackups(ctx)
+	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
+	// give-back of their memory to tenants.
+	borrowedBuilders := vmmdgrpc.NewBorrowedBuilders(builderslots.NewReader(), ops.Registry(), log)
+	impl.WithBorrowedBuilders(borrowedBuilders)
+	go borrowedBuilders.Run(ctx, func(killCtx context.Context, instance string) error {
+		_, _, err := signalAdapter{mgr}.SignalAndKill(killCtx, instance, 9, 0)
+		return err
+	})
+	if store != nil && pool != nil {
+		startBorrowedBuilderWatcher(ctx, store, pool, borrowedBuilders, log)
+	}
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(
@@ -2227,6 +2276,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// whose successor adopts the guests.
 	impl.WithInstanceBridgeHandoff(cfg.AdoptRunningVMs && cfg.AdoptionRecord)
 	impl.ReconcileInstanceBridgeUnits(ctx)
+	// Bridge activity counters in shadow (connection-survival ADR P1d):
+	// returns at once unless FAAS_INSTANCE_BRIDGE_CONTROL=1.
+	go impl.RunInstanceBridgeActivityShadow(ctx)
 	if err := enableDatabaseVMs(ctx, impl, cfg.DatabaseVMs, mgr.JailLeases(), log); err != nil {
 		return err
 	}
@@ -2265,6 +2317,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// control-plane Prometheus without exposing node_exporter on a new port.
 		hostMetrics := newHostJournalMetrics(ops.Registry(), nil, nil)
 		go hostMetrics.runSampler(ctx, log)
+		registerJailTmpfsMetrics(ops.Registry(), fcvm.JailChrootBase, nil)
 		mux := newMetricsMux(ops, cbm, frm, wpm, dsm)
 		if identitySigner != nil {
 			mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {

@@ -49,21 +49,8 @@ func ProbeProjectReleaseForScope(ctx context.Context, scope string, receipt api.
 			if tokens[id] != "" {
 				continue
 			}
-			token, err := routeprobe.NewToken()
+			token, err := PublishRouteProbeChallenge(ctx, scope, p.AppID, id, notify)
 			if err != nil {
-				return nil, err
-			}
-			payload, err := json.Marshal(struct {
-				Scope        string    `json:"scope"`
-				AppID        string    `json:"app_id"`
-				DeploymentID string    `json:"deployment_id"`
-				Token        string    `json:"token"`
-				ExpiresAt    time.Time `json:"expires_at"`
-			}{scope, p.AppID, id, token, time.Now().UTC().Add(api.RouteHealthProbeChallengeTTL)})
-			if err != nil {
-				return nil, err
-			}
-			if err := notify(ctx, string(payload)); err != nil {
 				return nil, err
 			}
 			tokens[id] = token
@@ -82,6 +69,26 @@ func ProbeProjectReleaseForScope(ctx context.Context, scope string, receipt api.
 		evidence = append(evidence, e)
 	}
 	return evidence, nil
+}
+
+// PublishRouteProbeChallenge distributes a private, deployment-scoped token
+// to the gateways. Callers wait for notification delivery before sending probes.
+func PublishRouteProbeChallenge(ctx context.Context, scope, app, deployment string, notify func(context.Context, string) error) (string, error) {
+	token, err := routeprobe.NewToken()
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(struct {
+		Scope        string    `json:"scope"`
+		AppID        string    `json:"app_id"`
+		DeploymentID string    `json:"deployment_id"`
+		Token        string    `json:"token"`
+		ExpiresAt    time.Time `json:"expires_at"`
+	}{scope, app, deployment, token, time.Now().UTC().Add(api.RouteHealthProbeChallengeTTL)})
+	if err != nil {
+		return "", err
+	}
+	return token, notify(ctx, string(payload))
 }
 
 func sampleProjectReleaseProbe(ctx context.Context, sender ProjectCriticalProbeSender, probe api.ProjectReleaseProbe, candidate, stable string, tokens map[string]string, evidence *api.ProjectReleaseProbeEvidence) {

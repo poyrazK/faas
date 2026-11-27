@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from ..models.create_managed_execution_workflow_step_result_schema_type_0 import (
         CreateManagedExecutionWorkflowStepResultSchemaType0,
     )
+    from ..models.execution_retry_policy import ExecutionRetryPolicy
+    from ..models.invoke_execution_task_request import InvokeExecutionTaskRequest
     from ..models.managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
 
 
@@ -22,22 +24,6 @@ class CreateManagedExecutionWorkflowStep:
     """One disposable Run in the DAG and its dependency, result, and artifact handoff rules."""
 
     label: str
-    request: Any
-    """Source and JSON input for one disposable execution. Send either the
-    legacy `source` string or an ephemeral `files` bundle with an
-    `entrypoint`. `artifact_inputs` may add files from successful runs in
-    the same key family for Runs-only credentials, or from the same account
-    for broad credentials; they are copied into the new
-    encrypted request and staged only in its ephemeral guest filesystem.
-    Optional `workflow_id` and `step_label` values group run receipts in
-    control-plane metadata; the guest does not receive them.
-    Optional `integration_ids` explicitly select managed integrations
-    granted for this Run; the IDs remain control-plane metadata and are
-    not delivered to the guest payload.
-    v1 supports only the listed interpreter runtimes and
-    `network.mode=none`; dependencies, secrets, environment injection, and
-    persistent disks are not part of this contract.
-    """
     depends_on: list[str] | Unset = UNSET
     """Earlier step labels that must succeed before this step is admitted."""
     input_from_previous_result: bool | Unset = False
@@ -53,6 +39,28 @@ class CreateManagedExecutionWorkflowStep:
     """Optional JSON Schema Draft 2020-12 contract for this Run's JSON result. The control plane enforces it before
     dependents can consume the result. Local fragment references are supported; external resources are not loaded.
     Each schema is limited to 64 KiB and all schemas in a workflow together are limited to 1 MiB."""
+    task: InvokeExecutionTaskRequest | Unset = UNSET
+    """Task selection, invocation input and optional file or completion configuration."""
+    retry: ExecutionRetryPolicy | Unset = UNSET
+    """Multiple attempts require safe_to_repeat=true. Only restore_failed, execution_transport_failed and
+    lease_expired are retried. Each attempt has a separate Run and budget reservation; external side effects may
+    repeat."""
+    request: Any | Unset = UNSET
+    """Source and JSON input for one disposable execution. Send either the
+    legacy `source` string or an ephemeral `files` bundle with an
+    `entrypoint`. `artifact_inputs` may add files from successful runs in
+    the same key family for Runs-only credentials, or from the same account
+    for broad credentials; they are copied into the new
+    encrypted request and staged only in its ephemeral guest filesystem.
+    Optional `workflow_id` and `step_label` values group run receipts in
+    control-plane metadata; the guest does not receive them.
+    Optional `integration_ids` explicitly select managed integrations
+    granted for this Run; the IDs remain control-plane metadata and are
+    not delivered to the guest payload.
+    v1 supports only the listed interpreter runtimes and
+    `network.mode=none`; dependencies, secrets, environment injection, and
+    persistent disks are not part of this contract.
+    """
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.create_managed_execution_workflow_step_result_schema_type_0 import (
@@ -60,9 +68,6 @@ class CreateManagedExecutionWorkflowStep:
         )
 
         label = self.label
-
-        request: Any
-        request = self.request
 
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
@@ -87,12 +92,25 @@ class CreateManagedExecutionWorkflowStep:
         else:
             result_schema = self.result_schema
 
+        task: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.task, Unset):
+            task = self.task.to_dict()
+
+        retry: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry, Unset):
+            retry = self.retry.to_dict()
+
+        request: Any | Unset
+        if isinstance(self.request, Unset):
+            request = UNSET
+        else:
+            request = self.request
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "label": label,
-                "request": request,
             }
         )
         if depends_on is not UNSET:
@@ -105,6 +123,12 @@ class CreateManagedExecutionWorkflowStep:
             field_dict["artifact_inputs"] = artifact_inputs
         if result_schema is not UNSET:
             field_dict["result_schema"] = result_schema
+        if task is not UNSET:
+            field_dict["task"] = task
+        if retry is not UNSET:
+            field_dict["retry"] = retry
+        if request is not UNSET:
+            field_dict["request"] = request
 
         return field_dict
 
@@ -113,15 +137,12 @@ class CreateManagedExecutionWorkflowStep:
         from ..models.create_managed_execution_workflow_step_result_schema_type_0 import (
             CreateManagedExecutionWorkflowStepResultSchemaType0,
         )
+        from ..models.execution_retry_policy import ExecutionRetryPolicy
+        from ..models.invoke_execution_task_request import InvokeExecutionTaskRequest
         from ..models.managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
 
         d = dict(src_dict)
         label = d.pop("label")
-
-        def _parse_request(data: object) -> Any:
-            return cast(Any, data)
-
-        request = _parse_request(d.pop("request"))
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
@@ -153,14 +174,37 @@ class CreateManagedExecutionWorkflowStep:
 
         result_schema = _parse_result_schema(d.pop("result_schema", UNSET))
 
+        _task = d.pop("task", UNSET)
+        task: InvokeExecutionTaskRequest | Unset
+        if isinstance(_task, Unset):
+            task = UNSET
+        else:
+            task = InvokeExecutionTaskRequest.from_dict(_task)
+
+        _retry = d.pop("retry", UNSET)
+        retry: ExecutionRetryPolicy | Unset
+        if isinstance(_retry, Unset):
+            retry = UNSET
+        else:
+            retry = ExecutionRetryPolicy.from_dict(_retry)
+
+        def _parse_request(data: object) -> Any | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(Any | Unset, data)
+
+        request = _parse_request(d.pop("request", UNSET))
+
         create_managed_execution_workflow_step = cls(
             label=label,
-            request=request,
             depends_on=depends_on,
             input_from_previous_result=input_from_previous_result,
             include_dependency_results=include_dependency_results,
             artifact_inputs=artifact_inputs,
             result_schema=result_schema,
+            task=task,
+            retry=retry,
+            request=request,
         )
 
         return create_managed_execution_workflow_step

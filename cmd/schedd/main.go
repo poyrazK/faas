@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/wire/otelinit"
@@ -164,8 +165,8 @@ type runDeps struct {
 	// pkg/sched, so the chooser moved here. apid writes apps with
 	// node_id = NULL; schedd races to stamp the owner on
 	// kind="created". nil = the subscriber is not started; the
-	// cold-start sweep still runs so an unplaced app from a prior
-	// run gets reconciled on boot.
+	// unplaced sweep (boot, then about once a minute) still places
+	// any app left with node_id NULL.
 	subscribePlacementClaim func(context.Context, *pgxpool.Pool) (<-chan db.Notification, func(), error)
 	// subscribeRebalancer (Tier A4 / ADR-064) is the
 	// producer-side seam for the compute_node_changed consumer
@@ -800,6 +801,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Workloads reach this installation's API through GREGALE_API_URL; unset
 	// leaves the SDK default, https://api.gregale.dev.
 	engine.WithPublicAPIURL(os.Getenv("FAAS_PUBLIC_API_URL"))
+	engine.WithWorkloadS3(os.Getenv("FAAS_PUBLIC_S3_ENDPOINT"), os.Getenv("FAAS_PUBLIC_S3_REGION"))
 	if leaseGuard != nil {
 		engine.WithTakeoverGuard(leaseGuard)
 	}
@@ -861,7 +863,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-20261109172421: memory is the only capacity limit; count what the
 	// vCPU and CPU budgets would have refused.
 	engine.WithCPUAdmissionMetrics(ops.Registry())
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones}, runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags(append(append([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones, runtimeconfig.KeyDevPrimeServes}, runtimeconfig.RequestConcurrencyKeys...), snapshotRefreshKeys...),
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			if handled, err := requestConcurrency.Apply(key, value); handled {
 				if err == nil {
@@ -881,6 +883,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			if key == runtimeconfig.KeyFullEnvironmentClones {
 				fullEnvironmentClones.Store(enabled)
+			}
+			if key == runtimeconfig.KeyDevPrimeServes {
+				engine.SetDevPrimeServes(enabled)
+				log.Info("schedd: applied developer prime setting (ADR-20261122200000)", "enabled", enabled)
 			}
 			if key == runtimeconfig.KeyDataPlacement {
 				upstreamAffinityEnabled.Store(enabled)
@@ -1044,6 +1050,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: storage backend: %w", err)
 	}
+	// ADR-20261117190000: on a granted compute node schedd holds no store
+	// credential either; its signature and snapshot reads go through
+	// secretd grants and its deletes become control-plane requests.
+	// Deletes must be deferred first: storage.UseGrants refuses a backend
+	// that still deletes directly.
+	if deferred, err := objectgc.DeferFromEnv(os.Getenv, storageBackend, store, "schedd"); err != nil {
+		return fmt.Errorf("schedd: %w", err)
+	} else if deferred {
+		log.Info("schedd: shared-store deletes deferred to the control plane")
+	}
+	storageGranted, closeStorageGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "schedd", log)
+	if err != nil {
+		return err
+	}
+	defer closeStorageGrants()
 	// ADR-054 acceptance: wire the LocalCacheBackend observer so
 	// stale-fallback serves on the wake path emit
 	// `schedd_storage_cache_stale_fallback_total`. The schedd
@@ -1546,7 +1567,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// EgressDriftSubscriber above shares the same channel but
 	// filters to kind="updated"; both run side-by-side. nil seam
 	// = skip in tests that don't want a fake channel; the
-	// cold-start sweep below still runs.
+	// unplaced sweep below still runs.
 	// ADR-20261110210000 §4: under control-plane owner authority a compute
 	// node's schedd never claims an app; the control plane's does.
 	if deps.subscribePlacementClaim != nil && owners.claimsOwners(cfg.Role) {
@@ -1771,7 +1792,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.Role == role.RoleComputeOnly {
 			return fmt.Errorf("schedd: FAAS_SCHEDD_OBJECT_GC runs on the control plane, not a compute node")
 		}
-		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).Run(ctx)
+		// ADR-20261117190000: granted compute nodes cannot list the store,
+		// so the jobs/ and sources/ sweeps run here too.
+		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).WithSweep(store).Run(ctx)
 		log.Info("schedd: object GC enabled")
 	}
 	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
@@ -1831,35 +1854,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}()
 	}
 
-	// Cold-start sweep: pg_notify is fire-and-forget, so a schedd
-	// that was down while an apid createApp landed missed the
-	// kind="created" notify. ListUnplacedApps at boot closes that
-	// gap (one tx per unplaced app, sub-second in steady state).
-	// Runs once, not per tick — the subscriber handles the live
-	// path. Errors are logged and dropped; the next notify (or the
-	// next schedd restart) is the next opportunity.
-	go func() {
-		if !owners.claimsOwners(cfg.Role) {
-			return
-		}
-		apps, err := store.ListUnplacedApps(ctx)
-		if err != nil {
-			log.Warn("schedd: cold-start sweep: list unplaced apps", "err", err)
-			return
-		}
-		for _, a := range apps {
-			if ctx.Err() != nil {
-				return
-			}
-			if err := engine.ClaimUnplaced(ctx, a.ID); err != nil {
-				log.Warn("schedd: cold-start sweep: claim", "app_id", a.ID, "err", err)
-				continue
-			}
-		}
-		if len(apps) > 0 {
-			log.Info("schedd: cold-start sweep: reconciled unplaced apps", "count", len(apps))
-		}
-	}()
+	// Unplaced sweep: pg_notify is fire-and-forget, so an app whose
+	// kind="created" never reached a claiming schedd (schedd down, or
+	// an apid path that returned before notifying) keeps
+	// apps.node_id NULL and every gateway wake for it fails. Sweep
+	// ListUnplacedApps at boot and then about once a minute (jittered)
+	// so such an app is placed without a schedd restart (prod
+	// 2026-11-25, project 8624ac80). The subscriber stays the live
+	// path; kind=updated is deliberately not a claim trigger.
+	if owners.claimsOwners(cfg.Role) {
+		go engine.RunUnplacedSweep(ctx, sched.UnplacedSweepInterval)
+	}
 
 	// PR #114 / ADR-025 axis 3: per-node liveness sweep. Every
 	// `HeartbeatInterval` (default 30s) the heartbeat goroutine
@@ -1990,6 +1995,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		})
 		log.Info("idle ladder idle-out enabled (ADR-20261107122928)",
 			"snapshot_after_seconds", api.IdleLadderSnapshotAfterSeconds)
+	}
+	if cfg.ReadinessProbeAppHost {
+		engine.EnableReadinessProbeAppHost(cfg.GetAppsDomain(os.Getenv))
+		log.Info("schedd: readiness probes send the app's public host (ADR-20261119140000)")
 	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
@@ -2208,6 +2217,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scale-up, targets and floor triggers, the reaper and the scaling-policy
 	// observer. It rereads the rows only when their version changed.
 	appSnapshot := sched.NewAppSnapshot(store)
+	// PR scale-out readiness #3: read-only snap/ vs DB drift sweep, hourly
+	// (api.DefaultDiskDriftInterval). Diagnostic only — never writes, never
+	// follows symlinks, never repairs; ops alert on
+	// rate(snapshot_disk_drift_total[5m]). ADR-054 §3: it enumerates snap/
+	// through the storage backend (a remote backend degrades to a presence
+	// check); ADR 20261022184951 amendment 1 adds vmmd's native runtime
+	// snapshots. A granted node cannot list the shared store, and with a
+	// shared store the sweep is fleet-wide: the control plane's schedd
+	// runs it (ADR-20261117190000). A granted node holds no native runtime
+	// snapshots either: execution dispatch, which writes them, stays off
+	// on granted nodes (docs/runbooks/storage-grants.md).
+	var diskDrift *sched.DiskDrift
+	if !storageGranted {
+		diskDrift = sched.NewDiskDrift(store, log).WithMetrics(ops).
+			WithStorage(storageBackend).
+			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))
+	}
 	loop := sched.NewLoop(pool, engine, log)
 	if databases != nil {
 		loop.WithDatabaseMover(databaseMover{sched: databases}).WithDatabaseRestarter(databaseMover{sched: databases}).
@@ -2257,22 +2283,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// engine got) — needed by the aggressive-reaper scale-down
 		// counter (ObserveScaleDown) and the audit-row emission.
 		WithOpsMetrics(ops).
-		// PR scale-out readiness #3: read-only /srv/fc/snap vs DB drift
-		// sweep. Hourly cadence (api.DefaultDiskDriftInterval = 1h).
-		// Diagnostic only — never writes, never follows symlinks,
-		// never repairs. Ops reads rate(snapshot_disk_drift_total[5m])
-		// and alerts on a non-zero rate. Shares the OpsMetrics
-		// receiver the engine + retention + watchdog already use.
-		WithDiskDrift(sched.NewDiskDrift(store, log).WithMetrics(ops).
-			// ADR-054 §3: enumerate the snap/ prefix via the
-			// production storage backend instead of os.ReadDir on
-			// /srv/fc/snap. The byte-comparison path stays in
-			// place for the local backend; a remote backend (OCI)
-			// degrades to a presence check.
-			WithStorage(storageBackend).
-			// ADR 20261022184951 amendment 1: native runtime snapshots
-			// sit in vmmd's private tree under the same snap/ keys.
-			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))).
+		// nil on a granted compute node (see diskDrift above).
+		WithDiskDrift(diskDrift).
 		// Audit seam (lifted from cmd/apid/audit.go into pkg/audit
 		// for cross-daemon reuse). schedd uses actor="schedd" so the
 		// cron-fire path can emit a `cron.fired` events row after
@@ -2513,6 +2525,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		log.Info("scheduled prewarm reconciler disabled — set FAAS_PREWARM_ENABLED=1 to enable")
 	}
+	switch {
+	case cfg.CronPrewake && !prewarmEnabled(os.Getenv("FAAS_PREWARM_ENABLED")):
+		log.Warn("cron_prewake ignored: it needs the prewarm drain (FAAS_PREWARM_ENABLED=1) (ADR-20261107122928)")
+	case cfg.CronPrewake:
+		// Pre-woken seconds are unbilled only for the accounts meterd's quiet
+		// pause release decides: the same flag decision as the idle-out.
+		loop.WithCronPrewake(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		}, ops.Registry())
+		log.Info("cron pre-wake enabled (ADR-20261107122928)",
+			"lead_seconds", api.CronPrewakeLeadSeconds, "hold_seconds", api.CronPrewakeHoldSeconds)
+	}
 	// Issue #171: wire the recent-load mirror off the same scraper and the
 	// VMMD telemetry reader. Split-box schedulers commonly leave the local
 	// gateway metrics URL empty; the telemetry fallback keeps scale-down
@@ -2625,14 +2649,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				if executor, ok := synth.(sched.WorkflowStepExecutor); ok {
 					orchestrator := sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, workflowMetrics, log)
 					if os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
-						key, keyErr := store.LoadClusterSigningKey(ctx)
-						if keyErr != nil || key.RetiredAt != nil {
-							return errors.New("workflow outbound requires an active cluster signing key")
+						// Integration steps stay off (each fails with "workflow
+						// outbound executor is disabled") rather than stopping
+						// schedd, which also runs crons, jobs and every other step.
+						if reason := workflowOutboundUnavailable(ctx, mintViaSecretd, workflowOutboundMinter, store.LoadClusterSigningKey); reason != "" {
+							log.Error("schedd: workflow integration steps disabled", "reason", reason)
+						} else {
+							orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
+							log.Info("schedd: workflow integration steps enabled", "minter", map[bool]string{true: "secretd", false: "local"}[mintViaSecretd])
 						}
-						if workflowOutboundMinter == nil {
-							return errors.New("workflow outbound requires the scheduler signing key")
-						}
-						orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
 					}
 					// ADR-20261027090010 §9: automation agent steps admit agent runs
 					// and wait for them; agentd runs them.
@@ -2719,7 +2744,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if strings.TrimSpace(executionNodeID) == "" {
 			return errors.New("schedd: execution dispatch enabled but no compute node is available")
 		}
-		catalogVerifier := sched.NewStorageRuntimeSnapshotVerifier(storageBackend)
+		templateReader, err := sched.NewRuntimeSnapshotReader(storageBackend, envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
+		if err != nil {
+			return err
+		}
+		if err := startExecutionTemplates(ctx, log, store, templateReader, vmmRouter, executionNodeID, sched.ExecutionRuntimeArtifactsFunc(deps.executionArtifacts)); err != nil {
+			return err
+		}
+		catalogVerifier := sched.NewStorageRuntimeSnapshotVerifier(templateReader)
 		catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), catalogVerifier)
 		resolver := sched.NewExecutionClaimResolver(
 			store,
@@ -2733,10 +2765,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdExecutionBackendWithBundle(vmmRouter, decoder)
 		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
-			Enabled:       true,
-			Owner:         executionNodeID,
-			MaxConcurrent: executionDispatchConcurrency,
-			Metrics:       ops,
+			Enabled:            true,
+			Owner:              executionNodeID,
+			MaxConcurrent:      executionDispatchConcurrency,
+			ExtendedConcurrent: api.ExecutionExtendedDispatchWorkers,
+			Metrics:            ops,
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}

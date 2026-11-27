@@ -53,6 +53,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 		}
 	}
 	applyCheckoutMigration(t, pool)
+	applySalesRolesMigrations(t, pool)
 	owner, other := uuid.NewString(), uuid.NewString()
 	if _, err = pool.Exec(ctx, "INSERT INTO accounts(id,email) VALUES ($1,'rep@example.com'),($2,'other@example.com')", owner, other); err != nil {
 		t.Fatal(err)
@@ -165,6 +166,23 @@ func TestRewardsFollowPaidInvoiceAndRefunds(t *testing.T) {
 		t.Fatal(err)
 	}
 	assert("eligible", true, 125) // fractions of a cent round down
+	sales := func(ever, month, everCents, monthCents int64) {
+		t.Helper()
+		summary, err := store.Summary(ctx, referrals.Scope{OwnerID: owner})
+		if err != nil || len(summary) != 1 {
+			t.Fatal(summary, err)
+		}
+		s := summary[0]
+		if s.Sales != ever || s.SalesThisMonth != month || s.PaidCents != everCents || s.PaidThisMonthCents != monthCents {
+			t.Fatalf("sales %+v, want %d/%d/%d/%d", s, ever, month, everCents, monthCents)
+		}
+	}
+	sales(1, 1, 1203, 1203)
+	// A first payment before this UTC month still counts toward sales ever.
+	if _, err = pool.Exec(ctx, "UPDATE referral_attributions SET first_paid_at=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' - interval '1 second' WHERE account_id=$1", id); err != nil {
+		t.Fatal(err)
+	}
+	sales(1, 0, 1203, 0)
 	if _, err = pool.Exec(ctx, "UPDATE invoices SET amount_refund_pending_cents=1 WHERE id=$1", invoice); err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +195,7 @@ func TestRewardsFollowPaidInvoiceAndRefunds(t *testing.T) {
 	if err != nil || summary[0].Eligible != 0 || summary[0].RewardCents != 0 {
 		t.Fatal(summary, err)
 	}
+	sales(0, 0, 0, 0) // a refunded first invoice is not a sale
 	if _, err = pool.Exec(ctx, "UPDATE invoices SET amount_refund_pending_cents=0,currency='eur' WHERE id=$1", invoice); err != nil {
 		t.Fatal(err)
 	}
@@ -273,5 +292,33 @@ func applyCheckoutMigration(t *testing.T, pool *pgxpool.Pool) {
 	// Keep the DO guard intact; this migration has no concurrent index build.
 	if _, err := pool.Exec(t.Context(), up); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// applySalesRolesMigrations adds the organization and namespace tables the
+// roles/agreements migrations reference, seeding a namespace for every new
+// account or organization as production's triggers do, then applies them.
+func applySalesRolesMigrations(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := t.Context()
+	_, err := pool.Exec(ctx, `CREATE TABLE resource_namespaces (id uuid PRIMARY KEY);
+CREATE TABLE orgs (id uuid PRIMARY KEY, slug text NOT NULL DEFAULT 'acme', name text NOT NULL DEFAULT 'Acme',
+ personal_org boolean NOT NULL DEFAULT false, plan text NOT NULL DEFAULT 'free', status text NOT NULL DEFAULT 'active',
+ stripe_subscription_item text, deleted_pending boolean NOT NULL DEFAULT false);
+CREATE FUNCTION seed_test_namespace() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN INSERT INTO resource_namespaces(id) VALUES (NEW.id) ON CONFLICT DO NOTHING; RETURN NEW; END';
+CREATE TRIGGER accounts_seed_namespace BEFORE INSERT ON accounts FOR EACH ROW EXECUTE FUNCTION seed_test_namespace();
+CREATE TRIGGER orgs_seed_namespace BEFORE INSERT ON orgs FOR EACH ROW EXECUTE FUNCTION seed_test_namespace();
+INSERT INTO resource_namespaces(id) SELECT id FROM accounts;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"20261120181326259_sales_team_agreements.sql", "20261120181327631_sales_org_attribution.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = pgtest.ExecMigration(ctx, t, pool, string(raw), true); err != nil {
+			t.Fatal(name, err)
+		}
 	}
 }

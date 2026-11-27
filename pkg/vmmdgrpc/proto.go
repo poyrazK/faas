@@ -15,12 +15,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"google.golang.org/grpc/status"
+
 	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/ociidentity"
+	"github.com/onebox-faas/faas/pkg/runfile"
 	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
@@ -264,6 +267,8 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 			api.CodeValidation, "Invalid execution request", "version is outside the supported range")
 	}
 	wireReq := executionproto.Request{
+		EnvironmentID:   req.GetEnvironmentId(),
+		Class:           api.ExecutionClass(req.GetExecutionClass()),
 		Profile:         api.ExecutionProfile(req.GetProfile()),
 		Version:         uint16(req.GetVersion()),
 		ExecutionID:     req.GetExecutionId(),
@@ -279,6 +284,9 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 	}
 	for _, file := range req.GetFiles() {
 		wireReq.Files = append(wireReq.Files, api.ExecutionFile{Path: file.GetPath(), Content: append([]byte{}, file.GetContent()...)})
+	}
+	if err := decodeExecutionFileManifest(req, &wireReq); err != nil {
+		return executionproto.Request{}, err
 	}
 	if err := wireReq.Validate(); err != nil {
 		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
@@ -303,7 +311,7 @@ func executionResponseFromResult(executionID string, result executionproto.Resul
 		PeakMemoryMb:    int32(result.Usage.PeakMemoryMB),
 	}
 	for _, artifact := range result.Artifacts {
-		resp.Artifacts = append(resp.Artifacts, &vmmdpb.ExecutionArtifact{Name: artifact.Name, SizeBytes: int32(artifact.SizeBytes), Sha256: artifact.SHA256, Content: append([]byte{}, artifact.Content...)})
+		resp.Artifacts = append(resp.Artifacts, &vmmdpb.ExecutionArtifact{Name: artifact.Name, SizeBytes: int32(artifact.SizeBytes), Sha256: artifact.SHA256, Content: append([]byte{}, artifact.Content...), FileId: artifact.FileID})
 	}
 	if result.ExitCode != nil {
 		resp.ExitCode = wrapperspb.Int32(int32(*result.ExitCode))
@@ -437,6 +445,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Per-deployment HTTP or gRPC readiness selection. Both
 		// probe modes target <HostIP>:8080.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
@@ -568,6 +577,11 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Invalid buildkit seed drive", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
 	}
+	cacheExportManifest, err := cacheExportManifestFromProto(req.GetBuild())
+	if err != nil {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid cache export manifest", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
+	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
@@ -626,6 +640,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// path so deploy's first boot primes the same probe
 		// semantics on the freshly-deployed app.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
@@ -659,6 +674,10 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// after the VM exits.
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
+		// ADR-20261118154632: a builder on a borrowed slot runs in
+		// faas-borrowed.slice. CreateColdBoot refuses it first when this
+		// node cannot.
+		BorrowedBuilder: req.GetBuild().GetBorrowed() && buildSpecExportDir(req.GetBuild()) != "",
 		// ADR-20261026091500: the built app's sealed registry
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
@@ -666,7 +685,35 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// ADR-20261110210000 slice 3j-3: the build a registry mirror pulls
 		// for through secretd.
 		BuildID: req.GetBuild().GetBuildId(),
+		// ADR-20261029171525 amendment 2: a deferred cache export run's
+		// build.json, staged on the build's drive before boot.
+		CacheExportManifest: cacheExportManifest,
 	}, nil
+}
+
+// cacheExportManifestFromProto returns a deferred cache export run's
+// build.json (ADR-20261029171525 amendment 2). vmmd stages only a builder's
+// manifest that asks for the cache export alone, so the field cannot turn a
+// drive into an ordinary build.
+func cacheExportManifestFromProto(b *vmmdpb.BuildSpec) ([]byte, error) {
+	raw := b.GetCacheExportManifest()
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if b.GetExportDir() == "" {
+		return nil, errors.New("vmmd: a cache export manifest needs a builder VM")
+	}
+	if len(raw) > api.BuildCacheExportManifestMaxBytes {
+		return nil, fmt.Errorf("vmmd: cache export manifest is %d bytes (max %d)", len(raw), api.BuildCacheExportManifestMaxBytes)
+	}
+	var m api.BuildManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("vmmd: cache export manifest: %w", err)
+	}
+	if !m.CacheExportOnly || m.DeferCacheExport || !m.DependencyCache {
+		return nil, errors.New("vmmd: cache export manifest must set cache_export_only and dependency_cache, and not defer_cache_export")
+	}
+	return raw, nil
 }
 
 // buildKitSeedDriveFromProto returns a builder's BuildKit seed copy
@@ -928,6 +975,7 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 		RestoreMs:    inst.RestoreMs,
 		NetnsTapMs:   inst.NetnsTapMs,
 		GuestReadyMs: inst.GuestReadyMs,
+		StartupOom:   inst.StartupOOM,
 	}
 	if requestMethod == vmmdpb.WakeMethod_WAKE_RESTORE && inst.Method == fcvm.WakeColdBoot {
 		switch inst.RestoreFallbackReason {
@@ -1134,4 +1182,29 @@ func quietPauseAfterFromWire(ms int64) time.Duration {
 		return 0
 	}
 	return d
+}
+
+func decodeExecutionFileManifest(req *vmmdpb.ExecuteExecutionRequest, wire *executionproto.Request) error {
+	if len(req.GetPrivateFileManifest()) == 0 {
+		if wire.Version == executionproto.FileVersion {
+			return status.Error(codes.InvalidArgument, "file manifest required")
+		}
+		return nil
+	}
+	if wire.Version < executionproto.FileVersion || len(req.GetPrivateFileManifest()) > api.ExecutionContractSchemaMaxBytes {
+		return status.Error(codes.InvalidArgument, "invalid file manifest")
+	}
+	var manifest executionproto.FileManifest
+	if json.Unmarshal(req.GetPrivateFileManifest(), &manifest) != nil || !runfile.ValidOwnerID(manifest.AccountID) {
+		return status.Error(codes.InvalidArgument, "invalid file manifest")
+	}
+	wire.Manifest = &manifest
+	wire.MaxArtifactBytes = req.GetMaxArtifactBytes()
+	for _, ref := range manifest.Inputs {
+		wire.InputFiles = append(wire.InputFiles, ref.Descriptor)
+	}
+	for _, ref := range manifest.Outputs {
+		wire.StoredOutputs = append(wire.StoredOutputs, ref.Descriptor)
+	}
+	return nil
 }

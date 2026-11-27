@@ -961,7 +961,7 @@ func TestLoadHost_EmitsOncePerRuleNotOncePerHost(t *testing.T) {
 
 func TestCompileCacheRulesIntersectsActionAndSelectorMethods(t *testing.T) {
 	rule := state.EdgeRule{
-		ID: "cache", AccountID: "account", AppID: "app", MatchHost: "example.com",
+		ID: "cache", Name: api.DataAPIPublicReadCacheRule, AccountID: "account", AppID: "app", MatchHost: "example.com",
 		MatchPath: "/catalog/*", MatchMethods: []string{"GET", "HEAD"}, Enabled: true,
 		Kind: state.EdgeRuleKindCache,
 		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindCache, Cache: &state.EdgeRuleCacheAction{
@@ -976,11 +976,20 @@ func TestCompileCacheRulesIntersectsActionAndSelectorMethods(t *testing.T) {
 		t.Fatalf("compiled methods = %#v, want GET only (action allowlist intersected with selector)", got[0].Methods)
 	}
 
+	if !got[0].DataAPIPublicRead {
+		t.Fatal("managed Data API rule lost its representation policy")
+	}
+
+	rule.Name = "catalog-cache"
 	rule.MatchMethods = nil
 	rule.Action.Cache.Methods = nil
 	got, parseErrs = compileCacheRules([]state.EdgeRule{rule})
 	if len(parseErrs) != 0 || len(got) != 1 || len(got[0].Methods) != 2 || !got[0].Methods[http.MethodGet] || !got[0].Methods[http.MethodHead] {
 		t.Fatalf("compiled default methods = (%#v, %#v), want GET + HEAD", got, parseErrs)
+	}
+
+	if got[0].DataAPIPublicRead {
+		t.Fatal("generic cache unexpectedly uses the Data API policy")
 	}
 
 	rule.MatchMethods = []string{"POST"}

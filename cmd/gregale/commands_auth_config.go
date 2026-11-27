@@ -561,7 +561,23 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])
 	}
+	for _, warning := range authSecurityWarnings(settings) {
+		PrintWarn(osStderr, "%s", warning)
+	}
 	return 0
+}
+
+// authSecurityWarnings names settings that leave an Auth app's sign-in open
+// to automated abuse, each with the change that closes it.
+func authSecurityWarnings(settings authPublicSettings) []string {
+	var out []string
+	if settings.Signup.Enabled && settings.Captcha == nil {
+		out = append(out, "CAPTCHA is off: bots can create users and try passwords from many addresses. Turn it on with --captcha turnstile|hcaptcha.")
+	}
+	if !settings.Password.LeakedPasswordCheck {
+		out = append(out, "the leaked-password check is off: people can choose passwords already published in breaches. Turn it on with --leaked-password-check on.")
+	}
+	return out
 }
 
 // cmdAuthProviders lists, enables or disables OAuth sign-in providers.

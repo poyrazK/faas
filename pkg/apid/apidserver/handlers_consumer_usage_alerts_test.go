@@ -42,7 +42,7 @@ func TestAPIConsumerPlanAlertThresholdsAndUsageAlerts(t *testing.T) {
 
 	policy := state.APIConsumerPlanPolicy{PlanID: plan.ID, AppID: consumer.AppID, MaxUnitsPerMonth: 10, AlertThresholdsPercent: plan.AlertThresholdsPercent}
 	for range 6 {
-		if _, err := (*e.Store()).AdmitAPIConsumerPlanRequest(context.Background(), (*e.Acct()).ID, consumer.ID, policy, 1); err != nil {
+		if _, err := (*e.Store()).AdmitAPIConsumerPlanRequest(context.Background(), (*e.Acct()).ID, consumer.ID, policy, "", 1); err != nil {
 			t.Fatal(err)
 		}
 	}

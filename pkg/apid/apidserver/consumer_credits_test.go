@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +79,13 @@ func TestConsumerPrepaidCreditAndSpendCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	zero := int64(0)
+	// The consumer is priced in EUR: a USD cap could never be reached, so it
+	// is refused instead of being stored and never capping (cost-control
+	// review 2026-11-19, N9).
+	if problem := creditsJSON[api.Problem](t, f, http.MethodPut, base+"/spend-cap",
+		api.PutAPIConsumerSpendCapRequest{Currency: "USD", MonthlyCapMillicents: &zero}, http.StatusUnprocessableEntity); !strings.Contains(problem.Detail, "EUR") {
+		t.Fatalf("mismatched cap problem = %+v, want it to name EUR", problem)
+	}
 	spendCap := creditsJSON[api.APIConsumerSpendCapResponse](t, f, http.MethodPut, base+"/spend-cap",
 		api.PutAPIConsumerSpendCapRequest{Currency: "EUR", MonthlyCapMillicents: &zero}, http.StatusOK)
 	if !spendCap.Capped || spendCap.AmountDueMillicents == nil || *spendCap.AmountDueMillicents != 125000 {

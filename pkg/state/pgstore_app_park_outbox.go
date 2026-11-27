@@ -202,3 +202,19 @@ func (s *PgStore) drainDrainedAppParkTransitions(ctx context.Context, limit int,
 	}
 	return len(pending), nil
 }
+
+// CurrentAppParkTransitionID returns the customer park transition behind the
+// app's current park, or "" when the app was parked some other way (a
+// liveness park, the reaper) or is not parked.
+func (s *PgStore) CurrentAppParkTransitionID(ctx context.Context, appID string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx,
+		`select coalesce(park_transition_id::text, '') from apps where id = $1::uuid`, appID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("state: read app park transition id: %w", err)
+	}
+	return id, nil
+}

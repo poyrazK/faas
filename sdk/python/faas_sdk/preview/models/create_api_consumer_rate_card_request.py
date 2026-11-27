@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+    from ..models.create_api_consumer_rate_card_request_model_prices import CreateAPIConsumerRateCardRequestModelPrices
     from ..models.create_api_consumer_rate_card_request_route_weights import (
         CreateAPIConsumerRateCardRequestRouteWeights,
     )
@@ -38,6 +39,9 @@ class CreateAPIConsumerRateCardRequest:
     consumer's units are counted per UTC calendar month in minute order and priced by the step their position falls
     in. Bounds increase strictly, only the last step is unbounded, and only the first step may be free. Statements
     of periods priced by a tiered card must cover exactly one UTC calendar month."""
+    model_prices: CreateAPIConsumerRateCardRequestModelPrices | Unset = UNSET
+    """Model price overrides for a flat app meter. Report a configured override as meter__model and use the base
+    meter for the base price. All models share the meter allowance."""
     route_weights: CreateAPIConsumerRateCardRequestRouteWeights | Unset = UNSET
     """Counts each request on a listed "METHOD /template" route as that many units (1..1000, at most 50 routes);
     unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's
@@ -76,6 +80,10 @@ class CreateAPIConsumerRateCardRequest:
             for tiers_item_data in self.tiers:
                 tiers_item = tiers_item_data.to_dict()
                 tiers.append(tiers_item)
+
+        model_prices: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.model_prices, Unset):
+            model_prices = self.model_prices.to_dict()
 
         route_weights: dict[str, Any] | Unset = UNSET
         if not isinstance(self.route_weights, Unset):
@@ -118,6 +126,8 @@ class CreateAPIConsumerRateCardRequest:
             field_dict["included_units_per_month"] = included_units_per_month
         if tiers is not UNSET:
             field_dict["tiers"] = tiers
+        if model_prices is not UNSET:
+            field_dict["model_prices"] = model_prices
         if route_weights is not UNSET:
             field_dict["route_weights"] = route_weights
         if plan_id is not UNSET:
@@ -140,6 +150,9 @@ class CreateAPIConsumerRateCardRequest:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.api_consumer_rate_card_tier import APIConsumerRateCardTier
+        from ..models.create_api_consumer_rate_card_request_model_prices import (
+            CreateAPIConsumerRateCardRequestModelPrices,
+        )
         from ..models.create_api_consumer_rate_card_request_route_weights import (
             CreateAPIConsumerRateCardRequestRouteWeights,
         )
@@ -159,6 +172,13 @@ class CreateAPIConsumerRateCardRequest:
                 tiers_item = APIConsumerRateCardTier.from_dict(tiers_item_data)
 
                 tiers.append(tiers_item)
+
+        _model_prices = d.pop("model_prices", UNSET)
+        model_prices: CreateAPIConsumerRateCardRequestModelPrices | Unset
+        if isinstance(_model_prices, Unset):
+            model_prices = UNSET
+        else:
+            model_prices = CreateAPIConsumerRateCardRequestModelPrices.from_dict(_model_prices)
 
         _route_weights = d.pop("route_weights", UNSET)
         route_weights: CreateAPIConsumerRateCardRequestRouteWeights | Unset
@@ -211,6 +231,7 @@ class CreateAPIConsumerRateCardRequest:
             currency=currency,
             included_units_per_month=included_units_per_month,
             tiers=tiers,
+            model_prices=model_prices,
             route_weights=route_weights,
             plan_id=plan_id,
             unit=unit,

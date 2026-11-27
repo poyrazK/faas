@@ -52,10 +52,30 @@ gregale data-api integrate --directory ./my-app \
 ```
 
 Use `--client-directory web` when the npm package is in `my-app/web`. The
-first version supports standalone npm packages with TypeScript 5+ declared in
-dependencies or devDependencies; npm workspaces and other package-manager
+flow supports standalone npm packages and npm workspace members, with
+TypeScript 5+ declared in the client or workspace root. Other package-manager
 lockfiles are refused before any writes. Once the SDK is published, an exact
 `--sdk-version` can replace `--bundle`, as for onboarding.
+
+Use `--numeric-mode exact` when integrating a client that handles large integer
+IDs or precise decimals. The integration records `"numeric_mode": "exact"` in
+`gregale-data/data-api.dev.json`. Generated types carry that mode and
+`createAppData` uses it automatically. Local onboarding and type generation in
+the default mode warn when the exposed schema includes PostgreSQL `bigint` or
+`numeric`. The notes and teams demo clients use ordinary JavaScript numbers.
+
+If installation or verification fails after setup, repeat the same integration
+command with `--resume`. The command validates the existing configuration and
+required setup files, then retries installation and verification without
+rewriting the setup. Keep the original client directory and numeric mode.
+
+For a bundled SDK in an npm workspace, restore the pin with the workspace root
+and member selected:
+
+```sh
+gregale data-api install --restore --directory ./my-app \
+  --client-directory apps/web --workspace-root . --from /path/to/data-api-bundle
+```
 
 The preview works offline and shows every new file's content in JSON, the
 types destination and the install/verification commands. Applying creates
@@ -64,8 +84,9 @@ development configuration and instructions. It adds
 `src/gregale-data/client.ts` and a separate typecheck configuration inside the
 selected client. Existing application code, scripts and TypeScript configuration
 are retained. Destination conflicts and symlinked integration paths fail before
-installation. The SDK installer updates the client's dependency and npm lockfile;
-bundle installs also retain their artifact pin and vendored archive.
+installation. The SDK installer updates the client's dependency and the npm
+lockfile at the workspace root when applicable. Bundle installs also retain
+their artifact pin and vendored archive.
 
 Integration starts a disposable local database and authenticated API, generates
 `src/gregale-data/database.types.ts` from the database, type-checks the client,
@@ -95,6 +116,52 @@ commands; rerunning `integrate` refuses the existing integration. The local
 session-file ignore rule is appended to the root `.gitignore`, preserving its
 existing entries. Local verification does not provision hosted resources or
 change preview availability.
+
+## Add a hosted read-only client
+
+Once `data-api connect` has produced a verified receipt, add its public-schema
+client to an existing npm TypeScript application. The selected package must
+have a `tsconfig.json`; `--client-directory` selects an npm workspace member.
+Write a JSON array of expected rows from the selected relation to a private
+assertion file. Choose stable test data and, when possible, an ordering column.
+The generated read returns at most 100 rows.
+
+```sh
+export NOTES_JWT='APPLICATION_JWT'
+gregale data-api integrate --hosted notes-data --receipt .gregale-data-api-notes-data.connect.json \
+  --directory ./my-app --client-directory apps/web \
+  --bundle /approved/data-api-bundle.json --relation notes --order-by id \
+  --assertion /private/path/expected-notes.json --token-env NOTES_JWT --dry-run
+# Repeat without --dry-run to install, generate, type-check and verify.
+```
+
+Use an exact `--sdk-version` instead of `--bundle` when that SDK is published.
+Preview is offline and does not require the JWT to be set; apply requires a
+real application JWT, the unchanged verified connection, Node.js and npm.
+The assertion file is read locally and its digest is recorded; its contents,
+JWT and database credentials are not written into generated source. Protect the
+assertion file and any shell history used to set the JWT.
+
+The generated `src/gregale-hosted/client.ts` accepts the API origin and the
+application's own token provider. Its single read uses the selected relation,
+the receipt's numeric mode and a fingerprint-pinned public-schema route. The
+workflow checks the selected relation against the hosted contract, checks the
+generated client with a configuration extending the app's own `tsconfig.json`,
+then invokes that client with the JWT and compares the response to the supplied
+array. In `number` mode, the check also rejects numeric values that would be
+rounded by JavaScript; use a connection with `exact` mode for such values.
+Passing this check proves that assertion only; it does not establish
+complete authorization coverage. The selected package and npm lockfile change
+when the SDK is installed; existing application sources and scripts are kept.
+
+If installation, type-checking or the hosted read fails after setup, correct
+the cause and rerun the same command with `--resume`. Resume requires the same
+connection, selected relation, SDK source and assertion bytes, verifies that
+the generated client, type-check configuration and setup metadata were not
+edited, and never overwrites different generated
+types. A failure during initial scaffold creation can leave empty directories;
+inspect those before retrying. A changed deployment or schema requires a new
+verified connection and a separately reviewed integration destination.
 
 ## Use the application
 
@@ -183,9 +250,257 @@ that no other failure occurred.
 
 ## Move to a customer database
 
-Hosted Data APIs currently use enabled managed PostgreSQL databases and qualified
-`data_api` bindings. This command does not connect arbitrary external databases,
+Hosted Data APIs currently use enabled managed PostgreSQL databases with
+`data_api` bindings, or `read_only` bindings for the public-schema path below.
+This workflow does not connect arbitrary external databases,
 create a hosted database or set up an identity provider.
+
+For an existing managed database, `connect` offers a read-only public-schema
+preview without an existing app or binding. Sign in to Gregale and run:
+
+```sh
+gregale data-api connect notes-data --database notes-db
+```
+
+The preview lists up to 1,000 public relations, their kinds, RLS and forced-RLS
+flags, view options, policy counts, and table-level SELECT access for the
+**provider-managed preview role**. The future API binding may have different
+grants and policy behavior, and column-only grants are not captured. Review
+the actual policies and view definitions separately. Catalog metadata does not
+test authorization or isolation. The preview reads no customer rows and creates
+no app or binding, but it may create or refresh a persistent provider-managed
+read-only login and wake the database, which can incur compute charges. A
+truncated preview exits unsuccessfully; use `gregale --json data-api connect ...`
+for a machine-readable report. The account needs data:read and any required MFA.
+
+On an older control plane where the backend cannot run managed preview, use
+`--inspect-app notes-worker` with an existing ready binding and local `psql`;
+`--inspect-env KEY` selects a binding when needed. That preview reports the
+existing binding's role instead. For the apply workflow install Node.js 22 or
+newer.
+
+Prepare read checks for two real application identities and known test rows.
+Write a visibility matrix such as `connect.matrix.json`, replace the sample
+keys with stable test data, and review every expectation before setting its
+status to `reviewed`:
+
+```json
+{"version":1,"status":"reviewed","relation":"notes","key_column":"id",
+ "identities":["alice","bob"],"fixtures":[
+  {"name":"alice_note","key":101,"visible_to":["alice"]},
+  {"name":"bob_note","key":202,"visible_to":["bob"]}
+]}
+```
+
+Generate a new request collection locally:
+
+```sh
+gregale data-api connect notes-data --prepare-checks connect.matrix.json \
+  --collection connect.requests.json
+```
+
+The generator checks both identities against each fixture and emits exact
+visible-row and empty-result assertions for the selected key column. Each
+fixture and identity needs at least one expected visible row. A shared row can
+list both identities in `visible_to`; a matrix without any hidden expectations
+does not check cross-user isolation. Use a unique, readable single key column;
+the generator cannot establish uniqueness or infer policy behavior. It accepts
+2–20 fixtures with distinct keys: safe JSON integers or strings containing
+letters, digits, `_` and `-` (up to 128 characters). Results must represent
+the key with the same JSON type as the matrix. Composite keys and special string
+characters require a manually authored collection. Checks expect HTTP 200 with
+an empty array for an RLS-filtered read. Generation runs offline, creates a new
+mode-0600 file, and does not test authorization; fixture keys are present in
+both files. Prefer synthetic test rows, and review the generated collection
+before applying or committing it.
+
+Store only environment variable names in `connect.identities.json`, for example
+`{"alice":"ALICE_JWT","bob":"BOB_JWT"}`, and put the two distinct
+application JWTs in those environment variables. Then run:
+
+```sh
+gregale data-api connect notes-data --database notes-db \
+  --apply --issuer HTTPS_ISSUER --jwks-url HTTPS_JWKS --audience AUDIENCE \
+  --origins HTTPS_APPLICATION_ORIGIN --output client/src/database.types.ts \
+  --collection connect.requests.json --identities connect.identities.json
+```
+
+The output directory must exist and the types file must be new. Apply checks
+the collection before creating anything, inspects the database, creates a new
+read-only API, exports TypeScript types, and replays the pinned collection
+against the generated schema fingerprint. GET relation requests only are
+allowed in this workflow. The SDK can be installed separately using the
+existing application integration flow. Passing these assertions proves only
+the scenarios supplied, not complete authorization coverage.
+
+Apply creates a private `.gregale-data-api-NAME.connect.json` receipt in the
+working directory. It contains resource identities, artifact paths and digests,
+not JWTs, database credentials, identity mappings or request bodies. Use
+`--receipt FILE` to choose another path. Keep it as a local recovery artifact.
+
+```sh
+gregale data-api connect notes-data --status
+gregale data-api connect notes-data --verify \
+  --collection connect.requests.json --identities connect.identities.json
+gregale data-api connect notes-data --resume \
+  --collection connect.requests.json --identities connect.identities.json
+```
+
+`--verify` reruns the exact recorded read-only collection with the application
+JWTs. It checks the recorded app, database, binding, configuration and deployment
+before and after the schema-pinned replay, and refuses changed resources or a
+changed collection. It does not update the connection receipt. A changed
+deployment requires the separate reviewed requalification below; it is never
+adopted automatically. After input preflight, `gregale --json` emits replay events (if
+replay starts) followed by a `connect_authorization_verification` event with status, completion time,
+resource IDs, schema fingerprint and collection digest. A non-passing run
+exits nonzero. Passing covers only the supplied scenarios at the time they ran;
+it does not detect every policy, membership or subsequent change.
+
+Status compares the recorded app, database, binding, credential generation,
+deployment and app configuration review with the current control plane. A
+control plane without the app release-review endpoint cannot supply that check;
+resume stops instead of assuming the deployment is unchanged. A
+previously passed authorization check is historical; status does not query the
+database schema or repeat the assertions. Resume requires the same collection
+bytes and rechecks the recorded
+resources, regenerates the types, and reruns the two-subject assertions. It
+refuses changed types, contracts, bindings or deployments and never redeploys
+or reconfigures an app. The app configuration review does not establish that
+secret values are unchanged. Remote changes can also race these observations;
+coordinate deployments and configuration changes while resuming.
+
+To requalify the same connected app after a deployment, first prepare a plan:
+
+```sh
+gregale data-api connect notes-data --requalify-plan candidate.plan.json \
+  --receipt .gregale-data-api-notes-data.connect.json \
+  --new-receipt candidate.receipt.json --output candidate.types.ts \
+  --collection connect.requests.json --identities connect.identities.json
+```
+
+The plan checks the original recorded types, the same app, database, read-only
+binding and credential generation, observes one stable serving deployment, and generates candidate
+types. It may wake the app to run a contract task. The plan reports old and
+new deployment, configuration, schema, types and collection digests, plus an
+identity-mapping digest and plan SHA-256. Review the plan, candidate types,
+configuration changes, identity mapping and authorization collection. A different collection is allowed only as the
+exact reviewed bytes. Planning does not run authorization checks or create a
+receipt. It writes new plan and types files; if plan creation fails after types
+are written, inspect the retained types file before retrying.
+
+Apply the exact reviewed plan with its printed digest:
+
+```sh
+gregale data-api connect notes-data --requalify-apply candidate.plan.json \
+  --plan-sha256 REVIEWED_PLAN_SHA256 \
+  --receipt .gregale-data-api-notes-data.connect.json \
+  --collection connect.requests.json --identities connect.identities.json
+```
+
+Apply checks the original receipt, candidate identity, deployment, configuration,
+endpoint, reviewed types, identity mapping and collection again. It regenerates types and runs
+the read-only assertions against the candidate schema, then rechecks the
+candidate before creating the new receipt. The original receipt and types are
+preserved. Changed or unavailable resources, an altered plan or failed checks
+stop the process. The new receipt is written only after the checks pass; the
+reviewed types remain if receipt creation fails. The result establishes only
+the supplied scenarios, and separate reads cannot prevent changes between
+observations. Resource observations do not prove which credentials the serving
+process used, that secret values are unchanged, or that every replica was tested.
+A replaced app or binding, or rotated binding credential, needs
+a separate recovery process rather than automatic adoption. JWT values can be
+refreshed between plan and apply; the replay verifies the current tokens and
+tests only the named scenarios.
+
+If creation fails before a deployment and its binding are recorded, the receipt
+reports an uncertain creation outcome and resume refuses to adopt the app by
+name. Inspect any retained app and binding before using `data-api create
+--resume` or other recovery commands. No resource is rolled back automatically.
+A successful local command is not evidence of a separate staging run.
+
+### Review potential write access
+
+To inspect one existing managed database table before considering writes:
+
+```sh
+gregale --json data-api write readiness --database notes-db --table notes \
+  --operations insert,update,delete
+```
+
+This reports metadata for `public.notes` under the provider-managed preview
+role. It does not create an app or binding, read table rows, or enable writes.
+The preview may create or refresh a persistent read-only login and wake the
+database. The future writable binding's grants, effective write policies,
+triggers and side effects remain unknown. The preview role can differ from the
+future binding. An incomplete catalog, missing relation or non-table relation
+returns a nonzero exit. An observed table is not an authorization approval.
+
+For an **existing** writable `data_api` binding on a deployed Data API, inspect
+the task's actual database role and `api` table metadata instead:
+
+```sh
+gregale --json data-api write readiness --database notes-db --app notes-data \
+  --binding BINDING_ID --schema api --table notes \
+  --operations insert,update,delete
+```
+
+The binding must be ready, use `DATABASE_URL`, have a stable credential
+generation, and belong to that app and database in the default scope. The app
+must have one stable serving deployment. The command starts a bounded app task
+using the app's database environment; it requires deployment write and managed
+PostgreSQL read access and may wake compute. The platform guest runs the fixed
+inspection with a host-provided CA bundle, rather than executing a client from
+the app image. The task reads catalog metadata in a read-only transaction. It returns
+the observed database role, table and column privileges, RLS and ownership
+flags, policy command/applicability metadata, and non-internal trigger metadata.
+It does not read table rows, run policy expressions or change grants. At most
+128 columns, policies and triggers are supported; a larger or unavailable
+inspection fails rather than returning a partial result.
+
+The control plane pins the task, nonce, deployment and binding generation, then
+checks the scheduler's execution evidence and compares the observed database
+target and trusted CA with the provider's expectation. `binding_identity.status`
+is `verified` when those checks match, `mismatch` for an observed different
+target, and `unknown` when evidence is unavailable, stale or changed. The
+identity result is point-in-time and expires after five minutes. A control-plane
+selection mismatch stops the command before starting a task. The selected-binding
+command still returns `review_required` and a nonzero exit even when the identity
+is verified and the catalog shows no findings: it does not test row authorization.
+The report also cannot establish policy behavior,
+helper-function or trigger effects, sequence privileges, all replica
+configuration or tenant isolation. Review those separately. An inspection result
+is not an approval; grant and RLS risks appear in `findings`, and unavailable or
+changed observations also exit nonzero. The command does not
+compare a local baseline or inspect a not-yet-created binding.
+
+For a local qualification, create a separate Data API project with reviewed
+migrations and policies representative of the intended database, a synthetic SQL
+fixture and a reviewed version 4 mutation manifest. Export a scaffold from the
+local inspector and review its fixtures and expectations as described in
+[guided mutation checks](data-api.md#guided-mutation-checks-in-disposable-verification).
+For every requested operation, the manifest must include an allowed write and a
+denied write by a different local subject against the same named fixture. Both
+subjects must also appear in the read baseline. All mutation checks must target
+the selected table and requested operations.
+
+```sh
+gregale --json data-api write check --directory ./local-data-api \
+  --schema api --table notes --operations insert,update,delete \
+  --access-checks data-api.mutations.json --fixture fixture.sql
+```
+
+This uses the existing disposable PostgreSQL verifier and its private
+before-and-after state observer. It fails on an unreviewed or incomplete
+manifest, an unexpected write, changed state after a denial, a stale contract,
+or failed cleanup. Reports identify the local schema fingerprint, normalized
+manifest and fixture digests, supplied operations and check outcomes; they omit fixture rows
+and credentials. The local verifier exposes the `api` schema, so testing a
+copy of `public.notes` requires a separately reviewed local equivalent. A local
+pass covers only the supplied local scenarios; it does not prove that the
+hosted schema, role, grants, policies, identities or side effects match, nor
+does it authorize or enable hosted writes. Fixtures and migrations are trusted
+local code; use synthetic data and review them before execution.
 
 Follow the starter README to create the managed database, deploy its separate
 migration app and configure its migration binding. Choose an identity provider

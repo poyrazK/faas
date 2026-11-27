@@ -31,6 +31,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/objectaccess"
@@ -56,7 +58,9 @@ import (
 // mfa_pending session legitimately needs are in the middleware's MFA
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))
+	// unclaimedAllowed runs on every auth chain: an anonymous deploy key
+	// (ADR-20261124080000) reaches only the routes claim.RouteAllowed lists.
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.unclaimedAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))))
 	return s.recordCredentialRefusals(s.authMw.RequireSession(pkgNext))
 }
 
@@ -67,14 +71,14 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // the wrapping because the spec §11 "10/min/IP" rule is a
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))))
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.unclaimedAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next)))))))))
 	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
-	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))))
+	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.unclaimedAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next))))))))))
 	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
@@ -628,7 +632,13 @@ func (s *server) authorizeNamedApp(r *http.Request, acct state.Account, app stat
 // plan gates that answer before the app lookup keep their shape.
 func (s *server) namedAppAs(r *http.Request, acct state.Account, ref string, bySlug bool) (state.App, state.Account, *api.Problem) {
 	missing := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
-	app, err := s.store.AppByID(r.Context(), ref)
+	// A slug never reaches the uuid-typed ID lookup: Postgres logged
+	// "invalid input syntax for type uuid" for every slug-named create on
+	// prod (34 on 2026-11-21).
+	app, err := state.App{}, state.ErrNotFound
+	if _, parseErr := uuid.Parse(ref); parseErr == nil {
+		app, err = s.store.AppByID(r.Context(), ref)
+	}
 	if err != nil && bySlug {
 		app, err = s.store.AppBySlug(r.Context(), ref)
 	}
