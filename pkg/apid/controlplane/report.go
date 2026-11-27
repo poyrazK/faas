@@ -110,12 +110,14 @@ func Queries() map[string]string {
 	}
 	topStmt := "topk(" + k + ", increase(faas_postgres_statement_exec_seconds_total[" + w + "]) > 0)"
 	return map[string]string{
-		qConns:            "max(faas_postgres_client_connections)",
-		qConnCap:          "max(faas_postgres_ordinary_connection_capacity)",
-		qLongestQuery:     "max(faas_postgres_longest_query_seconds)",
-		qOldestXact:       "max(faas_postgres_oldest_transaction_seconds)",
-		qIdleXact:         "max(faas_postgres_idle_in_transaction_max_seconds)",
-		qLockWaits:        `sum(faas_postgres_backends_waiting{wait_event_type="Lock"}) or vector(0)`,
+		qConns:        "max(faas_postgres_client_connections)",
+		qConnCap:      "max(faas_postgres_ordinary_connection_capacity)",
+		qLongestQuery: "max(faas_postgres_longest_query_seconds)",
+		qOldestXact:   "max(faas_postgres_oldest_transaction_seconds)",
+		qIdleXact:     "max(faas_postgres_idle_in_transaction_max_seconds)",
+		// No Lock series means none waiting only while the collector's
+		// activity section succeeds; when it fails the read is missing.
+		qLockWaits:        `sum(faas_postgres_backends_waiting{wait_event_type="Lock"}) or on () (max(faas_postgres_activity_metrics_errors{section="activity"}) == 0)`,
 		qDeadlocks:        "sum(increase(faas_postgres_deadlocks_total[15m]))",
 		qCollectorRun:     "max(faas_postgres_activity_metrics_last_run_timestamp_seconds)",
 		qCollectorErrors:  "max by (section) (faas_postgres_activity_metrics_errors)",
@@ -566,7 +568,11 @@ func checks(v view, now time.Time, r api.ObsControlPlaneReport) []api.ObsControl
 		}
 		add(c)
 	}
-	pg(connectionsCheck(r.Postgres))
+	// Connections come from faas-postgres-connection-metrics, not the
+	// activity collector, so a stale activity collector does not hide them.
+	conns := connectionsCheck(r.Postgres)
+	conns.Group = GroupPostgres
+	add(conns)
 	pg(above("oldest_transaction", "Oldest open transaction", "seconds", v.ptr(qOldestXact), api.ObsCPOldestTransactionWarnSeconds, "FaasPostgresLongTransaction", secondsText))
 	pg(above("idle_in_transaction", "Longest idle in transaction", "seconds", v.ptr(qIdleXact), api.ObsCPIdleInTransactionWarnSeconds, "FaasPostgresIdleInTransaction", secondsText))
 	pg(above("lock_waits", "Backends waiting on locks", "count", v.ptr(qLockWaits), api.ObsCPLockWaitsWarn, "FaasPostgresLockWaits", countText))
@@ -736,7 +742,8 @@ func lastSuccess(key, label string, v view, now time.Time, query string, stale f
 func walArchiveCheck(v view, now time.Time) api.ObsControlPlaneCheck {
 	c := lastSuccess("wal_archive", "Postgres WAL archived", v, now, qWALArchived, api.ObsCPWALArchiveStallSeconds, false, "PgWalArchiveStalled", false, "", "")
 	if ts, ok := v.scalar(qWALArchived); ok && ts == 0 {
-		c.Detail = "nothing archived yet"
+		// PgWalArchiveStalled does not fire before the first archive.
+		c.State, c.Detail = StateOK, "nothing archived yet"
 	}
 	return c
 }
@@ -747,7 +754,8 @@ func offhostCheck(v view, now time.Time) api.ObsControlPlaneCheck {
 		return api.ObsControlPlaneCheck{Key: "offhost_wal", Label: "WAL pushed off host", Unit: "seconds", State: StateOK,
 			Detail: "not configured", Alert: "PgWalOffHostPushStale", WarnAt: f64(api.ObsCPOffhostWALStaleSeconds)}
 	}
-	c := lastSuccess("offhost_wal", "WAL pushed off host", v, now, qOffhostLast, api.ObsCPOffhostWALStaleSeconds, false, "PgWalOffHostPushStale", false, "", "")
+	// Configured but never pushed exports 0, and PgWalOffHostPushStale fires.
+	c := lastSuccess("offhost_wal", "WAL pushed off host", v, now, qOffhostLast, api.ObsCPOffhostWALStaleSeconds, ok, "PgWalOffHostPushStale", false, "", "")
 	if !ok {
 		c.State, c.Value, c.At, c.Detail = StateUnknown, nil, nil, "not reported"
 	}
@@ -779,7 +787,8 @@ func notificationOutboxCheck(v view) api.ObsControlPlaneCheck {
 		c.State = StateWarning
 	}
 	if worst.Value > 0 {
-		c.Detail = fmt.Sprintf("%s on %s, %d undelivered", durationText(worst.Value), worst.Labels["channel"], int64(total))
+		ch := worst.Labels["channel"]
+		c.Detail = fmt.Sprintf("%s on %s (%d undelivered), %d undelivered in all", durationText(worst.Value), ch, int64(pending[ch]), int64(total))
 	} else {
 		c.Detail = fmt.Sprintf("%d undelivered", int64(total))
 	}
@@ -787,8 +796,10 @@ func notificationOutboxCheck(v view) api.ObsControlPlaneCheck {
 }
 
 func poolsCheck(v view, rows []api.ObsControlPlanePool) api.ObsControlPlaneCheck {
+	// Value counts unhealthy pools; the per-pool saturation threshold is in
+	// the detail, not WarnAt, since the units differ.
 	c := api.ObsControlPlaneCheck{Key: "db_pools", Label: "Daemon database pools", Unit: "count",
-		WarnAt: f64(api.ObsCPPoolSaturationPercent), Alert: "FaasDBPoolNearCap", State: StateUnknown, Detail: "not reported"}
+		Alert: "FaasDBPoolNearCap", State: StateUnknown, Detail: "not reported"}
 	if _, ok := v[qPoolConns]; !ok || len(rows) == 0 {
 		return c
 	}
@@ -827,7 +838,11 @@ func hubsCheck(v view, rows []api.ObsControlPlaneNotifyHub) api.ObsControlPlaneC
 		return c
 	}
 	var disabled []string
+	connected := 0
 	for _, h := range rows {
+		if h.Conns > 0 {
+			connected++
+		}
 		if h.State == StateWarning {
 			name := h.Hub
 			if h.Node != "" {
@@ -837,7 +852,10 @@ func hubsCheck(v view, rows []api.ObsControlPlaneNotifyHub) api.ObsControlPlaneC
 		}
 	}
 	c.Value = f64(float64(len(disabled)))
-	c.State, c.Detail = StateOK, fmt.Sprintf("%d listeners connected", len(rows))
+	c.State, c.Detail = StateOK, fmt.Sprintf("%d connected", connected)
+	if idle := len(rows) - connected - len(disabled); idle > 0 {
+		c.Detail += fmt.Sprintf(", %d idle (no subscribers)", idle)
+	}
 	if len(disabled) > 0 {
 		c.State, c.Detail = StateWarning, "subscribers but no connection: "+strings.Join(disabled, ", ")
 	}
@@ -852,7 +870,7 @@ func targetsCheck(v view, rows []api.ObsControlPlaneTarget) api.ObsControlPlaneC
 	var down []string
 	for _, t := range rows {
 		if !t.Up {
-			down = append(down, t.Job)
+			down = append(down, t.Job+"@"+t.Instance)
 		}
 	}
 	c.Value = f64(float64(len(down)))

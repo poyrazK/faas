@@ -145,11 +145,19 @@ func TestBuildHealthyProduction(t *testing.T) {
 	if apid := r.Pools[1]; apid.Acquired != 1 || apid.Idle != 11 || *apid.MeanAcquireWaitMs != 0 {
 		t.Fatalf("apid pool = %+v", apid)
 	}
-	// A hub with neither subscribers nor a connection is idle, not disabled.
+	// A hub with neither subscribers nor a connection is idle, not disabled,
+	// and is not counted as connected.
 	for _, h := range r.NotifyHubs {
 		if h.State != "ok" {
 			t.Fatalf("hub = %+v", h)
 		}
+	}
+	if h := c["notify_hubs"]; h.Detail != "1 connected, 1 idle (no subscribers)" {
+		t.Fatalf("hubs = %q", h.Detail)
+	}
+	// db_pools counts pools; a percent threshold would not compare with it.
+	if p := c["db_pools"]; p.WarnAt != nil || p.Unit != "count" {
+		t.Fatalf("db_pools = %+v", p)
 	}
 	if *r.Host.CPUs != 12 || *r.Host.MemAvailableBytes != 28269838336 {
 		t.Fatalf("host = %+v", r.Host)
@@ -193,10 +201,10 @@ func TestBuildFlagsProblems(t *testing.T) {
 	if c["base_backup"].Detail != "never succeeded" || c["state_backup"].Detail != "6.0 h ago, 15.3 KB; faas-cp-state-backup.service failed" {
 		t.Fatalf("backups = %q / %q", c["base_backup"].Detail, c["state_backup"].Detail)
 	}
-	if c["notification_outbox"].Detail != "20 min on app_wake, 5 undelivered" {
+	if c["notification_outbox"].Detail != "20 min on app_wake (4 undelivered), 5 undelivered in all" {
 		t.Fatalf("outbox = %q", c["notification_outbox"].Detail)
 	}
-	if c["db_pools"].Detail != "acquires canceled: apid" || c["notify_hubs"].Detail != "subscribers but no connection: schedd@bhs-2.faas" || c["targets"].Detail != "down: meterd" {
+	if c["db_pools"].Detail != "acquires canceled: apid" || c["notify_hubs"].Detail != "subscribers but no connection: schedd@bhs-2.faas" || c["targets"].Detail != "down: meterd@127.0.0.1:9096" {
 		t.Fatalf("daemons = %q / %q / %q", c["db_pools"].Detail, c["notify_hubs"].Detail, c["targets"].Detail)
 	}
 	if r.Pools[0].Pool != "apid" || r.Pools[0].State != "critical" || r.Pools[1].State != "warning" || r.Pools[1].Node != "bhs-3.faas" {
@@ -211,11 +219,13 @@ func TestBuildFlagsProblems(t *testing.T) {
 }
 
 // A stale collector leaves its Postgres readings unknown: a last value of
-// "no open transaction" is not current evidence.
+// "no open transaction" is not current evidence. Connections come from a
+// separate exporter and stay graded.
 func TestStaleCollectorLeavesPostgresUnknown(t *testing.T) {
 	s := healthy()
 	s["pg_collector_last_run"] = one(ago(10 * time.Minute))
 	s["pg_oldest_transaction"] = one(0)
+	s["pg_connections"] = one(170)
 	r := build(s)
 	for _, c := range r.Checks {
 		switch {
@@ -223,11 +233,40 @@ func TestStaleCollectorLeavesPostgresUnknown(t *testing.T) {
 			if c.State != "warning" || c.Detail != "ran 10 min ago" {
 				t.Fatalf("collector = %+v", c)
 			}
+		case c.Key == "connections":
+			if c.State != "critical" || c.Detail != "170 of 185" {
+				t.Fatalf("connections = %+v (a stale activity collector must not hide them)", c)
+			}
 		case c.Group == "postgres":
 			if c.State != "unknown" || !strings.HasSuffix(c.Detail, "(collector stale)") {
 				t.Fatalf("%s = %+v", c.Key, c)
 			}
 		}
+	}
+}
+
+// Edge readings graded as their alerts do: off-host WAL configured but never
+// pushed fires PgWalOffHostPushStale; nothing archived yet does not fire
+// PgWalArchiveStalled; a lock-wait read missing (the activity section
+// failed) is unknown, not zero.
+func TestAlertEdgeReadings(t *testing.T) {
+	s := healthy()
+	s["offhost_wal_last"] = one(0)
+	s["wal_last_archived"] = one(0)
+	delete(s, "pg_lock_waits")
+	c := checksByKey(build(s))
+	if o := c["offhost_wal"]; o.State != "warning" || o.Detail != "never succeeded" {
+		t.Fatalf("offhost = %+v", o)
+	}
+	if w := c["wal_archive"]; w.State != "ok" || w.Detail != "nothing archived yet" {
+		t.Fatalf("wal archive = %+v", w)
+	}
+	if l := c["lock_waits"]; l.State != "unknown" {
+		t.Fatalf("lock waits = %+v", l)
+	}
+	q := controlplane.Queries()["pg_lock_waits"]
+	if strings.Contains(q, "vector(0)") || !strings.Contains(q, `faas_postgres_activity_metrics_errors{section="activity"}) == 0`) {
+		t.Fatalf("lock waits query = %s", q)
 	}
 }
 

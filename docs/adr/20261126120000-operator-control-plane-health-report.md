@@ -18,10 +18,11 @@ The data is already in Prometheus. These were checked against the
 production fleet's Prometheus on 2026-11-26; every query answered in about
 10 ms:
 
+- `faas-postgres-connection-metrics` (textfile, job `node`) exports client
+  connections against the ordinary connection capacity (123 of 185 then)
+  and the WAL archive and off-host push timestamps.
 - The postgres activity collector (`faas-postgres-activity-metrics`,
-  textfile, job `node`) exports `faas_postgres_*`:
-  - client connections against the ordinary connection capacity (123 of
-    185 then);
+  textfile, job `node`) exports the rest of `faas_postgres_*`:
   - longest query, oldest transaction, idle in transaction;
   - backends by application and state, and lock waits;
   - deadlocks, cache blocks, commits and rollbacks, temp bytes;
@@ -59,7 +60,7 @@ It is operator-only (operator session read), sends `no-store`, takes no
 parameters (any parameter is a 400), and is excluded from spec compliance.
 It needs no migration, store query or new metric.
 
-`pkg/apid/controlplane` (ADR-982) runs 46 queries concurrently at one
+`pkg/apid/controlplane` (ADR-982) runs 45 queries concurrently at one
 pinned instant under `ObsCPPrometheusBudget` (3 s). The source is
 `observed`, `partial` (the failed queries are named), `unavailable` or
 `not_configured`.
@@ -86,8 +87,8 @@ it does not wait for the alert's `for:`.
 | postgres | deadlocks (15 min) | any | — |
 | backups | base backup pushed | over 26 h ago, never, or unit failed | — |
 | backups | state backup | over 26 h ago or unit failed | — |
-| backups | WAL archived | over 10 min ago | — |
-| backups | WAL pushed off host | over 15 min ago, when configured | — |
+| backups | WAL archived | over 10 min ago (ok before the first archive) | — |
+| backups | WAL pushed off host | when configured: over 15 min ago, or never | — |
 | backups | WAL pruned | over 2 h ago, or never | — |
 | backups | oldest archived WAL | over 3 d | — |
 | delivery | notification outbox | oldest over 15 min | — |
@@ -96,9 +97,14 @@ it does not wait for the alert's `for:`.
 | daemons | pg_notify listeners | subscribers but no connection | — |
 | daemons | control-plane targets | — | any target down |
 
-When the stats collector is stale, the Postgres checks are `unknown`: its
-last values (for example "no open transaction") are not current evidence.
-The report's `state` is the worst check's.
+When the activity collector is stale, the Postgres checks it feeds are
+`unknown`: its last values (for example "no open transaction") are not
+current evidence. Connections come from the separate connection exporter
+and stay graded. Lock waits read as zero only while the collector's
+`activity` section succeeds; when that section fails the check is
+`unknown`, not "0 waiting". The database pools check counts unhealthy
+pools, so it carries no percent threshold. The report's `state` is the
+worst check's.
 
 ### Details
 
