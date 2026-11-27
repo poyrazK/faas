@@ -62,6 +62,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/imageupload"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -245,7 +246,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	if openCount >= uploadSessionOpenCap {
 		api.WriteProblem(w, api.ErrUploadSessionTooMany(
 			fmt.Sprintf("Account has %d open upload sessions on app %q (cap %d). Cancel one before opening another.", openCount, req.AppSlug, uploadSessionOpenCap),
-			uploadSpoolBudgetBytes(limits), int64(openCount)*maxBytes))
+			uploadSpoolBudgetBytes(limits, req.DeployOptions != nil && req.DeployOptions.IsImageArchive()), int64(openCount)*maxBytes))
 		return
 	}
 
@@ -256,7 +257,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			"Retry in a moment; if it continues, contact support.", err)
 		return
 	}
-	budgetBytes := uploadSpoolBudgetBytes(limits)
+	budgetBytes := uploadSpoolBudgetBytes(limits, req.DeployOptions != nil && req.DeployOptions.IsImageArchive())
 	if openBytes+req.TotalSize > budgetBytes {
 		api.WriteProblem(w, api.ErrUploadSessionTooMany(
 			fmt.Sprintf("Account has %d bytes in open upload sessions (budget %d). Commit or cancel one before opening another.", openBytes, budgetBytes),
@@ -714,9 +715,13 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	explicitSourceRoot := strings.TrimSpace(opts.SourceRoot) != ""
 	imageArchive := opts.IsImageArchive()
 	if imageArchive {
-		// Rechecked at commit: the app's signing policy may have changed
-		// while the bytes uploaded.
-		if prob := imageArchiveAppProblem(app, opts); prob != nil {
+		// Rechecked at commit: the release flag or the app's signing policy
+		// may have changed while the bytes uploaded.
+		if prob := s.imageUploadReleaseProblem(acct, &opts); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		if prob := imageupload.AppProblem(app, opts); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -757,7 +762,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	var tree uploadedSourceTree
 	var imageSummary *ociarchive.Summary
 	if imageArchive {
-		summary, prob := inspectUploadedImage(row.PartPath)
+		summary, prob := imageupload.Inspect(row.PartPath)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -845,7 +850,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		SourceRoot:                opts.SourceRoot,
 		DockerfilePath:            sourceBuild.path,
 		DockerfileBuild:           sourceBuild.options,
-		UploadedImage:             uploadedImageParams(imageSummary, opts.ImageName),
+		UploadedImage:             imageupload.Params(imageSummary, opts.ImageName),
 		Handler:                   opts.Handler,
 		FunctionRuntime:           functionRuntimeForApp(app),
 		SourceURL:                 sourceURL,

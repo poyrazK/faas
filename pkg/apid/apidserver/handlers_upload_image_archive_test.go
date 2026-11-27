@@ -35,6 +35,25 @@ func TestUploadImageArchive_RefusedWhileFlagOff(t *testing.T) {
 	}
 }
 
+// Turning the flag off also stops an upload opened while it was on: an
+// older builderd must never receive one.
+func TestUploadImageArchive_FlagOffAtCommit(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	e := setupLocalImage(t, api.PlanFree)
+	e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "img"}, nil)
+	archive, _ := ociarchivetest.Canonical(t, 0)
+	rec := startImageUpload(t, e, "img", int64(len(archive)), imageUploadOptions(""))
+	var started apidserver.StartUploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil || rec.Code != http.StatusCreated {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	appendChunk(t, e, started.UploadID, 0, archive)
+	(*e.S()).SeedPlatformFlag(platformflags.LocalImageDeploys, platformflags.Definition{})
+	if rec := commitUpload(e, started.UploadID); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Local image deploys unavailable") {
+		t.Fatalf("commit with flag off: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func imageUploadOptions(name string) *api.UploadDeployOptions {
 	return &api.UploadDeployOptions{SourceFormat: api.UploadSourceFormatOCIImageArchive, ImageName: name, Reason: "local image"}
 }

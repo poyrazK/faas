@@ -123,6 +123,43 @@ func TestDeployLocalImageRunsDockerSave(t *testing.T) {
 	stub.checkUploaded(t, "acme/web:dev")
 }
 
+// An archive with no tag and a file name with no stem still deploys the
+// image, never the working directory's source.
+func TestDeployImageArchiveWithoutNameStillUploadsImage(t *testing.T) {
+	localImageRepo(t)
+	stub := newLocalImageStub(t)
+	saved := filepath.Join(t.TempDir(), ".tar")
+	if err := os.WriteFile(saved, ociarchivetest.DockerSave(t, "", "amd64", 8080), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := main.CmdDeployTarball([]string{"--name", "demo", "--app", "--no-wait", "--image-archive", saved}); code != 0 {
+		t.Fatalf("code=%d", code)
+	}
+	if stub.opts == nil || stub.opts.SourceFormat != api.UploadSourceFormatOCIImageArchive || stub.commits != 1 {
+		t.Fatalf("deploy options = %+v commits=%d, want the image uploaded", stub.opts, stub.commits)
+	}
+}
+
+// Docker runs only after the deploy's own validation, so a refused deploy
+// never writes the image to $TMPDIR.
+func TestDeployLocalImageSavesAfterValidation(t *testing.T) {
+	localImageRepo(t)
+	stub := newLocalImageStub(t)
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ran")
+	fake := filepath.Join(dir, "fake-docker")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\ntouch "+marker+"\nexit 3\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GREGALE_DOCKER", fake)
+	if code := main.CmdDeployTarball([]string{"--name", "demo", "--app", "--no-wait", "--local-image", "acme/web", "--require-authn", "--no-require-authn"}); code == 0 {
+		t.Fatal("deploy succeeded")
+	}
+	if _, err := os.Stat(marker); err == nil || stub.opts != nil {
+		t.Fatal("docker save ran (or the upload started) before validation refused the deploy")
+	}
+}
+
 func TestDeployLocalImageRefusesBeforeNetwork(t *testing.T) {
 	localImageRepo(t)
 	saved := filepath.Join(t.TempDir(), "app.tar")
@@ -136,6 +173,7 @@ func TestDeployLocalImageRefusesBeforeNetwork(t *testing.T) {
 		"preview":         {"--image-archive", saved, "--dry-run"},
 		"arm64 image":     {"--image-archive", saved},
 		"missing archive": {"--image-archive", filepath.Join(t.TempDir(), "none.tar")},
+		"option as name":  {"--local-image=-q"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			stub := newLocalImageStub(t)

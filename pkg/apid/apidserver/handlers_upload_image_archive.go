@@ -1,79 +1,41 @@
 package apidserver
 
-// Prebuilt image uploads (ADR-20261127120000): `gregale deploy
-// --local-image` sends a single-image OCI archive through the resumable
-// upload session. It skips the source-tree checks and becomes a Dockerfile
-// deployment whose build is already done; builderd hands the archive to
-// imaged without a builder VM.
+// Upload session wiring for prebuilt image uploads (ADR-20261127120000); the
+// rules live in pkg/apid/imageupload.
 
 import (
-	"errors"
-	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/imageupload"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
-	"github.com/onebox-faas/faas/pkg/ociarchive"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
-// uploadSessionSizeCap validates the upload's format and returns the plan
-// cap that applies to it, refusing a total size above it.
+// uploadSessionSizeCap refuses an image upload the release flag does not
+// cover, then applies imageupload.SizeCap.
 func (s *server) uploadSessionSizeCap(acct state.Account, app state.App, limits api.Limits, opts *api.UploadDeployOptions, total int64) (int64, *api.Problem) {
-	if opts != nil && opts.IsImageArchive() && !s.platformFlagEnabled(platformflags.LocalImageDeploys, acct) {
-		return 0, api.ErrImageArchiveUnavailable()
-	}
-	if opts == nil || !opts.IsImageArchive() {
-		if opts != nil {
-			if prob := opts.ValidateSourceFormat(); prob != nil {
-				return 0, prob
-			}
-		}
-		maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
-		if total > maxBytes {
-			return 0, api.ErrSourceTooLarge(limits, total)
-		}
-		return maxBytes, nil
-	}
-	if prob := imageArchiveAppProblem(app, *opts); prob != nil {
+	if prob := s.imageUploadReleaseProblem(acct, opts); prob != nil {
 		return 0, prob
 	}
-	maxBytes := limits.ImageArchiveMaxBytes()
-	if total > maxBytes {
-		return 0, api.ErrImageArchiveTooLarge(limits, total)
-	}
-	return maxBytes, nil
+	return imageupload.SizeCap(app, limits, opts, total)
 }
 
-// uploadSpoolBudgetBytes is an account's budget for bytes in open upload
-// sessions: a few source tarballs, or one image archive at the app layer cap
-// when that is larger (ADR-20261127120000). It does not scale with the image
-// cap, so image uploads cannot multiply the control plane's spool use.
-func uploadSpoolBudgetBytes(limits api.Limits) int64 {
-	return max(int64(limits.SourceTarballMaxMB)<<20*uploadSessionSpoolBudgetMultiplier, limits.ImageArchiveMaxBytes())
-}
-
-// imageArchiveAppProblem refuses options and apps a prebuilt image cannot
-// serve. It runs at session start and again at commit, because the app's
-// policy can change while the bytes upload.
-func imageArchiveAppProblem(app state.App, opts api.UploadDeployOptions) *api.Problem {
-	if prob := opts.ValidateSourceFormat(); prob != nil {
-		return prob
-	}
-	if app.Type == state.AppTypeFunction {
-		return api.ErrImageArchiveInvalid("functions build from their runtime; deploy a local image to an app")
-	}
-	if app.RequireSigned || app.SecurityPolicy.RequiresSignedImage() {
-		return api.ErrImageArchiveSignedImageRequired(app.Slug)
-	}
-	if hint, denied := statefuldenylist.Match(opts.ImageName); denied {
-		return api.ErrStatelessOnlyViolation("image", fmt.Sprintf("%s runs a datastore, which loses its data when the app parks; %s", opts.ImageName, hint))
+// imageUploadReleaseProblem refuses an image archive while the
+// local_image_deploys flag is off for the account. It is checked at start
+// and at commit, so turning the flag off also stops open uploads.
+func (s *server) imageUploadReleaseProblem(acct state.Account, opts *api.UploadDeployOptions) *api.Problem {
+	if opts != nil && opts.IsImageArchive() && !s.platformFlagEnabled(platformflags.LocalImageDeploys, acct) {
+		return api.ErrImageArchiveUnavailable()
 	}
 	return nil
+}
+
+// uploadSpoolBudgetBytes is imageupload.SpoolBudgetBytes with this server's
+// source multiplier.
+func uploadSpoolBudgetBytes(limits api.Limits, imageArchive bool) int64 {
+	return imageupload.SpoolBudgetBytes(limits, imageArchive, uploadSessionSpoolBudgetMultiplier)
 }
 
 // uploadedSourceTree is what a committed source tarball declares.
@@ -131,30 +93,4 @@ func (s *server) resolveUploadedSourceTree(partPath string, acct state.Account, 
 		return uploadedSourceTree{}, prob
 	}
 	return tree, nil
-}
-
-// uploadedImageParams is the Enqueue input for a committed image archive.
-func uploadedImageParams(summary *ociarchive.Summary, name string) *apidsource.UploadedImage {
-	if summary == nil {
-		return nil
-	}
-	return &apidsource.UploadedImage{ManifestDigest: summary.ManifestDigest, Name: name, Port: summary.ExposedPort}
-}
-
-// inspectUploadedImage verifies the committed archive's shape, digests and
-// platform. imaged verifies every layer's diff ID when it builds the layer.
-func inspectUploadedImage(partPath string) (ociarchive.Summary, *api.Problem) {
-	f, err := os.Open(partPath) //nolint:forbidigo // server-created upload spool path from the session row.
-	if err != nil {
-		return ociarchive.Summary{}, api.ErrImageArchiveInvalid("the uploaded archive is unreadable")
-	}
-	defer func() { _ = f.Close() }()
-	summary, err := ociarchive.Inspect(f)
-	if err != nil {
-		if errors.Is(err, ociarchive.ErrInvalid) {
-			return ociarchive.Summary{}, api.ErrImageArchiveInvalid(err.Error())
-		}
-		return ociarchive.Summary{}, api.ErrImageArchiveInvalid("the uploaded archive is unreadable")
-	}
-	return summary, nil
 }

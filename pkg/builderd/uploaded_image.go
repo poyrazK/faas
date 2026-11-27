@@ -16,13 +16,14 @@ import (
 )
 
 // uploadedImage returns the prebuilt image apid accepted for this deployment
-// (ADR-20261127120000), or nil for an ordinary source build.
+// (ADR-20261127120000), or nil for an ordinary source build. It ignores the
+// profile version, as apid's retry check does: a profile written before a
+// frameworkprofile.Version bump still marks an uploaded image.
 func uploadedImage(dep state.Deployment) *frameworkprofile.UploadedImage {
-	profile, ok := persistedProfile(dep)
-	if !ok || profile.UploadedImage == nil || dep.Kind != state.DeploymentKindDockerfile {
+	if dep.Kind != state.DeploymentKindDockerfile {
 		return nil
 	}
-	return profile.UploadedImage
+	return frameworkprofile.UploadedImageIn(dep.InferredProfile)
 }
 
 // sourceCapBytes is the plan's cap on what this build's source spool holds.
@@ -65,11 +66,19 @@ func (b *Builderd) completeUploadedImage(ctx context.Context, build state.Build,
 	}
 	if err := checkUploadedImage(layerPath, uploaded.ManifestDigest); err != nil {
 		_ = os.Remove(layerPath)
-		b.markFailed(ctx, build, state.FailureUserError, err.Error(), buildStart)
+		class := state.FailureInfra // the host could not read its own copy
+		if errors.Is(err, ociarchive.ErrInvalid) || errors.Is(err, errUploadedImageChanged) {
+			class = state.FailureUserError
+		}
+		b.markFailed(ctx, build, class, err.Error(), buildStart)
 		return BuildResult{}, err
 	}
 	return b.completeBuild(ctx, build, dep, app, acct, srcHash, "", BuildResult{BuildID: build.ID, LayerPath: layerPath, LayerBytes: size}, buildStart)
 }
+
+// errUploadedImageChanged marks an archive that is valid but is not the
+// image apid accepted.
+var errUploadedImageChanged = errors.New("uploaded image changed after commit")
 
 // checkUploadedImage re-inspects the placed export and confirms it is the
 // image apid accepted.
@@ -84,7 +93,7 @@ func checkUploadedImage(path, wantDigest string) error {
 		return fmt.Errorf("builderd: uploaded image: %w", err)
 	}
 	if summary.ManifestDigest != wantDigest {
-		return fmt.Errorf("builderd: uploaded image is %s, not the accepted %s", summary.ManifestDigest, wantDigest)
+		return fmt.Errorf("builderd: uploaded image is %s, not the accepted %s: %w", summary.ManifestDigest, wantDigest, errUploadedImageChanged)
 	}
 	return nil
 }

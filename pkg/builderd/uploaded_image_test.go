@@ -80,6 +80,18 @@ func TestProcessOne_UploadedImageSkipsVM(t *testing.T) {
 	}
 }
 
+// A profile written under an older frameworkprofile.Version still marks an
+// uploaded image, as apid's retry check reads it.
+func TestUploadedImageIgnoresProfileVersion(t *testing.T) {
+	dep := state.Deployment{Kind: state.DeploymentKindDockerfile, InferredProfile: []byte(`{"version":"0-old","uploaded_image":{"manifest_digest":"sha256:x"}}`)}
+	if got := uploadedImage(dep); got == nil || got.ManifestDigest != "sha256:x" {
+		t.Fatalf("uploadedImage = %+v", got)
+	}
+	if sourceCapBytes(api.MustLimitsFor(api.PlanFree), dep) != api.MustLimitsFor(api.PlanFree).ImageArchiveMaxBytes() {
+		t.Fatal("an old-version uploaded image got the source cap")
+	}
+}
+
 // builderd never signs bytes it did not build: an uploaded image completes
 // without a build publication even when a publisher is configured.
 func TestProcessOne_UploadedImageIsNeverSigned(t *testing.T) {

@@ -24,11 +24,16 @@ import (
 
 // localImageDeploy is a converted image ready to upload.
 type localImageDeploy struct {
-	archivePath    string
+	sourceName     string // --local-image NAME, normalised; empty for --image-archive
+	sourceArchive  string // --image-archive PATH
+	archivePath    string // canonical archive, set by prepare
 	imageName      string // repository tag recorded on the deployment, if any
-	displayName    string // what the --image path prints and checks
-	manifestDigest string
+	displayName    string // what the --image path prints and checks; never empty
+	manifestDigest string // set by prepare
 }
+
+// localImageFallbackName names an archive whose file name says nothing.
+const localImageFallbackName = "image-archive"
 
 // localImageIDPattern matches a short or full image ID, which names exactly
 // one image and must not gain a ":latest" tag.
@@ -52,6 +57,10 @@ func localImageFlagProblem(name, archive string, explicit map[string]bool) error
 	if name != "" && archive != "" {
 		return errors.New("--local-image and --image-archive are mutually exclusive")
 	}
+	if strings.HasPrefix(name, "-") {
+		// It would reach `docker image save` as an option.
+		return fmt.Errorf("--local-image %q is not an image name", name)
+	}
 	flagName := "--local-image"
 	if archive != "" {
 		flagName = "--image-archive"
@@ -69,70 +78,81 @@ func localImageFlagProblem(name, archive string, explicit map[string]bool) error
 	return nil
 }
 
-// prepareLocalImageDeploy validates the flags and converts the image. The
-// cleanup removes every temporary file and is safe to call on failure.
-func prepareLocalImageDeploy(ctx context.Context, name, archive string, explicit map[string]bool) (*localImageDeploy, func(), int) {
-	noop := func() {}
-	if !localImageIDPattern.MatchString(name) {
-		name = ociarchive.WithDefaultTag(name) // save one image, not every tag of the repository
-	}
+// planLocalImageDeploy validates the local-image flags and names the image,
+// without touching Docker or the archive: the deploy's own validation runs
+// first, so a refused combination never writes gigabytes to $TMPDIR.
+func planLocalImageDeploy(name, archive string, explicit map[string]bool) (*localImageDeploy, int) {
 	if err := localImageFlagProblem(name, archive, explicit); err != nil {
-		return nil, noop, printErr("Invalid flags", err)
+		return nil, printErr("Invalid flags", err)
 	}
 	if name == "" && archive == "" {
-		return nil, noop, 0
+		return nil, 0
 	}
+	if name != "" && !localImageIDPattern.MatchString(name) {
+		name = ociarchive.WithDefaultTag(name) // save one image, not every tag of the repository
+	}
+	display := name
+	if display == "" {
+		display = strings.TrimSuffix(filepath.Base(archive), filepath.Ext(archive))
+		if strings.Trim(display, ". ") == "" {
+			display = localImageFallbackName
+		}
+	}
+	return &localImageDeploy{sourceName: name, sourceArchive: archive, imageName: name, displayName: display}, 0
+}
+
+// prepare saves (for --local-image) and converts the image. The cleanup
+// removes every temporary file and is safe to call on failure.
+func (img *localImageDeploy) prepare(ctx context.Context) (func(), int) {
+	noop := func() {}
 	dir, err := os.MkdirTemp("", "gregale-local-image-")
 	if err != nil {
-		return nil, noop, printErr("Could not prepare the image", err)
+		return noop, printErr("Could not prepare the image", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
-	input := archive
-	if name != "" {
+	input := img.sourceArchive
+	if img.sourceName != "" {
 		input = filepath.Join(dir, "docker-save.tar")
 		if !jsonOutput {
-			PrintProgress(osStderr, "saving %s from Docker", name)
+			PrintProgress(osStderr, "saving %s from Docker", img.sourceName)
 		}
-		if err := dockerSave(ctx, name, input); err != nil {
+		if err := dockerSave(ctx, img.sourceName, input); err != nil {
 			cleanup()
-			return nil, noop, printErr("Could not read the local image", err)
+			return noop, printErr("Could not read the local image", err)
 		}
 	}
-	prepared, err := convertLocalImage(input, name, dir)
-	if name != "" {
+	err = img.convert(input, dir)
+	if img.sourceName != "" {
 		_ = os.Remove(input) // the canonical archive replaces it; halve the disk peak
 	}
 	if err != nil {
 		cleanup()
-		return nil, noop, printErr("Could not prepare the image", err)
+		return noop, printErr("Could not prepare the image", err)
 	}
-	if prepared.displayName == "" {
-		prepared.displayName = strings.TrimSuffix(filepath.Base(archive), filepath.Ext(archive))
-	}
-	return prepared, cleanup, 0
+	return cleanup, 0
 }
 
-func convertLocalImage(input, name, dir string) (*localImageDeploy, error) {
+func (img *localImageDeploy) convert(input, dir string) error {
 	out := filepath.Join(dir, "image.oci.tar")
 	f, err := os.Create(out) //nolint:forbidigo // CLI-owned temporary file.
 	if err != nil {
-		return nil, err
+		return err
 	}
-	res, convErr := ociarchive.Convert(input, name, dir, f)
+	res, convErr := ociarchive.Convert(input, img.sourceName, dir, f)
 	if closeErr := f.Close(); convErr == nil {
 		convErr = closeErr
 	}
 	if convErr != nil {
-		return nil, convErr
+		return convErr
 	}
-	imageName := name
-	if imageName == "" {
-		imageName = res.ImageName
+	if img.imageName == "" {
+		img.imageName = res.ImageName
 	}
-	if len(imageName) > api.UploadImageNameMaxLen {
-		imageName = imageName[:api.UploadImageNameMaxLen]
+	if len(img.imageName) > api.UploadImageNameMaxLen {
+		img.imageName = img.imageName[:api.UploadImageNameMaxLen]
 	}
-	return &localImageDeploy{archivePath: out, imageName: imageName, displayName: imageName, manifestDigest: res.ManifestDigest}, nil
+	img.archivePath, img.manifestDigest = out, res.ManifestDigest
+	return nil
 }
 
 // localImageIntent is the image identity a deploy's idempotency intent

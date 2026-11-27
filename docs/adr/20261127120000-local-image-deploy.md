@@ -74,12 +74,13 @@ moves large customer bytes to apid, resumably and within a size cap.
    image, so its signature never vouches for bytes it did not build. If an
    app later turns on signed images, those deployments cannot satisfy the
    policy.
-6. **Account spool budget.** The budget for bytes in open upload sessions
-   becomes the larger of 4× the source tarball cap (unchanged) and one image
-   archive at the app layer cap. It does not become 4× the image cap. On Scale
-   that is 2 GB instead of 1 GB: one full-size image at a time.
+6. **Account spool budget.** Opening a source upload keeps the budget of 4×
+   the source tarball cap. Opening an image archive may fill up to the larger
+   of that and one image archive at the app layer cap, never 4× the image cap.
+   On Scale that is 2 GB rather than 1 GB, and only for an image session.
 7. **Rollout.** apid accepts image archives only for accounts the
-   `local_image_deploys` platform flag releases. Turn it on only after every
+   `local_image_deploys` platform flag releases. It checks the flag at session
+   start and again at commit, so turning it off also stops open uploads. Turn it on only after every
    builderd runs this release. An older builderd would treat the archive as
    a source tarball, and an older apid ignores `source_format` and refuses the
    upload at commit because it is not gzip. Retries of an uploaded image are

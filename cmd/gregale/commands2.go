@@ -2514,8 +2514,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	// A local image follows the --image path until submission, where it is
 	// uploaded instead of pulled (ADR-20261127120000).
-	localImage, localImageCleanup, localImageCode := prepareLocalImageDeploy(ctx, *localImageName, *imageArchivePath, explicit)
-	defer localImageCleanup()
+	localImage, localImageCode := planLocalImageDeploy(*localImageName, *imageArchivePath, explicit)
 	if localImageCode != 0 {
 		return localImageCode
 	}
@@ -4082,6 +4081,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// the default logical retry key follows the exact archive being shipped.
 	// Deploys with an explicit key can skip this extra read unless source-map
 	// publication needs to verify the accepted deployment's source identity.
+	if localImage != nil {
+		// Save and convert only now, after every check that could refuse
+		// the deploy: the image can be gigabytes.
+		localImageCleanup, code := localImage.prepare(ctx)
+		defer localImageCleanup()
+		if code != 0 {
+			return code
+		}
+	}
 	sourceSHA256 := ""
 	// Previews also need the digest even with an explicit idempotency key.
 	if *tarball != "" && (strings.TrimSpace(*idempotencyKey) == "" || *diff || preparedIssueSourceMaps != nil) {
