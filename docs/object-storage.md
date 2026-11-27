@@ -494,8 +494,7 @@ always work. Retention set before these caps is kept as it was.
 your bucket supports. Enabling Object Lock on a bucket is permanent, and the
 bucket then keeps every object version.
 
-Some storage accepts Object Lock only when a bucket is created
-([ADR-20261119065000](adr/20261119065000-object-lock-chosen-at-bucket-creation.md)).
+Some storage accepts Object Lock only when a bucket is created.
 Choose it then with `gregale add bucket NAME --app APP --object-lock` (API:
 `"object_lock": true`). Enabling it later on a bucket created without it is
 refused with `409 object_lock_requires_new_bucket` (S3 SDKs:
