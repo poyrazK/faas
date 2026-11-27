@@ -3,10 +3,10 @@ package state
 import (
 	"context"
 	"errors"
-	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -144,7 +144,7 @@ func (m *MemStore) AdvanceProductStripeInvoiceSend(_ context.Context, account, e
 	return nil
 }
 
-var stripeSendEventID = regexp.MustCompile(`^evt_[A-Za-z0-9]{1,120}$`)
+var stripeSendEventID = lazyregexp.New(`^evt_[A-Za-z0-9]{1,120}$`)
 
 func (s *PgStore) VerifyProductStripeInvoiceSend(ctx context.Context, account, export, token, eventID string, eventAt, retryBefore time.Time) error {
 	if !stripeSendEventID.MatchString(eventID) || eventAt.IsZero() {
