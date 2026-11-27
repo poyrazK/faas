@@ -247,6 +247,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 		return 1
 	}
 	if imageFlags.image != "" {
+		imageFlags.app = *appFlag
 		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
 	}
 	path := "."

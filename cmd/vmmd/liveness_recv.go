@@ -693,7 +693,7 @@ func startLivenessLoopHelper(parent context.Context, mgr *fcvm.Manager, log *slo
 		if cfg.ImageHealthcheckRequired {
 			probes.Go(func() {
 				defer cancel()
-				reason := fcvm.RunImageHealthcheckMonitor(loopCtx, socketPath, func(outcome string, _ int, elapsed time.Duration) {
+				reason := fcvm.RunImageHealthcheckMonitor(loopCtx, socketPath, loop.quietGate, func(outcome string, _ int, elapsed time.Duration) {
 					mgr.ObserveLivenessProbe("image_"+outcome, elapsed.Seconds())
 				})
 				if reason != "" && loopCtx.Err() == nil {

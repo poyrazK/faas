@@ -1,4 +1,4 @@
--- filename: 20261127141323150_stage_workflow_schedule_cursors.sql
+-- filename: 20261127193058200_stage_workflow_schedule_cursors.sql
 -- migration-compat: expand
 
 -- +goose Up

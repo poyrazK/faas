@@ -2575,6 +2575,7 @@ type Querier interface {
 	GetAPIConsumerCreditPackSettings(ctx context.Context, db DBTX, arg GetAPIConsumerCreditPackSettingsParams) (GetAPIConsumerCreditPackSettingsRow, error)
 	GetAPIConsumerCreditPurchase(ctx context.Context, db DBTX, arg GetAPIConsumerCreditPurchaseParams) (ApiConsumerCreditPurchase, error)
 	GetAPIKeyApprovalCategories(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]string, error)
+	GetAPIKeyConnectGrant(ctx context.Context, db DBTX, keyID pgtype.UUID) (GetAPIKeyConnectGrantRow, error)
 	GetAPIKeyProjectLimit(ctx context.Context, db DBTX, keyID pgtype.UUID) ([]pgtype.UUID, error)
 	GetAPISandboxApprovalCheck(ctx context.Context, db DBTX, comparisonID pgtype.UUID) (GetAPISandboxApprovalCheckRow, error)
 	GetAPISandboxApprovalPinForApp(ctx context.Context, db DBTX, sandboxAppID pgtype.UUID) (GetAPISandboxApprovalPinForAppRow, error)
@@ -3081,6 +3082,9 @@ type Querier interface {
 	InsertAPIConsumerCreditPurchase(ctx context.Context, db DBTX, arg InsertAPIConsumerCreditPurchaseParams) (ApiConsumerCreditPurchase, error)
 	// ADR-20261104140058: the categories a key must have approved; set once, when it is minted.
 	InsertAPIKeyApprovalCategories(ctx context.Context, db DBTX, arg InsertAPIKeyApprovalCategoriesParams) error
+	// ADR-20261127160000: the Connect consent that approves a hosted MCP key's
+	// deploys; written once, when apid mints the key from the approved sign-in.
+	InsertAPIKeyConnectGrant(ctx context.Context, db DBTX, arg InsertAPIKeyConnectGrantParams) error
 	// ADR-20261104085712: limits a key to projects; set once, when it is minted.
 	InsertAPIKeyProjectLimit(ctx context.Context, db DBTX, arg InsertAPIKeyProjectLimitParams) error
 	InsertAccountEmailChange(ctx context.Context, db DBTX, arg InsertAccountEmailChangeParams) (int64, error)

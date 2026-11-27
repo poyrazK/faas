@@ -1232,6 +1232,13 @@ type ApiKeyApprovalCategory struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+// ADR-20261127160000 the Connect consent that approves a hosted MCP key's deploys; apid is the only writer.
+type ApiKeyConnectGrant struct {
+	KeyID     pgtype.UUID
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
 // ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.
 type ApiKeyProjectLimit struct {
 	KeyID      pgtype.UUID

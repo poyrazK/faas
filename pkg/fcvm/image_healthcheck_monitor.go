@@ -50,18 +50,30 @@ func checkImageHealthcheckOnce(ctx context.Context, socket, runtimeID string) (h
 	}
 }
 
+// QuietGate reports whether an instance is quiet-paused now (ADR-1151) and
+// the pause epoch, which changes on every pause. Manager.QuietGate is one.
+type QuietGate func() (paused bool, epoch uint64)
+
 type imageHealthcheckMonitor struct {
 	config  func(context.Context) (healthcheckproto.Config, error)
 	probe   func(context.Context, string) (healthcheckproto.Response, error)
 	wait    func(context.Context, time.Duration) bool
 	observe func(string, int, time.Duration)
+	quiet   QuietGate
 }
 
 // RunImageHealthcheckMonitor performs fresh, serialized command attempts until
 // cancellation or a terminal threshold. Schedd remains the recovery owner.
 // Missing/invalid transport proof is infrastructure recovery, never an app
 // health failure. The caller must stop sibling probes on a terminal return.
-func RunImageHealthcheckMonitor(ctx context.Context, socket string, observe func(string, int, time.Duration)) string {
+//
+// quiet (nil: the guest never pauses) gates the monitor like the vsock
+// liveness loop: a quiet-paused guest cannot answer, so no attempt runs while
+// it is paused and an attempt that overlapped a pause counts for nothing.
+// Without the gate every paused guest with a HEALTHCHECK ran out of transport
+// attempts and was destroyed as liveness_infrastructure (production
+// 2026-11-27), which also discarded the deployment's snapshot.
+func RunImageHealthcheckMonitor(ctx context.Context, socket string, quiet QuietGate, observe func(string, int, time.Duration)) string {
 	monitor := imageHealthcheckMonitor{
 		config: func(ctx context.Context) (healthcheckproto.Config, error) {
 			return ReadImageHealthcheckConfig(ctx, socket)
@@ -71,23 +83,38 @@ func RunImageHealthcheckMonitor(ctx context.Context, socket string, observe func
 		},
 		wait:    waitImageHealthcheckInterval,
 		observe: observe,
+		quiet:   quiet,
 	}
 	return monitor.run(ctx)
+}
+
+func (m imageHealthcheckMonitor) quietGate() (bool, uint64) {
+	if m.quiet == nil {
+		return false, 0
+	}
+	return m.quiet()
 }
 
 func (m imageHealthcheckMonitor) run(ctx context.Context) string {
 	var config healthcheckproto.Config
 	failures, transportFailures := 0, 0
+	skipped := false
 	for ctx.Err() == nil {
 		delay := time.Duration(0)
 		if config.RuntimeID != "" {
 			delay = time.Duration(config.IntervalNS)
 		}
-		if transportFailures > 0 {
+		if transportFailures > 0 || (skipped && delay < api.ImageHealthcheckTransportRetryInterval) {
 			delay = api.ImageHealthcheckTransportRetryInterval
 		}
 		if !m.wait(ctx, delay) {
 			return ""
+		}
+		// ADR-1151: a quiet-paused guest's silence says nothing about its
+		// health. Wait for it to resume; the streaks stand as they were.
+		pausedBefore, epochBefore := m.quietGate()
+		if skipped = pausedBefore; skipped {
+			continue
 		}
 		started := time.Now()
 		outcome := "transport"
@@ -122,6 +149,12 @@ func (m imageHealthcheckMonitor) run(ctx context.Context) string {
 		}
 		if ctx.Err() != nil {
 			return ""
+		}
+		// Drop an attempt the guest was paused for at any point: a timeout
+		// then measures the pause, not the guest.
+		if pausedAfter, epochAfter := m.quietGate(); pausedAfter || epochAfter != epochBefore {
+			skipped = pausedAfter
+			continue
 		}
 		if outcome == "transport" {
 			failures = 0

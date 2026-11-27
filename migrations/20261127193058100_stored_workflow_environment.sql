@@ -1,4 +1,4 @@
--- filename: 20261127141323100_stored_workflow_environment.sql
+-- filename: 20261127193058100_stored_workflow_environment.sql
 -- migration-compat: expand
 
 -- +goose Up
@@ -81,7 +81,7 @@ BEGIN
 END;
 $fn$;
 -- stored_workflows_environment_idx and the per-environment name index are
--- built concurrently by 20261127141323200_stored_workflow_environment_index.
+-- built concurrently by 20261127193058300_stored_workflow_environment_index.
 -- +goose StatementEnd
 
 -- +goose Down

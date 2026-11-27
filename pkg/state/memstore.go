@@ -1556,7 +1556,9 @@ type MemStore struct {
 	keyProjectLimits map[string][]string       // ADR-20261104085712
 	// ADR-20261104140058: agent keys' approval categories and requests.
 	keyApprovalCategories map[string][]string
-	agentApprovals        map[string]AgentApproval
+	// keyConnectGrants mirrors api_key_connect_grants (ADR-20261127160000).
+	keyConnectGrants map[string]AgentConnectGrant
+	agentApprovals   map[string]AgentApproval
 	// ADR-20261107140000: the notification outbox and email log.
 	agentApprovalNotifications   map[string]*memAgentApprovalNotification
 	agentApprovalEmailLog        map[memEmailLogKey]time.Time
