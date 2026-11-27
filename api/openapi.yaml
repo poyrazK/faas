@@ -25784,7 +25784,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '413':
-          description: The request body is above 512 KiB (`request_too_large`).
+          description: The request body is above 1.5 MiB (`request_too_large`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -25801,6 +25801,62 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/mcp-contract:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getMCPContract
+      summary: Read the tool contract a listed MCP server's production deploys are held to.
+      description: |
+        A listing published with a contract gates production deploys: a
+        candidate whose MCP tools break it is not promoted unless an override
+        admits it. The baseline is the listing's contract, or the newest
+        accepted candidate's since the listing was published. Lists the
+        newest checks and the open overrides.
+      responses:
+        '200':
+          description: The contract, its checks and open overrides.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPContractResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/mcp-contract/overrides:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [consumers]
+      operationId: createMCPContractOverride
+      summary: Let the next breaking production deploy of a listed MCP server ship.
+      description: |
+        Records why paying customers' tools may break. The override admits
+        one breaking or unverified candidate before it expires (one hour by
+        default, at most 24 hours); an app holds at most five open
+        overrides. The webhook event mcp.contract.changed and the listing's
+        changelog tell customers about the change once it is live.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMCPContractOverrideRequest' }
+      responses:
+        '201':
+          description: The override.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPContractOverride' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already holds five open overrides (`conflict`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
 
   /v1/apps/{slug}/consumer-identities:
     parameters:
@@ -136968,6 +137024,11 @@ components:
           items: { $ref: '#/components/schemas/MCPListingTool' }
         registry_name: { type: string, description: "MCP registry name, such as io.github.<user>/<server>; enables server.json." }
         show_usage: { type: boolean, description: "Show the open customer count on the page." }
+        contract:
+          type: object
+          additionalProperties: true
+          description: "The live server's format-2 MCP catalog contract, at most 1,000,000 bytes. Production deploys are then held to it; without it the listing is not gated."
+        probe_secret: { type: string, maxLength: 128, description: "App secret holding a bearer token the gate sends when listing a candidate's tools, for a server that checks credentials itself. Needs contract." }
     MCPListingResponse:
       description: "A sold MCP server's published listing, as its owner sees it."
       type: object
@@ -136986,6 +137047,8 @@ components:
         published_at: { type: string, format: date-time }
         page_url: { type: string, description: "The public listing page." }
         server_json_url: { type: string, description: "The registry server.json, when registry_name is set." }
+        contract_sha256: { type: string, description: "The published tool contract's digest; absent when the listing is not gated." }
+        probe_secret: { type: string, description: "The app secret the gate sends as a bearer token." }
     MCPListingInstall:
       description: "Ways to add a listed MCP server to a client."
       type: object
@@ -137016,6 +137079,96 @@ components:
         install: { $ref: '#/components/schemas/MCPListingInstall' }
         published_at: { type: string, format: date-time }
         customers: { type: integer, format: int64, description: "Open customers, when the seller shows usage." }
+        changelog:
+          type: array
+          maxItems: 20
+          description: "Tool contract changes shipped since the listing was published, newest first."
+          items: { $ref: '#/components/schemas/MCPContractChangelogEntry' }
+    MCPContractChange:
+      description: "One difference between a candidate's MCP catalog and the promised contract."
+      type: object
+      required: [path, kind, severity]
+      properties:
+        tool: { type: string }
+        resource: { type: string }
+        resource_template: { type: string }
+        prompt: { type: string }
+        capability: { type: string }
+        path: { type: string, description: "JSON pointer into the contract." }
+        kind: { type: string }
+        severity: { type: string, enum: [informational, needs_review, breaking] }
+    MCPContractCheck:
+      description: "One production candidate's comparison with the tool contract."
+      type: object
+      required: [deployment_id, verdict, baseline_sha256, overridden, changes, checked_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        verdict: { type: string, enum: [unchanged, compatible, review, breaking, unverified] }
+        baseline_sha256: { type: string }
+        contract_sha256: { type: string, description: "Absent when the catalog could not be listed (unverified)." }
+        overridden: { type: boolean }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/MCPContractChange' }
+        checked_at: { type: string, format: date-time }
+        accepted_at: { type: string, format: date-time, description: "When the candidate went live." }
+    MCPContractOverride:
+      description: "An audited permission for one breaking or unverified candidate."
+      type: object
+      required: [id, reason, created_by, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        reason: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    CreateMCPContractOverrideRequest:
+      description: "Why the next breaking candidate may ship."
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+        expires_in_seconds: { type: integer, minimum: 60, maximum: 86400, description: "Defaults to 3600." }
+    MCPContractResponse:
+      description: "The tool contract a listed MCP server's production deploys are held to."
+      type: object
+      required: [app, baseline_sha256, listing_version, tools, checks, overrides]
+      properties:
+        app: { type: string }
+        baseline_sha256: { type: string }
+        baseline_deployment_id: { type: string, format: uuid, description: "The accepted candidate the baseline comes from; absent when it is the listing's." }
+        listing_version: { type: integer }
+        tools: { type: array, items: { type: string } }
+        probe_secret: { type: string }
+        checks:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/MCPContractCheck' }
+        overrides:
+          type: array
+          items: { $ref: '#/components/schemas/MCPContractOverride' }
+    MCPContractChangelogEntry:
+      description: "One tool contract change on a public listing: changed tool names, never schemas."
+      type: object
+      required: [date, verdict, tools, changes]
+      properties:
+        date: { type: string, format: date-time }
+        verdict: { type: string, enum: [compatible, review, breaking, unverified] }
+        tools: { type: array, items: { type: string } }
+        changes: { type: integer }
+    MCPContractChangedWebhookPayload:
+      type: object
+      description: Data delivered with mcp.contract.changed when a candidate that changed a listed MCP server's tool contract went live.
+      required: [app_id, deployment_id, verdict, baseline_sha256, contract_sha256, overridden, tools, changes]
+      properties:
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        verdict: { type: string, enum: [compatible, review, breaking, unverified] }
+        baseline_sha256: { type: string }
+        contract_sha256: { type: [string, 'null'], description: "Null when the catalog could not be listed." }
+        overridden: { type: boolean }
+        tools: { type: array, items: { type: string } }
+        changes: { type: integer }
     MCPSellerStatsResponse:
       description: "A sold MCP server's customers, tools and revenue over UTC calendar months."
       type: object
@@ -144321,6 +144474,7 @@ components:
               - consumer.signed_up
               - consumer.plan_changed
               - consumer.closed
+              - mcp.contract.changed
               - outbound.ai_budget.threshold
               - outbound.ai_quality.drift
               - issue.created
@@ -145421,6 +145575,7 @@ components:
               - consumer.signed_up
               - consumer.plan_changed
               - consumer.closed
+              - mcp.contract.changed
               - outbound.ai_budget.threshold
               - outbound.ai_quality.drift
               - issue.created
@@ -145608,6 +145763,7 @@ components:
               - consumer.signed_up
               - consumer.plan_changed
               - consumer.closed
+              - mcp.contract.changed
               - outbound.ai_budget.threshold
               - outbound.ai_quality.drift
               - issue.created

@@ -100,7 +100,8 @@ func (o Owner) Put(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		api.WriteProblem(w, api.ErrInternal("could not publish the MCP listing"))
 		return
 	}
-	o.Host.Audit(r.Context(), "mcp_listing.published", acct.ID, map[string]any{"app_id": app.ID, "version": stored.Version, "tools": len(stored.Tools)})
+	o.Host.Audit(r.Context(), "mcp_listing.published", acct.ID, map[string]any{"app_id": app.ID, "version": stored.Version, "tools": len(stored.Tools),
+		"contract_sha256": stored.ContractSHA256})
 	httpkit.WriteJSON(w, http.StatusOK, Response(stored, app.Slug, o.Host.PublicOrigin()))
 }
 
