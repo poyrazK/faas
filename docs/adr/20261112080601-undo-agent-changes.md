@@ -206,3 +206,13 @@ Slices, each dark until its captures are complete for the kind:
   added with the NOT VALID → VALIDATE pattern); release N-1 apid writes no
   records, so a window spanning the upgrade shows those writes as
   `not_undoable`.
+
+## Amendment (2026-11-27): the Connect consent is the approval
+
+ADR-20261127160000: a hosted MCP connection whose person chose deploy access
+on the Connect screen does not ask again for its production deploys,
+promotions, checked rollbacks, restarts, domain and cron removals,
+configuration changes (with `env:write`) and undo; each such request writes
+the audit event `agent_approval.connect_grant` instead of opening an approval
+request. Organization floors, budgets, protected environments and every
+other request still ask as described here.

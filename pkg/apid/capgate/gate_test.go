@@ -239,3 +239,41 @@ func TestSourceUploadRoutesAreSourceDeploy(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentReleaseRoutesReleasedByDefault pins the routes every agent
+// release workflow needs (the hosted MCP's deploy, promotion and rollback
+// plans, the SDK's checked writes) to capabilities that are on for an
+// account no flag rule names. GET /v1/apps/{slug}/release-review sat under
+// the internal release-review capability, so a fresh account's redeploy and
+// rollback plans failed with 404 "no such API route" (ChatGPT plugin review
+// account, 2026-11-27) while internal accounts kept working.
+func TestAgentReleaseRoutesReleasedByDefault(t *testing.T) {
+	catalog, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := New(catalog, nil)
+	for _, plan := range []string{"free", "hobby", "pro", "scale"} {
+		subject := platformflags.Subject{AccountID: "33333333-3333-4333-8333-333333333333", Plan: plan}
+		for _, pattern := range []string{
+			"GET /v1/apps/{slug}",
+			"GET /v1/apps/{slug}/health",
+			"GET /v1/apps/{slug}/release-review",
+			"POST /v1/apps/{slug}/deployments",
+			"GET /v1/deployments/{id}",
+			"PATCH /v1/deployments/{id}/traffic",
+			"POST /v1/apps/{slug}/rollback",
+			"POST /v1/uploads/{id}/commit",
+			"GET /v1/agent-approvals/{id}",
+		} {
+			if !gate.Released(pattern) || !gate.Allowed(pattern, subject) {
+				owner, _ := gate.Capability(pattern)
+				t.Errorf("%s plan: %s is hidden by default (capability %q)", plan, pattern, owner)
+			}
+		}
+	}
+	// The dashboard page keeps its own internal capability.
+	if owner, _ := gate.Capability("GET /dashboard/apps/{slug}/release-review"); owner != "release-review" {
+		t.Errorf("release review page owner = %q, want release-review", owner)
+	}
+}
