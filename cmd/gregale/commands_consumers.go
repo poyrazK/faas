@@ -155,8 +155,10 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
 	_ = fs.Bool("yes", false, "accepted for scripts; revoke does not prompt (revoke, key-revoke)")
 	// A monetization verb is past hiddenMonetizationVerb already; a released
-	// verb's monetization flags follow the account's release.
-	if slices.Contains(monetizationVerbs["consumers"], verb) || monetizationForAccount() {
+	// verb's monetization flags follow the account's release, read only for a
+	// verb that has such flags.
+	if slices.Contains(monetizationVerbs["consumers"], verb) ||
+		len(monetizationFlags["consumers "+verb]) > 0 && monetizationForAccount() {
 		registerConsumerMonetizationFlags(fs, &f)
 	}
 	if err := parseInterspersed(fs, args[1:]); err != nil {

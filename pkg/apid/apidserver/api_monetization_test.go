@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // monetizationRoutes samples every family of API monetization routes.
@@ -139,25 +141,60 @@ func TestCapabilitiesHideMonetizationUntilReleased(t *testing.T) {
 		t.Run(released, func(t *testing.T) {
 			t.Setenv("FAAS_API_MONETIZATION_ENABLED", released)
 			e := setupWebhookTest(t, api.PlanPro)
-			res := e.Do(t, http.MethodGet, "/v1/capabilities", nil, nil)
-			if res.Code != http.StatusOK {
-				t.Fatalf("capabilities: %d %s", res.Code, res.Body)
-			}
-			var body struct {
-				Hidden []string `json:"hidden_capabilities"`
-			}
-			if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
-				t.Fatal(err)
-			}
-			hidden := 0
-			for _, id := range body.Hidden {
-				if id == "api-monetization" {
-					hidden++
-				}
-			}
-			if want := map[string]int{"0": 1, "1": 0}[released]; hidden != want {
-				t.Fatalf("api-monetization listed %d times in %v, want %d", hidden, body.Hidden, want)
+			want := map[string]int{"0": 1, "1": 0}[released]
+			if got := monetizationHiddenCount(t, e); got != want {
+				t.Fatalf("api-monetization hidden %d times, want %d", got, want)
 			}
 		})
 	}
+
+	// With the capability gate installed every route also needs the gate's
+	// flag, so the runtime switch alone must not show the commands.
+	t.Run("gate flag off", func(t *testing.T) {
+		t.Setenv("FAAS_API_MONETIZATION_ENABLED", "1")
+		e := setupWebhookTest(t, api.PlanPro)
+		apidserver.MustSeedApp(t, e, "shop")
+		server := *e.S()
+		if err := server.InstallCapabilityGate(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { server.WithCapabilityGate(nil) })
+		server.SeedPlatformFlag(capabilityFlag(t, "api-monetization"), platformflags.FromAccountList(true, false, []string{uuid.NewString()}))
+		if res := e.Do(t, http.MethodGet, "/v1/apps/shop/rate-cards", nil, nil); res.Code != http.StatusNotFound {
+			t.Fatalf("rate cards outside the gate flag: %d %s", res.Code, res.Body)
+		}
+		if got := monetizationHiddenCount(t, e); got != 1 {
+			t.Fatalf("api-monetization hidden %d times while the gate refuses the routes, want 1", got)
+		}
+		server.SeedPlatformFlag(capabilityFlag(t, "api-monetization"), platformflags.FromAccountList(true, false, []string{(*e.Acct()).ID}))
+		if res := e.Do(t, http.MethodGet, "/v1/apps/shop/rate-cards", nil, nil); res.Code != http.StatusOK {
+			t.Fatalf("rate cards inside the gate flag: %d %s", res.Code, res.Body)
+		}
+		if got := monetizationHiddenCount(t, e); got != 0 {
+			t.Fatalf("api-monetization hidden %d times while the routes answer, want 0", got)
+		}
+	})
+}
+
+// monetizationHiddenCount counts api-monetization in the account's
+// hidden_capabilities.
+func monetizationHiddenCount(t *testing.T, e apidserver.TestEnv) int {
+	t.Helper()
+	res := e.Do(t, http.MethodGet, "/v1/capabilities", nil, nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("capabilities: %d %s", res.Code, res.Body)
+	}
+	var body struct {
+		Hidden []string `json:"hidden_capabilities"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	hidden := 0
+	for _, id := range body.Hidden {
+		if id == "api-monetization" {
+			hidden++
+		}
+	}
+	return hidden
 }

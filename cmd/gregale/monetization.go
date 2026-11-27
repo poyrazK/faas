@@ -36,10 +36,18 @@ func monetizationInView(view capabilityView) bool {
 	return monetizationCLI() || !view.tier && !view.all && !view.hides(monetizationCapability)
 }
 
-// monetizationForAccount is monetizationInView for the logged-in account:
-// running a monetization verb or flag follows the account's release instead
-// of needing the operator variable in the seller's shell.
-func monetizationForAccount() bool { return monetizationInView(discoveryCapabilityView()) }
+// monetizationForAccount decides running a monetization verb or flag for the
+// logged-in account: it follows the account's release instead of needing the
+// operator variable in the seller's shell. The variable skips the API read;
+// an unconfirmed view (the capability read failed) runs the verb and lets
+// apid answer, rather than calling a released seller's command unknown.
+func monetizationForAccount() bool {
+	if monetizationCLI() {
+		return true
+	}
+	view := discoveryCapabilityView()
+	return view.unconfirmed || monetizationInView(view)
+}
 
 // monetizationOffline is monetizationInView for usage and error text: the
 // run's view or the cached one, never a new API read.

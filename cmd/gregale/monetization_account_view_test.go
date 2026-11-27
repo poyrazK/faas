@@ -15,6 +15,7 @@ import (
 // without FAAS_API_MONETIZATION_ENABLED in its shell.
 func TestMonetizationFollowsAccountView(t *testing.T) {
 	t.Setenv("FAAS_API_MONETIZATION_ENABLED", "")
+	t.Setenv("FAAS_MCP_GATEWAY_PREVIEW_ENABLED", "")
 	if main.MonetizationInView(true) {
 		t.Fatal("tier defaults (logged out, unconfirmed) must hide API monetization")
 	}

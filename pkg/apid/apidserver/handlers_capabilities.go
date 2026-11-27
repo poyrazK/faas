@@ -88,10 +88,6 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			// only the capability flag, so gregale_context and the CLI
 			// offered features whose routes answered 404 (2026-11-22).
 			available, _ = s.realtime.CapabilityAvailable(r, acct, capabilities.Capabilities[i].Key)
-		case monetizationCapability:
-			// The routes decide by the runtime switch or the flag
-			// (apiMonetizationFor); the flag alone missed the switch.
-			available = s.apiMonetizationFor(acct.ID)
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach
@@ -117,17 +113,17 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 	writeJSON(w, http.StatusOK, capabilities)
 }
 
-// withMonetizationVisibility makes the view say what the routes do: API
-// monetization is hidden exactly when apiMonetizationFor refuses the account
-// (runtime switch or api_monetization flag), whether or not the capability
-// gate is installed. The CLI shows the selling commands from this
-// (ADR-20261020170649).
+// withMonetizationVisibility makes the view say what the routes do. A
+// monetization route needs both the capability gate (capabilityAllowed,
+// which hides api-monetization through hiddenCapabilities when its flag is
+// off) and apiMonetizationFor (runtime switch or api_monetization flag), so
+// the capability is hidden when either refuses, with or without the gate.
+// The CLI shows the selling commands from this (ADR-20261020170649).
 func withMonetizationVisibility(hidden []string, released bool) []string {
-	out := slices.DeleteFunc(slices.Clone(hidden), func(id string) bool { return id == monetizationCapability })
-	if !released {
-		out = append(out, monetizationCapability)
+	if released {
+		return hidden
 	}
-	return out
+	return mergeHiddenCapabilities(hidden, []string{monetizationCapability})
 }
 
 // openAPIHidden leaves the operator routes and the capabilities off by
