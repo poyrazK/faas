@@ -12,6 +12,10 @@ gregale deploy check --image registry.example.com/team/api@sha256:<digest>
 gregale deploy --image registry.example.com/team/api@sha256:<digest>
 ```
 
+For a private registry you are already logged in to with `docker login`, add
+`--docker-config ~/.docker` to `deploy --image`, `deploy check` or `doctor`; see
+[registry credentials](registry-credentials.md).
+
 An image that exists only on your machine deploys without a registry:
 
 ```sh
