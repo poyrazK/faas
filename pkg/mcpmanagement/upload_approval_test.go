@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -25,6 +26,7 @@ func TestHostedUploadApprovalWindow(t *testing.T) {
 	}{
 		{name: "approved after original plan and directory expiry"},
 		{name: "new app created before approval"},
+		{name: "new app linked by the CLI before approval"},
 		{name: "restart while awaiting approval", restart: true},
 		{name: "restart after commit before receipt", restart: true},
 		{name: "restart at the approval deadline", restart: true, code: "invalid_plan"},
@@ -51,7 +53,8 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string, res
 	t.Helper()
 	const uploadID = "original-upload"
 	const verifyPath = "/items/5?q=gregale"
-	f := newLocalFixture(t, scenario != "new app created before approval", "")
+	newApp := scenario == "new app created before approval" || scenario == "new app linked by the CLI before approval"
+	f := newLocalFixture(t, !newApp, "")
 	f.app.ID = applicationResponseAppID
 	response := newApplicationResponseFixture(t)
 	response.path, response.result.Body = verifyPath, `{"item_id":5,"q":"gregale"}`
@@ -125,6 +128,11 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string, res
 			}
 			argsOnFirstApply = slices.Clone(args)
 			f.exists = true
+			if scenario == "new app linked by the CLI before approval" {
+				// rememberCreatedApp: the CLI links the directory to the app it
+				// just created, before the upload commit asks for approval.
+				linkCreatedApp(t, args[slices.Index(args, "--path")+1], "alpha")
+			}
 			approval.ExpiresAt = time.Now().Add(api.AgentApprovalTTL).UTC().Format(time.RFC3339Nano)
 			p := api.NewProblem(428, api.CodeApprovalRequired, "Approval required", "Review the upload")
 			p.AgentApproval = &api.AgentApprovalPendingInfo{ID: approval.ID, Category: approval.Category, ReviewURL: approval.ReviewURL, ExpiresAt: approval.ExpiresAt}
@@ -349,5 +357,29 @@ func connectUploadApprovalTest(t *testing.T, client *api.Client, opts Options) (
 	return manager, cs, func() {
 		_ = cs.Close()
 		_ = ss.Close()
+	}
+}
+
+// linkCreatedApp writes what `gregale deploy` writes into a directory after
+// creating its app (rememberCreatedApp in cmd/gregale).
+func linkCreatedApp(t *testing.T, dir, app string) {
+	t.Helper()
+	ignore := filepath.Join(dir, ".gitignore")
+	old, err := os.ReadFile(ignore)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	content := string(old)
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	if err := os.WriteFile(ignore, []byte(content+"\n# Gregale local project context\n.gregale/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".gregale"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gregale", "project.json"), []byte(`{"version":2,"app":"`+app+`"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
