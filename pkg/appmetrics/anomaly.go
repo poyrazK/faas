@@ -150,7 +150,7 @@ func supportedAnomalyMetric(metric, scope string) bool {
 
 func anomalyValueQuery(series requestSeries, appID, scope, window, metric string) (string, func(float64) float64) {
 	if scope == "" {
-		return alertMetricQuery(appID, window, metric)
+		return appWideAnomalyQuery(appID, window, metric)
 	}
 	if metric == "error_rate_pct" {
 		return series.errorRate(window), SafePercent

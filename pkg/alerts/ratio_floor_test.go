@@ -25,7 +25,7 @@ func TestEvaluator_RatioRuleNeedsEnoughRequests(t *testing.T) {
 			store := state.NewMemStore()
 			rule, ident, _ := seedRuleForApp(t, store, "ratio-app", state.AlertMetricErrorRate, state.AlertGt, 5)
 			prom := &selectivePromQL{fn: func(q string) (float64, error) {
-				if strings.HasPrefix(q, "sum(increase(gateway_request_duration_seconds_count") {
+				if strings.Contains(q, "sum(increase(gateway_request_duration_seconds_count") {
 					return tc.requests, nil
 				}
 				return 33, nil
