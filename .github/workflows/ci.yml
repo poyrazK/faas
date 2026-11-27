@@ -2639,8 +2639,9 @@ jobs:
     runs-on: ubuntu-24.04
     # Measured 25 min on a green run (2026-10-19) and over 30 min under runner load
     # (run 39345797073): the suite passes but cold compilation of the SDK,
-    # flags and apidserver packages dominates.
-    timeout-minutes: 45
+    # flags and apidserver packages dominates. 37 min green on run 45927419989;
+    # run 45936570897 was still compiling cmd/gregale's tests at 45.
+    timeout-minutes: 60
     permissions:
       contents: read
     services:
