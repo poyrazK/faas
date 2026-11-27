@@ -468,6 +468,8 @@ func cmdPostgresList(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
 		} else if database.RestoreSlotUntil != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is a restored copy past your plan's database limit; its delete is scheduled at %s unless you delete its source, purge another database or upgrade first\n", database.Name, database.RestoreSlotUntil)
+		} else if note := postgresKeptForCopiesNote(database, resp.Items); note != "" {
+			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
 		} else if note := postgresPlanExcessNote(database); note != "" {
 			_, _ = fmt.Fprintf(osStdout, "%s is %s\n", database.Name, note)
 		} else if note := postgresHoldNote(database.Hold); note != "" {
@@ -1048,6 +1050,9 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	if database.LastErrorCode != "" {
 		_, _ = fmt.Fprintf(w, "  last_error_code:  %s\n", database.LastErrorCode)
 	}
+	if note := postgresKeptForCopiesNote(database, nil); note != "" {
+		_, _ = fmt.Fprintf(w, "  note:             %s\n", note)
+	}
 	_, _ = fmt.Fprintf(w, "  created_at:       %s\n", database.CreatedAt)
 	_, _ = fmt.Fprintf(w, "  updated_at:       %s\n", database.UpdatedAt)
 }
@@ -1127,4 +1132,25 @@ func postgresHoldNote(hold string) string {
 	default:
 		return ""
 	}
+}
+
+// postgresKeptForCopiesNote explains a deleted database that waits for its
+// restore copies (ADR-20261103091657). `postgres list` showed it as
+// `deleting` with no note and `postgres get` printed only
+// restore_copies_remain (prod hunt r69). all, when given, names the copies.
+func postgresKeptForCopiesNote(database api.ManagedPostgresDatabase, all []api.ManagedPostgresDatabase) string {
+	if database.State != "deleting" || database.LastErrorCode != "restore_copies_remain" {
+		return ""
+	}
+	var copies []string
+	for _, other := range all {
+		if other.RestoreSourceDatabaseID == database.ID && other.State != "deleting" && other.State != "deleted" {
+			copies = append(copies, other.Name)
+		}
+	}
+	which := "its restore copies (databases whose restored_from is " + database.ID + ")"
+	if len(copies) > 0 {
+		which = "its restore copies: " + strings.Join(copies, ", ")
+	}
+	return "deleted and kept for " + which + "; it is purged once they are deleted and no longer counts toward your database limit"
 }
