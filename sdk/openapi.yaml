@@ -6731,6 +6731,30 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/release-review:
+    get:
+      operationId: getAppReleaseReview
+      summary: Read an atomic app configuration and release review
+      tags: [apps]
+      parameters:
+        - name: slug
+          description: Application slug for release review.
+          in: path
+          required: true
+          schema: {type: string}
+        - name: environment
+          in: query
+          required: false
+          description: Registered named environment in the app's project; omit for default.
+          schema: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,32}$'}
+      responses:
+        '200':
+          description: Configuration and selected-scope release identities for reviewed staging
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppReleaseReview'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /v1/apps/{slug}/health:
     parameters:
       - $ref: '#/components/parameters/Slug'

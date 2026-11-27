@@ -28,3 +28,48 @@ func TestConsentPageEscapesEveryValue(t *testing.T) {
 		t.Fatalf("API key page:\n%s", key)
 	}
 }
+
+// Every permission on the Connect screen starts ticked; the person unticks
+// what they do not want (ADR-20261127160000 §6).
+func TestConsentPageTicksEveryPermission(t *testing.T) {
+	signIn := consentPage(consentView{Native: true, SameTab: true, OfferWrites: true, RequestID: "r", CSRF: "c", ConsentAction: "/oauth/consent"})
+	review := consentPage(consentView{
+		Account: "alice@example.com", RequestID: "r", CSRF: "c", ConsentAction: "/oauth/consent",
+		Writes: true, Publishing: true, PrivateInvocations: true, Invocations: true,
+		Apps:         []consentApp{{Slug: "hello-api"}},
+		Environments: []EnvironmentGrant{{Project: "shop", Environment: "staging"}},
+	})
+	for _, tc := range []struct{ page, name, input string }{
+		{signIn, "deploy access", `name="access" value="deploy" form="gregale-connect" checked>`},
+		{signIn, "configuration", `name="capability" value="env:write" checked>`},
+		{signIn, "secret requests", `name="capability" value="secrets:request" checked>`},
+		{signIn, "object storage", `name="capability" value="storage:manage" checked>`},
+		{signIn, "managed PostgreSQL", `name="capability" value="postgres:manage" checked>`},
+		{review, "writes", `name="allow_writes" value="yes" required checked>`},
+		{review, "tool publishing", `name="allow_tool_publishing" value="yes" required checked>`},
+		{review, "private tool calls", `name="allow_private_tool_invocation" value="yes" required checked>`},
+		{review, "tool calls", `name="allow_tool_invocation" value="yes" required checked>`},
+		{review, "all apps", `name="app_access" value="all" required checked>`},
+		{review, "app diagnostics", `name="request_read_apps" value="hello-api" checked>`},
+		{review, "regression triage", `name="regression_write_apps" value="hello-api" checked>`},
+		{review, "default environment", `name="default_write" value="yes" checked>`},
+		{review, "named environment read", `name="environments" value="shop/staging" checked>`},
+		{review, "named environment write", `name="environment_writes" value="shop/staging" checked>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(tc.page, tc.input) {
+				t.Fatalf("%s is not ticked by default; want %s", tc.name, tc.input)
+			}
+		})
+	}
+	if strings.Contains(signIn, `value="inspect" form="gregale-connect" checked`) {
+		t.Fatal("inspect-only is preselected")
+	}
+	many := make([]consentApp, maxOAuthEntries+1)
+	for i := range many {
+		many[i] = consentApp{Slug: "app"}
+	}
+	if page := consentPage(consentView{Account: "a", Writes: true, Apps: many}); strings.Contains(page, `name="request_read_apps" value="app" checked`) {
+		t.Fatal("diagnostics ticked for more apps than one consent accepts")
+	}
+}

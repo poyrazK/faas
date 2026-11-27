@@ -600,11 +600,16 @@
         "/dashboard/apps/{}/restore",
         "=/v1/apps",
         "=/v1/apps/{}",
+        "/v1/apps/{}/api-sandbox-scenarios",
+        "/v1/apps/{}/api-sandbox-suite",
         "/v1/apps/{}/operation-preview",
+        "/v1/apps/{}/release-review",
         "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
         "/v1/apps/{}/service-aborts",
+        "/v1/api-sandbox-runs",
+        "/v1/api-sandboxes",
         "/v1/deleted-apps",
         "/dashboard/apps/{}/deployment-submissions",
         "/dashboard/apps/{}/deployments",
@@ -615,6 +620,10 @@
         "/v1/apps/{}/deployments/latest",
         "/v1/apps/{}/deployments/{}/cancel",
         "/v1/apps/{}/deployments/{}/response-check",
+        "/v1/apps/{}/deployments/{}/api-sandbox-comparisons",
+        "/v1/apps/{}/deployments/{}/api-sandbox-runs",
+        "/v1/apps/{}/deployments/{}/api-sandbox-scenario",
+        "/v1/apps/{}/deployments/{}/api-sandboxes",
         "/v1/apps/{}/deployments/{}/summary",
         "=/v1/deployments",
         "/v1/deployments/latest-by-app",
@@ -3426,6 +3435,7 @@
         "/dashboard/mcp",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-health",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-probe",
+        "/v1/apps/{}/mcp-listing",
         "/v1/deployments/{}/mcp-admissions",
         "/v1/mcp",
         "/v1/mcp-connection-health"
@@ -5230,8 +5240,7 @@
       "docs_url": "/docs/deploys",
       "acceptance_test": "pkg/state/release_review_pg_test.go::TestPgReleaseReview",
       "routes": [
-        "/dashboard/apps/{}/release-review",
-        "/v1/apps/{}/release-review"
+        "/dashboard/apps/{}/release-review"
       ]
     },
     {
