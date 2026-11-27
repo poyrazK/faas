@@ -80,6 +80,25 @@ func TestDeploymentShowsTheFailureFix(t *testing.T) {
 	}
 }
 
+// Prod hunt r73: `projects environments bindtest` hinted "If bindtest is an
+// app", and `environment list basic-hello` answered only "no such project
+// resource".
+func TestEnvironmentListNamesTheProject(t *testing.T) {
+	r63Server(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"status":404,"code":"not_found","title":"Not found","detail":"no such project resource"}`))
+	})
+	code, out := r63Run(t, "projects", "environments", "bindtest")
+	if code != 1 || !strings.Contains(out, "If bindtest is a project, the subcommand comes first") {
+		t.Fatalf("hint: exit=%d out=%s", code, out)
+	}
+	code, out = r63Run(t, "environment", "list", "basic-hello")
+	if code == 0 || !strings.Contains(out, `no project "basic-hello" in this account`) || !strings.Contains(out, "gregale project list") {
+		t.Fatalf("list: exit=%d out=%s", code, out)
+	}
+}
+
 // Prod hunt r68: `cron get nope` printed only its usage line, never that the
 // ID was malformed or where cron IDs come from.
 func TestCronGetNamesTheMalformedID(t *testing.T) {
