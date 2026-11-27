@@ -149,6 +149,9 @@ func cmdSLOsRm(args []string) int {
 	// <slo-id> or <app> <slo-id>, as `slo create <app>` and `check delete
 	// <app> <check>` take it (prod hunt r63).
 	id, ok := syntheticCheckArgs(slug, fs.Args())
+	if fs.NArg() != 1 && fs.NArg() != 2 {
+		ok = false
+	}
 	if !ok {
 		PrintUsage(os.Stderr, "usage: gregale alert slo delete [<slug>|--app <slug>] <slo-id> [--yes]", "slos")
 		return 1
