@@ -436,3 +436,50 @@ consumers; (2) platform-tenant consumer creation writes `ON CONFLICT (app_id,
 COALESCE(environment_id, zero uuid), external_ref)`, the per-environment
 index; (3) once every apid runs (2), the contract migration drops the
 app-wide indexes and full clones copy consumers, keys and plan assignments.
+
+### Alert rules (detail, 2026-11-26)
+
+- `alert_rules.environment_id` (NULL is production) names one of the app's
+  project environments; a trigger checks it and keeps it fixed, and the
+  environment's deletion removes its rules. Account-wide rules are
+  production's.
+- **What a stage rule reads.** The gateway's per-environment request series
+  from ADR-744 (amendment 2026-11-23):
+  `gateway_environment_request_duration_seconds{app,scope,class}` and
+  `gateway_environment_capacity_refusals_total{app,scope}`, labelled by
+  environment slug and recorded for production (`production`, or `default`
+  for a legacy app) as well as stages. This amendment adds
+  `gateway_environment_cold_boot_total{app,scope}` beside them. A stage
+  rule reads its stage's slug (looked up from `environment_id`). Failed
+  invocations already carry their environment.
+- **Production rules leave stages out.** A production rule's request
+  metrics are the app-wide series minus every non-production scope's, and
+  its failed-invocation counts take only invocations without an
+  environment, so a stage's traffic fires only the stage's rules. Anomaly
+  baselines (ADR-744) keep reading the whole app. Production's other
+  readers of the account's rules (the app's dashboard alerts and preset
+  cards, preset lookup, the platform outage notice's "owner already has an
+  error-rate rule" check) skip stage rules. A stage rule's webhook payloads
+  carry `app_id` and `environment_id`.
+- **Not to be confused with `environment_scope`** (ADR-744): that is a
+  production rule's anomaly baseline read over one environment's traffic.
+  A rule has at most one of the two: `environment_scope` needs an anomaly
+  comparison, and a stage rule a fixed one.
+- **A stage rule can run** on `request_count`, `error_rate_pct`,
+  `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `cold_start_pct` or
+  `failed_invocations`, with `gt`, `gte`, `lt` or `lte` and a webhook action
+  (`alert_rules_environment_enabled_chk`). The API refuses creating any
+  other stage rule, and refuses enabling one; a clone's paused copy of such
+  a rule can be edited or deleted. Notification channels work as for
+  production.
+- API and CLI take `environment` on the app's alert list and create routes.
+- **Release.** An N-1 meterd would evaluate a stage rule over the whole app,
+  and an N-1 gateway does not count environment hosts, so creating or
+  enabling a stage rule waits for the apid runtime key
+  `stage_alert_rules_enabled` (default off), turned on once every meterd and
+  gatewayd-internal runs this release.
+- Rule names become unique per app and environment
+  (`alert_rules_app_environment_name_uniq`); the app-wide
+  `alert_rules_app_name_uniq` is dropped by the contract release that also
+  lets a full clone copy rules paused, as for consumers. Until then a stage
+  rule's name must differ from production's.

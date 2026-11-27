@@ -67,7 +67,7 @@ func (c *ruleCover) covered(ctx context.Context, accountID string, match func(st
 		c.rules[accountID] = rules
 	}
 	for _, r := range rules {
-		if r.Enabled && match(r) {
+		if r.Enabled && r.EnvironmentID == "" && match(r) {
 			return true, nil
 		}
 	}

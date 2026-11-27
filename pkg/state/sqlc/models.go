@@ -767,6 +767,7 @@ type AlertRule struct {
 	ObservedIncidents               []byte
 	EnvironmentScope                string
 	RecoveryConfirmationChecks      int32
+	EnvironmentID                   pgtype.UUID
 }
 
 type AlertRuleChannel struct {

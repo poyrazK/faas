@@ -82,6 +82,7 @@ func cmdAlerts(args []string) int {
 func cmdAlertList(args []string) int {
 	fs := newFlagSet("alerts list", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (defaults to the linked app)")
+	environment := fs.String("environment", "", "project environment whose rules to list (default production)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -97,7 +98,7 @@ func cmdAlertList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	rules, err := client.ListAlertRules(context.Background(), *slug)
+	rules, err := client.ListAlertRulesInEnvironment(context.Background(), *slug, *environment)
 	if err != nil {
 		return printErr("List failed", err)
 	}
@@ -120,6 +121,7 @@ func cmdAlertList(args []string) int {
 func cmdAlertAdd(args []string) int {
 	fs := newFlagSet("alerts add", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (defaults to the linked app)")
+	environment := fs.String("environment", "", "project environment the rule watches (default production); a stage's rule watches its own requests, errors, latency, cold starts or failed invocations")
 	name := fs.String("name", "", "rule name (required, 3..120 chars)")
 	eventSubscription := fs.String("event-subscription-id", "", "subscription UUID for event consumer health alerts")
 	readinessScope := fs.String("mcp-readiness-scope", "", "readiness environment; omitted means all environments (immutable)")
@@ -198,7 +200,7 @@ func cmdAlertAdd(args []string) int {
 	if err != nil {
 		return printErr("Saved log search unavailable", err)
 	}
-	resp, err := client.CreateAlertRule(context.Background(), *slug, api.CreateAlertRuleRequest{
+	resp, err := client.CreateAlertRuleInEnvironment(context.Background(), *slug, *environment, api.CreateAlertRuleRequest{
 		MCPReadinessScope: *readinessScope, Name: *name,
 		Enabled:                         enabled,
 		Metric:                          *metric,

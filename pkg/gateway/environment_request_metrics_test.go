@@ -62,4 +62,18 @@ func TestEnvironmentRequestMetricsScopes(t *testing.T) {
 	if got := testutil.ToFloat64(m.refusals.WithLabelValues(app.ID, "production")); got != 0 {
 		t.Errorf("production refusals=%g, want 0", got)
 	}
+
+	// adr: 20261104120000 — cold boots are counted per environment too, so a
+	// stage's cold-start share reads its own boots.
+	m.observeColdBoot(stage, app.ID)
+	m.observeColdBoot(production, app.ID)
+	m.observeColdBoot(withRequestEnvironment(t.Context(), direct), app.ID) // exact revision host: not counted
+	if got := testutil.ToFloat64(m.coldBoots.WithLabelValues(app.ID, "staging")); got != 1 {
+		t.Errorf("staging cold boots=%g, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.coldBoots.WithLabelValues(app.ID, "production")); got != 1 {
+		t.Errorf("production cold boots=%g, want 1", got)
+	}
+	var nilMetrics *environmentRequestMetrics
+	nilMetrics.observeColdBoot(stage, app.ID)
 }
