@@ -442,6 +442,35 @@ gregale alert create --app shop --name "Out of memory" \
 
 The rule needs an app and accepts every alert window and action.
 
+## Boot and job failures
+
+`boot_failures` counts the times the app failed to start within the window.
+An app that crashes on start (a missing secret, a bad config, a failed
+migration) can still answer some requests between attempts, so `api_up` and
+the error rate may stay quiet while visitors wait on failed wakes. The rule
+needs an app and accepts every alert window and action, including
+`--action rollback`.
+
+`job_failures` counts the [job](jobs.md) runs in your account that finished
+`failed` or `dead_letter` within the window. Jobs belong to the account, not
+an app, so the rule counts every job whichever app you create it on. It
+supports the webhook action only.
+
+```bash
+gregale alert preset enable boot_failing --app shop --channel OPS_SLACK_ID
+gregale alert preset enable job_failures --app shop --channel OPS_SLACK_ID
+
+# Or set your own threshold:
+gregale alert create --app shop --name "Boot failures" \
+  --metric boot_failures --comparison gte --threshold 5 --window-spec 1h \
+  --channel OPS_SLACK_ID
+```
+
+The `boot_failing` preset fires at 3 failed boots in 15 minutes; the
+`job_failures` preset fires on any failed run in an hour. Both wait 60
+minutes before firing again. For cron failures, use `failed_invocations` with
+`--failure-source cron` (see [crons](crons.md)).
+
 ## AI budget alerts
 
 `ai_budget_alerts` counts the AI budget thresholds crossed within the window

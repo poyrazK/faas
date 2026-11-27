@@ -152,6 +152,32 @@ var catalog = map[string]row{
 				"• check the latest deployment: `gregale deploys status <id>` shows the failing stage + error code\n• if it's a build failure, the error-explanations catalog entry for that Code… has the remediation\n• if it's a readiness failure, the boot log is in `gregale logs <slug>`"
 		},
 	},
+	"boot_failing": {
+		Explanation: Explanation{
+			Title:   "App is failing to start",
+			Hint:    "the app failed to boot 3 or more times in the last 15 minutes",
+			Why:     "every wake that cannot start an instance records a failed boot with its reason; the app recorded at least 3 within the rolling 15-minute window. An app that crashes on start can still answer some requests between attempts, so availability alerts may stay quiet",
+			Fix:     "• check `gregale logs <slug>` for the crash at startup (missing secret, bad config, failed migration)\n• if the last deploy introduced it, roll back with `gregale rollback <slug>`\n• an app killed for memory while starting also fails to boot; if `oom_kills` fires too, raise the app's RAM",
+			DocsURL: "/docs/alerts#boot-and-job-failures",
+		},
+		Observed: func(observed float64) (why, fix string) {
+			return fmt.Sprintf("every wake that cannot start an instance records a failed boot with its reason; the app recorded %.0f within the rolling 15-minute window, at or past the threshold of 3", observed),
+				"• check `gregale logs <slug>` for the crash at startup (missing secret, bad config, failed migration)\n• if the last deploy introduced it, roll back with `gregale rollback <slug>`\n• an app killed for memory while starting also fails to boot; if `oom_kills` fires too, raise the app's RAM"
+		},
+	},
+	"job_failures": {
+		Explanation: Explanation{
+			Title:   "Job runs are failing",
+			Hint:    "a job run in this account finished failed or dead-lettered in the last hour",
+			Why:     "each job run records its final status; at least one run of a job in this account finished failed or dead-lettered within the rolling 1-hour window. The alert counts every job in the account, not only jobs related to this app",
+			Fix:     "• `gregale job runs <job>` lists recent runs and their status\n• `gregale job logs <job> <run> <task>` shows why a task failed\n• retry a run with `gregale job retry <job> <run> <task>` once the cause is fixed",
+			DocsURL: "/docs/alerts#boot-and-job-failures",
+		},
+		Observed: func(observed float64) (why, fix string) {
+			return fmt.Sprintf("each job run records its final status; %.0f job runs in this account finished failed or dead-lettered within the rolling 1-hour window", observed),
+				"• `gregale job runs <job>` lists recent runs and their status\n• `gregale job logs <job> <run> <task>` shows why a task failed\n• retry a run with `gregale job retry <job> <run> <task>` once the cause is fixed"
+		},
+	},
 	"cert_expiring_14d": {
 		Explanation: Explanation{
 			Title:   "TLS certificate expires within 14 days",

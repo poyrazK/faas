@@ -112,6 +112,7 @@ var AllowedAlertRuleMetrics = []string{
 	AlertMetricRouteMonitorIncidents, AlertMetricRouteHealthHolds,
 	AlertMetricAIBudgetAlerts,
 	AlertMetricOOMKills,
+	AlertMetricBootFailures, AlertMetricJobFailures,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -369,7 +370,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
 		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected || IsRouteAlertMetric(metric) ||
-		metric == AlertMetricAIBudgetAlerts {
+		metric == AlertMetricAIBudgetAlerts || metric == AlertMetricJobFailures {
 		return action == "" || action == "webhook"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
@@ -737,7 +738,7 @@ func IsRouteAlertMetric(metric string) bool {
 // window. Mirrors the alert_rules_route_alerts_chk constraint. AI budget
 // alerts share the same scope and windows and are checked here too.
 func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
-	if metric == AlertMetricOOMKills && appID == "" {
+	if (metric == AlertMetricOOMKills || metric == AlertMetricBootFailures) && appID == "" {
 		return ErrAlertRuleInvalid(metric + " alerts require an app")
 	}
 	if metric == AlertMetricAIBudgetAlerts {
@@ -767,6 +768,18 @@ const AlertMetricAIBudgetAlerts = "ai_budget_alerts"
 // loop on a too-small plan was visible only there, with no alert a customer
 // could set (Observe audit 2026-11-21, finding 18). App-scoped.
 const AlertMetricOOMKills = "oom_kills"
+
+// AlertMetricBootFailures counts the app's failed boots within the window. An
+// app that crashes on start and scales to zero between wakes answers some
+// requests and never trips api_up; support saw these as boot_failing
+// attention signals with no alert a customer could set. App-scoped.
+const AlertMetricBootFailures = "boot_failures"
+
+// AlertMetricJobFailures counts the account's job runs that finished failed
+// or dead-lettered within the window. Jobs belong to the account, so a rule
+// on any app counts every job, like account_spend_eur. Webhook action only:
+// a failing job is no reason to roll back an app.
+const AlertMetricJobFailures = "job_failures"
 
 // AIBudgetAlertNotes caps how many crossings one notification lists.
 const AIBudgetAlertNotes = 5
@@ -838,6 +851,8 @@ func AlertMetricActionRestriction(metric string) string {
 		return "log search alerts support webhook action only"
 	case AlertMetricAIBudgetAlerts:
 		return "AI budget alerts support webhook action only"
+	case AlertMetricJobFailures:
+		return "job failure alerts support webhook action only"
 	}
 	return "pre-auth target metrics support webhook action only"
 }
