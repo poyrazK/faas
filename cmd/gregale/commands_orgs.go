@@ -124,8 +124,9 @@ func cmdOrgsMembers(args []string) int {
 	case subRm:
 		return cmdOrgsMembersRm(args[1:])
 	default:
-		printCommandValidation(os.Stderr, "gregale org members: unknown subcommand %q\n", args[0])
-		return 1
+		// `org members audit-1001-org` named no verb (prod hunt r73); the
+		// shared renderer lists them in the help tree's words.
+		return printUnknownSubcommand(os.Stderr, "orgs members", nestedCliCommand("orgs", "members"), args[0])
 	}
 }
 

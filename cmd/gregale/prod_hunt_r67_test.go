@@ -99,6 +99,15 @@ func TestEnvironmentListNamesTheProject(t *testing.T) {
 	}
 }
 
+// Prod hunt r73: `org members audit-1001-org` printed only "unknown
+// subcommand", naming no verb.
+func TestOrgMembersUnknownVerbListsTheVerbs(t *testing.T) {
+	code, out := r63Run(t, "org", "members", "audit-1001-org")
+	if code != 1 || !strings.Contains(out, `unknown subcommand "audit-1001-org"`) || !strings.Contains(out, "list") || !strings.Contains(out, "invite") {
+		t.Fatalf("exit=%d out=%s", code, out)
+	}
+}
+
 // Prod hunt r68: `cron get nope` printed only its usage line, never that the
 // ID was malformed or where cron IDs come from.
 func TestCronGetNamesTheMalformedID(t *testing.T) {
