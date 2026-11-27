@@ -242,11 +242,15 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		return
 	}
 	label, scopes, ttl := browserAuthCredential(req.Code)
+	scopes, connect := withoutConnectApproval(scopes)
 	expiresAt := time.Now().UTC().Add(ttl)
 	k, scopes, p := h.mintBrowserAuthKey(r, req, accountID, keyHash, label, scopes, expiresAt)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
+	}
+	if connect {
+		h.recordConnectGrant(r, k.ID, accountID)
 	}
 	h.srv.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = h.srv.notif.Notify(r.Context(), db.NotifyKeyChanged,
