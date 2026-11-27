@@ -317,6 +317,8 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 
 // RestoreWithResult also reports whether this invocation reserved the target.
 // Callers must compensate only resources they created, never adopted restores.
+// Its error comes with a zero Database except ErrConflict for a copy another
+// worker is making right now (leasedRestore): the provisioning row, not ready.
 func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
 	// A restore copies a database that exists, so it is recovery, not a new
 	// database: the operations gate decides (ADR-20261103091657).
@@ -389,6 +391,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 			return existing, false, nil
 		}
 		database, err := s.Reconcile(ctx, existing.AccountID, existing.ID)
+		if errors.Is(err, ErrConflict) && database.ID == "" {
+			database = s.leasedRestore(ctx, existing)
+		}
 		return database, false, err
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -548,6 +553,21 @@ func restoreMatchesSourceDefinition(target, source Database) bool {
 	return target.ID != source.ID && target.Spec == source.Spec && target.BackendID == source.BackendID && target.BackendFingerprint == source.BackendFingerprint &&
 		target.RestoreSourceResourceID == databaseDataResource(source) && target.State != StateDeleting && target.State != StateDeleted &&
 		(target.ProviderResourceID == "" || target.ProviderResourceID != source.ProviderResourceID && target.ProviderResourceID != databaseDataResource(source))
+}
+
+// leasedRestore is a restore's copy that another worker is making right now:
+// still provisioning under a live lease, not waiting out a retry. Restore
+// answers its conflict with that row so a caller can tell a copy in progress
+// from a failed one (an environment branch waits instead of backing off; prod
+// 2026-11-27, two backoffs held a branch's data for 24 s). Any other conflict
+// (a failed, deleting or backed-off copy) keeps the empty row.
+func (s *Service) leasedRestore(ctx context.Context, existing Database) Database {
+	current, err := s.store.Get(ctx, existing.AccountID, existing.ID)
+	now := s.now()
+	if err != nil || current.State != StateProvisioning || current.LeaseToken == "" || !current.LeaseUntil.After(now) || current.RetryAt.After(now) {
+		return Database{}
+	}
+	return current
 }
 
 func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (Database, error) {
