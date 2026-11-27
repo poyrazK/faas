@@ -57,6 +57,12 @@ func PlanChargesNothing(cards []state.APIConsumerRateCard, planID string, now ti
 	return any
 }
 
+// offersOnlyFreePlan reports whether sign-up offers the free plan and nothing
+// else. No plan IDs offer the app's default plan, which is not the free plan.
+func offersOnlyFreePlan(set state.APIConsumerSignupSettings) bool {
+	return set.FreePlanID != "" && len(set.PlanIDs) == 1 && set.PlanIDs[0] == set.FreePlanID
+}
+
 // freePlanProblem checks a settings request's free plan and OAuth consumers.
 func (s *Service) freePlanProblem(ctx context.Context, app state.App, set state.APIConsumerSignupSettings) *api.Problem {
 	if set.FreePlanID == "" {
