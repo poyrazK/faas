@@ -6722,7 +6722,17 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 }
 
 func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, bool, error) {
+	phases := newParkPhases(time.Now())
+	info, cleaned, err := m.parkCapture(ctx, instance, spec, phases)
+	phases.report(m.log, instance, err, time.Now())
+	return info, cleaned, err
+}
+
+// parkCapture is parkWithCleanupResult's body; it marks each phase so a slow
+// or failed capture names the step that took the time (prod hunt r72).
+func (m *Manager) parkCapture(ctx context.Context, instance string, spec SnapshotSpec, phases *parkPhases) (SnapshotInfo, bool, error) {
 	operationCtx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotTerminal)
+	phases.mark("flight", time.Now())
 	if err != nil {
 		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, err)
 	}
@@ -6741,6 +6751,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 		m.log.Warn("park: forwards still in flight at the drain deadline", "instance", instance,
 			"forwards", remaining, "drain_s", parkForwardDrainTimeout.Seconds())
 	}
+	phases.mark("drain", time.Now())
 	m.mu.Lock()
 	flight.parking = true
 	m.mu.Unlock()
@@ -6752,6 +6763,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 		destroyErr := m.Destroy(context.WithoutCancel(ctx), instance)
 		return SnapshotInfo{}, destroyErr == nil, fmt.Errorf("park %s: drain forwarding: %w", instance, err)
 	}
+	phases.mark("forwards", time.Now())
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -6765,8 +6777,10 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	// sessions now and every restore wakes with failed sockets, not live ones.
 	m.releaseConnectionsBeforeCapture(operationCtx, inst)
 	spec.nativeRuntime = m.nativeRuntimeCapture(operationCtx, inst, spec)
+	phases.mark("prepare", time.Now())
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
+	phases.mark("snapshot", time.Now())
 	if snapshotErr != nil {
 		snapshotErr = fmt.Errorf("snapshot: %w", snapshotErr)
 	}
@@ -6779,6 +6793,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 		defer cancel()
 	}
 	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
+	phases.mark("cleanup", time.Now())
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
 		return SnapshotInfo{}, cleanupErr == nil, fmt.Errorf("park %s: %w", instance, err)
 	}
@@ -6792,6 +6807,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 		}
 		m.writeSnapshotBackingTo(context.WithoutCancel(ctx), store, instance, spec.StorageKey)
 	}
+	phases.mark("publish", time.Now())
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, true, nil
 }
