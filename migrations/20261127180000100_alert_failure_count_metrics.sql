@@ -1,23 +1,14 @@
 -- filename: 20261127180000100_alert_failure_count_metrics.sql
 -- migration-compat: expand
--- Customer alerts for failures support could see and customers could not
--- (pkg/apid/attention boot_failing and jobs_failing signals):
---   boot_failures  the app's wake.boot_failed events within the window.
---                  App-scoped; any action, like oom_kills.
---   job_failures   the account's job runs that finished failed or
---                  dead-lettered within the window. A rule lives on an app
---                  but counts every job, like account_spend_eur. Webhook
---                  action only (alert_rules_failure_count_action_chk).
--- Each gets a preset so it shows in the dashboard grid.
---
--- alert_rules_failure_count_action_chk is added NOT VALID and validated
--- first. Each metric CHECK is then replaced online, as in
--- 20261112122644583_ai_budget_alert_metric: a widened copy of its current
--- definition (which keeps metrics other migrations added) is added NOT VALID
--- under a new name and validated, the old one is dropped, the old name is
--- re-added from the copy NOT VALID and validated, and the copy is dropped.
--- Every step commits on its own and is guarded, so writers never wait on a
--- scan and a rerun after a partial failure converges.
+-- Alerts for failures only support could see (pkg/apid/attention):
+-- boot_failures counts the app's failed VM boots (wake.boot_failed, reason
+-- vmm_boot_failed, not mirror-mode); job_failures counts the account's job
+-- runs that finished failed or dead_letter (a rule on any app counts every
+-- job, like account_spend_eur). Both are webhook-only
+-- (alert_rules_failure_count_action_chk): a node fault also fails boots and
+-- neither count is tied to one deployment. Each gets a preset. The metric
+-- CHECKs are widened online as in 20261112122644583_ai_budget_alert_metric;
+-- every step commits on its own and is guarded so a rerun converges.
 -- +goose NO TRANSACTION
 
 -- +goose Up
