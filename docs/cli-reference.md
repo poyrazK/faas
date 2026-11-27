@@ -892,7 +892,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 
 Provision or attach object storage and inject sealed S3 settings
 
-`gregale add bucket [--app <APP>] [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
+`gregale add bucket [--app <APP>] [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--object-lock] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -900,6 +900,7 @@ Provision or attach object storage and inject sealed S3 settings
 | `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
 | `--scope <SCOPE>` | environment scope (alias for --env) |  |
 | `--region <REGION>` | object-storage region |  |
+| `--object-lock` | create the bucket with Object Lock (permanent; keeps every version) |  |
 | `--public` | serve objects publicly from the app host |  |
 | `--serve-at <PATH>` | public mount path |  |
 | `--permission <MODE>` | compute binding permission | one of `read` · `write` · `read_write` |

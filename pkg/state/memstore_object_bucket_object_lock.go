@@ -124,7 +124,9 @@ func (m *MemStore) DueObjectBucketObjectLock(ctx context.Context, limit int32) (
 
 	jobs := []ObjectBucketObjectLock{}
 	for _, j := range m.objectBucketObjectLock {
-		if objectLockActive(j) && !j.LeaseUntil.After(m.clock()) && !j.RetryAt.After(m.clock()) {
+		// A bucket created with Object Lock waits for its provider bucket
+		// (ADR-20261119065000).
+		if objectLockActive(j) && !j.LeaseUntil.After(m.clock()) && !j.RetryAt.After(m.clock()) && m.objectBuckets[j.BucketID].State != "provisioning" {
 			jobs = append(jobs, cloneObjectBucketObjectLock(j))
 		}
 	}
