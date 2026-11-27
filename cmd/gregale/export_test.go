@@ -3249,3 +3249,17 @@ func ProcNetListeners(text string) []string {
 	}
 	return out
 }
+
+// RunDoctorImageChecksWithLocal runs the image checks with a stand-in for the
+// local Docker store: images maps a reference to its `docker image inspect`
+// JSON.
+func RunDoctorImageChecksWithLocal(ctx context.Context, ref string, inspector doctorImageInspector, images map[string]string) doctorReport {
+	return runDoctorImageChecksWithLocal(ctx, ref, nil, inspector, func(_ context.Context, ref string) (doctorLocalImage, bool) {
+		raw, ok := images[ref]
+		if !ok {
+			return doctorLocalImage{}, false
+		}
+		img, err := parseDockerImageInspect([]byte(raw))
+		return img, err == nil
+	})
+}
