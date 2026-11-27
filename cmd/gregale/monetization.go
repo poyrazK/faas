@@ -1,11 +1,15 @@
 package main
 
-// adr: 20261018090210 — API monetization is released by a runtime setting.
-// Until it is, the CLI keeps its verbs and flags out of every customer
-// surface: help, completions, man pages, the generated reference, command
-// suggestions, dispatch and flag parsing. Setting
+// adr: 20261018090210 — API monetization is released by a runtime setting
+// or, per account, by the api_monetization platform flag
+// (ADR-20261020170649). Until it is, the CLI keeps its verbs and flags out of
+// every customer surface: help, completions, man pages, the generated
+// reference, command suggestions, dispatch and flag parsing. An account it is
+// released to sees them once apid's capability view says so
+// (api-monetization not hidden), as for the realtime preview; setting
 // FAAS_API_MONETIZATION_ENABLED in the shell, the variable that also
-// bootstraps the setting in apid, shows them.
+// bootstraps the setting in apid, shows them everywhere, including the
+// reference.
 
 import (
 	"slices"
@@ -14,7 +18,32 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// monetizationCapability is the capability apid hides from an account API
+// monetization is not released to.
+const monetizationCapability = "api-monetization"
+
+// monetizationCLI is the static gate: the operator variable in the shell. The
+// manifest the public reference and offline error paths read follows it
+// alone, so they never depend on who is logged in or wait on the API.
 func monetizationCLI() bool { return api.APIMonetizationEnabled() }
+
+// monetizationInView reports whether a capability view shows API
+// monetization: the static gate, or an account view apid confirmed (GET
+// /v1/capabilities) that does not hide it. Logged out, with no confirmed
+// view, or with FAAS_CAPABILITY_FLAGS_RELEASE_ALL (which releases capability
+// flags, not this account rollout), it stays hidden.
+func monetizationInView(view capabilityView) bool {
+	return monetizationCLI() || !view.tier && !view.all && !view.hides(monetizationCapability)
+}
+
+// monetizationForAccount is monetizationInView for the logged-in account:
+// running a monetization verb or flag follows the account's release instead
+// of needing the operator variable in the seller's shell.
+func monetizationForAccount() bool { return monetizationInView(discoveryCapabilityView()) }
+
+// monetizationOffline is monetizationInView for usage and error text: the
+// run's view or the cached one, never a new API read.
+func monetizationOffline() bool { return monetizationInView(offlineCapabilityView()) }
 
 // monetizationVerbs are, per command, the subcommands that belong to API
 // monetization.
@@ -31,6 +60,9 @@ var monetizationVerbs = map[string][]string{
 		"billing-policy-delete", "overdue-holds", "credits", "credit-grant", "credit-void", "spend-cap", "spend-cap-set",
 		"spend-cap-delete"},
 	"account": {"billing-connection", "billing-run", "invoices"},
+	// Seller stats and the listing are API monetization surfaces
+	// (ADR-20261126082046, ADR-20261126175800).
+	"mcp": {"stats", "listing"},
 }
 
 // monetizationFlags are monetization flags of released verbs, keyed by
@@ -46,13 +78,13 @@ var hiddenMonetizationFlagText = map[string]string{
 // hiddenMonetizationVerb reports whether verb is a monetization subcommand of
 // command while monetization is hidden.
 func hiddenMonetizationVerb(command, verb string) bool {
-	return !monetizationCLI() && slices.Contains(monetizationVerbs[command], verb)
+	return slices.Contains(monetizationVerbs[command], verb) && !monetizationForAccount()
 }
 
 // hiddenMonetizationFlag reports whether flag is a monetization flag of a
 // released verb while monetization is hidden.
 func hiddenMonetizationFlag(command, verb, flag string) bool {
-	return !monetizationCLI() && slices.Contains(monetizationFlags[command+" "+verb], flag)
+	return slices.Contains(monetizationFlags[command+" "+verb], flag) && !monetizationForAccount()
 }
 
 // releasedVerbFlags drops hidden monetization flags from a verb's allowed
@@ -64,7 +96,7 @@ func releasedVerbFlags(command, verb string, flags []string) []string {
 // releasedUsage drops hidden monetization verbs from the first <a|b> or
 // {a|b} group of a usage line.
 func releasedUsage(command, usage string) string {
-	if monetizationCLI() {
+	if monetizationOffline() {
 		return usage
 	}
 	open := strings.IndexAny(usage, "<{")

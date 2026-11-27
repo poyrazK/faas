@@ -13,6 +13,9 @@ import (
 
 const disposableRunsCapabilityKey = "disposable-runs"
 
+// monetizationCapability is the registry entry for API monetization.
+const monetizationCapability = "api-monetization"
+
 // getCapabilities returns the canonical customer capability registry with
 // plan entitlement resolved for the authenticated account. It is read-only
 // and intentionally does not require MFA so API keys can use it during setup.
@@ -85,6 +88,10 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			// only the capability flag, so gregale_context and the CLI
 			// offered features whose routes answered 404 (2026-11-22).
 			available, _ = s.realtime.CapabilityAvailable(r, acct, capabilities.Capabilities[i].Key)
+		case monetizationCapability:
+			// The routes decide by the runtime switch or the flag
+			// (apiMonetizationFor); the flag alone missed the switch.
+			available = s.apiMonetizationFor(acct.ID)
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach
@@ -105,9 +112,22 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}
 	applyParentRuntimeAvailability(capabilities.Capabilities)
-	capabilities.HiddenCapabilities = mergeHiddenCapabilities(s.hiddenCapabilities(flagSubject(r, acct)),
-		s.realtime.PreviewHiddenCapabilities(acct.ID))
+	capabilities.HiddenCapabilities = withMonetizationVisibility(mergeHiddenCapabilities(s.hiddenCapabilities(flagSubject(r, acct)),
+		s.realtime.PreviewHiddenCapabilities(acct.ID)), s.apiMonetizationFor(acct.ID))
 	writeJSON(w, http.StatusOK, capabilities)
+}
+
+// withMonetizationVisibility makes the view say what the routes do: API
+// monetization is hidden exactly when apiMonetizationFor refuses the account
+// (runtime switch or api_monetization flag), whether or not the capability
+// gate is installed. The CLI shows the selling commands from this
+// (ADR-20261020170649).
+func withMonetizationVisibility(hidden []string, released bool) []string {
+	out := slices.DeleteFunc(slices.Clone(hidden), func(id string) bool { return id == monetizationCapability })
+	if !released {
+		out = append(out, monetizationCapability)
+	}
+	return out
 }
 
 // openAPIHidden leaves the operator routes and the capabilities off by

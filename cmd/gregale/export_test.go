@@ -3077,12 +3077,36 @@ func RealtimePreviewInView(tier bool, hidden ...string) bool {
 	return realtimePreviewInView(accountCapabilityView(hidden))
 }
 
+// MonetizationInView is monetizationInView for the tier defaults (tier) or
+// for an account view that hides hidden.
+func MonetizationInView(tier bool, hidden ...string) bool {
+	if tier {
+		return monetizationInView(capabilityView{tier: true})
+	}
+	return monetizationInView(accountCapabilityView(hidden))
+}
+
+// VerbsDiscoveredBy lists the verbs of command that discovery shows to an
+// account whose view hides hidden.
+func VerbsDiscoveredBy(command string, hidden ...string) []string {
+	view := accountCapabilityView(hidden)
+	var names []string
+	for _, c := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view), monetizationInView(view))) {
+		if c.Name == command {
+			for _, sub := range c.Subcommands {
+				names = append(names, sub.Name)
+			}
+		}
+	}
+	return names
+}
+
 // RealtimeVerbsDiscoveredBy lists the realtime verbs discovery shows to an
 // account whose view hides hidden.
 func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 	view := accountCapabilityView(hidden)
 	var names []string
-	for _, command := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view))) {
+	for _, command := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view), monetizationInView(view))) {
 		if command.Name == "realtime" {
 			for _, sub := range command.Subcommands {
 				names = append(names, sub.Name)

@@ -131,3 +131,33 @@ func servedPaths(t *testing.T, e apidserver.TestEnv) map[string]bool {
 	}
 	return paths
 }
+
+// The capability view says what the routes do, so the CLI shows the selling
+// commands to exactly the accounts API monetization is released to.
+func TestCapabilitiesHideMonetizationUntilReleased(t *testing.T) {
+	for _, released := range []string{"0", "1"} {
+		t.Run(released, func(t *testing.T) {
+			t.Setenv("FAAS_API_MONETIZATION_ENABLED", released)
+			e := setupWebhookTest(t, api.PlanPro)
+			res := e.Do(t, http.MethodGet, "/v1/capabilities", nil, nil)
+			if res.Code != http.StatusOK {
+				t.Fatalf("capabilities: %d %s", res.Code, res.Body)
+			}
+			var body struct {
+				Hidden []string `json:"hidden_capabilities"`
+			}
+			if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			hidden := 0
+			for _, id := range body.Hidden {
+				if id == "api-monetization" {
+					hidden++
+				}
+			}
+			if want := map[string]int{"0": 1, "1": 0}[released]; hidden != want {
+				t.Fatalf("api-monetization listed %d times in %v, want %d", hidden, body.Hidden, want)
+			}
+		})
+	}
+}
