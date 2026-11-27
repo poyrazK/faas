@@ -98,7 +98,7 @@ func TestCheckInlineFailsOpen(t *testing.T) {
 
 	t.Run("app budget exhausted", func(t *testing.T) {
 		i, _ := newClockedInspector(&recordingObserver{})
-		for i.admitInline(attack.AppID) {
+		for i.admitInline(attack.AppID, estimateInline(0)) {
 		}
 		if res := i.CheckInline(attack); res.Outcome != gateway.WAFInlineSkipped || res.SkipReason != gateway.WAFInlineSkipBudget {
 			t.Fatalf("outcome = %s (%s), want skipped (budget)", res.Outcome, res.SkipReason)
@@ -335,6 +335,26 @@ func TestSampledCheckReportsUninspectedURI(t *testing.T) {
 	short, err := evaluate(waf, sample(http.MethodGet, "/search?q=shoes", nil, ""))
 	if err != nil || short.Detected || short.Oversized {
 		t.Fatalf("short URI = %+v (%v), want clean", short, err)
+	}
+}
+
+// TestCheckInlineChargesBodyUpFront: a check with a body reserves budget for
+// its fields before it runs, so a burst of body checks cannot admit far more
+// work than the app's balance (ADR-831 amendment 22).
+func TestCheckInlineChargesBodyUpFront(t *testing.T) {
+	if full, bare := estimateInline(api.EdgeWAFMaxInlineBodyBytes), estimateInline(0); full < 10*bare {
+		t.Fatalf("estimate for a 2 KiB body = %.1f ms, header-only %.1f ms; want the body to dominate", full, bare)
+	}
+	i := New(&recordingObserver{}, nil)
+	body := `{"a":"` + strings.Repeat("x", api.EdgeWAFMaxInlineBodyBytes) + `"}`
+	if !i.admitInline("app-1", estimateInline(len(body))) {
+		t.Fatal("first body check refused")
+	}
+	admitted := 1
+	for ; admitted < 1000 && i.admitInline("app-1", estimateInline(len(body))); admitted++ {
+	}
+	if burst := int(api.EdgeWAFInlineMsPerAppBurst / estimateInline(api.EdgeWAFMaxInlineBodyBytes)); admitted > burst+1 {
+		t.Errorf("admitted %d body checks before settling, want at most about %d", admitted, burst+1)
 	}
 }
 

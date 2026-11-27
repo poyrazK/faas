@@ -1543,17 +1543,36 @@ Warn and block rules now also score the first `api.EdgeWAFMaxInlineBodyBytes`
   rule family and reports it. Counting a long body as a detection, as
   amendments 20 and 21 do for headers and URIs, would refuse most uploads and
   is not done; `kind=validate` bounds and shapes bodies.
-- **What is not read** (`api.EdgeWAFInlineBodyInspectable`): a compressed
+- **Read only what admission reads anyway, under its deadlines.** Upload
+  admission (`admitRequestBody`) reads every body to the end before the app
+  wakes, except native gRPC to a gRPC app and upgrades, whose client may
+  send one message and wait for the reply (`requestBodyStreams`). The gate
+  reads only bodies admission would read, chunked ones included, so it
+  never makes a request wait for bytes the request would not have waited
+  for anyway. It reads under admission's deadlines on the connection (the
+  size-derived total and the 15 s sliding idle deadline), so a client that
+  sends its headers and stalls is held no longer than admission would hold
+  it; on a timeout or other read error the bytes read and the error are put
+  back, nothing is scored in-path, and admission answers as before. A
+  connection that cannot take a read deadline is not read. One known gap:
+  scoped local execution (the dev bridge) streams without admission, so a
+  full-duplex dev request under a body-checked block rule waits for 2 KiB,
+  the end of the body or the idle deadline.
+- **What is not scored** (`api.EdgeWAFInlineBodyInspectable`): a compressed
   body (any `Content-Encoding` but `identity`), which carries no text the
-  rules can read in-path or sampled; and a body of unknown length (chunked,
-  or HTTP/2 without `Content-Length`) declared as a streaming type (gRPC,
-  Connect streams, NDJSON, JSON sequences, server-sent events), because such
-  a client may send one message and wait for the reply, and the gateway would
-  wait for bytes that never come. Every other `Content-Type` is read: an app
+  rules can read in-path or sampled. Every `Content-Type` is scored: an app
   may parse a body whatever type the client declares, so skipping by type
   would let a client hide a JSON payload behind `application/octet-stream`,
   and CRS parses an unknown type as one URL-encoded argument (901340),
-  which is cheap.
+  which is cheap. Skipping bodies without a `Content-Length` would let a
+  client evade the check by sending chunked, so they are scored too.
+- **Charged by size.** A check reserves the app's inline budget for its
+  body before it runs (1 ms plus 6 µs a byte, the worst M3 rate), so a burst
+  of body checks cannot admit far more work than the app's balance and
+  hold check slots other accounts need; settle trues it up.
+- **Warn still samples.** A warn detection on a request with a body now
+  submits the off-path sample, so the body past the prefix is scored with
+  every family and reported (it was dropped before).
 - **Bounded twice.** The strict in-path engine sets `SecRequestBodyLimit` to
   2 KiB, and `CheckInline` cuts a longer sample, so no caller can make a
   check cost more than the prefix.
@@ -1575,7 +1594,12 @@ before the flag is widened past test accounts.
 Tests: `TestCheckInline` (XSS and SQLi in a JSON body, a benign body, body
 headers without bytes), `TestCheckInlineBoundsBody`,
 `TestCheckInlineWithoutStrictInspection` (the baseline set ignores the body),
-`TestEdgeWAFInlineBodyInspectable`, `TestApplyEdgeRuleWAFInlineBody` (the app
-receives the body unchanged; compressed, streaming and flag-off bodies are
-not read), `TestApplyEdgeRuleWAFInlineBodyBlocks` and
+`TestCheckInlineChargesBodyUpFront`, `TestEdgeWAFInlineBodyInspectable`,
+`TestApplyEdgeRuleWAFInlineBody` (the app receives the body unchanged, read
+under a deadline; compressed, native gRPC and flag-off bodies are not
+scored), `TestApplyEdgeRuleWAFInlineBodyBlocks`,
+`TestApplyEdgeRuleWAFInlineBodyStalledClient`,
+`TestApplyEdgeRuleWAFInlineBodyNeedsReadDeadline`,
+`TestApplyEdgeRuleWAFInlineBodyNotReadWithoutChecker`,
+`TestApplyEdgeRuleWAFWarnDetectionWithBodyIsSampled` and
 `TestApplyEdgeRuleWAFInlineBodyDoesNotWaitOnStreams`.

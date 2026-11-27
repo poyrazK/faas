@@ -107,25 +107,6 @@ func (i *Inspector) inlineWAF(strict bool) (coraza.WAF, error) {
 // down; the caller lets the request through and counts the skip. Seconds is
 // the latency the check added, including any wait for a slot.
 func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
-	if !i.admitInline(s.AppID) {
-		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: gateway.WAFInlineSkipBudget}
-	}
-	start := time.Now()
-	tenant := inlineTenant(s)
-	if ok, overShare := i.inlineSlots.acquire(tenant, i.inlineWait); !ok {
-		i.settleInline(s.AppID, 0)
-		reason := gateway.WAFInlineSkipBusy
-		if overShare {
-			reason = gateway.WAFInlineSkipAccountShare
-		}
-		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: reason}
-	}
-	defer i.inlineSlots.release(tenant)
-	waf, err := i.inlineWAF(s.Strict)
-	if err != nil {
-		i.settleInline(s.AppID, 0)
-		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineError}
-	}
 	if s.Strict {
 		// The gateway already cut the body; bound it again so no caller can
 		// make one check cost more than the prefix.
@@ -139,10 +120,32 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 		// empty the app's check budget (ADR-831 amendment 21).
 		s.URI = boundURI(s.URI)
 	}
+	// A body costs per field, so the app is charged up front for the body
+	// it sends; settle trues it up with the measured time.
+	estimate := estimateInline(len(s.Body))
+	if !i.admitInline(s.AppID, estimate) {
+		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: gateway.WAFInlineSkipBudget}
+	}
+	start := time.Now()
+	tenant := inlineTenant(s)
+	if ok, overShare := i.inlineSlots.acquire(tenant, i.inlineWait); !ok {
+		i.settleInline(s.AppID, estimate, 0)
+		reason := gateway.WAFInlineSkipBusy
+		if overShare {
+			reason = gateway.WAFInlineSkipAccountShare
+		}
+		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: reason}
+	}
+	defer i.inlineSlots.release(tenant)
+	waf, err := i.inlineWAF(s.Strict)
+	if err != nil {
+		i.settleInline(s.AppID, estimate, 0)
+		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineError}
+	}
 	checkStart := time.Now()
 	res, err := evaluate(waf, s)
 	// The app's budget is charged the check's own time, not the wait.
-	i.settleInline(s.AppID, time.Since(checkStart))
+	i.settleInline(s.AppID, estimate, time.Since(checkStart))
 	out := gateway.WAFInlineResult{Seconds: time.Since(start).Seconds()}
 	switch {
 	case err != nil:
@@ -168,14 +171,14 @@ func inlineTenant(s gateway.WAFSample) string {
 // InlineSlots is how many in-path checks may run at once.
 func (i *Inspector) InlineSlots() int { return i.inlineSlots.size }
 
-func (i *Inspector) admitInline(appID string) bool {
+func (i *Inspector) admitInline(appID string, estimateMs float64) bool {
 	i.inlineMu.Lock()
 	defer i.inlineMu.Unlock()
-	return i.inlineBudgets.admit(appID, i.now(), estimateInlineMs)
+	return i.inlineBudgets.admit(appID, i.now(), estimateMs)
 }
 
-func (i *Inspector) settleInline(appID string, took time.Duration) {
+func (i *Inspector) settleInline(appID string, estimateMs float64, took time.Duration) {
 	i.inlineMu.Lock()
 	defer i.inlineMu.Unlock()
-	i.inlineBudgets.settle(appID, i.now(), estimateInlineMs, took)
+	i.inlineBudgets.settle(appID, i.now(), estimateMs, took)
 }

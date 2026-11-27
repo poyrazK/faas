@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -200,8 +201,8 @@ func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, a
 	sample := newWAFSample(r, app, rule)
 	sample.Strict = h.edgeFeatureReleased(platformflags.EdgeWAFStrictInspection, app)
 	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
-		if sample.Strict && h.edgeFeatureReleased(platformflags.EdgeWAFInlineBody, app) {
-			sample.Body, sample.BodyTruncated = body.read(r)
+		if sample.Strict && h.wafInline != nil && h.edgeFeatureReleased(platformflags.EdgeWAFInlineBody, app) {
+			sample.Body, sample.BodyTruncated = body.read(w, r, app)
 		}
 		res := h.checkEdgeRuleWAFInline(rule, sample)
 		outcome := res.Outcome
@@ -217,13 +218,14 @@ func (h *Handler) applyEdgeRuleWAFRule(w http.ResponseWriter, r *http.Request, a
 			// The header names the edge rule, not the CRS rule, so the
 			// response does not teach a caller which signature fired.
 			rec.installHeaderOps([]EdgeRuleHeaderOp{{Action: "set", Name: "X-WAF-Warning", Value: rule.ID}})
-			if !res.Oversized || !requestHasBody(r) {
+			if !requestHasBody(r) {
 				return false, nil
 			}
-			// An oversized detection scored nothing, and the request still
-			// reaches the app: sample its body, so padding the query or
-			// headers cannot hide a body payload from the report (amendment
-			// 21). Without a body there is nothing more to find.
+			// The request still reaches the app: sample its body, so the
+			// rule's whole inspect_body_bytes is scored with every rule
+			// family and reported, past the in-path prefix (amendment 22) or
+			// past an oversized URI or headers that scored nothing
+			// (amendment 21). Without a body there is nothing more to find.
 			return false, h.sampleEdgeRuleWAF(r, rule, sample)
 		}
 		// The in-path check has scored the headers, URI and body prefix.
@@ -256,30 +258,70 @@ type wafInlineBody struct {
 // read returns the first api.EdgeWAFMaxInlineBodyBytes of r's body, and
 // whether the body is longer, and puts the bytes it read back in front of
 // the rest, so the app and the off-path sample receive the body unchanged.
+//
+// It reads only a body that upload admission (admitRequestBody) would read
+// to the end before the app wakes anyway, under the same deadlines: the
+// size-derived total and the sliding idle read deadline. So a client that
+// stalls is held no longer than admission would hold it, and a stream that
+// expects a reply before it ends (native gRPC, an upgrade) is never read.
 // It returns nothing for a body api.EdgeWAFInlineBodyInspectable leaves to
-// the sampled check, and for a body whose read failed: the error stays with
-// the body for the proxy to report.
-func (b *wafInlineBody) read(r *http.Request) ([]byte, bool) {
+// the sampled check, when the connection cannot take a read deadline, and
+// for a body whose read failed: the error is put back after the bytes read,
+// for admission to answer.
+func (b *wafInlineBody) read(w http.ResponseWriter, r *http.Request, app App) ([]byte, bool) {
 	if b.done {
 		return b.prefix, b.truncated
 	}
 	b.done = true
-	if !requestHasBody(r) || !api.EdgeWAFInlineBodyInspectable(r.ContentLength, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding")) {
+	if !requestHasBody(r) || requestBodyStreams(r, app) || !api.EdgeWAFInlineBodyInspectable(r.Header.Get("Content-Encoding")) {
 		return nil, false
 	}
-	buf := make([]byte, api.EdgeWAFMaxInlineBodyBytes+1)
-	n, err := io.ReadFull(r.Body, buf)
+	controller := http.NewResponseController(w)
+	total := time.Now().Add(api.RequestUploadTimeoutForBytes(max(r.ContentLength, 0)))
+	if err := controller.SetReadDeadline(wafBodyReadDeadline(total)); err != nil {
+		return nil, false
+	}
+	defer func() { _ = controller.SetReadDeadline(time.Time{}) }()
+
+	size := int64(api.EdgeWAFMaxInlineBodyBytes) + 1
+	if r.ContentLength >= 0 {
+		size = min(r.ContentLength, int64(api.EdgeWAFMaxInlineBodyBytes))
+	}
+	buf := make([]byte, size)
+	n := 0
+	var err error
+	for n < len(buf) && err == nil {
+		var m int
+		m, err = r.Body.Read(buf[n:])
+		n += m
+		if err == nil {
+			_ = controller.SetReadDeadline(wafBodyReadDeadline(total))
+		}
+	}
 	buf = buf[:n]
-	r.Body = &wafReplayedBody{Reader: io.MultiReader(bytes.NewReader(buf), r.Body), Closer: r.Body}
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	if err != nil && !errors.Is(err, io.EOF) {
+		r.Body = &wafReplayedBody{Reader: io.MultiReader(bytes.NewReader(buf), wafErrReader{err}), Closer: r.Body}
 		return nil, false
 	}
-	if n > api.EdgeWAFMaxInlineBodyBytes {
+	r.Body = &wafReplayedBody{Reader: io.MultiReader(bytes.NewReader(buf), r.Body), Closer: r.Body}
+	switch {
+	case r.ContentLength > int64(api.EdgeWAFMaxInlineBodyBytes):
+		b.prefix, b.truncated = buf, true
+	case n > api.EdgeWAFMaxInlineBodyBytes:
 		b.prefix, b.truncated = buf[:api.EdgeWAFMaxInlineBodyBytes], true
-	} else {
+	default:
 		b.prefix = buf
 	}
 	return b.prefix, b.truncated
+}
+
+// wafBodyReadDeadline is the next read's deadline: the idle timeout from
+// now, or the total deadline if that comes first, as admission sets them.
+func wafBodyReadDeadline(total time.Time) time.Time {
+	if idle := time.Now().Add(api.RequestUploadIdleTimeout); idle.Before(total) {
+		return idle
+	}
+	return total
 }
 
 // wafReplayedBody is a request body with the bytes already read put back in
@@ -288,6 +330,12 @@ type wafReplayedBody struct {
 	io.Reader
 	io.Closer
 }
+
+// wafErrReader returns the error the in-path read hit, after the bytes read
+// before it, so admission reports it as it would have.
+type wafErrReader struct{ err error }
+
+func (e wafErrReader) Read([]byte) (int, error) { return 0, e.err }
 
 func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) []*EdgeRuleWAFResolved {
 	if h.edgeRules == nil || (h.wafInspector == nil && h.wafInline == nil) {

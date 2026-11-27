@@ -360,9 +360,9 @@ load, and body detections are reported, never blocked. Once they reach
 yours, `warn` and `block` also check the first 2 KiB of the body before your
 app wakes; your app still receives the whole body. A check costs about
 0.1 ms per JSON or form field, so 2 KiB keeps a typical API body to a few
-milliseconds. Content past 2 KiB, compressed bodies (`Content-Encoding`), and
-streaming bodies without a `Content-Length` (gRPC, NDJSON, server-sent
-events) are still only sampled and reported. Either way, protect body fields
+milliseconds. Content past 2 KiB, compressed bodies (`Content-Encoding`),
+gRPC streams to gRPC apps and WebSocket upgrades are still only sampled and
+reported. Either way, protect body fields
 in your app (parameterized queries, output encoding) and declare their shape
 with a `kind=validate` rule, which the edge enforces on the whole body. In
 `warn` and `block`, a request without a body is checked in-path only; it is

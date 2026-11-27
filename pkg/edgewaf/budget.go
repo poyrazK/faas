@@ -101,7 +101,17 @@ const (
 	// estimateInlineMs is a header/URI check with the in-path rule set
 	// (amendment 3 addendum: ~0.9 ms p50, ~1.1 ms p95).
 	estimateInlineMs = 1.0
+	// estimateInlineMsPerBodyByte is the in-path body prefix (amendment 22):
+	// about 60–100 µs per JSON or form field on an M3, so 8 KiB of small
+	// fields took up to 50 ms, about 6 µs a byte. The worst case is used, so
+	// a burst of body checks cannot admit far more than the app's balance.
+	estimateInlineMsPerBodyByte = 0.006
 )
+
+// estimateInline is an in-path check's admission estimate.
+func estimateInline(bodyBytes int) float64 {
+	return estimateInlineMs + estimateInlineMsPerBodyByte*float64(bodyBytes)
+}
 
 func estimateMs(paranoiaLevel, bodyBytes int) float64 {
 	est := estimateBaseMs + estimateMsPerBodyByte*float64(bodyBytes)
