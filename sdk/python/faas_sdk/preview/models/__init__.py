@@ -7219,6 +7219,7 @@ from .update_trigger_request_delivery import UpdateTriggerRequestDelivery
 from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
+from .upload_deploy_options_source_format import UploadDeployOptionsSourceFormat
 from .upload_managed_postgres_archive_body import UploadManagedPostgresArchiveBody
 from .upload_org_managed_postgres_archive_body import UploadOrgManagedPostgresArchiveBody
 from .upload_session_response import UploadSessionResponse
@@ -14375,6 +14376,7 @@ __all__ = (
     "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",
+    "UploadDeployOptionsSourceFormat",
     "UploadManagedPostgresArchiveBody",
     "UploadOrgManagedPostgresArchiveBody",
     "UploadSessionResponse",

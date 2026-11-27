@@ -2229,6 +2229,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}()
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
+	localImageName := fs.String("local-image", "", "deploy a linux/amd64 image from this machine's Docker without a registry")
+	imageArchivePath := fs.String("image-archive", "", "deploy a linux/amd64 image from a `docker save` archive without a registry")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
 	sourceMode := fs.String("source", "auto", "local source to deploy: auto, head, or worktree")
@@ -2510,6 +2512,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	// A local image follows the --image path until submission, where it is
+	// uploaded instead of pulled (ADR-20261127120000).
+	localImage, localImageCleanup, localImageCode := prepareLocalImageDeploy(ctx, *localImageName, *imageArchivePath, explicit)
+	defer localImageCleanup()
+	if localImageCode != 0 {
+		return localImageCode
+	}
+	if localImage != nil {
+		*image = localImage.displayName
+	}
 	if explicit["resume-upload-id"] {
 		if *resumeUploadID == "" || *idempotencyKey == "" || *sourcePath == "" || *createOnly ||
 			*image != "" || *repo != "" || *simplePlan || *dryRun || *diff || *serverDiff || *explainFiles {
@@ -2864,7 +2876,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := validateDeploySourceSelection(*sourcePath, *worktree, *image, *tarball, *repo, *templateName, *githubSnippet, *ref, *sourceBranch); err != nil {
 		return printErr("Invalid flags", err)
 	}
-	if *image != "" && !api.ValidDeploymentImage(*image) {
+	if *image != "" && localImage == nil && !api.ValidDeploymentImage(*image) {
 		return printErr("Invalid --image", &api.APIError{Problem: *imageDigestRequiredProblem(*image)})
 	}
 	// Resolve template shape into immutable command intent before any source
@@ -4088,7 +4100,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployIntent := deployIdempotencyIntent{
 		OverrideEnv: execution.overrideEnv,
 		Slug:        slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler, HasSecrets: len(deploySecrets) > 0,
-		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
+		Image: localImageIntent(*image, localImage), SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
 		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr, PlatformTenantRequired: platformTenantRequiredPtr, PublicAuth: publicAuthPtr,
 		AppProtocol: appProtocolIntent, ExecutionMode: *executionMode, RestartPolicy: *restartPolicy,
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
@@ -4880,7 +4892,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return &v
 	}
 	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
-	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
+	imageReq := api.CreateDeploymentRequest{
 		Image:                    *image,
 		Scope:                    manifestScope,
 		Environment:              *environment,
@@ -4899,7 +4911,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DeployedBy:               annPtr(resolveDeployedBy(*deployedBy)),
 		PRNumber:                 annIntPtr(*prNumber),
 		Canary:                   canarySpec,
-	})
+	}
+	var dep api.DeploymentResponse
+	if localImage != nil {
+		uploadCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "local-image"))
+		dep, err = submitLocalImage(uploadCtx, client, slug, localImage,
+			localImageUploadOptions(localImage, imageReq, healthcheck, *noTriggers), execution.onUploadSession)
+	} else {
+		dep, err = client.Deploy(deployCtx, slug, imageReq)
+	}
 	if err != nil {
 		return submissionFailed("Deploy submission failed", dep, err, deployKey)
 	}

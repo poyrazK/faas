@@ -101,6 +101,31 @@ type Profile struct {
 	ImageHealthcheck *ImageHealthcheck `json:"image_healthcheck,omitempty"`
 	// ImageHealthcheckRequired is imaged's effective immutable-manifest receipt.
 	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
+	// UploadedImage marks a Dockerfile-kind deployment whose source is an
+	// already built single-image OCI archive (ADR-20261127120000): builderd
+	// hands it to imaged without a builder VM.
+	UploadedImage *UploadedImage `json:"uploaded_image,omitempty"`
+}
+
+// UploadedImage records the uploaded archive apid accepted.
+type UploadedImage struct {
+	ManifestDigest string `json:"manifest_digest"`
+	// Name is the local repository tag the CLI read, informational only.
+	Name string `json:"name,omitempty"`
+}
+
+// ForUploadedImage is the profile of a prebuilt image: a Dockerfile build
+// with nothing left to build. Readiness is the port accepting connections,
+// as for a registry image, because the image never promised /healthz.
+func ForUploadedImage(manifestDigest, name string, port int) Profile {
+	if port <= 0 {
+		port = api.DefaultAppPort
+	}
+	return Profile{
+		Version: Version, Framework: string(markers.FrameworkDocker), Family: string(markers.FrameworkDocker),
+		Port: port, HealthPath: "/healthz", HealthDefaulted: true,
+		UploadedImage: &UploadedImage{ManifestDigest: manifestDigest, Name: name},
+	}
 }
 
 // Warning is actionable profile feedback. Source paths are relative to the

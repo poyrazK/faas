@@ -21,6 +21,14 @@ export type UploadDeployOptions = {
    */
   source_root?: string;
   /**
+   * What the uploaded bytes are. Omitted means a source tarball. oci_image_archive is a single-image linux/amd64 OCI image layout tar that deploys without a build (ADR-20261127120000); it is capped at the plan's app layer size and refused for function apps and apps that require signed images.
+   */
+  source_format?: 'oci_image_archive';
+  /**
+   * Informational name of the uploaded image, such as its local tag. Only valid with source_format oci_image_archive.
+   */
+  image_name?: string;
+  /**
    * Named environment scope applied when the upload is committed; omitted uses default.
    */
   scope?: string;

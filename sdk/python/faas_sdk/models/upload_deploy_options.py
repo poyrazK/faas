@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.upload_deploy_options_source_format import (
+    UploadDeployOptionsSourceFormat,
+    check_upload_deploy_options_source_format,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -44,6 +48,13 @@ class UploadDeployOptions:
     source_root: str | Unset = UNSET
     """Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.'
     selects the archive root."""
+    source_format: UploadDeployOptionsSourceFormat | Unset = UNSET
+    """What the uploaded bytes are. Omitted means a source tarball. oci_image_archive is a single-image linux/amd64
+    OCI image layout tar that deploys without a build (ADR-20261127120000); it is capped at the plan's app layer
+    size and refused for function apps and apps that require signed images."""
+    image_name: str | Unset = UNSET
+    """Informational name of the uploaded image, such as its local tag. Only valid with source_format
+    oci_image_archive."""
     scope: str | Unset = UNSET
     """Named environment scope applied when the upload is committed; omitted uses default."""
     source_url: str | Unset = UNSET
@@ -91,6 +102,12 @@ class UploadDeployOptions:
         dockerfile = self.dockerfile
 
         source_root = self.source_root
+
+        source_format: str | Unset = UNSET
+        if not isinstance(self.source_format, Unset):
+            source_format = self.source_format
+
+        image_name = self.image_name
 
         scope = self.scope
 
@@ -166,6 +183,10 @@ class UploadDeployOptions:
             field_dict["dockerfile"] = dockerfile
         if source_root is not UNSET:
             field_dict["source_root"] = source_root
+        if source_format is not UNSET:
+            field_dict["source_format"] = source_format
+        if image_name is not UNSET:
+            field_dict["image_name"] = image_name
         if scope is not UNSET:
             field_dict["scope"] = scope
         if source_url is not UNSET:
@@ -224,6 +245,15 @@ class UploadDeployOptions:
         dockerfile = d.pop("dockerfile", UNSET)
 
         source_root = d.pop("source_root", UNSET)
+
+        _source_format = d.pop("source_format", UNSET)
+        source_format: UploadDeployOptionsSourceFormat | Unset
+        if isinstance(_source_format, Unset):
+            source_format = UNSET
+        else:
+            source_format = check_upload_deploy_options_source_format(_source_format)
+
+        image_name = d.pop("image_name", UNSET)
 
         scope = d.pop("scope", UNSET)
 
@@ -305,6 +335,8 @@ class UploadDeployOptions:
             handler=handler,
             dockerfile=dockerfile,
             source_root=source_root,
+            source_format=source_format,
+            image_name=image_name,
             scope=scope,
             source_url=source_url,
             commit_sha=commit_sha,

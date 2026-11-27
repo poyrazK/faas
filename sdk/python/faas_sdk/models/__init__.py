@@ -2987,6 +2987,7 @@ from .update_project_environment_config_request import UpdateProjectEnvironmentC
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_request import UpdateProjectRequest
 from .upload_deploy_options import UploadDeployOptions
+from .upload_deploy_options_source_format import UploadDeployOptionsSourceFormat
 from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
 from .upload_start_request import UploadStartRequest
@@ -6055,6 +6056,7 @@ __all__ = (
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectRequest",
     "UploadDeployOptions",
+    "UploadDeployOptionsSourceFormat",
     "UploadSessionResponse",
     "UploadSessionResponseStatus",
     "UploadStartRequest",
