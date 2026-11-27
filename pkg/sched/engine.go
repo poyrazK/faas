@@ -4609,6 +4609,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 				Method:     method,
 				Reason:     "vmm_boot_failed",
 				FailedAt:   time.Now().UTC(),
+				Mirror:     mode == string(state.InstanceModeMirror),
 			})
 		}
 		// issue #1059 / ADR-127 §3.6 — schedd-side parity
@@ -4776,6 +4777,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 				Method:     method,
 				Reason:     "record_runtime_failed",
 				FailedAt:   time.Now().UTC(),
+				Mirror:     mode == string(state.InstanceModeMirror),
 			})
 		}
 		// issue #1059 / ADR-127 §3.6 — schedd-side parity
