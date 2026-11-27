@@ -84,6 +84,10 @@ type doctorCheck struct {
 	Why     string   `json:"why,omitempty"`
 	Fix     string   `json:"fix,omitempty"`
 	Sources []string `json:"sources,omitempty"` // file:line that triggered
+	// Detail replaces "ok" on a passed check's line (boot checks: "GET / → 200").
+	Detail string `json:"detail,omitempty"`
+	// Output is the tail of a booted container's output (doctor --boot).
+	Output string `json:"output,omitempty"`
 }
 
 // doctorReport is the top-level JSON shape. Always emits a
@@ -1157,10 +1161,14 @@ func renderDoctorReport(w io.Writer, rep doctorReport, failing, compact, doctorS
 			if compact {
 				continue
 			}
+			result := "ok"
+			if c.Detail != "" {
+				result = c.Detail
+			}
 			if Enabled() {
-				_, _ = fmt.Fprintf(w, "  ✓ %s — ok\n", c.Name)
+				_, _ = fmt.Fprintf(w, "  ✓ %s — %s\n", c.Name, result)
 			} else {
-				_, _ = fmt.Fprintf(w, "  %s — ok\n", c.Name)
+				_, _ = fmt.Fprintf(w, "  %s — %s\n", c.Name, result)
 			}
 		case "warn":
 			hasFinding = true
@@ -1194,6 +1202,7 @@ func renderDoctorReport(w io.Writer, rep doctorReport, failing, compact, doctorS
 			if len(c.Sources) > 0 {
 				_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(c.Sources, ", "))
 			}
+			renderDoctorCheckOutput(w, c.Output)
 		case "skipped":
 			hasSkipped = true
 			skipped++
@@ -1255,5 +1264,16 @@ func renderDoctorReport(w io.Writer, rep doctorReport, failing, compact, doctorS
 		} else {
 			_, _ = fmt.Fprintln(w, "The warnings above do not block a deploy; review them, or run with --strict to fail on them in CI.")
 		}
+	}
+}
+
+// renderDoctorCheckOutput prints a booted container's last output, indented.
+func renderDoctorCheckOutput(w io.Writer, output string) {
+	if output == "" {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "    container output (last lines):")
+	for _, line := range strings.Split(output, "\n") {
+		_, _ = fmt.Fprintf(w, "      %s\n", line)
 	}
 }
