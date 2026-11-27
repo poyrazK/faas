@@ -1,5 +1,5 @@
 -- filename: 20261127074004247_sandbox_session_forks.sql
--- migration-compat: expand
+-- migration-compat: contract
 -- ADR-20261122132055 §3: forks. A fork is a queued session forked_from its
 -- source that restores fork_capture_id: the source's live fork capture, or
 -- its pause capture when it was paused. apid sets fork_requested_at on a
@@ -20,6 +20,8 @@
 -- check and the narrower unique index accept what it writes. Each wider
 -- CHECK is added under a new name NOT VALID, validated, and only then is the
 -- old one dropped; the index builds concurrently. Every step is re-runnable.
+-- Contract only because it drops a unique index (the old live-capture one,
+-- no ON CONFLICT target): a full release applies it.
 -- +goose NO TRANSACTION
 
 -- +goose Up
