@@ -90,7 +90,7 @@ func registerAgentApprovals(s *mcp.Server, m *management) {
 	register(s, m, agentBudgetTool, "Show this agent key's monthly budget for always-on cost and what it committed this month. Plans of priced changes show their added cost.", m.agentBudget)
 	register(s, m, planUndoTool, "Plan undoing your own changes (default: the last 24 hours): lists each, newest first, with what undoing it will do. Apply it with gregale_apply_undo and the plan_digest.", m.planUndo)
 	if m.opts.AllowWrites {
-		registerTool(s, m, applyUndoTool, "Undo your own changes from a plan. A person must approve every undo: follow the approval_required recovery, then repeat this call with the same inputs.", false, m.applyUndo)
+		registerTool(s, m, applyUndoTool, "Undo your own changes from a plan. Unless the person approved undo when connecting, they must approve it: follow the approval_required recovery, then repeat this call with the same inputs.", false, m.applyUndo)
 	}
 }
 
