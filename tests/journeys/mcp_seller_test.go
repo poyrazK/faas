@@ -107,10 +107,16 @@ func (j *mcpSellerJourney) token(t *testing.T, subject string) string {
 }
 
 // monetizationReleased: the account can sell; otherwise the journey skips.
+// The app does not exist yet, so a released route answers app not found;
+// anything else (no consumer keys on the plan, auth, transport) fails here
+// rather than after two deploys.
 func (j *mcpSellerJourney) monetizationReleased(t *testing.T) {
 	res := j.cli(t, time.Minute, "api", "consumer", "plans", j.app)
-	if strings.Contains(res.problem(), "no such API route") {
+	switch {
+	case strings.Contains(res.problem(), "no such API route"):
 		t.Skip("API monetization is not released to this account (platform flag api_monetization)")
+	case res.exit != 0 && res.problemCode() != "not_found":
+		t.Fatalf("api consumer plans for a missing app: exit %d: %s", res.exit, res.problem())
 	}
 }
 
@@ -146,7 +152,12 @@ createServer((req, res) => {
 		j.issuer = j.tg.appURL(j.idp)
 	}
 	// The MCP server's endpoint is on the same apps domain as the issuer.
-	domain := strings.TrimPrefix(strings.TrimPrefix(j.issuer, "https://"), j.idp+".")
+	// (tg.appURL guesses the domain from the API host, which is wrong where
+	// apps live on another domain, as on production.)
+	domain, ok := strings.CutPrefix(j.issuer, "https://"+j.idp+".")
+	if !ok || domain == "" || strings.ContainsAny(domain, "/:") {
+		t.Fatalf("issuer app URL %q is not https://%s.<apps domain>", j.issuer, j.idp)
+	}
 	j.resource = "https://" + j.app + "." + domain + "/mcp"
 	r := get(j.issuer + "/.well-known/openid-configuration")
 	var discovery map[string]any
@@ -291,45 +302,49 @@ func (j *mcpSellerJourney) accountToolsListed(t *testing.T) {
 // next call is refused in MCP terms (HTTP 200, not billed) with the plan
 // limit code; other tools still answer.
 func (j *mcpSellerJourney) toolCapRefuses(t *testing.T) {
-	for i := 0; i < mcpSellerToolCap+4; i++ {
-		r := j.session.post(map[string]any{"jsonrpc": "2.0", "id": 100 + i, "method": "tools/call",
+	// sign_in_becomes_customer made the first greet call; call n (counting
+	// it) is allowed while n <= the cap and refused at n = cap+1, exactly.
+	for n := 2; n <= mcpSellerToolCap+1; n++ {
+		r := j.session.post(map[string]any{"jsonrpc": "2.0", "id": 100 + n, "method": "tools/call",
 			"params": map[string]any{"name": "greet", "arguments": map[string]any{"name": "journey"}}})
 		if r.err != nil || r.status != http.StatusOK {
-			t.Fatalf("greet call %d = %s", i+1, r)
+			t.Fatalf("greet call %d = %s", n, r)
 		}
-		if code := r.header.Get("X-Faas-Error-Code"); code != "" {
-			if code != "consumer_plan_limit_exceeded" {
-				t.Fatalf("greet call %d refused with %q: %s", i+1, code, r)
+		code := r.header.Get("X-Faas-Error-Code")
+		if n <= mcpSellerToolCap {
+			if code != "" || strings.Contains(string(r.body), `"isError":true`) {
+				t.Fatalf("greet call %d of a %d/month cap was refused (%q): %s", n, mcpSellerToolCap, code, r)
 			}
-			// The cap counts the sign-in step's call too.
-			if i+2 < mcpSellerToolCap {
-				t.Fatalf("refused after %d calls, before the cap of %d", i+2, mcpSellerToolCap)
-			}
-			t.Logf("refused at call %d (cap %d): %s", i+2, mcpSellerToolCap, tail(string(r.body), 400))
-			if out := j.session.callTool(t, "add", map[string]any{"a": 1, "b": 2}); !strings.Contains(out, "3") {
-				t.Errorf("add after the greet cap = %q", out)
-			}
-			return
+			continue
 		}
-		time.Sleep(time.Second)
+		if code != "consumer_plan_limit_exceeded" {
+			t.Fatalf("greet call %d, past the %d/month cap, answered %q: %s", n, mcpSellerToolCap, code, r)
+		}
+		t.Logf("refused at call %d (cap %d): %s", n, mcpSellerToolCap, tail(string(r.body), 400))
 	}
-	t.Fatalf("greet was never refused within %d calls (cap %d)", mcpSellerToolCap+5, mcpSellerToolCap)
+	if out := j.session.callTool(t, "add", map[string]any{"a": 1, "b": 2}); !strings.Contains(out, "3") {
+		t.Errorf("add after the greet cap = %q", out)
+	}
 }
 
 // sellerStats: the seller sees the sign-in and the greet usage. Usage
-// reaches the stats asynchronously.
+// reaches the stats asynchronously. Two months, summed, so a run that
+// crosses a UTC month boundary still finds them.
 func (j *mcpSellerJourney) sellerStats(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Minute)
 	var stats map[string]any
 	for {
-		stats = object(t, j.cliOK(t, time.Minute, "mcp", "server", "stats", "--app", j.app).stdout)
-		var greet float64
+		stats = object(t, j.cliOK(t, time.Minute, "mcp", "server", "stats", "--app", j.app, "--months", "2").stdout)
+		var greet, oauth float64
 		for _, tool := range asList(field(stats, "tools")) {
 			if strings.HasSuffix(str(tool, "tool"), "greet") {
-				greet = num(tool, "units")
+				greet += num(tool, "units")
 			}
 		}
-		if num(stats, "months.0.signed_up_by_source.oauth") >= 1 && greet >= mcpSellerToolCap {
+		for _, month := range asList(field(stats, "months")) {
+			oauth += num(month, "signed_up_by_source.oauth")
+		}
+		if oauth >= 1 && greet >= mcpSellerToolCap {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -347,7 +362,10 @@ func (j *mcpSellerJourney) revokedCustomerRefused(t *testing.T) {
 	for {
 		r := j.session.post(map[string]any{"jsonrpc": "2.0", "id": 200, "method": "tools/call",
 			"params": map[string]any{"name": "add", "arguments": map[string]any{"a": 1, "b": 2}}})
-		if r.err == nil && (r.status != http.StatusOK || r.header.Get("X-Faas-Error-Code") != "") {
+		// A refusal of the caller: 401/403, or a platform error code. A 404
+		// (lost MCP session) or a 5xx is not evidence of revocation.
+		if r.err == nil && (r.status == http.StatusUnauthorized || r.status == http.StatusForbidden ||
+			(r.status != http.StatusNotFound && r.status < 500 && r.header.Get("X-Faas-Error-Code") != "")) {
 			t.Logf("revoked customer refused: %s", r)
 			return
 		}

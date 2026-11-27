@@ -188,3 +188,21 @@ func (s *Service) completeFree(ctx context.Context, w http.ResponseWriter, app s
 	}
 	return consumer, true
 }
+
+// liveMode is the mode a sign-up records and the hosted pages show: the
+// Stripe connection's. Without a connection a seller can offer only the
+// card-less free plan, so no sign-up is a test: live.
+func (s *Service) liveMode(ctx context.Context, accountID string) bool {
+	connections, ok := s.Host.Store().(state.StatementInvoiceExportStore)
+	if !ok {
+		return false
+	}
+	conn, err := connections.GetBillingConnection(ctx, accountID, state.BillingProviderStripe)
+	switch {
+	case err == nil:
+		return conn.Livemode
+	case errors.Is(err, state.ErrNotFound):
+		return true
+	}
+	return false
+}

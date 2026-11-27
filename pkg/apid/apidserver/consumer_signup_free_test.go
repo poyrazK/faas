@@ -223,6 +223,16 @@ func TestConsumerSignupFreePlanOnlyNeedsNoStripe(t *testing.T) {
 	if res := put(free); res.Code != http.StatusOK {
 		t.Fatalf("free plan only without Stripe: %d %s", res.Code, res.Body)
 	}
+	// Without a connection nothing is a test: the page shows no test-mode
+	// notice, so sign-ups count as real customers.
+	var form api.ConsumerSignupFormResponse
+	res := e.Do(t, http.MethodGet, "/v1/consumer-signup/search", nil, map[string]string{"Authorization": ""})
+	if res.Code != http.StatusOK || json.Unmarshal(res.Body.Bytes(), &form) != nil {
+		t.Fatalf("sign-up form: %d %s", res.Code, res.Body)
+	}
+	if !form.Livemode {
+		t.Fatalf("free-only sign-up without Stripe is shown as test mode: %+v", form)
+	}
 	if _, created, err := (*e.S()).ConsumerSignup().EnrollOAuthConsumer(t.Context(), state.APIConsumerEnrollment{AccountID: e.Acct().ID, AppID: appID,
 		Issuer: "https://login.example", Subject: "u1", Email: "u1@example.com"}); err != nil || !created {
 		t.Fatalf("enroll without Stripe: created=%v err=%v", created, err)

@@ -897,7 +897,9 @@ gregale consumers signup-set my-api --display-name "Weather API" --plans free,pr
 - **No Stripe needed yet.** When the free plan is the only plan you offer
   (`--plans free --free-plan free`), sign-up works before you connect
   Stripe, so you can open an MCP server to signed-in callers first.
-  Offering a paid plan asks you to connect Stripe.
+  Without a Stripe connection these sign-ups are live, not test: the pages
+  show no test-mode notice and the funnel counts them. Offering a paid plan
+  asks you to connect Stripe.
 - **Joining.** `POST /v1/consumer-signup/my-api` with the free plan's
   `plan_id` returns an empty `checkout_url`; complete the sign-up at once
   with the claim token. The hosted page does this for you. No Stripe
