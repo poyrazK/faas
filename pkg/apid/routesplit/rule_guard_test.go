@@ -96,4 +96,3 @@ func TestRuleChangesAfterUndoAreFree(t *testing.T) {
 		t.Fatalf("an undone split's leftover rule could not be removed: %+v", prob)
 	}
 }
-
