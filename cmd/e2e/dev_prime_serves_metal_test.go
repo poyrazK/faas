@@ -107,21 +107,21 @@ func TestDevPrimeServesMetal(t *testing.T) {
 			t.Fatalf("request served by %q (%v); want the prime %s", still, err, primeInstance)
 		}
 	})
-	t.Run("first-park-captures", func(t *testing.T) {
+	t.Run("first-idle-park-captures", func(t *testing.T) {
 		if primeInstance == "" {
 			t.Skip("deployment did not go live from its prime")
 		}
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
-			t.Fatalf("park: status %d", status)
-		}
-		// Park captures the used instance, or (clean recapture, the default)
-		// boots and captures a fresh one in the background.
-		deadline := time.Now().Add(3 * time.Minute)
+		// The reaper's idle park, not a manual park: a manual park leaves the
+		// app inactive, and clean recapture (the default) only re-primes
+		// active apps. On an idle park it boots and captures a fresh
+		// instance in the background (ADR-20261115113000).
+		setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
+		deadline := time.Now().Add(4 * time.Minute)
 		for countSnapshots(t) == 0 {
 			if time.Now().After(deadline) {
-				t.Fatal("no snapshot 3 min after the first park")
+				t.Fatal("no snapshot 4 min after the prime went idle")
 			}
-			time.Sleep(time.Second)
+			time.Sleep(2 * time.Second)
 		}
 	})
 	t.Run("wake-after-park", func(t *testing.T) {
