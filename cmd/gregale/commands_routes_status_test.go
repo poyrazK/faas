@@ -112,7 +112,8 @@ func TestRoutesStatusCLIReportsUnavailableSections(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	for _, want := range []string{"Routes for demo", "POST", "/checkout", "rollback healthy", "Unavailable:", "traffic: analytics is not included in this plan"} {
+	// Prod hunt r61: REQUESTS counts the serving deployment, and says so.
+	for _, want := range []string{"Routes for demo", "Traffic to the serving deployment over", "POST", "/checkout", "rollback healthy", "Unavailable:", "traffic: analytics is not included in this plan"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

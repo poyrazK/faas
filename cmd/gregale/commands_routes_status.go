@@ -168,7 +168,14 @@ func renderRouteStatus(w io.Writer, s routestatus.Status) {
 	if s.CandidateDeployment != "" {
 		_, _ = fmt.Fprintf(w, ", canary %s", s.CandidateDeployment)
 	}
-	_, _ = fmt.Fprintf(w, "\nTraffic observed over %s (observed telemetry only)\n", s.Since)
+	// REQUESTS counts the serving deployment only. Unlabelled, mcp-canary's
+	// 61 read as the app's week while `api route activity` said 193 (prod
+	// hunt r61).
+	if s.ServingDeploymentID != "" {
+		_, _ = fmt.Fprintf(w, "\nTraffic to the serving deployment over %s (observed telemetry only; `api route activity` counts every deployment)\n", s.Since)
+	} else {
+		_, _ = fmt.Fprintf(w, "\nTraffic observed over %s (observed telemetry only)\n", s.Since)
+	}
 	_, _ = fmt.Fprintf(w, "%d routes · %d protected · %d with automatic rollback · %d with traffic but no protection\n\n", s.Summary.Routes, s.Summary.Protected, s.Summary.Rollback, s.Summary.Unprotected)
 	if len(s.Routes) == 0 {
 		_, _ = fmt.Fprintln(w, "No routes observed, captured or configured yet.")

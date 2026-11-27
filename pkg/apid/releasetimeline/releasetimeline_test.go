@@ -46,6 +46,9 @@ func TestPhase(t *testing.T) {
 			api.ReleasePhaseBuilding, "Building"},
 		{"failed", releasetimeline.Inputs{Deployment: live(func(d *api.DeploymentResponse) { d.Status, d.ErrorCode = "failed", "build_timeout" })},
 			api.ReleasePhaseFailed, "Build failed: build_timeout"},
+		{"failed after build", releasetimeline.Inputs{Deployment: live(func(d *api.DeploymentResponse) {
+			d.Status, d.ErrorCode, d.ImageDigest = "failed", "stage_snapshot_prepare_timeout", "sha256:402f"
+		})}, api.ReleasePhaseFailed, "Failed before release: stage_snapshot_prepare_timeout"},
 		{"aborted canary", releasetimeline.Inputs{Deployment: live(func(d *api.DeploymentResponse) {
 			d.RolloutState, d.RolloutAbortedAt, d.TrafficPercent = "aborted", ptr(at(9)), 0
 			d.RolloutDecision = decision(api.RolloutDecisionAbort, api.RolloutRuleAbortReleaseGate, "orders fell 41%", 10, at(9))

@@ -67,6 +67,10 @@ type deploymentLabelSet struct {
 	mu       sync.Mutex
 	capByApp map[string]int                 // appID → plan cap (cached on first sight)
 	admitted map[string]map[string]struct{} // appID → deploymentID → {}
+	// onAdmit runs once per real deployment id the set admits, outside
+	// the lock. Metrics uses it to create the deployment's status-class
+	// series at zero; see NewMetrics.
+	onAdmit func(appID, deploymentID string)
 }
 
 // newDeploymentLabelSet constructs a fresh admission set with
@@ -99,11 +103,20 @@ func newDeploymentLabelSet() *deploymentLabelSet {
 // inserts. The Prometheus observe at the call site happens
 // AFTER admit returns, so it is outside the critical section.
 func (s *deploymentLabelSet) admit(appID string, plan api.Plan, deploymentID string) string {
+	label, fresh := s.admitLocked(appID, plan, deploymentID)
+	if fresh && s.onAdmit != nil {
+		s.onAdmit(appID, label)
+	}
+	return label
+}
+
+// admitLocked is admit's decision; fresh reports a real id admitted now.
+func (s *deploymentLabelSet) admitLocked(appID string, plan api.Plan, deploymentID string) (string, bool) {
 	switch deploymentID {
 	case "":
-		return emptyDeploymentLabel
+		return emptyDeploymentLabel, false
 	case otherDeploymentLabel:
-		return otherDeploymentLabel
+		return otherDeploymentLabel, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -122,14 +135,14 @@ func (s *deploymentLabelSet) admit(appID string, plan api.Plan, deploymentID str
 	}
 	appMap := s.admitted[appID]
 	if _, ok := appMap[deploymentID]; ok {
-		return deploymentID
+		return deploymentID, false
 	}
 	// Real-id budget is exactly `cap - reservedCount`, not
 	// `cap - reservedCount - 2`. Without the subtraction the
 	// reserved labels steal two slots from the real-id budget.
 	if len(appMap)-reservedDeploymentCnt >= cap {
-		return otherDeploymentLabel
+		return otherDeploymentLabel, false
 	}
 	appMap[deploymentID] = struct{}{}
-	return deploymentID
+	return deploymentID, true
 }
