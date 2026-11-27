@@ -7402,6 +7402,23 @@ func (l Limits) EphemeralDiskMaxMB() int {
 	return l.AppLayerMaxMB
 }
 
+// ImageArchiveMaxMB caps an uploaded prebuilt image archive
+// (`deploy --local-image`, ADR-20261127120000). It is the plan's app layer
+// cap: the layers become that drive1 layer, so a larger compressed archive
+// could never fit. Free 256 · Hobby 512 · Pro 1024 · Scale 2048.
+func (l Limits) ImageArchiveMaxMB() int {
+	return l.AppLayerMaxMB
+}
+
+// ImageArchiveMaxBytes returns ImageArchiveMaxMB in bytes.
+func (l Limits) ImageArchiveMaxBytes() int64 {
+	return int64(l.ImageArchiveMaxMB()) << 20
+}
+
+// UploadImageNameMaxLen bounds the informational image_name of an uploaded
+// image archive (ADR-20261127120000).
+const UploadImageNameMaxLen = 256
+
 // EphemeralDiskMaxBytes returns EphemeralDiskMaxMB in bytes. A zero result
 // means the limits value is unset or invalid; callers should fail closed
 // rather than treating it as unlimited.
