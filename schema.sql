@@ -34135,6 +34135,24 @@ COMMENT ON TABLE public.api_key_approval_categories IS 'ADR-20261104140058 the a
 
 
 --
+-- Name: api_key_connect_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_connect_grants (
+    key_id uuid NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE api_key_connect_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_key_connect_grants IS 'ADR-20261127160000 the Connect consent that approves a hosted MCP key''s deploys; apid is the only writer.';
+
+
+--
 -- Name: api_key_project_limits; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -67536,6 +67554,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 ALTER TABLE ONLY public.api_key_approval_categories
     ADD CONSTRAINT api_key_approval_categories_pkey PRIMARY KEY (key_id);
+
+
+--
+-- Name: api_key_connect_grants api_key_connect_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_connect_grants
+    ADD CONSTRAINT api_key_connect_grants_pkey PRIMARY KEY (key_id);
 
 
 --
@@ -103864,6 +103890,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 ALTER TABLE ONLY public.api_key_approval_categories
     ADD CONSTRAINT api_key_approval_categories_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_key_connect_grants api_key_connect_grants_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_connect_grants
+    ADD CONSTRAINT api_key_connect_grants_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

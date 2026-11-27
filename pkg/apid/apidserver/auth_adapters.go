@@ -109,6 +109,7 @@ var (
 	_ middleware.AgentApprovalGate       = storeAuthAdapter{}
 	_ middleware.AgentApprovalWindowGate = storeAuthAdapter{}
 	_ middleware.OrgAgentPolicyReader    = storeAuthAdapter{}
+	_ middleware.AgentConnectGrantReader = storeAuthAdapter{}
 )
 
 // errNoApprovalStore fails a gated request closed on a store that cannot
@@ -121,6 +122,16 @@ func (a storeAuthAdapter) APIKeyApprovalCategories(ctx context.Context, keyID st
 		return nil, false, nil
 	}
 	return store.APIKeyApprovalCategories(ctx, keyID)
+}
+
+// APIKeyConnectGrant is the key's Connect grant (ADR-20261127160000); a
+// store without grants has none, so the key keeps asking.
+func (a storeAuthAdapter) APIKeyConnectGrant(ctx context.Context, keyID string) (state.AgentConnectGrant, bool, error) {
+	store, ok := a.Store.(state.AgentConnectGrantStore)
+	if !ok {
+		return state.AgentConnectGrant{}, false, nil
+	}
+	return store.APIKeyConnectGrant(ctx, keyID)
 }
 
 func (a storeAuthAdapter) ConsumeAgentApproval(ctx context.Context, binding state.AgentApprovalBinding) (string, bool, error) {

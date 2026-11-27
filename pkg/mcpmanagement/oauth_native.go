@@ -140,17 +140,7 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		oauthError(w, 400, "invalid_request", err.Error())
 		return
 	}
-	var code api.CliAuthCodeResponse
-	if len(capabilities) == 0 {
-		code, err = client.MintMCPAuthCode(ctx, writes)
-	} else {
-		// The code carries exactly these scopes (ADR-20261026195952).
-		scopes := append([]string(nil), capabilities...)
-		if writes {
-			scopes = append([]string{api.ScopeDeployWrite}, scopes...)
-		}
-		code, err = client.MintScopedMCPAuthCode(ctx, scopes)
-	}
+	code, connectGrant, err := mintNativeCode(ctx, client, writes, capabilities)
 	login, parseErr := url.Parse(code.URL)
 	// The API controls its console origin; never render credential-bearing,
 	// script or arbitrary non-browser redirect schemes.
@@ -167,6 +157,7 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	active.NativeCode, active.NativeURL, active.Capabilities = code.Code, code.URL, capabilities
+	active.ConnectGrant = connectGrant
 	active.Toolsets = toolsets
 	if writes && !slices.Contains(active.Scopes, scopeWrite) {
 		// The person chose deploy access for a client that asked only to
@@ -186,6 +177,32 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	r.renderConsent(w, active, req.PostForm.Get("csrf"), "")
+}
+
+// mintNativeCode asks apid for the sign-in code; the code carries exactly
+// the chosen scopes (ADR-20261026195952). With deploy access it carries the
+// Connect grant too, so the person's approval of the sign-in approves the
+// connection's deploys (ADR-20261127160000); an apid that predates the
+// grant refuses that code, and the connection then keeps asking.
+func mintNativeCode(ctx context.Context, client *api.Client, writes bool, capabilities []string) (api.CliAuthCodeResponse, bool, error) {
+	if writes {
+		scopes := append([]string{api.ScopeDeployWrite, api.ScopeConnectApproval}, capabilities...)
+		code, err := client.MintScopedMCPAuthCode(ctx, scopes)
+		var refused *api.APIError
+		if err == nil || !errors.As(err, &refused) || refused.Problem.Status != http.StatusBadRequest {
+			return code, err == nil, err
+		}
+	}
+	if len(capabilities) == 0 {
+		code, err := client.MintMCPAuthCode(ctx, writes)
+		return code, false, err
+	}
+	scopes := slices.Clone(capabilities)
+	if writes {
+		scopes = append([]string{api.ScopeDeployWrite}, scopes...)
+	}
+	code, err := client.MintScopedMCPAuthCode(ctx, scopes)
+	return code, false, err
 }
 
 // prepareAccount records the signed-in account for review. A renewable

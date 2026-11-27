@@ -5,6 +5,7 @@ package agentapproval
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,6 +39,10 @@ type Rule struct {
 	// for this long after its first use (ADR-20261111150000); zero allows
 	// exactly one request.
 	Window time.Duration
+	// Connect says the Connect consent covers the route
+	// (ADR-20261127160000 §3): a hosted MCP connection that holds the grant
+	// needs no per-request approval for it (ConnectApproves).
+	Connect bool
 }
 
 var wildcard = regexp.MustCompile(`\{[^}]*\}`)
@@ -306,9 +311,58 @@ func RecordedRead(pattern string) bool {
 	return ok
 }
 
+// connectRoutes are what the Connect screen's deploy consent names
+// (ADR-20261127160000 §3): reviewed deployments, production promotion,
+// checked rollback, restarts, domain and cron removal, configuration (the
+// env:write choice) and undo of the agent's own changes. An upload commit
+// is gated by its handler with UploadCommitRule. Widening this set needs
+// the owner's decision and an amendment of that ADR.
+var connectRoutes = map[string]bool{
+	"POST /v1/apps/{}/deployments":                         true,
+	"POST /v1/apps/{}/deployments/source-ref":              true,
+	"POST /v1/apps/{}/deployments/source-tarball":          true,
+	"POST /v1/deployments/{}/retry":                        true,
+	"PATCH /v1/apps/{}":                                    true,
+	"PATCH /v1/deployments/{}/traffic":                     true,
+	"POST /v1/deployments/{}/promote":                      true,
+	"POST /v1/deployments/{}/promote-with-application-ack": true,
+	"POST /v1/deployments/{}/canary/advance":               true,
+	"POST /v1/apps/{}/rollback":                            true,
+	"POST /v1/apps/{}/restart":                             true,
+	"DELETE /v1/domains/{}":                                true,
+	"DELETE /v1/domains/{}/hosts":                          true,
+	"DELETE /v1/crons/{}":                                  true,
+	"PUT /v1/apps/{}/env/{}":                               true,
+	"POST /v1/apps/{}/env/batch":                           true,
+	"POST /v1/apps/{}/config/rollback":                     true,
+	"POST /v1/agent-connections/self/undo":                 true,
+}
+
+// UploadCommitRule is the rule of an upload commit to a production app,
+// which deploys like POST /v1/apps/{slug}/deployments.
+var UploadCommitRule = Rule{Category: api.AgentApprovalProduction, Connect: true}
+
+// ConnectApproves reports whether a Connect grant stands in for a person's
+// approval of a request under rule (ADR-20261127160000 §4): only for a
+// covered route, only while the key has not chosen its own categories, and
+// never for a category in the organization's floor (with production in the
+// floor, undo asks too).
+func ConnectApproves(rule Rule, chosen bool, floor []string) bool {
+	if !rule.Connect || chosen || slices.Contains(floor, rule.Category) {
+		return false
+	}
+	return rule.Category != api.AgentApprovalUndo || !slices.Contains(floor, api.AgentApprovalProduction)
+}
+
 // Classify returns the rule for a request's route pattern, and false when
 // the request needs no approval.
 func Classify(pattern string) (Rule, bool) {
+	rule, ok := classify(pattern)
+	rule.Connect = ok && connectRoutes[Normalize(pattern)]
+	return rule, ok
+}
+
+func classify(pattern string) (Rule, bool) {
 	key := Normalize(pattern)
 	if rule, ok := gatedReads[key]; ok {
 		return rule, true
