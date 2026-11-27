@@ -9267,8 +9267,12 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// A transient capture error keeps the prime's retry (dispatchPrime);
 	// any other platform capture failure activates without a snapshot,
 	// except a managed cache's handoff, which fails so the running cache
-	// keeps serving (isManagedCacheHandoff).
-	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && !retryableSnapshotPrimeError(err) &&
+	// keeps serving (isManagedCacheHandoff). On the last attempt a transient
+	// error activates too: uc1127-umami booted healthy twice on 2026-11-27,
+	// both captures hit the 45 s budget, and the release failed as
+	// "exceeded the cold-boot RPC budget" with a fix to raise
+	// startup_deadline_s (prod hunt r71). Snapshots are a cache (ADR-005).
+	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && (!retryableSnapshotPrimeError(err) || finalPrimeAttempt(ctx)) &&
 		!allowReuse && state.HasSnapshotPrimeAttempt(ctx) {
 		if !e.isManagedCacheHandoff(ctx, ins.DeploymentID) {
 			return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
