@@ -25,6 +25,9 @@ func (s *PostgresStore) SetPreviews(ctx context.Context, accountID, databaseID s
 	if err != nil {
 		return Database{}, err
 	}
+	if mode == PreviewsMasked {
+		return Database{}, ErrInvalid
+	}
 	if mode == "" {
 		mode = PreviewsOff
 	}
@@ -104,7 +107,8 @@ func (s *PostgresStore) ReservePreview(ctx context.Context, database Database, l
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-	if err := previewSourceAllows(databaseFromSQL(sourceRow), database); err != nil {
+	source := databaseFromSQL(sourceRow)
+	if err := previewSourceAllows(source, database); err != nil {
 		return Database{}, false, err
 	}
 	held, err := s.countPreviewOwner(ctx, tx, database)
@@ -121,6 +125,18 @@ func (s *PostgresStore) ReservePreview(ctx context.Context, database Database, l
 		SourceDatabaseID: params.SourceDatabaseID, EnvironmentID: params.EnvironmentID, PrNumber: params.PrNumber, ID: databaseID})
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
+	}
+	if database.IsMaskedBranch() {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO native_postgres_masked_branches (database_id, source_resource_id, policy, preview_policy_revision)
+			SELECT $1, $2, p.policy, p.revision
+			FROM native_postgres_preview_masking_policies p WHERE p.database_id = $3`, databaseID, source.ProviderResourceID, params.SourceDatabaseID)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if tag.RowsAffected() != 1 {
+			return Database{}, false, ErrUnavailable
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Database{}, false, mapPostgresError(err)
@@ -198,7 +214,7 @@ func previewOwnerParams(owner PreviewOwner) (sqlc.FindManagedPostgresPreviewData
 // database, not being deleted, with previews on, and set to copy for a copy.
 func previewSourceAllows(source, preview Database) error {
 	switch {
-	case source.AccountID != preview.AccountID:
+	case source.AccountID != preview.AccountID || preview.OrgID != "" && source.OrgID != preview.OrgID:
 		return ErrNotFound
 	case !source.Preview.IsZero():
 		return ErrPreviewDatabase
@@ -206,6 +222,17 @@ func previewSourceAllows(source, preview Database) error {
 		return ErrConflict
 	case source.Previews == "" || source.Previews == PreviewsOff:
 		return ErrPreviewsOff
+	case source.Previews == PreviewsMasked:
+		if !preview.IsMaskedBranch() {
+			return ErrPreviewReplacementRequired
+		}
+		if source.State != StateReady || source.ProviderResourceID == "" || source.BackendID != preview.BackendID ||
+			source.BackendFingerprint != preview.BackendFingerprint || source.Spec.Region != preview.Spec.Region ||
+			source.Spec.PostgresMajor != preview.Spec.PostgresMajor {
+			return ErrConflict
+		}
+	case preview.IsMaskedBranch():
+		return ErrConflict
 	case preview.RestoreSourceDatabaseID != "" && source.Previews != PreviewsCopy:
 		return fmt.Errorf("%w: the database's previews setting changed from copy", ErrConflict)
 	}
@@ -217,6 +244,9 @@ func previewSourceAllows(source, preview Database) error {
 func previewRestoreValid(preview Database) bool {
 	if preview.RestoreSourceDatabaseID == "" && preview.RestoreSourceResourceID == "" && preview.RestorePointInTime.IsZero() {
 		return true
+	}
+	if preview.IsMaskedBranch() {
+		return preview.RestoreSourceDatabaseID == preview.Preview.SourceDatabaseID && preview.ExpiresAt.IsZero()
 	}
 	return preview.RestoreSourceDatabaseID == preview.Preview.SourceDatabaseID && preview.RestoreSourceResourceID != "" && !preview.RestorePointInTime.IsZero()
 }

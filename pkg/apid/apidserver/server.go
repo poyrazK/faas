@@ -75,6 +75,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/apid/platformflagadmin"
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
+	"github.com/onebox-faas/faas/pkg/apid/postgresexport"
 	"github.com/onebox-faas/faas/pkg/apid/previews"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/profilecapture"
@@ -258,9 +259,11 @@ type server struct {
 	// workloadVerifier is the cluster workload trust (ADR-1141); nil when unset.
 	workloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
-	totp            *totpGuard
-	objectStorage   *objectstorage.Registry
-	managedPostgres *managedpostgres.Service
+	totp                    *totpGuard
+	objectStorage           *objectstorage.Registry
+	managedPostgres         *managedpostgres.Service
+	postgresExports         *postgresexport.Service
+	postgresBackupSchedules *postgresexport.BackupSchedules
 
 	// managedPostgresUncapped holds the production release to accounts a
 	// flag rule names while the compute or storage cap is not on
@@ -539,6 +542,10 @@ type server struct {
 	dashboardExportLimiter *middleware.Limiter
 	// securityMail caps sign-in mail per account (security_mail_limit.go).
 	securityMail *securityMailLimiter
+	// publicSourceFetches caps an account's reads of public repositories
+	// without an installation (ADR-20261126164847); built on first use.
+	publicSourceFetchesOnce sync.Once
+	publicSourceFetches     *securityMailLimiter
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
@@ -1816,6 +1823,18 @@ func newServerWithDeps(
 	s.productControl.OwnerRender = s.renderProductOwner
 	s.productControl.OperationDoctor = s.operation.ObserveProductDefinitionDoctor
 	s.productControl.ExportInvoice = s.statementInvoices.ExportProductStatement
+	s.productControl.ReviewInvoice = s.statementInvoices.ReviewProductStatementExport
+	s.productControl.ConfirmInvoice = s.statementInvoices.ConfirmProductStatementExport
+	s.productControl.ReviewInvoiceIssue = s.statementInvoices.ReviewProductPaddleInvoiceIssue
+	s.productControl.IssueInvoice = s.statementInvoices.IssueProductPaddleInvoice
+	s.productControl.ReviewStripeInvoiceReminder = s.statementInvoices.ReviewProductStripeInvoiceReminder
+	s.productControl.SendStripeInvoiceReminder = s.statementInvoices.SendProductStripeInvoiceReminder
+	s.productControl.ReviewStripeDraftSend = s.statementInvoices.ReviewProductStripeDraftSend
+	s.productControl.ReviewStripeInvoiceSend = s.statementInvoices.ReviewProductStripeInvoiceSend
+	s.productControl.SendStripeInvoice = s.statementInvoices.SendProductStripeInvoice
+	s.productControl.CheckStripeInvoiceSend = s.statementInvoices.CheckProductStripeInvoiceSend
+	s.productControl.RefreshInvoicePayment = s.statementInvoices.RefreshProductInvoicePayment
+	s.productControl.RefreshHeldInvoicePayment = s.statementInvoices.RefreshProductHeldInvoicePayment
 	s.productControl.InvoiceExport = s.statementInvoices.GetProductStatementExport
 	s.productControl.DocumentInvoice = s.statementInvoices.ProductStatementInvoice
 	s.productControl.BillingDetails = s.statementInvoices.PaddleBillingDetails
@@ -1841,6 +1860,7 @@ func newServerWithDeps(
 	s.appEvents.Host = appEventsHost{s}
 	s.outboundAI.Host = outboundAIHost{s}
 	s.statementInvoices.Host = statementInvoicesHost{s}
+	s.statementInvoices.ProductControlEnabled = func() bool { return s.productControl.Enabled }
 	s.billingRuns.Host = billingRunsHost{s}
 	s.billingSync.Host = billingSyncHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}
@@ -2107,6 +2127,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresComputePolicyChange))))
 	// A database's own scale-to-zero suspend timeout; idempotent by value.
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/suspend-timeout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresSuspendTimeout)))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/maintenance-window", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresMaintenance)))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/auto-grow", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresAutoGrow)))))
 	// Whether a database starts when a bound app wakes (ADR-20261125105038).
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/wake-with-app", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresWakeWithApp)))))
 	// Why a database was awake (ADR-20261125231222).
@@ -2125,7 +2147,42 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/data-api-catalog-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDataReadSurface...)(s.previewManagedPostgresDataAPICatalog))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/migration-check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.checkManagedPostgresMigration)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.startManagedPostgresMigration)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/migration/stop", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.stopManagedPostgresMigration)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/migration/prepare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.prepareManagedPostgresMigration)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/migration/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.verifyManagedPostgresMigration)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresMigration))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/imports/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.checkManagedPostgresImport)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/backup-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.getManagedPostgresBackupSchedule))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/backup-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireScope(api.ScopesStorageWriteSurface...)(s.requireVerifiedEmail(s.setManagedPostgresBackupSchedule))))))
+	mux.HandleFunc("DELETE /v1/postgres/databases/{id}/backup-schedule", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.deleteManagedPostgresBackupSchedule)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/exports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.startManagedPostgresExport)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/exports/{export_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.getManagedPostgresExport)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/exports/{export_id}/download", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.downloadManagedPostgresExport)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/imports", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.startManagedPostgresImport)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/imports/{operation_id}/archive", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.uploadManagedPostgresArchive)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/imports/{operation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresImport))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/restore-check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.checkManagedPostgresRestore))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/restore-drills/{drill_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresRestoreDrill))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/upgrade-rehearsals/{rehearsal_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresUpgradeRehearsal))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore-drills", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresRestoreDrill)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/upgrade-rehearsals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresUpgradeRehearsal)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/diagnostics", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDiagnostics))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/tables", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresTableHealth))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/extensions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresExtensions))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/extensions/{extension}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresExtensions)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/errors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresErrorHistory))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/errors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresErrorHistory)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/query-insights", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresQueryInsights))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/query-insights", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresQueryInsights)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/autovacuum", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresAutovacuum))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/autovacuum", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresAutovacuum)))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/sessions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresSessions))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/cancel-query", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.cancelManagedPostgresQuery)))))
+	mux.HandleFunc("PUT /v1/postgres/databases/{id}/recovery-region", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresRecoveryRegion)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/masked-branches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresMaskedBranch))))))
 	// ADR-20261102123523: PR preview databases; the preview-databases
 	// capability hides the route until launch.
 	mux.HandleFunc("PUT /v1/postgres/databases/{id}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresPreviews)))))
@@ -2158,6 +2215,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/live", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.enableLiveQueries)))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/live/rotate", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.rotateLiveSecret)))))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}/live", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.disableLiveQueries))))))
+	mux.HandleFunc("GET /v1/postgres/bindings/{id}/timeouts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBindingTimeouts))))
+	mux.HandleFunc("PUT /v1/postgres/bindings/{id}/timeouts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.setManagedPostgresBindingTimeouts)))))
 	mux.HandleFunc("POST /v1/postgres/bindings/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.rotateManagedPostgresBinding))))))
 	mux.HandleFunc("POST /v1/postgres/cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.cutoverMutation(s.prepareManagedPostgresCutover))))))
 	mux.HandleFunc("GET /v1/postgres/cutovers/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCutover))))
@@ -3559,11 +3618,27 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/rollbacks/{operation}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCheckedRollback)))
 	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackApp)))))
 	// ADR-20261023181931: rollbacks that restore the database.
-	mux.HandleFunc("GET /v1/apps/{slug}/database-switches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listDatabaseSwitches)))
-	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDatabaseSwitch)))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.listDatabaseSwitches(w, r, acct, false)
+	})))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/migration", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.listDatabaseSwitches(w, r, acct, true)
+	})))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.getDatabaseSwitch(w, r, acct, false)
+	})))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/migration/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.getDatabaseSwitch(w, r, acct, true)
+	})))
 	// Amendment 3: a restore that switches the app and keeps its code.
 	mux.HandleFunc("POST /v1/apps/{slug}/database-switches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDatabaseSwitch)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelDatabaseSwitch))))
+	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.activateManagedPostgresMigration))))
+	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.cancelDatabaseSwitch(w, r, acct, false)
+	}))))
+	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/migration/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		s.cancelDatabaseSwitch(w, r, acct, true)
+	}))))
 	// SAFE-RELEASES-R (issue #976 / ADR-122): the operator
 	// manual-rollout-recovery escape hatch. The CLI subcommand
 	// `gregale rollouts recover <slug>` is the canonical caller;
@@ -4194,6 +4269,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/alert-rollbacks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRollbacks))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alert-rollbacks/{fire}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAlertRollback))))
 	mux.HandleFunc("GET /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAlertRules))))
+	mux.HandleFunc("GET /v1/apps/{slug}/alerts/anomaly-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.previewAlertAnomaly))))
 	mux.HandleFunc("POST /v1/apps/{slug}/alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAlertRule)))))
 	// ADR-749: account-level alert notification channels. Writes carry the
 	// same MFA requirement as alert rules: both hold sealed destinations.

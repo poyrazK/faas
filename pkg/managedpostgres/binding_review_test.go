@@ -142,7 +142,7 @@ func TestQualificationReportCarriesSessionEvidence(t *testing.T) {
 		t.Fatalf("session evidence refused: %v", err)
 	}
 	// Every known mode fits one report.
-	report.CredentialAccess = append(report.CredentialAccess, CredentialMigration, CredentialDataAPI, CredentialAuth)
+	report.CredentialAccess = append(report.CredentialAccess, CredentialMigration, CredentialDataAPI, CredentialAuth, CredentialReplicaOnly)
 	report.DataAPICredentials = &DataAPICredentialEvidence{SchemaIsolated: true, RLSEnforced: true, PasswordRecovered: true, RotationPreservesData: true, Revoked: true}
 	report.AuthCredentials = &AuthCredentialEvidence{SchemaOwned: true, CustomerIsolated: true, PasswordRecovered: true, RotationPreservesData: true, Revoked: true}
 	passed("data_api_credentials_probe", "auth_credentials_probe")
@@ -150,7 +150,7 @@ func TestQualificationReportCarriesSessionEvidence(t *testing.T) {
 		t.Fatalf("modes = %v", report.CredentialAccess)
 	}
 	if err := ValidateQualificationReport(report); err != nil {
-		t.Fatalf("six-mode report refused: %v", err)
+		t.Fatalf("all-modes report refused: %v", err)
 	}
 	report.CredentialAccess = report.CredentialAccess[:2]
 	report.DataAPICredentials, report.AuthCredentials = nil, nil

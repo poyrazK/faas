@@ -37,12 +37,13 @@ const (
 
 // Spec describes one database VM boot.
 type Spec struct {
-	KernelPath string
-	BasePath   string
-	VolumePath string
-	Major      int
-	VcpuCount  int
-	MemSizeMiB int
+	QueryInsights bool
+	KernelPath    string
+	BasePath      string
+	VolumePath    string
+	Major         int
+	VcpuCount     int
+	MemSizeMiB    int
 	// GuestCID is the vsock context id; unique per live VM on the host.
 	GuestCID uint32
 	// VsockUDS is the host-side AF_UNIX path Firecracker serves vsock on.
@@ -54,7 +55,8 @@ type Spec struct {
 	Archive bool
 	// RestoreTarget, when set, boots the empty volume as a point-in-time
 	// restore to that instant; it needs Archive.
-	RestoreTarget time.Time
+	RestoreTarget   time.Time
+	RestoreTimeline uint32
 	// RestoreUntilEnd lets that restore end at the end of the archive.
 	RestoreUntilEnd bool
 	// Spare boots a spare: guest-init leaves the volume drive alone until
@@ -84,6 +86,8 @@ func (s Spec) Validate() error {
 		return fmt.Errorf("dbvm: guest cid %d is reserved", s.GuestCID)
 	case !s.RestoreTarget.IsZero() && !s.Archive:
 		return errors.New("dbvm: a point-in-time restore needs the archive")
+	case s.RestoreTimeline != 0 && s.RestoreTarget.IsZero():
+		return errors.New("dbvm: restore timeline without a restore")
 	case s.RestoreUntilEnd && s.RestoreTarget.IsZero():
 		return errors.New("dbvm: restore-until-end without a restore")
 	case s.Spare && !s.RestoreTarget.IsZero():
@@ -112,11 +116,17 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 	if err != nil {
 		return fcvm.VMConfig{}, fmt.Errorf("dbvm: %w", err)
 	}
+	if s.QueryInsights {
+		bootArgs += " " + dbguest.QueryInsightsArg
+	}
 	if s.Archive {
 		bootArgs += " " + dbguest.ArchiveArg
 	}
 	if !s.RestoreTarget.IsZero() {
 		bootArgs += " " + dbguest.RestoreTargetArg(s.RestoreTarget)
+	}
+	if s.RestoreTimeline != 0 {
+		bootArgs += " " + dbguest.RestoreTimelineArg(s.RestoreTimeline)
 	}
 	if s.RestoreUntilEnd {
 		bootArgs += " " + dbguest.RestoreUntilEndArg

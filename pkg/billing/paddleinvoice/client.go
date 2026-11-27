@@ -160,12 +160,17 @@ type TransactionParams struct {
 }
 
 type transactionData struct {
-	ID           string            `json:"id"`
-	Status       string            `json:"status"`
-	CustomData   map[string]string `json:"custom_data"`
-	BilledAt     *time.Time        `json:"billed_at"`
-	CurrencyCode string            `json:"currency_code"`
-	Details      struct {
+	ID             string            `json:"id"`
+	Status         string            `json:"status"`
+	CustomerID     string            `json:"customer_id"`
+	AddressID      string            `json:"address_id"`
+	BusinessID     string            `json:"business_id"`
+	CollectionMode string            `json:"collection_mode"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+	CustomData     map[string]string `json:"custom_data"`
+	BilledAt       *time.Time        `json:"billed_at"`
+	CurrencyCode   string            `json:"currency_code"`
+	Details        struct {
 		Totals struct {
 			GrandTotal string `json:"grand_total"`
 			Balance    string `json:"balance"`
@@ -287,17 +292,38 @@ func (c *Client) BillTransaction(ctx context.Context, key, transactionID, addres
 	return c.do(ctx, key, http.MethodPatch, "/transactions/"+url.PathEscape(transactionID), body, nil)
 }
 
+// PrepareTransactionBilling updates the billing details of an unissued draft
+// so Paddle can calculate its total before the owner confirms issuance.
+func (c *Client) PrepareTransactionBilling(ctx context.Context, key, transactionID, addressID, businessID string) error {
+	body := map[string]any{"address_id": addressID, "business_id": nil}
+	if businessID != "" {
+		body["business_id"] = businessID
+	}
+	return c.do(ctx, key, http.MethodPatch, "/transactions/"+url.PathEscape(transactionID), body, nil)
+}
+
+// IssuePreparedTransaction issues a ready invoice with its reviewed billing details.
+func (c *Client) IssuePreparedTransaction(ctx context.Context, key, transactionID string) error {
+	body := map[string]string{"status": "billed"}
+	return c.do(ctx, key, http.MethodPatch, "/transactions/"+url.PathEscape(transactionID), body, nil)
+}
+
 // TransactionState is a transaction's payment state (ADR-1504).
 type TransactionState struct {
-	Status      string
-	Currency    string
-	GrandTotal  int64
-	Balance     int64
-	BilledAt    *time.Time
-	DueAt       *time.Time
-	PaidAt      *time.Time
-	CheckoutURL string
-	Deleted     bool
+	ID, Status, Currency, CustomerID, CollectionMode string
+	AddressID, BusinessID                            string
+	CustomData                                       map[string]string
+	UpdatedAt                                        time.Time
+	PaymentTermsInterval                             string
+	PaymentTermsFrequency                            int
+	GrandTotalKnown                                  bool
+	GrandTotal                                       int64
+	Balance                                          int64
+	BilledAt                                         *time.Time
+	DueAt                                            *time.Time
+	PaidAt                                           *time.Time
+	CheckoutURL                                      string
+	Deleted                                          bool
 }
 
 // GetTransaction reads a transaction's payment state.
@@ -314,14 +340,22 @@ func (c *Client) GetTransaction(ctx context.Context, key, transactionID string) 
 		return TransactionState{}, err
 	}
 	t := out.Data
-	st := TransactionState{Status: t.Status, Currency: t.CurrencyCode, BilledAt: t.BilledAt}
-	st.GrandTotal, _ = strconv.ParseInt(t.Details.Totals.GrandTotal, 10, 64)
+	st := TransactionState{
+		ID: t.ID, Status: t.Status, Currency: t.CurrencyCode, CustomerID: t.CustomerID,
+		AddressID: t.AddressID, BusinessID: t.BusinessID,
+		CollectionMode: t.CollectionMode, UpdatedAt: t.UpdatedAt, CustomData: t.CustomData, BilledAt: t.BilledAt,
+	}
+	total, err := strconv.ParseInt(t.Details.Totals.GrandTotal, 10, 64)
+	st.GrandTotal, st.GrandTotalKnown = total, err == nil
 	st.Balance, _ = strconv.ParseInt(t.Details.Totals.Balance, 10, 64)
 	if t.Checkout != nil {
 		st.CheckoutURL = t.Checkout.URL
 	}
-	if t.BilledAt != nil && t.BillingDetails != nil {
-		st.DueAt = addTerms(*t.BilledAt, t.BillingDetails.PaymentTerms.Interval, t.BillingDetails.PaymentTerms.Frequency)
+	if t.BillingDetails != nil {
+		st.PaymentTermsInterval, st.PaymentTermsFrequency = t.BillingDetails.PaymentTerms.Interval, t.BillingDetails.PaymentTerms.Frequency
+		if t.BilledAt != nil {
+			st.DueAt = addTerms(*t.BilledAt, st.PaymentTermsInterval, st.PaymentTermsFrequency)
+		}
 	}
 	for _, p := range t.Payments {
 		if p.CapturedAt != nil {

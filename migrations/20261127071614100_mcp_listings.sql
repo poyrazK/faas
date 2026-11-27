@@ -1,4 +1,4 @@
--- filename: 20261126175800100_mcp_listings.sql
+-- filename: 20261127071614100_mcp_listings.sql
 -- migration-compat: expand
 
 -- +goose Up

@@ -5112,7 +5112,7 @@ Restore a database to a new database
 
 | Flag | Meaning | |
 |---|---|---|
-| `--name <NAME>` | name for the restored database | required |
+| `--name <NAME>` | name for the restored database when creating a copy | required |
 | `--point-in-time <TIMESTAMP>` | RFC3339 restore timestamp | required |
 | `--switch <APP>` | move this app to the copy, keeping its code |  |
 | `--env <SCOPE>` | with --switch: environment whose bindings move |  |

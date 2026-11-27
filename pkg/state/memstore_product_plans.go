@@ -25,10 +25,12 @@ func (m *MemStore) productPlanViewLocked(s ProductPlanScope) (productPlanView, e
 	if _, err := m.onboardingAuthAppLocked(s.AccountID, api.ProductOnboardingRequest{AuthApp: s.AuthApp, AuthAppID: s.AuthAppID}); err != nil {
 		return v, ErrProductAccess
 	}
-	head, err := m.productBillingScopeLocked(ProductBillingScope{AccountID: s.AccountID, AppID: s.AppID, TenantID: s.TenantID, Period: productcontrol.Period(time.Now())})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	head, err := m.productBillingScopeLocked(ProductBillingScope{AccountID: s.AccountID, AppID: s.AppID, TenantID: s.TenantID, Period: productcontrol.Period(now)})
 	if err != nil {
 		return v, err
 	}
+	m.applyDueProductPlanLocked(s.AccountID, s.AppID, s.TenantID, now)
 	d := m.productLocked()
 	c, ok := d.customers[s.AppID+"/"+s.TenantID]
 	if !ok {
@@ -37,18 +39,33 @@ func (m *MemStore) productPlanViewLocked(s ProductPlanScope) (productPlanView, e
 	if err := productPlanAuthorized(s, head, c, m.platformTenants[s.TenantID]); err != nil {
 		return v, err
 	}
-	now := time.Now()
-	v = productPlanView{head: head, current: d.revisions[s.AppID+"/"+c.Revision], customer: c, starts: map[string]int64{}, period: productcontrol.Period(now), now: now}
-	features := map[string]bool{}
-	for _, name := range productPlanFeatures(v) {
-		features[name] = true
-	}
-	for _, r := range d.receipts {
-		if r.account == s.AccountID && r.app == s.AppID && r.tenant == s.TenantID && r.receipt.Period == v.period && features[r.receipt.Feature] {
-			v.starts[r.receipt.Feature]++
-		}
-	}
+	v = productPlanView{head: head, current: d.revisions[s.AppID+"/"+c.Revision], customer: c, period: productcontrol.Period(now), now: now}
+	v.starts = m.productPlanStartsLocked(ProductBillingScope{s.AccountID, s.AppID, s.TenantID, v.period}, c)
 	return v, nil
+}
+
+func (m *MemStore) productPlanStartsLocked(scope ProductBillingScope, customer api.ProductCustomer) map[string]productPlanStartCounts {
+	starts := map[string]productPlanStartCounts{}
+	from, until, hasTrial := productTrialInPeriod(customer, scope.Period)
+	for _, r := range m.productLocked().receipts {
+		if r.account != scope.AccountID || r.app != scope.AppID || r.tenant != scope.TenantID || r.receipt.Period != scope.Period {
+			continue
+		}
+		count := starts[r.receipt.Feature]
+		count.total++
+		if hasTrial && !r.receipt.AdmittedAt.Before(from) && r.receipt.AdmittedAt.Before(until) {
+			count.trial++
+		}
+		starts[r.receipt.Feature] = count
+	}
+	return starts
+}
+
+func (m *MemStore) productPlanHistoryLocked(scope ProductBillingScope) productPlanHistory {
+	return productPlanHistory{held: m.productMonthPlansLocked(scope), catalog: func(revision string) (api.ProductCatalog, bool) {
+		catalog, ok := m.productLocked().revisions[scope.AppID+"/"+revision]
+		return catalog, ok
+	}}
 }
 
 func (m *MemStore) GetProductPlanOptions(_ context.Context, s ProductPlanScope) (api.ProductPlanOptions, error) {
@@ -68,6 +85,7 @@ func (m *MemStore) PreviewProductPlanChange(_ context.Context, s ProductPlanScop
 	if err != nil {
 		return api.ProductPlanChangePreview{}, err
 	}
+	v.history = m.productPlanHistoryLocked(ProductBillingScope{s.AccountID, s.AppID, s.TenantID, v.period})
 	return productPlanPreview(s, v, selection)
 }
 
@@ -89,6 +107,7 @@ func (m *MemStore) ApplyProductPlanChange(_ context.Context, s ProductPlanScope,
 		}
 		return cloneProductBilling(old.receipt), nil
 	}
+	v.history = m.productPlanHistoryLocked(ProductBillingScope{s.AccountID, s.AppID, s.TenantID, v.period})
 	p, err := productPlanPreview(s, v, c.Request)
 	if err != nil {
 		return api.ProductPlanChangeReceipt{}, err
@@ -96,11 +115,11 @@ func (m *MemStore) ApplyProductPlanChange(_ context.Context, s ProductPlanScope,
 	if p.Hash != c.ExpectedHash {
 		return api.ProductPlanChangeReceipt{}, ErrProductPlanChangeStale
 	}
-	r := productPlanReceipt(p, s.Role)
+	r := productPlanReceipt(p, s.Role, v.now)
 	if d.planChanges == nil {
 		d.planChanges = map[string]productMemoryPlanChange{}
 	}
-	m.assignProductCustomerLocked(s.AccountID, s.AppID, p.AfterCustomer)
+	m.assignProductCustomerAtLocked(s.AccountID, s.AppID, p.AfterCustomer, v.now)
 	d.planChanges[r.ID] = productMemoryPlanChange{account: s.AccountID, app: s.AppID, tenant: s.TenantID, fingerprint: fingerprint, receipt: r}
 	return cloneProductBilling(r), nil
 }

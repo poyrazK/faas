@@ -27,6 +27,10 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"AlertDeferredFireRecipients":            true,
+	"UpdateAlertDeliveryStatus":              true,
+	"ClaimAlertFire":                         true,
+	"ListDeploymentPromotions":               true,
 	"AdmitExecution":                         true,
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
@@ -94,6 +98,8 @@ var memDispatched = map[string]bool{
 	"AdmitScheduledWorkflow":                                  true,
 	"AppByID":                                                 true,
 	"AppBySlug":                                               true,
+	"ApplyProductCustomerChange":                              true,
+	"FinalizeProductBilling":                                  true,
 	"GetProductBillingDocument":                               true,
 	"ListProductBillingDocuments":                             true,
 	"GetProductBillingHandoff":                                true,
@@ -309,6 +315,40 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) UpdateAlertDeliveryStatus(ctx context.Context, id string, status state.AlertDeliveryStatus, attempts, code int, detail string, deliveredAt *time.Time) error {
+	if override, ok := s.over.(interface {
+		UpdateAlertDeliveryStatus(context.Context, string, state.AlertDeliveryStatus, int, int, string, *time.Time) error
+	}); ok {
+		return override.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
+	}
+	return s.MemStore.UpdateAlertDeliveryStatus(ctx, id, status, attempts, code, detail, deliveredAt)
+}
+
+func (s *Mem) AlertDeferredFireRecipients(ctx context.Context, ruleID string, firedAt time.Time) (state.AlertDeferredRecipients, error) {
+	if override, ok := s.over.(interface {
+		AlertDeferredFireRecipients(context.Context, string, time.Time) (state.AlertDeferredRecipients, error)
+	}); ok {
+		return override.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+	}
+	return s.MemStore.AlertDeferredFireRecipients(ctx, ruleID, firedAt)
+}
+
+func (s *Mem) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (string, bool, state.AlertFireRecipients, error) {
+	if override, ok := s.over.(interface {
+		ClaimAlertFire(context.Context, string, string, []byte, float64, time.Time) (string, bool, state.AlertFireRecipients, error)
+	}); ok {
+		return override.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+	}
+	return s.MemStore.ClaimAlertFire(ctx, ruleID, idempotencyKey, payload, observed, at)
+}
+
+func (s *Mem) ListDeploymentPromotions(ctx context.Context, accountID, appID, scope string, before time.Time, limit int) ([]state.DeploymentPromotion, error) {
+	if override, ok := s.over.(state.DeploymentPromotionHistoryStore); ok {
+		return override.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
+	}
+	return s.MemStore.ListDeploymentPromotions(ctx, accountID, appID, scope, before, limit)
 }
 
 func (s *Mem) GetEdgeRuleByID(ctx context.Context, id string) (state.EdgeRule, error) {
@@ -4904,6 +4944,24 @@ func (s *Store) ListProjectsForOrg(ctx context.Context, orgID string) ([]state.P
 		return override.ListProjectsForOrg(ctx, orgID)
 	}
 	return s.Store.ListProjectsForOrg(ctx, orgID)
+}
+
+func (s *Mem) ApplyProductCustomerChange(ctx context.Context, account, app string, request api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error) {
+	if override, ok := s.over.(interface {
+		ApplyProductCustomerChange(context.Context, string, string, api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error)
+	}); ok {
+		return override.ApplyProductCustomerChange(ctx, account, app, request)
+	}
+	return s.MemStore.ApplyProductCustomerChange(ctx, account, app, request)
+}
+
+func (s *Mem) FinalizeProductBilling(ctx context.Context, scope state.ProductBillingScope, hash string) (api.ProductBillingDocument, error) {
+	if override, ok := s.over.(interface {
+		FinalizeProductBilling(context.Context, state.ProductBillingScope, string) (api.ProductBillingDocument, error)
+	}); ok {
+		return override.FinalizeProductBilling(ctx, scope, hash)
+	}
+	return s.MemStore.FinalizeProductBilling(ctx, scope, hash)
 }
 
 func (s *Mem) GetProductBillingDocument(p0 context.Context, p1 state.ProductBillingScope, p2 string) (api.ProductBillingDocument, error) {

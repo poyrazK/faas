@@ -240,7 +240,7 @@ func (s *sourceRefStreamer) resolveCommitSHA(ctx context.Context, repoFullName, 
 	if err != nil {
 		return "", fmt.Errorf("githubd: source-ref streamer: new commit request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	setSourceRefAuthorization(req, token)
 	// Only the immutable SHA is needed. The JSON representation also contains
 	// nested metadata and potentially large file patches.
 	req.Header.Set("Accept", "application/vnd.github.sha")
@@ -287,7 +287,7 @@ func (s *sourceRefStreamer) fetchArchive(ctx context.Context, repoFullName, ref,
 	if err != nil {
 		return nil, fmt.Errorf("githubd: source-ref streamer: new request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	setSourceRefAuthorization(req, token)
 	req.Header.Set("Accept", "application/x-gzip")
 	req.Header.Set("User-Agent", "onebox-faas-githubd/1.0")
 
@@ -314,6 +314,16 @@ func (s *sourceRefStreamer) fetchArchive(ctx context.Context, repoFullName, ref,
 		return nil, fmt.Errorf("githubd: source-ref streamer: unexpected %d: %w", resp.StatusCode, gitfetch.ErrBadArchive)
 	}
 	return resp.Body, nil
+}
+
+// setSourceRefAuthorization adds the bearer credential when there is one.
+// The public-repository path (ADR-20261126164847) may read anonymously, and
+// an empty "Bearer " header would make GitHub answer 401 instead of serving
+// the public resource.
+func setSourceRefAuthorization(req *http.Request, token string) {
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 }
 
 // capAndWrap wraps body in io.LimitReader(maxArchiveBytes + 1, …)
@@ -379,7 +389,9 @@ func isValidSourceRefRepo(s string) bool {
 		return false
 	}
 	for _, seg := range parts {
-		if seg == "" || len(seg) > 100 {
+		// "." and ".." are reserved by GitHub and would turn the
+		// API and codeload paths into traversals.
+		if seg == "" || seg == "." || seg == ".." || len(seg) > 100 {
 			return false
 		}
 		for _, r := range seg {

@@ -64,6 +64,7 @@ type countingWaker struct {
 	wakes, touches atomic.Int32
 	egress         atomic.Int64
 	fail           atomic.Bool
+	epoch          atomic.Int64
 }
 
 func (w *countingWaker) Wake(context.Context, string) (Backend, error) {
@@ -71,7 +72,7 @@ func (w *countingWaker) Wake(context.Context, string) (Backend, error) {
 	if w.fail.Load() {
 		return Backend{}, errors.New("no capacity")
 	}
-	return Backend{Target: "backend", Node: "db-node"}, nil
+	return Backend{Target: "backend", Node: "db-node", PrimaryEpochMicros: w.epoch.Load()}, nil
 }
 
 func (w *countingWaker) Touch(_ context.Context, _ string, egress int64) error {
@@ -122,6 +123,11 @@ func newHarness(t *testing.T) *harness {
 // newHarnessWith is newHarness with the proxy's config adjusted.
 func newHarnessWith(t *testing.T, adjust func(*Config)) *harness {
 	t.Helper()
+	return newHarnessWithCredentials(t, adjust, nil)
+}
+
+func newHarnessWithCredentials(t *testing.T, adjust func(*Config), credentials Credentials) *harness {
+	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("DATABASE_URL required (pg_hba must use scram-sha-256 for non-superusers)")
@@ -139,7 +145,10 @@ func newHarnessWith(t *testing.T, adjust func(*Config)) *harness {
 	if adjust != nil {
 		adjust(&proxyCfg)
 	}
-	p, err := New(proxyCfg, h.creds, h.waker, tcpDialer{addr: net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))}, nil)
+	if credentials == nil {
+		credentials = h.creds
+	}
+	p, err := New(proxyCfg, credentials, h.waker, tcpDialer{addr: net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +168,12 @@ func newHarnessWith(t *testing.T, adjust func(*Config)) *harness {
 // the same verifier to the proxy, as the native driver does.
 func (h *harness) addRole(t *testing.T, databaseID string) (role, password string) {
 	t.Helper()
-	role = "proxy_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	return h.addRoleWithPrefix(t, databaseID, "proxy_")
+}
+
+func (h *harness) addRoleWithPrefix(t *testing.T, databaseID, prefix string) (role, password string) {
+	t.Helper()
+	role = prefix + uuid.NewString()[:8]
 	password = "pw-" + uuid.NewString()
 	v, err := pgscram.NewVerifier(password, pgscram.DefaultIterations)
 	if err != nil {

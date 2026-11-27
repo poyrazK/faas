@@ -192,6 +192,38 @@ func TestQueryRange_MalformedValueSkipped(t *testing.T) {
 		t.Errorf("len(Values) = %d, want 2 (1 good + 1 bad skipped)",
 			len(got[0].Values))
 	}
+	if _, err := c.QueryRangeStrict(t.Context(), "foo", "1", "2", "1m"); err == nil {
+		t.Fatal("strict range query accepted a malformed sample")
+	}
+}
+
+func TestQueryRangeStrictRejectsPartialResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		if r.URL.Path != "/api/v1/query_range" || query.Get("start") != "1700000000" || query.Get("end") != "1700086400" || query.Get("step") != "1d" {
+			t.Errorf("unexpected range URL: %v", r.URL)
+		}
+		result := map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"resultType": "matrix",
+				"result":     []map[string]any{{"metric": map[string]string{}, "values": [][]any{{1700000000, "50"}}}},
+			},
+		}
+		if query.Get("query") == "partial" {
+			result["warnings"] = []string{"incomplete data"}
+		}
+		_ = json.NewEncoder(w).Encode(result)
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, srv.Client())
+	rows, err := c.QueryRangeStrict(t.Context(), "complete", "1700000000", "1700086400", "1d")
+	if err != nil || len(rows) != 1 || len(rows[0].Values) != 1 || rows[0].Values[0].Value != 50 {
+		t.Fatalf("rows=%v error=%v, want one parsed sample", rows, err)
+	}
+	if _, err := c.QueryRangeStrict(t.Context(), "partial", "1700000000", "1700086400", "1d"); err == nil {
+		t.Fatal("strict range query accepted a warning")
+	}
 }
 
 // TestQueryMap_Happy covers the per-app rollup with two apps and

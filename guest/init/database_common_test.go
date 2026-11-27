@@ -242,7 +242,7 @@ func TestExtractBaseTarRefusesEscapesAndLinks(t *testing.T) {
 }
 
 func TestRecoverySettingsTargetAndPromote(t *testing.T) {
-	got := strings.Join(recoverySettings(time.Date(2026, 10, 13, 9, 30, 15, 250000000, time.UTC)), " ")
+	got := strings.Join(recoverySettings(time.Date(2026, 10, 13, 9, 30, 15, 250000000, time.UTC), 0), " ")
 	for _, want := range []string{
 		"-c restore_command=/sbin/init archive-wal get %f %p",
 		"-c recovery_target_time=2026-10-13 09:30:15.25+00",
@@ -270,7 +270,7 @@ func TestArchivePendingCountsReadyFiles(t *testing.T) {
 }
 
 func TestRecoverySettingsWithoutTargetRecoverToTheEnd(t *testing.T) {
-	got := strings.Join(recoverySettings(time.Time{}), " ")
+	got := strings.Join(recoverySettings(time.Time{}, 0), " ")
 	if !strings.Contains(got, "restore_command=") || strings.Contains(got, "recovery_target") {
 		t.Fatalf("untargeted recovery settings = %q", got)
 	}
@@ -290,5 +290,15 @@ func TestParseReplayTimestamp(t *testing.T) {
 	}
 	if _, err := parseReplayTimestamp("yesterday"); err == nil {
 		t.Error("garbage parsed")
+	}
+}
+
+func TestRecoverySettingsPinTheVerifiedTimeline(t *testing.T) {
+	at := time.Date(2026, 11, 24, 9, 30, 0, 0, time.UTC)
+	for _, target := range []time.Time{at, {}} {
+		got := strings.Join(recoverySettings(target, 2), " ")
+		if !strings.Contains(got, "-c recovery_target_timeline=2") {
+			t.Fatalf("expected an explicit recovery timeline, got %s", got)
+		}
 	}
 }

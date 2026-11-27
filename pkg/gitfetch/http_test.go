@@ -459,3 +459,21 @@ func TestTree_ConcurrentClose(t *testing.T) {
 		t.Error("FS still accessible after concurrent Close")
 	}
 }
+
+// isValidRepoPath and cmd/githubd's isValidSourceRefRepo are kept in sync;
+// both refuse GitHub's reserved dot segments.
+func TestIsValidRepoPathRejectsDotSegments(t *testing.T) {
+	for repo, want := range map[string]bool{
+		"gregale-dev/mcp-server-node": true,
+		"a.b/c_d-e":                   true,
+		"owner/.github":               true,
+		"../etc":                      false,
+		"owner/..":                    false,
+		"./repo":                      false,
+		"owner/.":                     false,
+	} {
+		if got := isValidRepoPath(repo); got != want {
+			t.Errorf("isValidRepoPath(%q) = %v, want %v", repo, got, want)
+		}
+	}
+}

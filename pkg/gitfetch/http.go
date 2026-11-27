@@ -553,7 +553,9 @@ func isValidRepoPath(s string) bool {
 		return false
 	}
 	for _, seg := range parts {
-		if seg == "" || len(seg) > 100 {
+		// "." and ".." are reserved by GitHub and would turn the
+		// API and codeload paths into traversals.
+		if seg == "" || seg == "." || seg == ".." || len(seg) > 100 {
 			return false
 		}
 		for _, r := range seg {

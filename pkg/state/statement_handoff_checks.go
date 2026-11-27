@@ -118,11 +118,17 @@ func statementHandoffBlocked(ctx context.Context, q rowQuerier, accountID, sourc
 			return false, fmt.Errorf("check platform tenant handoff overlap: %w", err)
 		}
 	case StatementSourceProductControl:
-		// A Product Control statement invoices only its own app, customer and
-		// month of receipts; no other statement covers them.
+		// These statements never overlap, but a manual handoff can win
+		// while the export is being prepared. Recheck under reservation.
 		var exists bool
 		err := q.QueryRow(ctx, `select exists (select 1 from product_control_billing_documents
-			where id = $1::uuid and account_id = $2::uuid and kind = 'statement')`, statementID, accountID).Scan(&exists)
+			where id = $1::uuid and account_id = $2::uuid and kind = 'statement'),
+			exists (select 1 from product_control_invoice_handoffs h
+			where h.document_id = $1::uuid and h.account_id = $2::uuid
+			  and not exists (select 1 from usage_statement_invoice_exports e
+			  where e.statement_id = h.document_id and e.account_id = h.account_id
+			    and e.source_kind = 'product_control' and e.provider_invoice_id = h.external_invoice_id))`,
+			statementID, accountID).Scan(&exists, &blocked)
 		if err != nil {
 			return false, fmt.Errorf("load product control statement: %w", err)
 		}
@@ -152,13 +158,29 @@ func (m *MemStore) StatementHandoffBlocked(_ context.Context, accountID, sourceK
 		}
 		return m.tenantHandoffOverlapLocked(statement), nil
 	case StatementSourceProductControl:
-		row, ok := m.productLocked().documents[statementID]
-		if !ok || row.account != accountID || row.document.Kind != "statement" {
-			return false, ErrNotFound
-		}
-		return false, nil
+		return m.productStatementHandoffBlockedLocked(accountID, statementID)
 	}
 	return false, ErrNotFound
+}
+
+func (m *MemStore) productStatementExportLocked(accountID, statementID string) (StatementInvoiceExport, bool) {
+	for _, e := range m.statementInvoiceExports {
+		if e.AccountID == accountID && e.SourceKind == StatementSourceProductControl && e.StatementID == statementID {
+			return e, true
+		}
+	}
+	return StatementInvoiceExport{}, false
+}
+
+func (m *MemStore) productStatementHandoffBlockedLocked(accountID, statementID string) (bool, error) {
+	d := m.productLocked()
+	row, ok := d.documents[statementID]
+	if !ok || row.account != accountID || row.document.Kind != "statement" {
+		return false, ErrNotFound
+	}
+	handoff, recorded := d.handoffs[statementID]
+	export, _ := m.productStatementExportLocked(accountID, statementID)
+	return recorded && handoff.ExternalInvoiceID != export.ProviderInvoiceID, nil
 }
 
 // externalInvoiceHandedOffLocked reports whether the account already used

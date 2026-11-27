@@ -28,3 +28,14 @@ access_key_id_path = "/etc/faas/dbbackupd/offsite-s3-access-key-id"
 secret_access_key_path = "/etc/faas/dbbackupd/offsite-s3-secret-access-key"
 upload_interval = "{{ dbbackupd_offsite_upload_interval }}"
 {% endif %}
+{% if dbbackupd_recovery_s3_bucket | length > 0 %}
+
+[recovery]
+endpoint = "{{ dbbackupd_recovery_s3_endpoint }}"
+region = "{{ dbbackupd_recovery_s3_region }}"
+bucket = "{{ dbbackupd_recovery_s3_bucket }}"
+prefix = "{{ dbbackupd_recovery_s3_prefix }}"
+path_style = {{ dbbackupd_recovery_s3_path_style | bool | lower }}
+access_key_id_path = "/etc/faas/dbbackupd/recovery-s3-access-key-id"
+secret_access_key_path = "/etc/faas/dbbackupd/recovery-s3-secret-access-key"
+{% endif %}

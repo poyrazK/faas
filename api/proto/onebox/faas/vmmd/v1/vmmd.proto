@@ -154,6 +154,12 @@ service Vmmd {
   // that finds the VM frozen thaws it in place and reports thawed. The VM is
   // destroyed on close and whenever the stream ends.
   rpc RunSandbox(stream RunSandboxRequest) returns (stream RunSandboxEvent);
+  // DeleteSandboxVolume removes a persistent session's workspace volume
+  // from this node (ADR-20261122132055 §4): schedd calls it for agentd once
+  // the session ended or its newest copy is on another node. A volume a
+  // running session uses is refused with FailedPrecondition; one that is not
+  // here is not an error.
+  rpc DeleteSandboxVolume(DeleteSandboxVolumeRequest) returns (DeleteSandboxVolumeResponse);
 
   // PersistSandboxWorkspace archives a session's workspace to the artifact
   // store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
@@ -719,6 +725,9 @@ service Vmmd {
   // A read of a missing hold is NotFound; placing a name again with
   // another point is AlreadyExists.
   rpc DatabaseArchiveHold(DatabaseArchiveHoldRequest) returns (DatabaseArchiveHoldResponse);
+
+  // DatabaseArchiveRestoreCheck reads archive evidence for a source and target.
+  rpc DatabaseArchiveRestoreCheck(DatabaseArchiveRestoreCheckRequest) returns (DatabaseArchiveRestoreCheckResponse);
   // ExportDatabaseVolume streams a stopped database's volume for a move to
   // another node: a header with its size, its data extents, then the
   // transfer digest. The database cannot start until the stream ends.
@@ -739,11 +748,15 @@ service Vmmd {
   // DatabaseControl relays one guest control request (status, bootstrap,
   // admin_sql).
   rpc DatabaseControl(DatabaseControlRequest) returns (DatabaseControlResponse);
+  rpc StreamDatabaseExport(DatabaseExportRequest) returns (stream DatabaseExportFrame);
+  rpc StreamDatabaseArchiveImport(stream DatabaseArchiveImportFrame) returns (stream DatabaseArchiveImportProgress);
   // DatabaseSession carries one client session to a running database VM's
   // PostgreSQL data port, never its control port. The first client frame
   // names the database; every later frame carries raw protocol bytes. The
   // lifecycle RPCs above accept only schedd; this one only pgproxyd.
   rpc DatabaseSession(stream DatabaseSessionFrame) returns (stream DatabaseSessionFrame);
+  // Uses the guest's standby-only port, which closes sessions before promotion.
+  rpc DatabaseReplicaSession(stream DatabaseSessionFrame) returns (stream DatabaseSessionFrame);
   // DatabaseReplication carries one replication stream from a standby's
   // node to its running primary's guest (ADR-1027 production class). The
   // first client frame names the database; every later frame carries raw
@@ -3643,6 +3656,18 @@ message RunSandboxStart {
   // ran, so a restore runs none, and no workspace_key goes with it. A failed
   // restore still cold-boots (ADR-005) and booted says so.
   bool session_capture = 23;
+  // volume_gb gives a persistent session its workspace volume
+  // (ADR-20261122132055 §4), mounted at /workspace: vmmd makes it, or grows
+  // the node's copy to this size. Zero: no volume. An older vmmd ignores it
+  // and the workspace is on the root drive.
+  int32 volume_gb = 24;
+  // volume_backup_id is the session's newest volume backup. The node's copy
+  // is used when it is that backup or newer; otherwise vmmd restores the
+  // backup first. Empty: the volume was never backed up.
+  string volume_backup_id = 25;
+  // volume_backup_interval_ms backs the volume up while the session runs,
+  // reporting each backup as volume_backup. Zero: only pauses back it up.
+  int64 volume_backup_interval_ms = 26;
 }
 
 // RunSandboxAction is one browser action on a live session
@@ -3772,7 +3797,35 @@ message RunSandboxEvent {
     // or the capture failed before the guest was touched. The VM keeps
     // running.
     RunSandboxPauseRefused pause_refused = 13;
+    // volume_backup reports a backup of the session's volume taken while it
+    // runs (ADR-20261122132055 §4). Sent only to a start with volume_gb, so
+    // an older reader never sees one.
+    RunSandboxVolumeBackup volume_backup = 14;
   }
+}
+
+// RunSandboxVolumeBackup is one stored backup of a session's volume.
+message RunSandboxVolumeBackup {
+  string backup_id = 1;
+  int64 size_bytes = 2;
+  // data_chunks counts the chunks that hold data; uploaded_bytes is what
+  // this backup added to the store, compressed.
+  int32 data_chunks = 3;
+  int64 uploaded_bytes = 4;
+  int64 backup_ms = 5;
+  // incremental: only the blocks changed since the node's last backup were
+  // read.
+  bool incremental = 6;
+}
+
+message DeleteSandboxVolumeRequest {
+  string account_id = 1;
+  string sandbox_id = 2;
+}
+
+message DeleteSandboxVolumeResponse {
+  // deleted: the node had a copy and removed it.
+  bool deleted = 1;
 }
 
 message RunSandboxPaused {
@@ -3784,6 +3837,10 @@ message RunSandboxPaused {
   // node now and reaches the shared store in the background
   // (ADR-20261122132055 §2).
   bool has_backing = 4;
+  // volume_backup_id names the backup of the session's volume as the
+  // capture left it (ADR-20261122132055 §4), uploaded in the background with
+  // the capture. Empty for a session without a volume.
+  string volume_backup_id = 5;
 }
 
 message RunSandboxPauseRefused {
@@ -4352,6 +4409,9 @@ message StartDatabaseRequest {
   // pg_upgrade --link. The node needs both majors' bases. Never with a
   // primary, a promotion or a restore.
   int32 upgrade_from_major = 14;
+  bool query_insights = 15;
+  // A verified restore timeline. Zero uses the guest default.
+  uint32 restore_timeline = 16;
 }
 
 message StartDatabaseResponse {
@@ -4364,6 +4424,36 @@ message StopDatabaseRequest {
 }
 
 message StopDatabaseResponse {}
+
+message DatabaseExportRequest {
+  string database_id = 1;
+  string database = 2;
+  int32 postgres_major = 3;
+}
+
+message DatabaseExportFrame {
+  oneof content {
+    bytes dump = 1;
+    bytes source = 2;
+  }
+}
+
+message DatabaseArchiveImportTarget {
+  string database_id = 1;
+  bytes request = 2;
+}
+
+message DatabaseArchiveImportFrame {
+  oneof content {
+    DatabaseArchiveImportTarget target = 1;
+    bytes dump = 2;
+  }
+}
+
+message DatabaseArchiveImportProgress {
+  bool ready_for_upload = 1;
+  bytes result = 2;
+}
 
 message DatabaseControlRequest {
   string database_id = 1;
@@ -4388,12 +4478,30 @@ message DatabaseControlRequest {
   // mark_drill and check_drill only: the restore drill's id, a lowercase
   // UUID (ADR-1027 restore drills).
   string drill = 8;
+  string verification_id = 9;
+  bool source_writes_paused = 10;
+  DatabaseMigrationActivation activation = 11;
+  string diagnostic_database = 12;
+  string enable_extension = 13;
+  // base_extensions only: inspect the configured image for this major.
+  int32 extensions_base_major = 14;
+  DatabaseTableHealthOptions table_health_options = 15;
+  string autovacuum_profile = 16;
+  int64 autovacuum_revision = 17;
 }
 
 // DatabaseImport names an import's source. vmmd relays the guest's
 // connections to host:port over TLS it verifies for host, and only to a
 // public address; the rest goes to the guest. Sensitive (password): never
 // logged.
+message DatabaseMigrationActivation {
+  string switch_id = 1;
+  string operation_id = 2;
+  string source_pin = 3;
+  string source_database = 4;
+  repeated string roles = 5;
+}
+
 message DatabaseImport {
   string host = 1;
   int32 port = 2;
@@ -4428,6 +4536,129 @@ message DatabaseImportStatus {
   // For target_too_small: the volume size the copy needs, zero when free
   // space ran out during the copy.
   int64 required_volume_bytes = 8;
+  repeated DatabaseExtensionVersion incompatible_extensions = 9;
+}
+
+message DatabaseMigrationPreparation {
+  message Blocker {
+    string code = 1;
+    int64 count = 2;
+  }
+  string state = 1;
+  string reason = 2;
+  int32 indexes_total = 3;
+  int32 indexes_ready = 4;
+  int64 sequences = 5;
+  repeated Blocker blockers = 6;
+}
+
+message DatabaseMigrationVerification {
+  string verification_id = 1;
+  string state = 2;
+  string reason = 3;
+  string applied_lsn = 4;
+  int32 sequences_synced = 5;
+  google.protobuf.Timestamp verified_at = 6;
+}
+
+message DatabaseMigrationProgress {
+  string operation_id = 1;
+  string state = 2;
+  string reason = 3;
+  int32 tables = 4;
+  int32 tables_ready = 5;
+  int64 apply_lag_bytes = 6;
+  int64 retained_wal_bytes = 7;
+  DatabaseMigrationPreparation preparation = 8;
+  DatabaseMigrationVerification verification = 9;
+}
+
+message DatabaseMigrationCheck {
+  string outcome = 1;
+  repeated string reasons = 2;
+  int32 source_major = 3;
+  int32 target_major = 4;
+  int64 table_count = 5;
+  int64 sequence_count = 6;
+  int64 unsupported_table_count = 7;
+  repeated string unsupported_tables = 8;
+  int64 source_bytes = 9;
+  int64 target_free_bytes = 10;
+  int64 source_wal_limit_bytes = 11;
+  int64 free_source_slots = 12;
+  int64 free_source_senders = 13;
+}
+
+message DatabaseActivitySample {
+  google.protobuf.Timestamp sampled_at = 1;
+  int64 connections = 2;
+  int64 connection_limit = 3;
+  int64 active_transactions = 4;
+  int64 oldest_active_transaction_ms = 5;
+  int64 idle_in_transaction = 6;
+  int64 oldest_idle_transaction_ms = 7;
+  int64 lock_waits = 8;
+  message BlockedSession {
+    int32 pid = 1;
+    repeated int32 blocking_pids = 2;
+  }
+  repeated BlockedSession blocked_sessions = 9;
+}
+
+message DatabaseSessionSample {
+  google.protobuf.Timestamp sampled_at = 1;
+  bool has_more = 2;
+  message Session {
+    int32 pid = 1;
+    string state = 2;
+    int64 transaction_age_ms = 3;
+    string wait_event_type = 4;
+    string wait_event = 5;
+    string application_name = 6;
+    string target_id = 7;
+  }
+  repeated Session sessions = 3;
+}
+
+message DatabaseAutovacuumSettings {
+  double vacuum_scale_factor = 1;
+  double analyze_scale_factor = 2;
+}
+
+message DatabaseTableHealthOptions {
+  string sort = 1;
+  int32 limit = 2;
+}
+
+message DatabaseTableHealthSample {
+  google.protobuf.Timestamp sampled_at = 1;
+  bool has_more = 2;
+  message Table {
+    string schema = 1;
+    string name = 2;
+    int64 table_bytes = 3;
+    int64 index_bytes = 4;
+    int64 estimated_dead_rows = 5;
+    int64 changes_since_analyze = 6;
+    int64 xid_age = 7;
+    google.protobuf.Timestamp last_vacuum_at = 8;
+    google.protobuf.Timestamp last_analyze_at = 9;
+  }
+  repeated Table tables = 3;
+}
+
+message DatabaseQuerySample {
+  google.protobuf.Timestamp at = 1;
+  google.protobuf.Timestamp boot_at = 2;
+  google.protobuf.Timestamp reset_at = 3;
+  int64 evictions = 4;
+  message Counter {
+    string query_id = 1;
+    uint32 user_id = 2;
+    int64 calls = 3;
+    double execution_ms = 4;
+  }
+  repeated Counter counters = 5;
 }
 
 message DatabaseControlResponse {
@@ -4452,6 +4683,35 @@ message DatabaseControlResponse {
   bool stale = 10;
   // mark_drill only: the guest clock once the drill's mark committed.
   google.protobuf.Timestamp marked_at = 11;
+  // migration_check only.
+  DatabaseMigrationCheck migration = 12;
+  DatabaseMigrationProgress migration_progress = 13;
+  bool migration_running = 14;
+  DatabaseActivitySample activity = 15;
+  bool query_insights_configured = 16;
+  DatabaseQuerySample query_sample = 17;
+  bool query_insights_supported = 18;
+  DatabaseExtensionCatalog extensions = 19;
+  repeated string extension_files = 20;
+  // Host-observed base and launch identities on status requests.
+  string running_image = 21;
+  string desired_image = 22;
+  DatabaseTableHealthSample table_health = 23;
+  DatabaseAutovacuumSettings autovacuum = 24;
+  DatabaseSessionSample sessions = 25;
+  // The timeline applied by a targeted restore boot.
+  uint32 restore_timeline = 26;
+}
+
+message DatabaseExtensionVersion {
+  string name = 1;
+  string version = 2;
+  bool default_version = 3;
+}
+
+message DatabaseExtensionCatalog {
+  repeated DatabaseExtensionVersion installed = 1;
+  repeated DatabaseExtensionVersion available = 2;
 }
 
 message DatabaseStorage {
@@ -4470,6 +4730,7 @@ message DatabaseReplicationStatus {
   // Commits wait for the standby, which has flushed every one so far.
   bool synchronous = 3;
   int64 lag_bytes = 4;
+  optional int64 replay_lag_bytes = 5;
 }
 
 message DatabaseSessionFrame {
@@ -4592,4 +4853,26 @@ message CaptureExecutionTemplateRequest {
 message CaptureExecutionTemplateResponse {
   SnapshotRef snapshot = 1;
   int64 vmstate_bytes = 2;
+}
+
+message DatabaseArchiveRestoreCheckRequest {
+  string database_id = 1;
+  google.protobuf.Timestamp point_in_time = 2;
+  int32 postgres_major = 3;
+  bool from_recovery_archive = 4;
+  bool latest = 5;
+  // Recheck coverage on this reserved timeline. Zero selects a timeline.
+  uint32 recovery_timeline = 6;
+}
+
+message DatabaseArchiveRestoreCheckResponse {
+  string outcome = 1;
+  string reason = 2;
+  google.protobuf.Timestamp backup_completed_at = 3;
+  google.protobuf.Timestamp wal_stop_at = 4;
+  string missing_wal_segment = 5;
+  bool from_recovery_archive = 6;
+  google.protobuf.Timestamp recovery_point = 7;
+  uint32 recovery_timeline = 8;
+  string missing_timeline_history = 9;
 }

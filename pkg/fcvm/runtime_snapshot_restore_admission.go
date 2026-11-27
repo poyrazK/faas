@@ -139,6 +139,7 @@ func (m *Manager) coldBootSpecForWake(nc netns.Config, req WakeRequest, serviceD
 		AgentInput:         req.agentRunOnly,
 		InputKey:           req.agentRunInputKey,
 		BuildKitSeedDrive:  builderSeedDrive(req),
+		SandboxVolume:      req.sandboxVolume,
 	}
 }
 

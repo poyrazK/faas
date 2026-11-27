@@ -63,10 +63,11 @@ func deployClientOrAnonymous(ctx context.Context, timeout time.Duration, anonymo
 	if saved, ok := loadAnonymousSession(); ok {
 		// Redeploy with the open anonymous deploy rather than start another,
 		// and repeat its claim link after the deploy.
-		if err := checkAnonymousKey(ctx, saved.APIKey); err != nil {
+		accountID, err := checkAnonymousKey(ctx, saved.APIKey)
+		if err != nil {
 			return nil, err
 		}
-		anonymousDeploySession = &api.AnonymousSessionResponse{APIKey: saved.APIKey, ClaimURL: saved.ClaimURL, ExpiresAt: saved.ExpiresAt}
+		anonymousDeploySession = &api.AnonymousSessionResponse{AccountID: accountID, APIKey: saved.APIKey, ClaimURL: saved.ClaimURL, ExpiresAt: saved.ExpiresAt}
 		return NewClientWithDeployTimeout(apiBase(), saved.APIKey, timeout), nil
 	}
 	sess, err := createAnonymousDeploySession(ctx)
@@ -148,17 +149,31 @@ func loadAnonymousSessionToken() string {
 var errAnonymousEnded = errors.New("this deploy without an account was claimed or has ended; run gregale login")
 
 // checkAnonymousKey asks the API whether the saved anonymous key still
-// works. A refused key is forgotten; any other failure is left to the
-// command that uses the key.
-func checkAnonymousKey(ctx context.Context, key string) error {
+// works and returns its account id ("" when the check could not tell). A
+// refused key is forgotten; any other failure is left to the command that
+// uses the key.
+func checkAnonymousKey(ctx context.Context, key string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	_, err := NewClient(apiBase(), key).Whoami(ctx)
+	acct, err := NewClient(apiBase(), key).Whoami(ctx)
 	if anonymousKeyRefused(err) {
 		deleteAnonymousSession()
-		return errAuth(errAnonymousEnded)
+		return "", errAuth(errAnonymousEnded)
 	}
-	return nil
+	if err != nil {
+		return "", nil
+	}
+	return acct.ID, nil
+}
+
+// anonymousAppSlug is the name an app gets when this deploy runs without an
+// account: the requested name with the account's suffix, which apid requires
+// (api.AnonymousAppSlug). Any other deploy keeps the requested name.
+func anonymousAppSlug(slug string) string {
+	if sess := anonymousDeploySession; sess != nil && sess.AccountID != "" && slug != "" {
+		return api.AnonymousAppSlug(sess.AccountID, slug)
+	}
+	return slug
 }
 
 // anonymousKeyRefused reports a 401 for the anonymous key.

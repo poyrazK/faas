@@ -22,7 +22,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/lagoinvoice"
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Product Control provider qualification (ADR-20261018212918). Each provider
@@ -190,8 +189,7 @@ func newQualification(t *testing.T, p qualifyProvider) *qualification {
 	// The overdue sync reads the statement from the store; the routes read
 	// it, for a closed month, from the fake.
 	mem.SeedProductBillingDocumentForTest(account.ID, app.ID, doc)
-	fake := &productStatementFake{MemStore: mem, docs: map[string]api.ProductBillingDocument{doc.ID: doc}, handoffs: map[string]api.ProductInvoiceHandoff{}}
-	srv := apidserver.NewServer(statetest.NewMem(fake), slog.New(slog.NewTextHandler(io.Discard, nil)), "example.test", apidserver.NoopNotifier{})
+	srv := apidserver.NewServer(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.test", apidserver.NoopNotifier{})
 	*srv.Mailer() = &apidserver.RecordingMailer{}
 	srv.WithProductControlEnabled(true)
 	invoices, products := srv.StatementInvoices(), srv.ProductControl()

@@ -11,6 +11,9 @@
 //   - The same app on Pro (1 GB): the full /app fits, so the build drops the
 //     tree and the app ships whole, as before the ADR. (On Hobby it does not:
 //     its full layer needs 545 MB of the 512 MB cap, so Hobby gets the tree.)
+//   - Next.js on Free started with `next start -p $PORT -H 0.0.0.0`
+//     (ADR-20261124160000 amendment 2): the flags become the standalone
+//     server's environment and the app still ships only the tree.
 //   - Bun on Free: imaged keeps mise's Bun install and drops mise's Node.
 //   - pnpm and yarn on Free (ADR-20261125170000): the start script runs on the
 //     runner base's Node, and the layer keeps only /app: no mise Node and no
@@ -39,6 +42,12 @@ var jsNextStaticAsset = regexp.MustCompile(`/_next/static/[^"' ]+\.(?:css|js)`)
 // journeyFixture tars a fixture directory of the journey suite.
 func journeyFixture(t *testing.T, name string) []byte {
 	t.Helper()
+	return journeyFixtureWith(t, name, nil)
+}
+
+// journeyFixtureWith is journeyFixture with files replaced by replace.
+func journeyFixtureWith(t *testing.T, name string, replace map[string]string) []byte {
+	t.Helper()
 	root := filepath.Join("..", "..", "tests", "journeys", "testdata", name)
 	files := map[string]string{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -58,6 +67,9 @@ func journeyFixture(t *testing.T, name string) []byte {
 	})
 	if err != nil {
 		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	for path, body := range replace {
+		files[path] = body
 	}
 	files["faas-build-token"] = name + time.Now().UTC().Format(time.RFC3339Nano) + "\n"
 	return buildTarGz(t, files)
@@ -110,6 +122,7 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 	// newSharedRuntimeApp seeds Hobby; each app below gets its own account.
 	nextFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "next-free")
 	nextPro := addSharedRuntimeApp(t, h, pool, api.PlanPro, "next-pro")
+	nextFlags := addSharedRuntimeApp(t, h, pool, api.PlanFree, "next-flags")
 	bunFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "bun-free")
 	pnpmFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "pnpm-free")
 	yarnFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "yarn-free")
@@ -151,6 +164,31 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 		nextFree.park(t)
 		check(t)
 		nextFree.park(t)
+	})
+
+	t.Run("nextjs-free-start-flags", func(t *testing.T) {
+		pkg, err := os.ReadFile(filepath.Join("..", "..", "tests", "journeys", "testdata", "nextjs-standalone", "package.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		flagged := strings.Replace(string(pkg), `"start": "next start"`, `"start": "next start -p $PORT -H 0.0.0.0"`, 1)
+		if flagged == string(pkg) {
+			t.Fatal("fixture start script is not `next start`")
+		}
+		dep := nextFlags.deploy(t, journeyFixtureWith(t, "nextjs-standalone", map[string]string{"package.json": flagged}), "cccccccc-0000-4000-8000-000000000004", sharedBaseStallWindow, sharedBaseCeiling)
+		t.Logf("next flags: runtime_base=%q app layer=%d bytes", dep.RuntimeBase, dep.RootfsBytes)
+		if limit := guestInit.Size() + 96<<20; dep.RootfsBytes <= 0 || dep.RootfsBytes > limit {
+			t.Fatalf("app layer = %d bytes, want the standalone tree: at most %d", dep.RootfsBytes, limit)
+		}
+		check := func(t *testing.T) {
+			if cwd := nextFlags.getJSON(t, "/api/runtime")["cwd"]; cwd != "/app/.next/standalone" {
+				t.Fatalf("server cwd = %v, want /app/.next/standalone", cwd)
+			}
+		}
+		check(t)
+		nextFlags.park(t)
+		check(t)
+		nextFlags.park(t)
 	})
 
 	t.Run("nextjs-pro-full-app", func(t *testing.T) {

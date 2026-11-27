@@ -413,6 +413,10 @@ func SandboxEgressRuleCovered(rule string, allow []string) bool {
 type UpdateSandboxRequest struct {
 	IdleTimeoutS *int `json:"idle_timeout_s,omitempty"`
 	LifetimeS    *int `json:"lifetime_s,omitempty"`
+	// VolumeGB grows a paused persistent session's workspace volume
+	// (ADR-20261122132055 §4); it never shrinks, and the session sees the
+	// new size when it resumes.
+	VolumeGB *int `json:"volume_gb,omitempty"`
 }
 
 // Sandbox is one session. Token is a fresh session token for the data plane,

@@ -17,9 +17,9 @@ func resizeFromSQL(row sqlc.ManagedPostgresResize) (ResizeOperation, error) {
 	operation := ResizeOperation{ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), DatabaseID: cutoverUUID(row.DatabaseID),
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID,
 		PolicyChange: row.TargetScaleToZero.Valid, TargetScaleToZero: row.TargetScaleToZero.Bool, TargetStorageLimitBytes: row.TargetStorageLimitBytes.Int64,
-		TargetPostgresMajor: int(row.TargetPostgresMajor.Int32), ErrorCode: row.ErrorCode.String, LastErrorCode: row.ErrorCode.String,
+		TargetPostgresMajor: int(row.TargetPostgresMajor.Int32), Automatic: row.Automatic, ErrorCode: row.ErrorCode.String, LastErrorCode: row.ErrorCode.String,
 		DataResourceID: row.DataResourceID, TargetClass: ServiceClass(row.TargetClass), Generation: row.Generation, State: ResizeState(row.State),
-		CreatedAt: bindingDeliveryTime(row.CreatedAt), CompletedAt: bindingDeliveryTime(row.CompletedAt)}
+		CreatedAt: bindingDeliveryTime(row.CreatedAt), autoGrowIdleAt: row.AutoGrowIdleAt.Time, CompletedAt: bindingDeliveryTime(row.CompletedAt)}
 	if json.Unmarshal(row.SourceSpec, &operation.SourceSpec) != nil || operation.SourceSpec.Validate() != nil || operation.TargetSpec().Validate() != nil {
 		return ResizeOperation{}, ErrUnavailable
 	}
@@ -119,6 +119,11 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 		database.LeaseUntil.After(clock.Time) || current.CutoverID.Valid || current.CloneResourceRole != "target" || database.DeletedAt != nil {
 		return ResizeOperation{}, ErrConflict
 	}
+	if operation.Automatic {
+		if err := reserveAutoGrow(ctx, tx, database, operation, id); err != nil {
+			return ResizeOperation{}, mapPostgresError(err)
+		}
+	}
 	conflicts, err := q.ReadManagedPostgresResizeConflicts(ctx, tx, id)
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
@@ -126,6 +131,9 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 	holds, err := q.ReadManagedPostgresLifecycleDependants(ctx, tx, id)
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
+	}
+	if conflicts.ReplicaBindings && operation.TargetSpec().Class != ClassProduction {
+		return ResizeOperation{}, ErrConflict
 	}
 	if conflicts.UnfinishedBindings || conflicts.UnfinishedRestores || holds.HasCloneSnapshotHolds || holds.HasCloneWriteFenceHolds {
 		return ResizeOperation{}, ErrConflict
@@ -139,9 +147,18 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 		DataResourceID: operation.DataResourceID, SourceSpec: source, TargetClass: string(operation.TargetClass), TargetScaleToZero: pgtype.Bool{Bool: operation.TargetScaleToZero, Valid: operation.PolicyChange},
 		TargetStorageLimitBytes: pgtype.Int8{Int64: operation.TargetStorageLimitBytes, Valid: operation.TargetStorageLimitBytes != 0},
 		TargetPostgresMajor:     pgtype.Int4{Int32: int32(operation.TargetPostgresMajor), Valid: operation.MajorUpgrade()}, //nolint:gosec // validated: a major
-		Generation:              operation.Generation, CreatedAt: clock})
+		Generation:              operation.Generation, CreatedAt: clock, Automatic: operation.Automatic,
+		AutoGrowIdleAt: pgtype.Timestamptz{Time: operation.autoGrowIdleAt, Valid: !operation.autoGrowIdleAt.IsZero()}})
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
+	}
+	if !operation.autoGrowWindow.Start.IsZero() {
+		_, err = tx.Exec(ctx, `INSERT INTO native_postgres_scheduled_growth
+			(resize_id, window_start, window_end, source_running_at, policy_at) VALUES ($1, $2, $3, $4, $5)`,
+			requestID, operation.autoGrowWindow.Start, operation.autoGrowWindow.End, operation.autoGrowRunningAt, operation.autoGrowPolicyAt)
+		if err != nil {
+			return ResizeOperation{}, mapPostgresError(err)
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return ResizeOperation{}, mapPostgresError(err)

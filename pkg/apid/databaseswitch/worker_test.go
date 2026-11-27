@@ -104,7 +104,10 @@ type fakeCutovers struct {
 
 func (f *fakeCutovers) Prepare(_ context.Context, r managedpostgres.PrepareCutoverRequest) (managedpostgres.Cutover, error) {
 	f.calls = append(f.calls, "prepare")
-	f.cutover = managedpostgres.Cutover{ID: r.ID, AccountID: r.AccountID, AppID: r.AppID, Scope: r.Scope, State: managedpostgres.CutoverPrepared}
+	f.cutover = managedpostgres.Cutover{
+		ID: r.ID, AccountID: r.AccountID, AppID: r.AppID, Scope: r.Scope, State: managedpostgres.CutoverPrepared,
+		Source: managedpostgres.Database{ID: r.SourceDatabaseID}, Target: managedpostgres.Database{ID: r.TargetDatabaseID},
+	}
 	return f.cutover, nil
 }
 
@@ -256,6 +259,11 @@ func newHarness(t *testing.T) *harness {
 // the live release (ADR-20261023181931 amendment 3) instead of a rollback.
 func newHarnessFor(t *testing.T, keepRelease bool) *harness {
 	t.Helper()
+	return newHarnessWithSwitch(t, keepRelease, nil)
+}
+
+func newHarnessWithSwitch(t *testing.T, keepRelease bool, configure func(*harness, *state.DatabaseSwitch)) *harness {
+	t.Helper()
 	ctx := context.Background()
 	h := &harness{t: t, clock: time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC), store: state.NewMemStore()}
 	app, err := h.store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: uuid.NewString(), Slug: "shop"})
@@ -279,6 +287,9 @@ func newHarnessFor(t *testing.T, keepRelease bool) *harness {
 		SourceDatabaseID: uuid.NewString(), TargetName: "orders-before-v42", RestorePoint: h.clock.Add(-time.Hour), CreatedAt: h.clock}
 	if keepRelease {
 		sw.TargetDeploymentID, sw.UndoneDeploymentIDs, sw.TargetName = from.ID, []string{}, "orders-0900"
+	}
+	if configure != nil {
+		configure(h, &sw)
 	}
 	h.sw, err = h.store.CreateDatabaseSwitch(ctx, sw)
 	if err != nil {

@@ -1140,6 +1140,70 @@
         }
       },
       "description": "ADR-20261122132055 §2: paused sessions that resumed by cold boot and lost their memory state, by reason: no_capture or restore_failed."
+    },
+    {
+      "type": "timeseries",
+      "title": "Persistent sandbox volume backups (p95 seconds, uploaded bytes/s)",
+      "id": 23,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(sandbox_volume_backup_seconds_bucket[15m])) by (le))",
+          "legendFormat": "backup p95 seconds",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(sandbox_volume_backup_bytes_sum[15m]))",
+          "legendFormat": "uploaded bytes/s",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "ADR-20261122132055: time vmmd took to capture a persistent session and end its VM, and from a paused session's claim to its VM up by source: node (its capture on its own node), remote (another node) or cold (no capture restored)."
     }
   ]
 }

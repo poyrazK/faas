@@ -34,16 +34,21 @@ func ownerConsoleForm(t *testing.T, body, action string) url.Values {
 			var inputs func(*html.Node)
 			inputs = func(node *html.Node) {
 				if node.Type == html.ElementNode && node.Data == "input" {
-					name, value := "", ""
+					name, value, kind := "", "", ""
+					checked := false
 					for _, a := range node.Attr {
-						if a.Key == "name" {
+						switch a.Key {
+						case "name":
 							name = a.Val
-						}
-						if a.Key == "value" {
+						case "value":
 							value = a.Val
+						case "type":
+							kind = a.Val
+						case "checked":
+							checked = true
 						}
 					}
-					if name != "" {
+					if name != "" && (kind != "checkbox" || checked) {
 						values.Set(name, value)
 					}
 				}
@@ -52,7 +57,13 @@ func ownerConsoleForm(t *testing.T, body, action string) url.Values {
 				}
 			}
 			inputs(n)
-			if values.Get("action") == action || (action == "confirm" && values.Get("payload") != "") {
+			var formAction string
+			for _, a := range n.Attr {
+				if a.Key == "action" {
+					formAction = a.Val
+				}
+			}
+			if values.Get("action") == action || formAction == action || (action == "confirm" && values.Get("payload") != "") {
 				found = values
 				return
 			}
@@ -200,7 +211,7 @@ func TestProductControlOwnerConsole(t *testing.T) {
 	noCSRF.Del("csrf_token")
 	call("POST", base+"/review", noCSRF, true, 403)
 	preview := call("POST", base+"/review", plan, true, 200)
-	for _, want := range []string{"EUR 0.25000", "EUR 0.10000", "Monthly starts already used do not reset", org} {
+	for _, want := range []string{"EUR 0.25000", "EUR 0.10000", "Monthly starts already used do not reset", "Plan fee for", "Projected plan fee for", "export next run", org} {
 		if !strings.Contains(preview.Body.String(), want) {
 			t.Fatalf("incomplete preview %q", want)
 		}
@@ -250,6 +261,13 @@ func TestProductControlOwnerConsole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	current := op.ProductControl.Period
+	focused := call("GET", path+"&period="+current+"&runs=review", nil, true, 200)
+	if body := focused.Body.String(); !strings.Contains(body, "No runs need review on this page") || strings.Contains(body, op.ID) {
+		t.Fatal("active run appeared in the open month review")
+	}
+	call("GET", base+"?runs=review&period="+current, nil, true, 400)
+	call("GET", path+"&period="+current+"&runs=unknown", nil, true, 400)
 	page = call("GET", path, nil, true, 200)
 	waive := ownerConsoleForm(t, page.Body.String(), "waive")
 	waive.Set("reason", "pilot write-off")
@@ -261,12 +279,45 @@ func TestProductControlOwnerConsole(t *testing.T) {
 	if !strings.Contains(runPage.Body.String(), "waived") || strings.Contains(runPage.Body.String(), "excluded-from-console") {
 		t.Fatal("run explanation exposed input or lost charge evidence")
 	}
-	current := time.Now().UTC().Format("2006-01")
 	form := url.Values{"action": {"finalize"}, "tenant": {tenant.ID}, "period": {current}, "csrf_token": {waive.Get("csrf_token")}}
 	call("POST", base+"/review", form, true, 409)
-	// Closed empty months exercise statement confirmation, retained retries,
-	// external-reference review and recovery in the real owner cookie flow.
-	closed := time.Date(time.Now().UTC().Year(), time.Now().UTC().Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0).Format("2006-01")
+	monthStart, err := time.Parse("2006-01", current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := monthStart.AddDate(0, -1, 0)
+	closed := past.Format("2006-01")
+	unresolved := op
+	unresolved.ID = uuid.NewString()
+	unresolved.State = api.OperationRequiresReconciliation
+	receipt := *op.ProductControl
+	receipt.Period, receipt.AdmittedAt = closed, past
+	unresolved.ProductControl = &receipt
+	store.SeedProductOperationForTest(unresolved)
+	page = call("GET", base, nil, true, 200)
+	if !strings.Contains(page.Body.String(), "runs=review&amp;tenant="+tenant.ID+"#runs") {
+		t.Fatal("attention row did not link to its filtered runs")
+	}
+	focused = call("GET", path+"&period="+closed+"&runs=review", nil, true, 200)
+	for _, want := range []string{unresolved.ID, "Age", "EUR 0.25000", "No retained execution evidence", "1 unresolved run blocks finalization"} {
+		if !strings.Contains(focused.Body.String(), want) {
+			t.Fatalf("run review missing %q", want)
+		}
+	}
+	waive = ownerConsoleForm(t, focused.Body.String(), "waive")
+	waive.Set("reason", "no retained outcome")
+	preview = call("POST", base+"/review", waive, true, 200)
+	waiver = ownerConsoleForm(t, preview.Body.String(), "confirm")
+	confirmed := call("POST", base+"/confirm", waiver, true, 200)
+	if !strings.Contains(confirmed.Body.String(), "All run charges are resolved") {
+		t.Fatal("waiver confirmation did not refresh the month review")
+	}
+	focused = call("GET", path+"&period="+closed+"&runs=review", nil, true, 200)
+	if strings.Contains(focused.Body.String(), unresolved.ID) || !strings.Contains(focused.Body.String(), "No runs need review on this page") {
+		t.Fatal("waived run remained in the month review")
+	}
+	// Exercise statement confirmation, retained retries and external handoff
+	// in the real owner cookie flow after the blocker has been removed.
 	page = call("GET", path+"&period="+closed, nil, true, 200)
 	finalize := ownerConsoleForm(t, page.Body.String(), "finalize")
 	preview = call("POST", base+"/review", finalize, true, 200)

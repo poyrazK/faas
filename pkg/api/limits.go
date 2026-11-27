@@ -899,6 +899,8 @@ const (
 	ProductControlInvoiceReferenceMaxBytes                = 255
 	ProductControlOwnerPageSize                           = 100
 	ProductControlOwnerCursorMaxBytes                     = 1024
+	ProductControlBalanceRefreshBatchMax                  = 5
+	ProductControlStripeSendBatchMax                      = 5
 	ProductControlOwnerFormMaxBytes                       = 16 << 10
 	ProductControlSetupFormMaxBytes                       = 128 << 10
 	ProductControlDoctorMaxChecks                         = 1024
@@ -1939,6 +1941,9 @@ const (
 	// attempt cannot create a second provider invoice; a crashed attempt's
 	// claim expires (ADR-20261019180000).
 	StatementInvoiceExportClaimTTL = 15 * time.Minute
+	// Stripe can prune idempotency records after 24 hours. Leave a margin
+	// for request time and clock differences when retrying uncertain sends.
+	ProductStripeInvoiceSendRetryWindow = 23 * time.Hour
 	// List page sizes.
 	StatementInvoiceListDefault = 50
 	StatementInvoiceListMax     = 200
@@ -19261,6 +19266,13 @@ const (
 	AlertChannelResolveRetryBatch      = 100
 )
 
+// PublicSourceFetchesPerHour caps the reads of public GitHub repositories one
+// account makes without an installation, scans and deploys together
+// (ADR-20261126164847). Every account shares githubd's one public-read token,
+// 5,000 GitHub calls an hour, so no plan raises it. Counted in the database
+// counter every apid shares (ADR 20261108160000).
+const PublicSourceFetchesPerHour = 30
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -19344,14 +19356,20 @@ const AlertRatioMinRequests = 10
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.
 const (
-	AnomalyBaselineDays       = 7
-	AnomalyBaselineMinDays    = 5
-	AnomalyBaselineCacheTTL   = time.Hour
-	AnomalyAlertMinRequests   = 50
-	AnomalyAboveMultiplierMin = 1.5
-	AnomalyAboveMultiplierMax = 20.0
-	AnomalyBelowMultiplierMin = 0.05
-	AnomalyBelowMultiplierMax = 0.67
+	AnomalyBaselineDays          = 7
+	AnomalyBaselineMinDays       = 5
+	AnomalyBaselineCacheTTL      = time.Hour
+	AnomalyAlertMinRequests      = 50
+	AnomalyAboveMultiplierMin    = 1.5
+	AnomalyAboveMultiplierMax    = 20.0
+	AnomalyBelowMultiplierMin    = 0.05
+	AnomalyBelowMultiplierMax    = 0.67
+	AnomalyPreviewChecks         = 7 * 24
+	AnomalyPreviewStep           = time.Hour
+	AnomalyIncidentReplayChecks  = 2 * 60
+	AnomalyIncidentReplayStep    = time.Minute
+	AnomalyReplayRecoveryChecks  = 2
+	AnomalyObservedIncidentLimit = 20
 )
 
 // AnomalyAlertMetrics are the request metrics that support baseline

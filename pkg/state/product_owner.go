@@ -22,6 +22,7 @@ type ProductOwnerStore interface {
 	PreviewProductCustomerChange(context.Context, string, string, api.ProductCustomer) (api.ProductCustomerChangePreview, error)
 	ApplyProductCustomerChange(context.Context, string, string, api.ProductCustomerChangeRequest) (api.ProductCustomerChangeReceipt, error)
 	ListProductOwnerRuns(context.Context, ProductBillingScope, string) (api.ProductOwnerRuns, error)
+	ListProductOwnerReviewRuns(context.Context, ProductBillingScope, string) (api.ProductOwnerRuns, error)
 	ListProductOwnerAttention(context.Context, string, string, string) (api.ProductOwnerAttentionPage, error)
 	InspectProductBinding(context.Context, string, string, api.ProductFeature) (OperationDefinition, error)
 	GetProductOwnerDocument(context.Context, ProductBillingScope, string) (api.ProductBillingDocument, error)
@@ -33,7 +34,7 @@ func productOwnerHash(value any) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func productChangePreview(account, app string, before *api.ProductCustomer, beforeCatalog *api.ProductCatalog, target api.ProductCustomer, catalog, head api.ProductCatalog, now time.Time) (api.ProductCustomerChangePreview, error) {
+func productChangePreview(before *api.ProductCustomer, beforeCatalog *api.ProductCatalog, target api.ProductCustomer, catalog, head api.ProductCatalog, now time.Time) (api.ProductCustomerChangePreview, error) {
 	if !validProductUUID(target.TenantID) || validateProductCustomerIdentity(target) != nil {
 		return api.ProductCustomerChangePreview{}, ErrInvalidArgument
 	}
@@ -47,12 +48,25 @@ func productChangePreview(account, app string, before *api.ProductCustomer, befo
 		target.AuthOrganizationID = before.AuthOrganizationID
 	}
 	target.Revision = catalog.Revision
-	p := api.ProductCustomerChangePreview{Before: before, After: target, BeforeCatalog: beforeCatalog, Catalog: catalog, HeadRevision: head.Revision, Period: productcontrol.Period(now)}
+	return api.ProductCustomerChangePreview{Before: before, After: target, BeforeCatalog: beforeCatalog, Catalog: catalog, HeadRevision: head.Revision, Period: productcontrol.Period(now)}, nil
+}
+
+func priceProductChange(p api.ProductCustomerChangePreview, scope ProductBillingScope, history productPlanHistory, starts map[string]productPlanStartCounts, now time.Time) api.ProductCustomerChangePreview {
+	var before api.ProductCustomer
+	var current api.ProductCatalog
+	if p.Before != nil {
+		before, current = *p.Before, *p.BeforeCatalog
+	}
+	effective := now
+	if p.StartsNextMonthAt != nil {
+		effective, starts = *p.StartsNextMonthAt, nil
+	}
+	p.Pricing = history.pricingAt(before, p.After, current, p.Catalog, starts, now, effective)
 	p.Hash = productOwnerHash(struct {
 		Account, App string
 		Preview      api.ProductCustomerChangePreview
-	}{account, app, p})
-	return p, nil
+	}{scope.AccountID, scope.AppID, p})
+	return p
 }
 
 func validateProductChange(req api.ProductCustomerChangeRequest) error {
@@ -79,6 +93,14 @@ type productOwnerCursor struct {
 
 func productOwnerCursorScope(kind, account, app, tenant, period string) string {
 	return productOwnerHash([]string{"product-owner/v1", kind, account, app, tenant, period})
+}
+
+func productOwnerRunCursor(scope ProductBillingScope, raw string, reviewOnly bool) (productOwnerCursor, error) {
+	kind := "runs"
+	if reviewOnly {
+		kind = "review-runs"
+	}
+	return decodeProductOwnerCursor(raw, productOwnerCursorScope(kind, scope.AccountID, scope.AppID, scope.TenantID, scope.Period), true)
 }
 
 func decodeProductOwnerCursor(raw, scope string, runs bool) (productOwnerCursor, error) {
