@@ -84,6 +84,11 @@ type resourceAdoption struct {
 	// Backing is the kernel, base and timer identity the guest booted with.
 	// A capture of the adopted guest needs it to be restorable.
 	Backing *BackingIdentity `json:"backing,omitempty"`
+	// DriveBase is the app layer key the guest's private drive was cloned
+	// from. A capture of the adopted guest uploads its drive as a delta
+	// against it (ADR-20261115213230); without it the whole drive goes up.
+	// Records written before it carry none.
+	DriveBase string `json:"drive_base,omitempty"`
 	// Bridge is the instance's bridge unit run (instance_bridge.go).
 	Bridge *resourceAdoptionBridge `json:"bridge,omitempty"`
 }
@@ -432,6 +437,9 @@ func (r resourceJournalRecord) validateAdoption() error {
 	if b := a.Backing; b != nil && (!b.complete() || !adoptionString(b.Kernel) || !adoptionString(b.Base) || !adoptionString(b.Timer)) {
 		return errors.New("invalid adoption backing identity")
 	}
+	if !adoptionString(a.DriveBase) || strings.HasPrefix(a.DriveBase, "snap/") {
+		return errors.New("invalid adoption drive base")
+	}
 	if err := a.Bridge.validate(r.Lease); err != nil {
 		return err
 	}
@@ -693,6 +701,17 @@ func (m *Manager) adoptionPolicyFor(instance, appID string, block *resourceAdopt
 		block.Backing = &b
 	}
 	m.backingMu.Unlock()
+	if k, ok := m.vmm.(driveBaseKeeper); ok {
+		block.DriveBase = k.driveBaseKey(instance)
+	}
+}
+
+// driveBaseKeeper is a VMM that records the layer each guest's private
+// drive was cloned from (JailerVMM). Adoption carries it across a vmmd
+// restart.
+type driveBaseKeeper interface {
+	driveBaseKey(instance string) string
+	setDriveBaseKey(instance, key string)
 }
 
 // fenceMemoryMaxFor is the memory.max newCgroupFence writes for l.

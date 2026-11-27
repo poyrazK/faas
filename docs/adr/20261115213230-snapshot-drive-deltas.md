@@ -19,3 +19,9 @@
   - Every reader of snapshot drives goes through the node cache, so callers, digests and receipts see whole drives. `GetCanonical` and `GetParent`, which bypass the cache, read only runtime bases and artifact scans.
   - The drive object now depends on the layer object. A deployment's layer outlives its snapshots (cold boot needs it), and the digest check refuses a layer that changed.
   - Release skew: every node decodes deltas from this release on; writing is off by default. Turn `FAAS_STORAGE_DRIVE_DELTA=1` on only after every compute node runs a vmmd with this change, because an older node that fetches a delta would install the payload as a drive. Turning it off again is safe: existing deltas stay readable.
+
+## Amendment 1 (2026-11-27): the layer key survives cold boot and vmmd restart
+
+- Cold boot recorded the layer key and then lost it when it made the jail, so no cold-booted guest's drive went up as a delta (fixed in #8173). Prod evidence 2026-11-27: with `FAAS_STORAGE_DRIVE_DELTA=1`, drive objects stayed 16–27 MB and `publish_drive_ms` was 7–19 s, which pushed 512 MB captures past schedd's 45 s snapshot budget.
+- The adoption block now carries the key (`drive_base`, omitempty), and an adopting vmmd restores it. An adopted guest's park uploads a delta too, so decision 4's "adopted after a vmmd restart" case applies only to records written before this field existed.
+- Rollback: an older vmmd decodes the journal strictly and refuses to adopt a record that carries `drive_base`, so that instance is replaced. This is the same behaviour as for earlier omitempty adoption fields such as `probe_host`.

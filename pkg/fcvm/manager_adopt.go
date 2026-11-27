@@ -559,6 +559,9 @@ func (m *Manager) restoreAdoptedPolicy(instance, appID string, a *resourceAdopti
 		m.instanceBacking[instance] = *a.Backing
 		m.backingMu.Unlock()
 	}
+	if k, ok := m.vmm.(driveBaseKeeper); ok && a.DriveBase != "" {
+		k.setDriveBaseKey(instance, a.DriveBase)
+	}
 }
 
 // resumeAdoptedGuest re-opens the guest's channels, undoes a quiet pause the
