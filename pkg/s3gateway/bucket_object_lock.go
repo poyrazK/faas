@@ -58,7 +58,7 @@ func (h *Handler) bucketObjectLock(w http.ResponseWriter, r *http.Request, req r
 		h.unsupported(w, r, req.requestID)
 		return
 	}
-	svc := objectstorage.BucketObjectLockService{Store: st, Provider: native, Versioning: versioning, BeforeRequest: h.configurationRequestRecorder(req.bucket)}
+	svc := objectstorage.BucketObjectLockService{Store: st, Provider: native, Versioning: versioning, BeforeRequest: h.configurationRequestRecorder(req.bucket), CreationOnly: req.objectLockConfig.CreationOnly}
 	if r.Method == http.MethodGet {
 		h.getBucketObjectLock(w, r, req, svc, st)
 		return
@@ -140,6 +140,11 @@ func (h *Handler) bucketObjectLockError(w http.ResponseWriter, r *http.Request, 
 	}
 	status, code, message := 503, "ServiceUnavailable", "The native Object Lock configuration could not be verified."
 	switch {
+	case errors.Is(err, objectstorage.ErrObjectLockRequiresNewBucket):
+		// AWS's answer for enabling Object Lock on a bucket created without
+		// it; retrying cannot help (ADR-20261119065000).
+		writeS3Error(w, http.StatusConflict, "InvalidBucketState", "Object Lock can only be enabled when the bucket is created. Create a new bucket with Object Lock.", r.URL.Path, req.requestID)
+		return
 	case errors.Is(err, objectstorage.ErrUnsupported):
 		h.unsupported(w, r, req.requestID)
 		return
