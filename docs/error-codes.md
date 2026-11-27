@@ -3748,7 +3748,7 @@ Grype found CVEs at or above the plan's severity threshold
 
 ### `stage_snapshot_prepare_timeout`
 
-HTTP 422 Unprocessable Entity · Snapshot prime exceeded the scheduler deadline
+HTTP 422 Unprocessable Entity · Snapshot capture exceeded its budget; Snapshot prime exceeded the scheduler deadline
 
 The snapshot_prepare stage exceeded the scheduler's wall-clock ceiling
 
