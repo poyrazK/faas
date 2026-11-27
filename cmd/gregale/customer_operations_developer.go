@@ -103,7 +103,7 @@ func parseCustomerOperationDeveloper(args []string) (customerOperationDeveloperC
 func cmdCustomerOperationDeveloper(args []string) int {
 	c, err := parseCustomerOperationDeveloper(args)
 	if err != nil {
-		return printErr("Invalid customer-operations command", err)
+		return printErr("Invalid operation command", err)
 	}
 	if c.verb == "validate" {
 		report, err := validateCustomerOperationSource(c)

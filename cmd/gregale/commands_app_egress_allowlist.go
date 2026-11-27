@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -56,21 +57,28 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 			return 1
 		}
 		prefix := args[1]
-		if action == "add" {
-			for _, existing := range current {
-				if existing == prefix {
-					return 0
-				}
+		held := -1
+		for i, existing := range current {
+			if sameEgressPrefix(existing, prefix) {
+				held = i
+				break
 			}
+		}
+		// Prod hunt r58: removing an entry that was never on the list, or
+		// adding one already there, reported "updated" (or nothing) and
+		// left the reader guessing whether the policy changed.
+		switch {
+		case action == "add" && held >= 0:
+			_, _ = fmt.Fprintf(osStdout, "%s is already in %s's egress allowlist; nothing changed.\n", current[held], slug)
+			return 0
+		case action == "add":
 			current = append(current, prefix)
-		} else {
-			filtered := current[:0]
-			for _, existing := range current {
-				if existing != prefix {
-					filtered = append(filtered, existing)
-				}
-			}
-			current = filtered
+		case held < 0:
+			// Idempotent like add: scripts run remove to make sure an entry is gone.
+			_, _ = fmt.Fprintf(osStdout, "%s is not in %s's egress allowlist; nothing changed.\n", prefix, slug)
+			return 0
+		default:
+			current = append(current[:held], current[held+1:]...)
 		}
 	default:
 		PrintUsage(os.Stderr, "usage: gregale app <slug> egress-allowlist {show|add <cidr>|remove <cidr>|clear}", "apps")
@@ -93,4 +101,30 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 	// printed for a first entry or a clear was stale (Hunt 32 H32-29).
 	_, _ = fmt.Fprintln(osStdout, "Running instances apply it within seconds.")
 	return 0
+}
+
+// sameEgressPrefix compares allowlist entries as the server stores them:
+// 1.1.1.1 and 1.1.1.1/32, or 10.1.2.3/24 and 10.1.2.0/24, are one entry.
+func sameEgressPrefix(a, b string) bool {
+	if a == b {
+		return true
+	}
+	pa, okA := parseEgressPrefix(a)
+	pb, okB := parseEgressPrefix(b)
+	return okA && okB && pa == pb
+}
+
+func parseEgressPrefix(s string) (netip.Prefix, bool) {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		// A v4-mapped v6 prefix is stored in its v4 form.
+		if p.Addr().Is4In6() && p.Bits() >= 96 {
+			p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+		}
+		return p.Masked(), true
+	}
+	if a, err := netip.ParseAddr(s); err == nil {
+		a = a.Unmap()
+		return netip.PrefixFrom(a, a.BitLen()), true
+	}
+	return netip.Prefix{}, false
 }

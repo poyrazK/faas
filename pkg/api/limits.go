@@ -327,6 +327,35 @@ const (
 	ObsDiskPrometheusBudget     = 3 * time.Second
 )
 
+// Operator control-plane health report (ADR-20261126120000). Each check
+// copies the threshold of the alert it mirrors (faas.rules.yml and
+// pg_backup.rules.yml), graded at one instant without the alert's `for:`
+// hold. Rates, statements and per-pool totals cover ObsCPWindow; the report
+// lists ObsCPStatementsMax statements (query text cut to
+// ObsCPStatementQueryMaxChars) and up to ObsCPRowsMax pools, hubs and
+// backend groups, read under ObsCPPrometheusBudget.
+const (
+	ObsCPConnectionsWarnPercent         = 75     // FaasPostgresConnectionsHigh
+	ObsCPConnectionsCriticalPercent     = 90     // FaasPostgresConnectionsCritical
+	ObsCPOldestTransactionWarnSeconds   = 600    // FaasPostgresLongTransaction
+	ObsCPIdleInTransactionWarnSeconds   = 300    // FaasPostgresIdleInTransaction
+	ObsCPLockWaitsWarn                  = 5      // FaasPostgresLockWaits
+	ObsCPActivityStaleSeconds           = 300    // FaasPostgresActivityMetricsStale
+	ObsCPBackupStaleSeconds             = 93600  // PgBackupStale, FaasControlPlaneStateBackupStale
+	ObsCPWALArchiveStallSeconds         = 600    // PgWalArchiveStalled
+	ObsCPOffhostWALStaleSeconds         = 900    // PgWalOffHostPushStale
+	ObsCPWALPruneStaleSeconds           = 7200   // PgWalPruneStale
+	ObsCPWALArchiveOldestWarnSeconds    = 259200 // PgWalArchiveLarge
+	ObsCPNotificationOutboxStuckSeconds = 900    // FaasNotificationOutboxStuck
+	ObsCPWebhookOutboxBacklogSeconds    = 300    // FaasWebhookEventOutboxBacklog
+	ObsCPPoolSaturationPercent          = 90     // FaasDBPoolNearCap
+	ObsCPWindow                         = time.Hour
+	ObsCPStatementsMax                  = 10
+	ObsCPStatementQueryMaxChars         = 500
+	ObsCPRowsMax                        = 200
+	ObsCPPrometheusBudget               = 3 * time.Second
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -7372,6 +7401,23 @@ type Limits struct {
 func (l Limits) EphemeralDiskMaxMB() int {
 	return l.AppLayerMaxMB
 }
+
+// ImageArchiveMaxMB caps an uploaded prebuilt image archive
+// (`deploy --local-image`, ADR-20261127120000). It is the plan's app layer
+// cap: the layers become that drive1 layer, so a larger compressed archive
+// could never fit. Free 256 · Hobby 512 · Pro 1024 · Scale 2048.
+func (l Limits) ImageArchiveMaxMB() int {
+	return l.AppLayerMaxMB
+}
+
+// ImageArchiveMaxBytes returns ImageArchiveMaxMB in bytes.
+func (l Limits) ImageArchiveMaxBytes() int64 {
+	return int64(l.ImageArchiveMaxMB()) << 20
+}
+
+// UploadImageNameMaxLen bounds the informational image_name of an uploaded
+// image archive (ADR-20261127120000).
+const UploadImageNameMaxLen = 256
 
 // EphemeralDiskMaxBytes returns EphemeralDiskMaxMB in bytes. A zero result
 // means the limits value is unset or invalid; callers should fail closed

@@ -7090,7 +7090,11 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if h.applyEdgeRuleIP(w, r, app) {
+	// Customer kind=ip and kind=geo rules skip authorized smoke for the same
+	// reason: a deny covering the verifier's address left the deployment
+	// unable to go live (a route split denies every address on the route
+	// app's own hosts before deploying it, ADR-20261121170000 amendment 4).
+	if !deploymentSmoke && h.applyEdgeRuleIP(w, r, app) {
 		h.metrics.ObserveEdgeRejection(app.ID, "ip", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -7103,7 +7107,7 @@ haveApp:
 	// gate is gated on the country, not on auth). The gate is
 	// fail-open on lookup failure (see applyEdgeRuleGeo for the
 	// metric + audit + slog path).
-	if h.applyEdgeRuleGeo(w, r, app) {
+	if !deploymentSmoke && h.applyEdgeRuleGeo(w, r, app) {
 		h.metrics.ObserveEdgeRejection(app.ID, "geo", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return

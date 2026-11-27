@@ -12,6 +12,24 @@ gregale deploy check --image registry.example.com/team/api@sha256:<digest>
 gregale deploy --image registry.example.com/team/api@sha256:<digest>
 ```
 
+An image that exists only on your machine deploys without a registry:
+
+```sh
+gregale deploy --local-image team/api:dev        # runs `docker image save`
+gregale deploy --image-archive api.tar           # a file from `docker save -o api.tar team/api:dev`
+```
+
+The CLI converts the saved image into a single-image Linux/amd64 OCI archive
+and uploads it through the resumable upload session. The archive may be as
+large as your plan's app layer (256 MB Free, 512 MB Hobby, 1 GB Pro, 2 GB
+Scale); larger images fail with `source_too_large`. Nothing is built: the image
+deploys exactly as saved. Set `GREGALE_DOCKER=podman` to save with a
+Docker-compatible client other than `docker`. Apps that require signed images
+and function apps only accept registry images. Pushing to a registry is still
+faster for large images and is the better choice in CI. Local image deploys are
+being released gradually; an account without them gets "Local image deploys
+unavailable" and can deploy through a registry instead.
+
 Gregale preserves the OCI/Docker process model. Image metadata supplies the
 entrypoint, command, environment, working directory, user, health check, stop
 signal, and exposed ports. Deployment overrides can replace the start command,

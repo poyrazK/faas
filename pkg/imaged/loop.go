@@ -1356,6 +1356,11 @@ func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
 
 func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork, source string) {
 	for _, item := range work {
+		if !l.handler.runtimeBaseRetries.due(item.DeploymentID) {
+			// Its runtime-base staging lost to another node's base; wait
+			// out the backoff instead of re-staging on every tick.
+			continue
+		}
 		prepare := func(ctx context.Context) {
 			err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
 			l.handler.handoffMetrics.observeWork(ctx, source, err)

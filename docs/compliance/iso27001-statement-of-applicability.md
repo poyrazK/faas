@@ -190,7 +190,7 @@ The issue #755 acceptance item 2 (ISO 27001 SoA) is satisfied when:
 | PR | What | Status |
 |---|---|---|
 | PR-3 | Sub-processors list + CI gate | Planned |
-| PR-4 | Responsible disclosure + SECURITY.md + `security@gregale.dev` mailbox | Planned |
+| PR-4 | Responsible disclosure + SECURITY.md + `gregale@gregale.dev` mailbox | Planned |
 | PR-8 | First DR drill + `docs/runbooks/disaster-recovery-drill.md` | Planned |
 | PR-10 | Vendor risk management + first 3 assessments (covers Hetzner) | Planned |
 | PR-11 | Infosec policy + code of conduct + training Loom | Planned |

@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -842,5 +843,97 @@ func TestUpsertPreviewComment_RejectsMissingArgs(t *testing.T) {
 	}
 	if err := c.UpsertPreviewComment(context.Background(), 1, "", 1, "m", "b"); err == nil {
 		t.Error("empty repo should error")
+	}
+}
+
+func TestTruncateGitHubDescription(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	cases := []struct {
+		name  string
+		in    string
+		limit int
+		want  string
+	}{
+		{name: "short stays", in: "deployed by octocat", limit: 140, want: "deployed by octocat"},
+		{name: "exactly at limit stays", in: strings.Repeat("a", 140), limit: 140, want: strings.Repeat("a", 140)},
+		{name: "long is cut with ellipsis", in: long, limit: 140, want: strings.Repeat("x", 139) + "…"},
+		{name: "runes not bytes", in: strings.Repeat("é", 141), limit: 140, want: strings.Repeat("é", 139) + "…"},
+		{name: "dangling separator dropped", in: "abcdef · ghijkl", limit: 9, want: "abcdef…"},
+		{name: "zero limit", in: "abc", limit: 0, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateGitHubDescription(tc.in, tc.limit)
+			if got != tc.want {
+				t.Fatalf("truncateGitHubDescription(%q, %d) = %q, want %q", tc.in, tc.limit, got, tc.want)
+			}
+			if n := utf8.RuneCountInString(got); n > tc.limit {
+				t.Fatalf("result has %d runes, limit %d", n, tc.limit)
+			}
+		})
+	}
+}
+
+// GitHub refuses a deployment status description over 140 characters with
+// 422, and the outbox retried two such updates until they were dead
+// (FaasGithubCheckUpdateDead, 2026-11-27). A failed deploy's long error must
+// still produce a status GitHub accepts.
+func TestChecksAPI_WriteGitHubDeploymentStatus_BoundsDescription(t *testing.T) {
+	var statusDescriptions []string
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		case strings.HasSuffix(r.URL.Path, "/deployments"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":4242,"environment":"production"}`))
+		default:
+			var status map[string]any
+			_ = json.Unmarshal(body, &status)
+			description, _ := status["description"].(string)
+			statusDescriptions = append(statusDescriptions, description)
+			if utf8.RuneCountInString(description) > 140 {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = w.Write([]byte(`{"message":"Validation Failed","errors":[{"resource":"DeploymentStatus","code":"custom","field":"description","message":"description is too long (maximum is 140 characters)"}]}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":5252}`))
+		}
+	}))
+	defer fake.Close()
+
+	tokens := NewTokenCache(fakeFetcher(func(_ context.Context, _ int64) (string, time.Time, error) {
+		return "ghs_deploy_token", time.Now().Add(time.Hour), nil
+	}), time.Minute)
+	c, err := NewChecksAPI(tokens, &singleHostClient{base: fake.Client(), api: fake.URL}, &fakeBindings{id: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.WithGitHubDeploymentStore(&fakeGitHubDeploymentStore{})
+	update := GitHubDeploymentUpdate{
+		LocalDeploymentID: "738c9929-555c-4021-9565-604487ee2628",
+		InstallationID:    99,
+		RepoFullName:      "octo/api",
+		CommitSHA:         "deadbeef",
+		Ref:               "deadbeef",
+		Environment:       "production",
+		Status:            "failed",
+		Description: "handleDeployment: imaged: shared runtime app layer: runtime base node24 does not match the build artifact: " +
+			"oci: app diff_ids not a prefix of base diff_ids (full-rootfs required): app not built FROM base: layer 5 differs",
+		DeployedBy: "octocat",
+	}
+	if err := c.WriteGitHubDeploymentStatus(context.Background(), update); err != nil {
+		t.Fatalf("failed deployment status: %v", err)
+	}
+	if len(statusDescriptions) != 1 {
+		t.Fatalf("status writes = %d, want 1", len(statusDescriptions))
+	}
+	got := statusDescriptions[0]
+	if n := utf8.RuneCountInString(got); n > 140 || !strings.HasPrefix(got, "handleDeployment: imaged:") || !strings.HasSuffix(got, "…") {
+		t.Fatalf("status description (%d runes) = %q", utf8.RuneCountInString(got), got)
 	}
 }

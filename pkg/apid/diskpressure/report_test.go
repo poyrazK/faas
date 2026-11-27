@@ -171,6 +171,57 @@ func TestMissingFreeSpaceIsUnknown(t *testing.T) {
 	}
 }
 
+// The production layout, as read from the OVH fleet's Prometheus on
+// 2026-11-26: faas-fc-crypt is bind-mounted at /srv/fc and /var/lib/faas, and
+// node_exporter cannot statfs the mode-1700 jail, so the jail comes from
+// vmmd's gauges.
+func TestProductionLayout(t *testing.T) {
+	crypt := func(node, mount string) []string {
+		return []string{"job", "node-compute", "node", node, "instance", "bhs.example:9100", "mountpoint", mount, "device", "/dev/mapper/faas-fc-crypt", "fstype", "xfs"}
+	}
+	jail := []string{"job", "node-compute", "node", "bhs-3.faas", "mountpoint", "/srv/fc/jail", "device", "tmpfs", "fstype", "tmpfs"}
+	s := map[string][]promql.VectorSample{
+		"fs_size": {
+			row(900*gb, crypt("bhs-2.faas", "/var/lib/faas")...), row(900*gb, crypt("bhs-2.faas", "/srv/fc")...),
+			row(900*gb, crypt("bhs-3.faas", "/srv/fc")...), row(12*gb, jail...),
+		},
+		"fs_avail": {
+			row(700*gb, crypt("bhs-2.faas", "/var/lib/faas")...), row(700*gb, crypt("bhs-2.faas", "/srv/fc")...),
+			row(800*gb, crypt("bhs-3.faas", "/srv/fc")...), row(11*gb, jail...),
+		},
+		// bhs-2's jail is only in vmmd; bhs-3's node_exporter reads its jail,
+		// which wins over vmmd's; a row without a node is dropped.
+		"jail_size":  {row(12*gb, "node", "bhs-2.faas", "job", "vmmd"), row(12*gb, "node", "bhs-3.faas", "job", "vmmd"), row(12*gb, "job", "vmmd")},
+		"jail_avail": {row(10*gb, "node", "bhs-2.faas", "job", "vmmd"), row(2*gb, "node", "bhs-3.faas", "job", "vmmd")},
+	}
+	out := diskpressure.Build(diskpressure.Input{Now: now, Samples: diskpressure.Samples{ByQuery: s, Source: diskpressure.SourceObserved}})
+	got := map[string]api.ObsDiskFilesystem{}
+	for _, f := range out.Filesystems {
+		got[f.Node+" "+f.Mountpoint] = f
+	}
+	if len(got) != 4 || out.Totals.Filesystems != 4 {
+		t.Fatalf("filesystems = %v (a bind mount is one filesystem)", got)
+	}
+	if f, ok := got["bhs-2.faas /srv/fc"]; !ok || f.State != "ok" || free(f) != 77.8 {
+		t.Fatalf("bhs-2 /srv/fc = %+v (the shortest mountpoint names the device)", f)
+	}
+	j2 := got["bhs-2.faas /srv/fc/jail"]
+	if !j2.JailTmpfs || j2.State != "ram" || j2.Role != "compute" || j2.SizeBytes != 12*gb || j2.AvailBytes == nil || *j2.AvailBytes != 10*gb {
+		t.Fatalf("vmmd jail = %+v", j2)
+	}
+	if j3 := got["bhs-3.faas /srv/fc/jail"]; j3.AvailBytes == nil || *j3.AvailBytes != 11*gb {
+		t.Fatalf("node_exporter jail = %+v (it wins over vmmd)", j3)
+	}
+	if out.Totals.JailTmpfsUsedBytes != 3*gb {
+		t.Fatalf("jail used = %d, want 3 GiB", out.Totals.JailTmpfsUsedBytes)
+	}
+	for _, n := range out.Nodes {
+		if n.Filesystems != 1 || n.State != "ok" {
+			t.Fatalf("node = %+v (the jail is not a disk)", n)
+		}
+	}
+}
+
 // The grade uses unrounded ratios: 4.96% free is critical, as the alert
 // pages, although it rounds to 5.0%.
 func TestGradeMatchesAlertsAtThresholds(t *testing.T) {

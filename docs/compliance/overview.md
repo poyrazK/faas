@@ -26,6 +26,6 @@ How Gregale handles your data, and where to find the documents behind it.
 
 ## Reporting a vulnerability
 
-Report security issues to `security@gregale.dev`. The
+Report security issues to `gregale@gregale.dev`. The
 [responsible disclosure policy](responsible-disclosure.md) lists response
-times, the PGP key, scope and safe-harbour terms.
+times, the private reporting channel, scope and safe-harbour terms.

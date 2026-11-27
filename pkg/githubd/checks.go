@@ -31,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -371,7 +372,7 @@ func (c *ChecksAPI) writeGitHubDeploymentStatus(ctx context.Context, update GitH
 	if err != nil {
 		return err
 	}
-	description := githubDeploymentDescription(update)
+	description := truncateGitHubDescription(githubDeploymentDescription(update), githubDescriptionMaxRunes)
 	payload, err := json.Marshal(githubDeploymentStatusRequest{
 		State:          state,
 		TargetURL:      update.TargetURL,
@@ -525,6 +526,26 @@ func (c *ChecksAPI) createGitHubDeployment(ctx context.Context, token string, up
 
 func githubDeploymentMarker(localDeploymentID string) string {
 	return "gregale-deployment:" + localDeploymentID
+}
+
+// githubDescriptionMaxRunes is GitHub's cap on a deployment status
+// description. A longer one is refused with 422 "description is too long
+// (maximum is 140 characters)", and the outbox retries it until the update is
+// dead (FaasGithubCheckUpdateDead, 2026-11-27: two failed deploys whose error
+// text went into the description).
+const githubDescriptionMaxRunes = 140
+
+// truncateGitHubDescription cuts s to at most limit runes, ending in "…" when
+// it had to cut.
+func truncateGitHubDescription(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	return strings.TrimRight(string(runes[:limit-1]), " ·") + "…"
 }
 
 // githubDeploymentDescription keeps the GitHub Deployment timeline useful to

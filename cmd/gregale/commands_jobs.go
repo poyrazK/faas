@@ -295,6 +295,7 @@ func cmdJobsAdd(args []string) int {
 	}
 	if *command != "" {
 		req.Command = parseJobCommand(*command)
+		warnShellLineCommand(req.Command)
 	} else if len(argv) > 0 {
 		req.Command = argv
 	}
@@ -314,6 +315,15 @@ func cmdJobsAdd(args []string) int {
 }
 
 const jobCommandFlagUsage = "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after --"
+
+// warnShellLineCommand flags a --command that parsed to one argument holding
+// a shell line: the guest would exec the whole string as a program name and
+// every task would fail with 127 (prod hunt r62).
+func warnShellLineCommand(argv []string) {
+	if len(argv) == 1 && strings.ContainsAny(argv[0], " \t;|&$") {
+		_, _ = fmt.Fprintf(osStderr, "warning: --command is one argument %q, which runs as a program name; to run a shell line pass --command '/bin/sh,-c,<line>' or give the command after --\n", argv[0])
+	}
+}
 
 // parseJobCommand reads --command. A JSON array of strings is taken as the
 // exact argv; otherwise the value is split on commas, and "\," is a comma
@@ -427,6 +437,7 @@ func cmdJobsUpdate(args []string) int {
 	}
 	if set["command"] {
 		req.Command = parseJobCommand(*command)
+		warnShellLineCommand(req.Command)
 		touched = true
 	} else if len(argv) > 0 {
 		req.Command = argv

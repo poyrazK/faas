@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -40,7 +41,12 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 		return state.Deployment{}, err
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	if dep.SourceBytes > int64(limits.SourceTarballMaxMB)*1024*1024 {
+	if dep.Kind == state.DeploymentKindDockerfile && frameworkprofile.UploadedImageIn(dep.InferredProfile) != nil {
+		// An uploaded image is capped by the app layer, not the source cap.
+		if dep.SourceBytes > limits.ImageArchiveMaxBytes() {
+			return state.Deployment{}, api.ErrImageArchiveTooLarge(limits, dep.SourceBytes)
+		}
+	} else if dep.SourceBytes > int64(limits.SourceTarballMaxMB)*1024*1024 {
 		return state.Deployment{}, api.ErrSourceTooLarge(limits, dep.SourceBytes)
 	}
 	specs, err := s.retryOperationDefinitions(ctx, app, dep)
