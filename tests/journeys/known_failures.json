@@ -1,7 +1,7 @@
 [
   {
     "step": "TestMCPSeller/signup_opened",
-    "bug": "api consumer signup-set refuses 'Stripe is not connected' even when only a free plan is offered, so a seller without a billing provider cannot open free sign-up (fix on branch fix/mcp-signup-free-plan-no-stripe)",
+    "bug": "api consumer signup-set refuses 'Stripe is not connected' even when only a free plan is offered, so a seller without a billing provider cannot open free sign-up (fixed on main by 7f48210b72 with this journey; remove this entry once apid with the fix is released)",
     "since": "2026-11-27"
   },
   {
