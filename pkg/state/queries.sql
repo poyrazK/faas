@@ -20912,7 +20912,17 @@ VALUES(sqlc.arg(id)::uuid, sqlc.arg(app_id)::uuid, nullif(sqlc.arg(platform_tena
 INSERT INTO workflow_event_receipts(outbox_id, recipient_id, run_id) VALUES($1, $2, $3);
 
 -- name: ListStoredWorkflows :many
-SELECT * FROM stored_workflows WHERE app_id=$1 ORDER BY name;
+-- Production's workflows; a stage's are read by ListStageStoredWorkflows
+-- (ADR-20261104120000).
+SELECT * FROM stored_workflows WHERE app_id=$1 AND environment_id IS NULL ORDER BY name;
+
+-- name: ListStageStoredWorkflows :many
+SELECT * FROM stored_workflows WHERE app_id=$1 AND environment_id=$2 ORDER BY name;
+
+-- name: StoredWorkflowEnvironmentByName :one
+-- Names are unique per app until the contract release, so a name finds its
+-- workflow's environment (NULL is production).
+SELECT environment_id FROM stored_workflows WHERE app_id=$1 AND name=$2;
 
 -- name: ListStoredWorkflowRevisions :many
 SELECT * FROM stored_workflow_revisions
@@ -20991,8 +21001,9 @@ INSERT INTO stored_workflow_revisions(
 ) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8);
 
 -- name: SaveStoredWorkflow :exec
-INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+-- environment_id is set on insert only; a workflow keeps its environment.
+INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report,environment_id)
+VALUES(sqlc.arg(app_id),sqlc.arg(name),sqlc.arg(version),sqlc.arg(draft),sqlc.narg(published),sqlc.arg(published_version),sqlc.arg(enabled),sqlc.arg(updated_at),sqlc.narg(test_suite),sqlc.narg(test_report),sqlc.narg(environment_id)::uuid)
 ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
  published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
  test_suite=excluded.test_suite,test_report=excluded.test_report;

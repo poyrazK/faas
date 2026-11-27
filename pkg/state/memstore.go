@@ -4644,6 +4644,13 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			delete(m.eventSubscriptions, key)
 		}
 	}
+	// So do its stored workflows and their revisions (FK ON DELETE CASCADE).
+	for key, workflow := range m.storedWorkflows {
+		if workflow.EnvironmentID == environmentID {
+			delete(m.storedWorkflows, key)
+			delete(m.storedWorkflowRevisions, key)
+		}
+	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {

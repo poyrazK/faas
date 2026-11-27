@@ -17858,6 +17858,7 @@ type StoredWorkflow struct {
 	UpdatedAt        pgtype.Timestamptz
 	TestSuite        []byte
 	TestReport       []byte
+	EnvironmentID    pgtype.UUID
 }
 
 type StoredWorkflowFailureGuard struct {
@@ -17967,6 +17968,7 @@ type StoredWorkflowRevision struct {
 	PublishedByAccountID pgtype.UUID
 	PublishedByApiKeyID  pgtype.UUID
 	CheckEvidence        []byte
+	EnvironmentID        pgtype.UUID
 }
 
 type StripePushDedupe struct {

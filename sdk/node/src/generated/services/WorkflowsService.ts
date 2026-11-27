@@ -225,17 +225,25 @@ export class WorkflowsService {
    */
   public static listStoredWorkflows({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
   }): CancelablePromise<ListStoredWorkflowsResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -360,6 +368,7 @@ export class WorkflowsService {
   public static getStoredWorkflow({
     slug,
     name,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -369,6 +378,10 @@ export class WorkflowsService {
      * Stored workflow name, shared with workflow run endpoints.
      */
     name: string,
+    /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -376,6 +389,9 @@ export class WorkflowsService {
       path: {
         'slug': slug,
         'name': name,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -404,6 +420,7 @@ export class WorkflowsService {
     slug,
     name,
     requestBody,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -414,6 +431,10 @@ export class WorkflowsService {
      */
     name: string,
     requestBody: SaveStoredWorkflowDraftRequest,
+    /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
@@ -421,6 +442,9 @@ export class WorkflowsService {
       path: {
         'slug': slug,
         'name': name,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -438,6 +462,7 @@ export class WorkflowsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
     });
@@ -451,6 +476,7 @@ export class WorkflowsService {
     slug,
     name,
     expectedVersion,
+    environment,
     restoreManifest = false,
   }: {
     /**
@@ -466,6 +492,10 @@ export class WorkflowsService {
      */
     expectedVersion: number,
     /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
+    /**
      * Explicitly return ownership to the current YAML definition after deletion.
      */
     restoreManifest?: boolean,
@@ -478,6 +508,7 @@ export class WorkflowsService {
         'name': name,
       },
       query: {
+        'environment': environment,
         'expected_version': expectedVersion,
         'restore_manifest': restoreManifest,
       },
@@ -495,6 +526,7 @@ export class WorkflowsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
     });
@@ -684,6 +716,7 @@ export class WorkflowsService {
   public static listStoredWorkflowRevisions({
     slug,
     name,
+    environment,
     limit = 50,
     offset,
   }: {
@@ -695,6 +728,10 @@ export class WorkflowsService {
      * Stored workflow whose immutable published revisions are listed.
      */
     name: string,
+    /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
     /**
      * Maximum number of revisions to return (1–100; defaults to 50).
      */
@@ -712,6 +749,7 @@ export class WorkflowsService {
         'name': name,
       },
       query: {
+        'environment': environment,
         'limit': limit,
         'offset': offset,
       },
@@ -738,6 +776,7 @@ export class WorkflowsService {
     slug,
     name,
     version,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -751,6 +790,10 @@ export class WorkflowsService {
      * Published revision identifier returned by the revision list.
      */
     version: number,
+    /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
   }): CancelablePromise<StoredWorkflowRevisionResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
@@ -759,6 +802,9 @@ export class WorkflowsService {
         'slug': slug,
         'name': name,
         'version': version,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -1067,6 +1113,7 @@ export class WorkflowsService {
     slug,
     name,
     requestBody,
+    environment,
     idempotencyKey,
   }: {
     /**
@@ -1078,6 +1125,10 @@ export class WorkflowsService {
      */
     name: string,
     requestBody: PublishStoredWorkflowRequest,
+    /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
     /**
      * Idempotency key for the POST. Stored for 24h. On replay the server
      * returns the original response with `Idempotent-Replayed: true`.
@@ -1095,6 +1146,9 @@ export class WorkflowsService {
       headers: {
         'Idempotency-Key': idempotencyKey,
       },
+      query: {
+        'environment': environment,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
@@ -1111,6 +1165,7 @@ export class WorkflowsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
     });
@@ -1124,6 +1179,7 @@ export class WorkflowsService {
     slug,
     name,
     requestBody,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1134,6 +1190,10 @@ export class WorkflowsService {
      */
     name: string,
     requestBody: SetStoredWorkflowEnabledRequest,
+    /**
+     * Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+     */
+    environment?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
@@ -1141,6 +1201,9 @@ export class WorkflowsService {
       path: {
         'slug': slug,
         'name': name,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -1158,6 +1221,7 @@ export class WorkflowsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
         503: `code: capacity — server-side error; retry with backoff.`,
       },
     });

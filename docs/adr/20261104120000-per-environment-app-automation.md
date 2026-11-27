@@ -483,3 +483,35 @@ app-wide indexes and full clones copy consumers, keys and plan assignments.
   `alert_rules_app_name_uniq` is dropped by the contract release that also
   lets a full clone copy rules paused, as for consumers. Until then a stage
   rule's name must differ from production's.
+
+### Stored workflows (detail, 2026-11-27)
+
+- **Storage first.** Nothing runs workflows per environment today: runs,
+  schedule cursors, event and webhook starts all use production's live
+  deployment (`scope = 'default'`). The owner chose to land storage first
+  and the runtime (manual and schedule triggers on the stage's own
+  deployment) as the next slice.
+- `stored_workflows.environment_id` (NULL is production) names one of the
+  app's project environments; a trigger checks it and keeps it fixed, and
+  the environment's deletion removes its workflows.
+  `stored_workflow_revisions.environment_id` is copied from the workflow by a
+  trigger, whichever release writes the revision.
+- **A stage's workflow stays disabled**
+  (`stored_workflows_environment_disabled_chk`). `app_workflow_definitions()`
+  (production's runnable definitions, read by schedules, events, webhooks
+  and manual starts on N and N-1) and `ListStoredWorkflows` take production's
+  workflows only.
+- A workflow is reached only through its own environment. The routes take
+  `environment`; a stage supports list, get, save, publish, disable, delete
+  and its revisions, and refuses the routes that test, verify, watch or
+  restore a workflow (501). Stage writes wait for the apid runtime key
+  `stage_stored_workflows_enabled` (default off), turned on once every apid
+  runs this release, since N-1 apid lists every workflow of the app.
+- Names become unique per app and environment
+  (`stored_workflows_app_environment_name_uniq`). `stored_workflows_pkey`
+  stays `(app_id, name)` until the contract release, so a stage's workflow
+  name must differ from production's; the workflow-keyed side tables
+  (failure policies, live suites, publish receipts) move to the
+  per-environment identity in that release, which also lets a full clone
+  copy workflows disabled.
+

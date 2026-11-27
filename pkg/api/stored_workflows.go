@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -155,14 +156,36 @@ type ValidateStoredWorkflowResponse struct {
 func storedWorkflowPath(slug string) string {
 	return "/v1/apps/" + url.PathEscape(slug) + "/workflows/stored"
 }
+
+// inStoredWorkflowEnvironment adds ?environment to a stored workflow path; ""
+// is production (ADR-20261104120000).
+func inStoredWorkflowEnvironment(path, environment string) string {
+	if environment == "" {
+		return path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "environment=" + url.QueryEscape(environment)
+}
 func (c *Client) ListStoredWorkflows(ctx context.Context, slug string) (ListStoredWorkflowsResponse, error) {
+	return c.ListStoredWorkflowsInEnvironment(ctx, slug, "")
+}
+
+// ListStoredWorkflowsInEnvironment lists one environment's stored workflows;
+// "" is production.
+func (c *Client) ListStoredWorkflowsInEnvironment(ctx context.Context, slug, environment string) (ListStoredWorkflowsResponse, error) {
 	var out ListStoredWorkflowsResponse
-	err := c.do(ctx, "GET", storedWorkflowPath(slug), nil, &out)
+	err := c.do(ctx, "GET", inStoredWorkflowEnvironment(storedWorkflowPath(slug), environment), nil, &out)
 	return out, err
 }
 func (c *Client) GetStoredWorkflow(ctx context.Context, slug, name string) (StoredWorkflowResponse, error) {
+	return c.GetStoredWorkflowInEnvironment(ctx, slug, name, "")
+}
+func (c *Client) GetStoredWorkflowInEnvironment(ctx context.Context, slug, name, environment string) (StoredWorkflowResponse, error) {
 	var out StoredWorkflowResponse
-	err := c.do(ctx, "GET", storedWorkflowPath(slug)+"/"+url.PathEscape(name), nil, &out)
+	err := c.do(ctx, "GET", inStoredWorkflowEnvironment(storedWorkflowPath(slug)+"/"+url.PathEscape(name), environment), nil, &out)
 	return out, err
 }
 
@@ -184,6 +207,9 @@ func (c *Client) GetStoredWorkflowHealth(ctx context.Context, slug, name string,
 }
 
 func (c *Client) ListStoredWorkflowRevisions(ctx context.Context, slug, name string, limit, offset int) (ListStoredWorkflowRevisionsResponse, error) {
+	return c.ListStoredWorkflowRevisionsInEnvironment(ctx, slug, name, "", limit, offset)
+}
+func (c *Client) ListStoredWorkflowRevisionsInEnvironment(ctx context.Context, slug, name, environment string, limit, offset int) (ListStoredWorkflowRevisionsResponse, error) {
 	var out ListStoredWorkflowRevisionsResponse
 	path := storedWorkflowPath(slug) + "/" + url.PathEscape(name) + "/revisions"
 	query := url.Values{}
@@ -193,6 +219,9 @@ func (c *Client) ListStoredWorkflowRevisions(ctx context.Context, slug, name str
 	if offset > 0 {
 		query.Set("offset", strconv.Itoa(offset))
 	}
+	if environment != "" {
+		query.Set("environment", environment)
+	}
 	if encoded := query.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -200,9 +229,12 @@ func (c *Client) ListStoredWorkflowRevisions(ctx context.Context, slug, name str
 	return out, err
 }
 func (c *Client) GetStoredWorkflowRevision(ctx context.Context, slug, name string, version int64) (StoredWorkflowRevisionResponse, error) {
+	return c.GetStoredWorkflowRevisionInEnvironment(ctx, slug, name, "", version)
+}
+func (c *Client) GetStoredWorkflowRevisionInEnvironment(ctx context.Context, slug, name, environment string, version int64) (StoredWorkflowRevisionResponse, error) {
 	var out StoredWorkflowRevisionResponse
 	path := storedWorkflowPath(slug) + "/" + url.PathEscape(name) + "/revisions/" + strconv.FormatInt(version, 10)
-	err := c.do(ctx, "GET", path, nil, &out)
+	err := c.do(ctx, "GET", inStoredWorkflowEnvironment(path, environment), nil, &out)
 	return out, err
 }
 func (c *Client) RestoreStoredWorkflowRevision(ctx context.Context, slug, name string, version int64, body RestoreStoredWorkflowRevisionRequest) (StoredWorkflowResponse, error) {
@@ -212,18 +244,27 @@ func (c *Client) RestoreStoredWorkflowRevision(ctx context.Context, slug, name s
 	return out, err
 }
 func (c *Client) SaveStoredWorkflowDraft(ctx context.Context, slug, name string, body SaveStoredWorkflowDraftRequest) (StoredWorkflowResponse, error) {
+	return c.SaveStoredWorkflowDraftInEnvironment(ctx, slug, name, "", body)
+}
+func (c *Client) SaveStoredWorkflowDraftInEnvironment(ctx context.Context, slug, name, environment string, body SaveStoredWorkflowDraftRequest) (StoredWorkflowResponse, error) {
 	var out StoredWorkflowResponse
-	err := c.do(ctx, "PUT", storedWorkflowPath(slug)+"/"+url.PathEscape(name), body, &out)
+	err := c.do(ctx, "PUT", inStoredWorkflowEnvironment(storedWorkflowPath(slug)+"/"+url.PathEscape(name), environment), body, &out)
 	return out, err
 }
 func (c *Client) PublishStoredWorkflow(ctx context.Context, slug, name string, body PublishStoredWorkflowRequest) (StoredWorkflowResponse, error) {
+	return c.PublishStoredWorkflowInEnvironment(ctx, slug, name, "", body)
+}
+func (c *Client) PublishStoredWorkflowInEnvironment(ctx context.Context, slug, name, environment string, body PublishStoredWorkflowRequest) (StoredWorkflowResponse, error) {
 	var out StoredWorkflowResponse
-	err := c.do(ctx, "POST", storedWorkflowPath(slug)+"/"+url.PathEscape(name)+"/publish", body, &out)
+	err := c.do(ctx, "POST", inStoredWorkflowEnvironment(storedWorkflowPath(slug)+"/"+url.PathEscape(name)+"/publish", environment), body, &out)
 	return out, err
 }
 func (c *Client) SetStoredWorkflowEnabled(ctx context.Context, slug, name string, body SetStoredWorkflowEnabledRequest) (StoredWorkflowResponse, error) {
+	return c.SetStoredWorkflowEnabledInEnvironment(ctx, slug, name, "", body)
+}
+func (c *Client) SetStoredWorkflowEnabledInEnvironment(ctx context.Context, slug, name, environment string, body SetStoredWorkflowEnabledRequest) (StoredWorkflowResponse, error) {
 	var out StoredWorkflowResponse
-	err := c.do(ctx, "PUT", storedWorkflowPath(slug)+"/"+url.PathEscape(name)+"/enabled", body, &out)
+	err := c.do(ctx, "PUT", inStoredWorkflowEnvironment(storedWorkflowPath(slug)+"/"+url.PathEscape(name)+"/enabled", environment), body, &out)
 	return out, err
 }
 func (c *Client) ValidateStoredWorkflow(ctx context.Context, slug string, body ValidateStoredWorkflowRequest) (ValidateStoredWorkflowResponse, error) {
@@ -232,7 +273,11 @@ func (c *Client) ValidateStoredWorkflow(ctx context.Context, slug string, body V
 	return out, err
 }
 func (c *Client) DeleteStoredWorkflow(ctx context.Context, slug, name string, version int64, restoreManifest bool) error {
-	return c.do(ctx, "DELETE", storedWorkflowPath(slug)+"/"+url.PathEscape(name)+fmt.Sprintf("?expected_version=%d&restore_manifest=%t", version, restoreManifest), nil, nil)
+	return c.DeleteStoredWorkflowInEnvironment(ctx, slug, name, "", version, restoreManifest)
+}
+func (c *Client) DeleteStoredWorkflowInEnvironment(ctx context.Context, slug, name, environment string, version int64, restoreManifest bool) error {
+	path := storedWorkflowPath(slug) + "/" + url.PathEscape(name) + fmt.Sprintf("?expected_version=%d&restore_manifest=%t", version, restoreManifest)
+	return c.do(ctx, "DELETE", inStoredWorkflowEnvironment(path, environment), nil, nil)
 }
 
 // ErrStoredWorkflowDefinitionsQuota shares the workflow quota code but reports

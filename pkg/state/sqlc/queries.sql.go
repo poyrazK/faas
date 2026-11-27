@@ -31430,7 +31430,7 @@ func (q *Queries) GetStoredWorkflowQueueHealth(ctx context.Context, db DBTX, arg
 }
 
 const getStoredWorkflowRevision = `-- name: GetStoredWorkflowRevision :one
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2 AND version=$3
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence, environment_id FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2 AND version=$3
 `
 
 type GetStoredWorkflowRevisionParams struct {
@@ -31452,6 +31452,7 @@ func (q *Queries) GetStoredWorkflowRevision(ctx context.Context, db DBTX, arg Ge
 		&i.PublishedByAccountID,
 		&i.PublishedByApiKeyID,
 		&i.CheckEvidence,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -58808,6 +58809,47 @@ func (q *Queries) ListSoonestExpiringCustomDomainCerts(ctx context.Context, db D
 	return items, nil
 }
 
+const listStageStoredWorkflows = `-- name: ListStageStoredWorkflows :many
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report, environment_id FROM stored_workflows WHERE app_id=$1 AND environment_id=$2 ORDER BY name
+`
+
+type ListStageStoredWorkflowsParams struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) ListStageStoredWorkflows(ctx context.Context, db DBTX, arg ListStageStoredWorkflowsParams) ([]StoredWorkflow, error) {
+	rows, err := db.Query(ctx, listStageStoredWorkflows, arg.AppID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StoredWorkflow{}
+	for rows.Next() {
+		var i StoredWorkflow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.Version,
+			&i.Draft,
+			&i.Published,
+			&i.PublishedVersion,
+			&i.Enabled,
+			&i.UpdatedAt,
+			&i.TestSuite,
+			&i.TestReport,
+			&i.EnvironmentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStoredWorkflowFailurePauses = `-- name: ListStoredWorkflowFailurePauses :many
 SELECT name FROM stored_workflow_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
 `
@@ -59000,7 +59042,7 @@ func (q *Queries) ListStoredWorkflowHealthRecentRuns(ctx context.Context, db DBT
 }
 
 const listStoredWorkflowRevisions = `-- name: ListStoredWorkflowRevisions :many
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence, environment_id FROM stored_workflow_revisions
 WHERE app_id=$1 AND name=$2
 ORDER BY version DESC
 LIMIT $3 OFFSET $4
@@ -59037,6 +59079,7 @@ func (q *Queries) ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg 
 			&i.PublishedByAccountID,
 			&i.PublishedByApiKeyID,
 			&i.CheckEvidence,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -59049,9 +59092,11 @@ func (q *Queries) ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg 
 }
 
 const listStoredWorkflows = `-- name: ListStoredWorkflows :many
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 ORDER BY name
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report, environment_id FROM stored_workflows WHERE app_id=$1 AND environment_id IS NULL ORDER BY name
 `
 
+// Production's workflows; a stage's are read by ListStageStoredWorkflows
+// (ADR-20261104120000).
 func (q *Queries) ListStoredWorkflows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]StoredWorkflow, error) {
 	rows, err := db.Query(ctx, listStoredWorkflows, appID)
 	if err != nil {
@@ -59072,6 +59117,7 @@ func (q *Queries) ListStoredWorkflows(ctx context.Context, db DBTX, appID pgtype
 			&i.UpdatedAt,
 			&i.TestSuite,
 			&i.TestReport,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -110682,8 +110728,8 @@ func (q *Queries) SaveSnapshotPrimeHandoff(ctx context.Context, db DBTX, arg Sav
 }
 
 const saveStoredWorkflow = `-- name: SaveStoredWorkflow :exec
-INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report,environment_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
 ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
  published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
  test_suite=excluded.test_suite,test_report=excluded.test_report
@@ -110700,8 +110746,10 @@ type SaveStoredWorkflowParams struct {
 	UpdatedAt        pgtype.Timestamptz
 	TestSuite        []byte
 	TestReport       []byte
+	EnvironmentID    pgtype.UUID
 }
 
+// environment_id is set on insert only; a workflow keeps its environment.
 func (q *Queries) SaveStoredWorkflow(ctx context.Context, db DBTX, arg SaveStoredWorkflowParams) error {
 	_, err := db.Exec(ctx, saveStoredWorkflow,
 		arg.AppID,
@@ -110714,6 +110762,7 @@ func (q *Queries) SaveStoredWorkflow(ctx context.Context, db DBTX, arg SaveStore
 		arg.UpdatedAt,
 		arg.TestSuite,
 		arg.TestReport,
+		arg.EnvironmentID,
 	)
 	return err
 }
@@ -113328,6 +113377,24 @@ UPDATE workflow_runs SET status='failed',last_error='workflow coordinator lease 
 func (q *Queries) StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, stopUncertainCustomerOperationWorkflow, id)
 	return err
+}
+
+const storedWorkflowEnvironmentByName = `-- name: StoredWorkflowEnvironmentByName :one
+SELECT environment_id FROM stored_workflows WHERE app_id=$1 AND name=$2
+`
+
+type StoredWorkflowEnvironmentByNameParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+// Names are unique per app until the contract release, so a name finds its
+// workflow's environment (NULL is production).
+func (q *Queries) StoredWorkflowEnvironmentByName(ctx context.Context, db DBTX, arg StoredWorkflowEnvironmentByNameParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, storedWorkflowEnvironmentByName, arg.AppID, arg.Name)
+	var environment_id pgtype.UUID
+	err := row.Scan(&environment_id)
+	return environment_id, err
 }
 
 const storedWorkflowFailurePaused = `-- name: StoredWorkflowFailurePaused :one

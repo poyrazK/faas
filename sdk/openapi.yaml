@@ -12817,6 +12817,12 @@ paths:
   /v1/apps/{slug}/workflows/stored:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+        schema:
+          type: string
     get:
       tags:
         - workflows
@@ -12936,6 +12942,12 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+        schema:
+          type: string
       - name: name
         in: path
         required: true
@@ -13006,6 +13018,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       requestBody:
@@ -13040,6 +13054,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       parameters:
@@ -13193,6 +13209,12 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/revisions:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+        schema:
+          type: string
       - name: name
         in: path
         required: true
@@ -13228,6 +13250,12 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/revisions/{version}:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+        schema:
+          type: string
       - name: name
         in: path
         required: true
@@ -13513,6 +13541,12 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/publish:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+        schema:
+          type: string
       - name: name
         in: path
         required: true
@@ -13551,6 +13585,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       requestBody:
@@ -13565,6 +13601,12 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/enabled:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug (ADR-20261104120000). Omitted or production is production; a stage's stored workflows are its own and stay disabled. A workflow is reached only through its own environment.
+        schema:
+          type: string
       - name: name
         in: path
         required: true
@@ -13603,6 +13645,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       requestBody:

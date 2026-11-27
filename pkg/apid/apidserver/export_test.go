@@ -1985,6 +1985,17 @@ func (s *server) EnableStageAlertRulesForTest(t *testing.T) {
 	}
 }
 
+// EnableStageStoredWorkflowsForTest turns stage_stored_workflows_enabled on.
+func (s *server) EnableStageStoredWorkflowsForTest(t *testing.T) {
+	t.Helper()
+	if s.runtimeConfig == nil {
+		s.runtimeConfig = newRuntimeConfigManager(nil)
+	}
+	if err := s.runtimeConfig.apply(runtimeConfigStageStoredWorkflows, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
 

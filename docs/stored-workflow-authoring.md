@@ -248,6 +248,30 @@ Both require the current `--expected-version`; a successful change advances the
 stored workflow version but does not publish a definition or add a revision. Read the
 stored workflow again before retrying after a version conflict.
 
+## Stored workflows in a stage
+
+A project's stage keeps stored workflows of its own. Pass `--environment` to
+the authoring commands; without it they work on production:
+
+```sh
+gregale workflow stored apply --app billing --env staging --file paid-invoice.yaml --expected-version 0
+gregale workflow stored publish --app billing --env staging --name paid-invoice --expected-version VERSION
+gregale workflow stored list --app billing --env staging
+gregale workflow stored revisions list --app billing --env staging --name paid-invoice
+gregale workflow stored delete --app billing --env staging --name paid-invoice --expected-version VERSION --yes
+```
+
+- A stage's workflow does not run yet, so it stays disabled: `resume` refuses
+  it, and so do tests, live verification, health, failure policies and
+  restoring a revision. Production's schedules, events, webhooks and manual
+  starts never see it.
+- A workflow is reached only through its own environment. Until a later
+  release, a name is unique across the app: a stage cannot use a name
+  production uses, or the other way round.
+- Deleting the stage deletes its workflows.
+- Creating or changing a stage's workflow waits until operators turn on
+  stage stored workflows; until then those commands answer 501.
+
 ## Conditional actions
 
 Add `when` to a step to run it only when workflow data matches a predicate:

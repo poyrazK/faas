@@ -15,7 +15,7 @@ import (
 func (m *MemStore) storedWorkflowRecordsLocked(appID string) []StoredWorkflow {
 	records := make([]StoredWorkflow, 0)
 	for _, record := range m.storedWorkflows {
-		if record.AppID == appID {
+		if record.AppID == appID && record.EnvironmentID == "" {
 			records = append(records, copyStoredWorkflow(record))
 		}
 	}
@@ -91,8 +91,15 @@ func (m *MemStore) MutateStoredWorkflow(_ context.Context, appID, name string, m
 	}
 	key := appID + "/" + name
 	var previous *StoredWorkflow
-	if record, ok := m.storedWorkflows[key]; ok {
+	record, found := m.storedWorkflows[key]
+	if err := storedWorkflowEnvironmentConflict(record.EnvironmentID, found, mutation); err != nil {
+		return StoredWorkflow{}, err
+	}
+	if found {
 		previous = &record
+	}
+	if !m.storedWorkflowEnvironmentValidLocked(app, mutation.EnvironmentID) {
+		return StoredWorkflow{}, ErrNotFound
 	}
 	if mutation.ActorAccountID == "" {
 		mutation.ActorAccountID = app.AccountID
@@ -105,8 +112,14 @@ func (m *MemStore) MutateStoredWorkflow(_ context.Context, appID, name string, m
 	if err := validatePublicationReceipt(policy, receipt, appID, name, &mutation, previous); err != nil {
 		return StoredWorkflow{}, err
 	}
-	dep := m.storedWorkflowDeploymentLocked(appID)
-	next, err := mutateStoredWorkflow(appID, name, mutation, previous, dep.Workflows, m.storedWorkflowRecordsLocked(appID), account.Plan, dep.ID != "")
+	dep, records := m.storedWorkflowDeploymentLocked(appID), m.storedWorkflowRecordsLocked(appID)
+	hasDeployment := dep.ID != ""
+	if mutation.EnvironmentID != "" {
+		// A stage's workflow does not run yet: production's manifest and
+		// workflows are not its, and its publication needs no deployment.
+		dep, records, hasDeployment = Deployment{}, m.storedWorkflowStageRecordsLocked(appID, mutation.EnvironmentID), true
+	}
+	next, err := mutateStoredWorkflow(appID, name, mutation, previous, dep.Workflows, records, account.Plan, hasDeployment)
 	if err != nil {
 		return StoredWorkflow{}, err
 	}
@@ -179,7 +192,7 @@ func storedWorkflowAccountGate(plan api.Plan, active bool, action string) error 
 	return nil
 }
 func storedWorkflowFromSQL(row sqlc.StoredWorkflow) StoredWorkflow {
-	return StoredWorkflow{TestSuite: row.TestSuite, TestReport: row.TestReport, AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version, Draft: row.Draft, Published: row.Published, PublishedVersion: row.PublishedVersion, Enabled: row.Enabled, UpdatedAt: row.UpdatedAt.Time}
+	return StoredWorkflow{TestSuite: row.TestSuite, TestReport: row.TestReport, AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version, Draft: row.Draft, Published: row.Published, PublishedVersion: row.PublishedVersion, Enabled: row.Enabled, UpdatedAt: row.UpdatedAt.Time, EnvironmentID: pgUUIDStringOrEmpty(row.EnvironmentID)}
 }
 func storedWorkflowRevisionFromSQL(row sqlc.StoredWorkflowRevision) StoredWorkflowRevision {
 	revision := StoredWorkflowRevision{
@@ -274,7 +287,20 @@ func mutateStoredWorkflowTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app
 	if mutation.ActorAccountID == "" {
 		mutation.ActorAccountID = accountID
 	}
-	rows, err := q.ListStoredWorkflows(ctx, tx, mustPgUUID(appID))
+	held, err := storedWorkflowEnvironmentTx(ctx, tx, q, appID, name)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return StoredWorkflow{}, err
+	}
+	if err := storedWorkflowEnvironmentConflict(held, err == nil, mutation); err != nil {
+		return StoredWorkflow{}, err
+	}
+	stage := mutation.EnvironmentID != ""
+	var rows []sqlc.StoredWorkflow
+	if stage {
+		rows, err = q.ListStageStoredWorkflows(ctx, tx, sqlc.ListStageStoredWorkflowsParams{AppID: mustPgUUID(appID), EnvironmentID: mustPgUUID(mutation.EnvironmentID)})
+	} else {
+		rows, err = q.ListStoredWorkflows(ctx, tx, mustPgUUID(appID))
+	}
 	if err != nil {
 		return StoredWorkflow{}, err
 	}
@@ -294,6 +320,11 @@ func mutateStoredWorkflowTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app
 	hasDeployment := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return StoredWorkflow{}, err
+	}
+	if stage {
+		// A stage's workflow does not run yet: production's manifest is not
+		// its, and its publication needs no deployment.
+		dep, hasDeployment = sqlc.StoredWorkflowManifestRow{}, true
 	}
 	next, err := mutateStoredWorkflow(appID, name, mutation, previous, dep.Workflows, records, plan, hasDeployment)
 	if err != nil {
@@ -318,7 +349,7 @@ func mutateStoredWorkflowTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app
 	if mutation.Action == "delete" {
 		err = q.DeleteStoredWorkflow(ctx, tx, sqlc.DeleteStoredWorkflowParams{AppID: mustPgUUID(appID), Name: name})
 	} else {
-		err = q.SaveStoredWorkflow(ctx, tx, sqlc.SaveStoredWorkflowParams{TestSuite: next.TestSuite, TestReport: next.TestReport, AppID: mustPgUUID(appID), Name: name, Version: next.Version, Draft: next.Draft, Published: next.Published, PublishedVersion: next.PublishedVersion, Enabled: next.Enabled, UpdatedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true}})
+		err = q.SaveStoredWorkflow(ctx, tx, sqlc.SaveStoredWorkflowParams{TestSuite: next.TestSuite, TestReport: next.TestReport, AppID: mustPgUUID(appID), Name: name, Version: next.Version, Draft: next.Draft, Published: next.Published, PublishedVersion: next.PublishedVersion, Enabled: next.Enabled, UpdatedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true}, EnvironmentID: nullablePgUUID(next.EnvironmentID)})
 	}
 	if err != nil {
 		return StoredWorkflow{}, err

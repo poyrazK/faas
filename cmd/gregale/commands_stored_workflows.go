@@ -143,6 +143,7 @@ func cmdStoredWorkflowsSetEnabled(args []string, enabled bool) int {
 	}
 	fs := newFlagSet("workflow stored "+verb, flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	name := fs.String("name", "", "stored workflow name")
 	expectedVersion := fs.Int64("expected-version", 0, "current stored workflow version")
 	if err := fs.Parse(args); err != nil || rejectUnexpectedFlagArgs(fs) {
@@ -156,7 +157,7 @@ func cmdStoredWorkflowsSetEnabled(args []string, enabled bool) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.SetStoredWorkflowEnabled(context.Background(), *app, *name, api.SetStoredWorkflowEnabledRequest{ExpectedVersion: *expectedVersion, Enabled: &enabled})
+	result, err := client.SetStoredWorkflowEnabledInEnvironment(context.Background(), *app, *name, *environment, api.SetStoredWorkflowEnabledRequest{ExpectedVersion: *expectedVersion, Enabled: &enabled})
 	if err != nil {
 		return printErr("Could not "+verb+" stored workflow", err)
 	}
@@ -252,6 +253,7 @@ func cmdStoredWorkflowsRevisions(args []string) int {
 func cmdStoredWorkflowsRevisionsList(args []string) int {
 	fs := newFlagSet("workflow stored revisions list", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	name := fs.String("name", "", "stored workflow name")
 	limit := fs.Int("limit", 50, "page size (1..100)")
 	offset := fs.Int("offset", 0, "number of revisions to skip")
@@ -266,7 +268,7 @@ func cmdStoredWorkflowsRevisionsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.ListStoredWorkflowRevisions(context.Background(), *app, *name, *limit, *offset)
+	result, err := client.ListStoredWorkflowRevisionsInEnvironment(context.Background(), *app, *name, *environment, *limit, *offset)
 	if err != nil {
 		return printErr("Could not list stored workflow revisions", err)
 	}
@@ -276,6 +278,7 @@ func cmdStoredWorkflowsRevisionsList(args []string) int {
 func cmdStoredWorkflowsRevisionsShow(args []string) int {
 	fs := newFlagSet("workflow stored revisions show", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	name := fs.String("name", "", "stored workflow name")
 	revision := fs.Int64("revision", 0, "published revision number")
 	definitionOut := fs.String("definition-out", "", "export this definition as JSON to a new file")
@@ -293,7 +296,7 @@ func cmdStoredWorkflowsRevisionsShow(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.GetStoredWorkflowRevision(context.Background(), *app, *name, *revision)
+	result, err := client.GetStoredWorkflowRevisionInEnvironment(context.Background(), *app, *name, *environment, *revision)
 	if err != nil {
 		return printErr("Could not get stored workflow revision", err)
 	}
@@ -327,6 +330,7 @@ func cmdStoredWorkflowsRestore(args []string) int {
 func cmdStoredWorkflowsDelete(args []string) int {
 	fs := newFlagSet("workflow stored delete", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	name := fs.String("name", "", "stored workflow name")
 	expectedVersion := fs.Int64("expected-version", 0, "current stored workflow version")
 	yes := fs.Bool("yes", false, "confirm stored workflow deletion")
@@ -345,7 +349,7 @@ func cmdStoredWorkflowsDelete(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if err := client.DeleteStoredWorkflow(context.Background(), *app, *name, *expectedVersion, *restoreManifest); err != nil {
+	if err := client.DeleteStoredWorkflowInEnvironment(context.Background(), *app, *name, *environment, *expectedVersion, *restoreManifest); err != nil {
 		return printErr("Could not delete stored workflow", err)
 	}
 	return printStoredWorkflowDelete(*name, *expectedVersion, *restoreManifest)
@@ -387,9 +391,14 @@ func cmdStoredWorkflowsSimulate(args []string) int {
 	return printStoredWorkflowSimulation(definition.Name, result, *requireComplete)
 }
 
+// storedWorkflowEnvironmentUsage describes --environment on the stored
+// workflow commands a stage supports (ADR-20261104120000).
+const storedWorkflowEnvironmentUsage = "project environment that holds the workflow (default production); a stage's workflow stays disabled"
+
 func cmdStoredWorkflowsList(args []string) int {
 	fs := newFlagSet("workflow stored list", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	if err := fs.Parse(args); err != nil || rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
@@ -401,7 +410,7 @@ func cmdStoredWorkflowsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.ListStoredWorkflows(context.Background(), *app)
+	result, err := client.ListStoredWorkflowsInEnvironment(context.Background(), *app, *environment)
 	if err != nil {
 		return printErr("Could not list stored workflows", err)
 	}
@@ -411,6 +420,7 @@ func cmdStoredWorkflowsList(args []string) int {
 func cmdStoredWorkflowsGet(args []string) int {
 	fs := newFlagSet("workflow stored get", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	name := fs.String("name", "", "stored workflow name")
 	definitionOut := fs.String("definition-out", "", "export the selected definition as JSON to a new file")
 	published := fs.Bool("published", false, "export the published definition instead of the draft")
@@ -428,7 +438,7 @@ func cmdStoredWorkflowsGet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.GetStoredWorkflow(context.Background(), *app, *name)
+	result, err := client.GetStoredWorkflowInEnvironment(context.Background(), *app, *name, *environment)
 	if err != nil {
 		return printErr("Could not get stored workflow", err)
 	}
@@ -464,6 +474,7 @@ func cmdStoredWorkflowsValidate(args []string) int {
 func cmdStoredWorkflowsApply(args []string) int {
 	fs := newFlagSet("workflow stored apply", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	file := fs.String("file", "", "stored workflow definition YAML or JSON file")
 	expectedVersion := fs.Int64("expected-version", -1, "current stored workflow version (0 for a new draft)")
 	if err := fs.Parse(args); err != nil || rejectUnexpectedFlagArgs(fs) {
@@ -484,7 +495,7 @@ func cmdStoredWorkflowsApply(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.SaveStoredWorkflowDraft(context.Background(), *app, definition.Name, api.SaveStoredWorkflowDraftRequest{ExpectedVersion: *expectedVersion, Definition: definition})
+	result, err := client.SaveStoredWorkflowDraftInEnvironment(context.Background(), *app, definition.Name, *environment, api.SaveStoredWorkflowDraftRequest{ExpectedVersion: *expectedVersion, Definition: definition})
 	if err != nil {
 		return printErr("Could not save stored workflow draft", err)
 	}
@@ -494,6 +505,7 @@ func cmdStoredWorkflowsApply(args []string) int {
 func cmdStoredWorkflowsPublish(args []string) int {
 	fs := newFlagSet("workflow stored publish", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
+	environment := fs.String("environment", "", storedWorkflowEnvironmentUsage)
 	name := fs.String("name", "", "stored workflow name")
 	expectedVersion := fs.Int64("expected-version", -1, "current stored workflow version")
 	takeOverManifest := fs.Bool("take-over-manifest", false, "explicitly replace YAML ownership for this name")
@@ -533,7 +545,7 @@ func cmdStoredWorkflowsPublish(args []string) int {
 	if *scenarioPath != "" {
 		return publishStoredWorkflowWithScenarios(client, *app, *name, *expectedVersion, *takeOverManifest, scenarios, *requireCoverage)
 	}
-	result, err := client.PublishStoredWorkflow(context.Background(), *app, *name, api.PublishStoredWorkflowRequest{ExpectedVersion: *expectedVersion, TakeOverManifest: *takeOverManifest})
+	result, err := client.PublishStoredWorkflowInEnvironment(context.Background(), *app, *name, *environment, api.PublishStoredWorkflowRequest{ExpectedVersion: *expectedVersion, TakeOverManifest: *takeOverManifest})
 	if err != nil {
 		return printErr("Could not publish stored workflow", err)
 	}

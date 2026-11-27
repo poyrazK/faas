@@ -1,0 +1,71 @@
+// Package stageworkflows holds apid's rules for a stage's stored workflows
+// (ADR-20261104120000 amendment 2026-11-22). The app's stored workflow
+// routes take ?environment=<slug>; omitted or production is production. A
+// workflow is reached only through its own environment. A stage's workflow
+// can be listed, read, saved, published, disabled, deleted and its revisions
+// read; nothing runs it yet, so it stays disabled, and the routes that run or
+// test a workflow refuse it.
+package stageworkflows
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// Request is one stored workflow route's view of the environments involved.
+type Request struct {
+	// Requested is the environment the caller names ("" is production).
+	Requested string
+	// Held is the environment holding the named workflow; Found is false
+	// when no environment does (or the route names no workflow).
+	Held  string
+	Found bool
+	// StageReady marks the routes a stage's workflow supports.
+	StageReady bool
+	// Write marks a route that changes the workflow.
+	Write bool
+	// Open is the runtime key stage_stored_workflows_enabled.
+	Open bool
+}
+
+// Check refuses a route that reaches a workflow through another environment
+// than its own, a route a stage's workflow does not support yet, and a stage
+// write while operators keep stage_stored_workflows_enabled off: the key
+// waits until every apid runs the release whose readers keep a stage's
+// workflows out of production. Production's routes are unchanged.
+func Check(req Request) *api.Problem {
+	if req.Found && req.Held != req.Requested {
+		if req.Write {
+			return Problem(state.ErrStoredWorkflowNameInOtherEnvironment)
+		}
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such stored workflow")
+	}
+	if req.Requested == "" {
+		return nil
+	}
+	if !req.StageReady {
+		return api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Not available in a stage",
+			"a stage's stored workflow does not run yet, so it cannot be tested, verified or watched; use production")
+	}
+	if req.Write && !req.Open {
+		return api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented, "Stage stored workflows unavailable",
+			"stored workflows in a stage are not available yet; create the workflow in production")
+	}
+	return nil
+}
+
+// Problem maps the store's stage refusals, or returns nil.
+func Problem(err error) *api.Problem {
+	switch {
+	case errors.Is(err, state.ErrStoredWorkflowNameInOtherEnvironment):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Name in use",
+			"another environment of this app has a stored workflow with this name; until a later release, names are unique per app")
+	case errors.Is(err, state.ErrStoredWorkflowStageDisabled):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Stage workflow cannot be enabled",
+			"a stage's stored workflow does not run yet, so it stays disabled")
+	}
+	return nil
+}
