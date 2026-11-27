@@ -75,7 +75,7 @@ func extractAutomationFlag(args []string) ([]string, error) {
 			if strings.TrimSpace(value) == "" || strings.HasPrefix(value, "-") {
 				return args, errors.New("--org requires an organization slug")
 			}
-			projectOrganization = value
+			projectOrganization = strings.TrimSpace(value)
 			continue
 		}
 		if arg == "--http-retries" || strings.HasPrefix(arg, "--http-retries=") {

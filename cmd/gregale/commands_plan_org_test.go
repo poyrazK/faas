@@ -16,9 +16,10 @@ import (
 // and records every plan change it receives. With checkout set, a plan change
 // answers 402 with a checkout URL instead.
 type orgPlanSink struct {
-	mu       sync.Mutex
-	checkout bool
-	changes  []string
+	mu        sync.Mutex
+	checkout  bool
+	orgResult bool
+	changes   []string
 }
 
 func (s *orgPlanSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +41,10 @@ func (s *orgPlanSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Status: http.StatusPaymentRequired, Code: api.CodePayment, Title: "Billing subscription required",
 				Detail: "update the payment method", BillingPortalURL: "https://billing.example/portal",
 			})
+			return
+		}
+		if s.orgResult {
+			main.WriteJSONTest(w, api.OrgPlanResponse{OrgID: "org-acme", Plan: api.Plan(body["plan"])})
 			return
 		}
 		main.WriteJSONTest(w, api.AccountResponse{Plan: body["plan"]})
@@ -81,6 +86,28 @@ func TestPlanUnderOrgChangesTheOrganizationPlan(t *testing.T) {
 	}
 	if len(sink.changes) != 1 || sink.changes[0] != "/v1/orgs/acme/plan hobby" {
 		t.Fatalf("plan changes = %v, want [/v1/orgs/acme/plan hobby]", sink.changes)
+	}
+}
+
+// TestPlanUnderOrgJSONIsTheOrganizationResult: --json prints the
+// organization's plan result (org_id, plan), not an empty account.
+func TestPlanUnderOrgJSONIsTheOrganizationResult(t *testing.T) {
+	sink := &orgPlanSink{orgResult: true}
+	startOrgPlanSink(t, sink)
+	stdout, restore := main.CaptureStdout(t)
+	defer restore()
+	_, restoreErr := main.CaptureStderr(t)
+	defer restoreErr()
+
+	if code := main.Run([]string{"--json", "--org", "acme", "billing", "plan", "scale"}); code != 0 {
+		t.Fatalf("billing plan scale --json = %d, want 0", code)
+	}
+	var got api.OrgPlanResponse
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode %q: %v", stdout.String(), err)
+	}
+	if got.OrgID != "org-acme" || got.Plan != api.PlanScale || strings.Contains(stdout.String(), `"email"`) {
+		t.Fatalf("--json = %s, want the organization's plan result", stdout.String())
 	}
 }
 

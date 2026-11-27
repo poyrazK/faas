@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -89,7 +90,8 @@ func (c *Client) orgRoute(method, path string) (string, error) {
 	// Budget alert channels have no organization form yet: they are
 	// refused below like other personal-only billing calls.
 	// So is the PostgreSQL overage setting, a personal billing preference.
-	unmapped := strings.HasPrefix(bare, "/v1/billing/budgets/") && strings.HasSuffix(bare, "/channels") ||
+	budgetRest, isBudget := strings.CutPrefix(bare, "/v1/billing/budgets/")
+	unmapped := isBudget && slices.Contains(strings.Split(budgetRest, "/"), "channels") ||
 		under(bare, "/v1/postgres/overage")
 	for _, route := range orgAccountRoutes {
 		if unmapped {
@@ -108,7 +110,7 @@ func (c *Client) orgRoute(method, path string) (string, error) {
 	if under(bare, "/v1/keys") {
 		return "", NewProblem(http.StatusBadRequest, CodeUnsupportedByCLI,
 			"--org does not apply to personal API keys",
-			"organization keys have their own commands: gregale org key list|create|rotate|delete --org"+c.projectOrg)
+			"organization keys have their own commands: gregale org key list|create|rotate|delete --org "+c.projectOrg)
 	}
 	if personalAccountOnly(method, bare) {
 		return "", NewProblem(http.StatusBadRequest, CodeUnsupportedByCLI,
@@ -157,7 +159,7 @@ func personalAccountOnly(method, path string) bool {
 	}
 	switch path {
 	case "/v1/account/managed-postgres-usage", "/v1/account/object-storage-usage",
-		"/v1/account/realtime-history-usage":
+		"/v1/account/realtime-history-usage", "/v1/account/export":
 		return true
 	}
 	return method != http.MethodGet && method != http.MethodHead && under(path, "/v1/account")

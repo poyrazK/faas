@@ -58,19 +58,28 @@ not get started from the terminal:
      other shapes;
    - billing and usage calls with no organization form (forecast, FOCUS
      export, daily and storage usage, budget alert channels, cancel, retry);
-   - the personal usage reads under `/v1/account`, and the managed
-     PostgreSQL overage setting;
-   - any other write to `/v1/account`.
+   - the personal usage reads and the account export under `/v1/account`,
+     and the managed PostgreSQL overage setting;
+   - any other write to `/v1/account`, including account deletion.
+
+   The client's hand-built requests (the streamed account export and account
+   deletion) go through the same routing as `do`.
 
    Other `GET /v1/account...` reads, such as who-am-I and rate limits, still
    work.
 5. `gregale --org SLUG billing plan PLAN` reads the organization's plan for
    its downgrade confirmation. Its retry and keep-subscription hints keep
    `--org`, and it points to `gregale org info SLUG` to check the switch.
-6. A source-scanning test pins the client mapping to apid's registered
-   routes. Every rewritten path must exist, and every PostgreSQL path left
-   flat must have no organization form, so a new organization route is not
-   silently skipped.
+6. Source-scanning tests pin the client mapping to apid's registered routes:
+   - every rewritten path must exist;
+   - every PostgreSQL path left flat must have no organization form, so a new
+     organization route is not silently skipped;
+   - a mapped route must reach the same handler as the personal one, unless
+     it is a reviewed exception. Only the plan route answers a different
+     shape (`OrgPlanResponse`), and the CLI calls `ChangeOrgPlan` for it, so
+     `--json` prints the organization's result.
+
+   The seat decisions live in `pkg/apid/orgseats`.
 7. The dashboard hint names `gregale org members invite --org SLUG --email
    ADDR`, and the member list reads accounts in one batch (`AccountsByIDs`).
 

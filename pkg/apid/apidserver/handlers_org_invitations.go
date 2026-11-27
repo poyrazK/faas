@@ -31,6 +31,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/orgseats"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -241,7 +242,7 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrOrgAlreadyMember(existingRole))
 		return
 	case errors.Is(err, state.ErrOrgMemberCapExceeded):
-		api.WriteProblem(w, s.memberCapProblem(r.Context(), hash[:]))
+		api.WriteProblem(w, orgseats.MemberCapProblem(r.Context(), s.store, hash[:]))
 		return
 	case err != nil:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,

@@ -778,6 +778,10 @@ func (c *Client) StreamAccountExport(ctx context.Context, includeSecrets bool, r
 	if requestID == "" {
 		requestID = newUUIDv4()
 	}
+	path, err := c.orgRoute(http.MethodGet, path)
+	if err != nil {
+		return 0, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return 0, err
@@ -832,6 +836,10 @@ func (c *Client) DeleteAccountIncludingManagedPostgres(ctx context.Context, idem
 func (c *Client) deleteAccount(ctx context.Context, idempotencyKey, path string) (AccountDeletionResponse, error) {
 	if idempotencyKey == "" {
 		idempotencyKey = newUUIDv4()
+	}
+	path, err := c.orgRoute(http.MethodDelete, path)
+	if err != nil {
+		return AccountDeletionResponse{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
 	if err != nil {

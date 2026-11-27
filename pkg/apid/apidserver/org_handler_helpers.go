@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/orgseats"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -149,31 +150,6 @@ func (s *server) loadMutableOrgByMembership(ctx context.Context, w http.Response
 // ConsumeOrgInvitation is the load-bearing back-stop — see
 // handlers_org_invitations.go:166-167.
 
-// memberCapProblem is the 403 an accept answers when the store refused it at
-// the member cap. A plan with no seats (Free) asks for an upgrade rather than
-// reporting "0 of 0"; a full paid plan reports its limit and the live
-// active-member count, which a downgrade can leave above the limit
-// (ADR-20261127200000). Lookups are best effort: the refusal stands either way.
-func (s *server) memberCapProblem(ctx context.Context, tokenHash []byte) *api.Problem {
-	inv, err := s.store.OrgInvitationByTokenHash(ctx, tokenHash)
-	if err != nil {
-		return api.ErrOrgMemberCapExceeded(0, 0)
-	}
-	org, err := s.store.OrgByID(ctx, inv.OrgID)
-	if err != nil {
-		return api.ErrOrgMemberCapExceeded(0, 0)
-	}
-	limit := org.Plan.OrgMembersMax()
-	if limit <= 0 {
-		return api.ErrOrgSeatsUnavailable()
-	}
-	active, err := s.store.CountActiveOrgMembers(ctx, org.ID)
-	if err != nil {
-		active = limit
-	}
-	return api.ErrOrgMemberCapExceeded(limit, active)
-}
-
 // enforcePendingInvitationCap applies the per-plan
 // OrgPendingInvitationsMax limit on POST /v1/orgs/{slug}/members.
 // Free + unknown plans have OrgPendingInvitationsMax == 0 by plan
@@ -185,11 +161,11 @@ func (s *server) memberCapProblem(ctx context.Context, tokenHash []byte) *api.Pr
 // returns false.
 func (s *server) enforcePendingInvitationCap(ctx context.Context, w http.ResponseWriter, org state.Org) bool {
 	limit := org.Plan.OrgPendingInvitationsMax()
-	if limit <= 0 || org.Plan.OrgMembersMax() <= 0 {
+	if !orgseats.HasSeats(org) {
 		// A plan with no seats (Free, or an unknown plan) can never seat an
 		// invitee: every accept would fail with org_member_cap_exceeded.
 		// Refuse here and name the upgrade (ADR-20261127200000).
-		api.WriteProblem(w, api.ErrOrgPlanHasNoSeats(org.Slug, org.Plan))
+		api.WriteProblem(w, orgseats.NoSeatsProblem(org))
 		return false
 	}
 	pending, err := s.store.CountPendingOrgInvitations(ctx, org.ID)
