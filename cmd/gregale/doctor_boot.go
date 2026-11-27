@@ -86,8 +86,8 @@ func (d doctorDocker) state(ctx context.Context, name string) (doctorBootState, 
 }
 
 // logTail returns the container's last output lines for a crash report.
-func (d doctorDocker) logTail(name string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (d doctorDocker) logTail(ctx context.Context, name string) string {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, d.bin, "logs", "--tail", "20", name) //nolint:gosec // argv only.
@@ -96,8 +96,8 @@ func (d doctorDocker) logTail(name string) string {
 	return truncateBootText(strings.TrimSpace(out.String()), 2000)
 }
 
-func (d doctorDocker) remove(name string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (d doctorDocker) remove(ctx context.Context, name string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	_, _ = d.run(ctx, "rm", "--force", "--volumes", name)
 }
@@ -122,7 +122,7 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 	_, err = docker.run(runCtx, args...)
 	cancel()
 	// A failed run can still leave a created container behind.
-	defer docker.remove(name)
+	defer docker.remove(ctx, name)
 	if err != nil {
 		return []doctorCheck{{Name: "boot-start", Status: "error", Code: "boot_run_failed", Hint: "Could not start the image: " + err.Error(), Fix: "Check that Docker is running and the image can be pulled (`docker pull --platform linux/amd64 " + opts.image + "`)."}}
 	}
@@ -144,7 +144,7 @@ func (b doctorBoot) check(ctx context.Context) []doctorCheck {
 		return []doctorCheck{{Name: "boot-start", Status: "error", Code: "boot_inspect_failed", Hint: err.Error()}}
 	}
 	if exited != nil {
-		return []doctorCheck{b.exitedCheck("boot-start", *exited)}
+		return []doctorCheck{b.exitedCheck(ctx, "boot-start", *exited)}
 	}
 	if status == 0 {
 		return []doctorCheck{
@@ -237,19 +237,19 @@ func (b doctorBoot) stayUp(ctx context.Context) doctorCheck {
 		return doctorCheck{Name: "boot-stay-up", Status: "error", Code: "boot_inspect_failed", Hint: err.Error()}
 	}
 	if !st.running {
-		return b.exitedCheck("boot-stay-up", st)
+		return b.exitedCheck(ctx, "boot-stay-up", st)
 	}
 	return doctorCheck{Name: "boot-stay-up", Status: "ok", Detail: fmt.Sprintf("stayed up %s", bootSeconds(doctorBootStayUp))}
 }
 
-func (b doctorBoot) exitedCheck(name string, st doctorBootState) doctorCheck {
+func (b doctorBoot) exitedCheck(ctx context.Context, name string, st doctorBootState) doctorCheck {
 	c := doctorCheck{Name: name, Status: "error", Code: "boot_exited",
 		Hint: fmt.Sprintf("The container exited with code %d after %s.", st.exitCode, bootSeconds(time.Since(b.started))),
 		Fix:  "Read the container output; an app that needs env vars to start can get them with --env-file. A request-serving app must keep running and serve HTTP on 0.0.0.0:$PORT; a one-off task belongs in `gregale run`."}
 	if st.oomKilled {
 		c.Code, c.Hint = "boot_oom_killed", fmt.Sprintf("The container was killed for running out of memory after %s.", bootSeconds(time.Since(b.started)))
 	}
-	if tail := b.docker.logTail(b.name); tail != "" {
+	if tail := b.docker.logTail(ctx, b.name); tail != "" {
 		c.Output = tail
 	}
 	return c
