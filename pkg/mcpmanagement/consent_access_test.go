@@ -20,13 +20,15 @@ func TestConsentOffersDeployAccessToAnInspectOnlyClient(t *testing.T) {
 		capabilities           []string
 		wantWrite              bool
 		wantPurpose            string
+		wantScopes             []string
 		wantDeployTools        bool
 	}{
-		{"deploy with default tools", accessDeploy, "", nil, true, api.CliAuthPurposeMCPWrite, true},
-		{"deploy with core tools kept", accessDeploy, "core", nil, true, api.CliAuthPurposeMCPWrite, false},
+		// Deploy access asks for the Connect grant (ADR-20261127160000).
+		{"deploy with default tools", accessDeploy, "", nil, true, api.CliAuthPurposeMCP, []string{api.ScopeDeployWrite, api.ScopeConnectApproval}, true},
+		{"deploy with core tools kept", accessDeploy, "core", nil, true, api.CliAuthPurposeMCP, []string{api.ScopeDeployWrite, api.ScopeConnectApproval}, false},
 		// A write-only extra ticked before choosing "Inspect only" is dropped,
 		// not a failed connection.
-		{"inspect", "inspect", "", []string{api.ScopeStorageManage}, false, api.CliAuthPurposeMCPRead, false},
+		{"inspect", "inspect", "", []string{api.ScopeStorageManage}, false, api.CliAuthPurposeMCPRead, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, _ := testStateStore(t)
@@ -60,8 +62,8 @@ func TestConsentOffersDeployAccessToAnInspectOnlyClient(t *testing.T) {
 			f.mu.Lock()
 			mints := slices.Clone(f.mints)
 			f.mu.Unlock()
-			if len(mints) != 1 || mints[0].Purpose != tc.wantPurpose {
-				t.Fatalf("sign-in code purposes = %+v, want %s", mints, tc.wantPurpose)
+			if len(mints) != 1 || mints[0].Purpose != tc.wantPurpose || !slices.Equal(mints[0].Scopes, tc.wantScopes) {
+				t.Fatalf("sign-in codes = %+v, want %s %v", mints, tc.wantPurpose, tc.wantScopes)
 			}
 			r := service.remote
 			g := onlyGrant(t, r)

@@ -91,6 +91,16 @@ func (m *Manager) WithAdoptAdmittedRuntimes(on bool) *Manager {
 	return m
 }
 
+// WithAdoptionDriveBase writes each guest's drive layer key into its
+// adoption block (vmmd.toml adoption_drive_base). Startup only. Every release
+// from this one reads the field; an older vmmd fails to open a journal that
+// holds it, so turn it on only once every compute node and rollback target
+// reads it.
+func (m *Manager) WithAdoptionDriveBase(on bool) *Manager {
+	m.adoptionDriveBase = on
+	return m
+}
+
 // AdmissionHeldFrom returns the incarnation that issued parent when this
 // process adopted instance carrying exactly that receipt, else "". A grant
 // naming parent is then this process's to serve although parent names its
@@ -558,6 +568,9 @@ func (m *Manager) restoreAdoptedPolicy(instance, appID string, a *resourceAdopti
 		}
 		m.instanceBacking[instance] = *a.Backing
 		m.backingMu.Unlock()
+	}
+	if k, ok := m.vmm.(driveBaseKeeper); ok && a.DriveBase != "" {
+		k.setDriveBaseKey(instance, a.DriveBase)
 	}
 }
 
