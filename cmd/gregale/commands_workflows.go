@@ -133,6 +133,12 @@ func cmdWorkflowsList(args []string) int {
 		return jsonOut(writeNDJSON(items))
 	}
 
+	if len(items) == 0 && *offset == 0 && *status == "" && *workflowName == "" && *createdAfter == "" && *createdBefore == "" {
+		// Unfiltered, the "next step" repeated the command just run
+		// (prod hunt r65); point at starting a run instead.
+		printEmptyResult("workflow runs in app "+*appSlug, "", recoveryCLI()+" workflow run --app "+recoveryArgument(*appSlug)+" WORKFLOW_NAME")
+		return 0
+	}
 	if len(items) == 0 {
 		detail := fmt.Sprintf("offset=%d; status=%q; workflow=%q; created-after=%q; created-before=%q (blank filters are unrestricted)", *offset, *status, *workflowName, *createdAfter, *createdBefore)
 		printEmptyResult("workflow runs in app "+*appSlug, detail, recoveryCLI()+" workflow list --app "+recoveryArgument(*appSlug))
