@@ -1088,10 +1088,10 @@ func TestHostPolicyPublicEntryAddrsTakeOnly443(t *testing.T) {
 	input := out[start:end]
 	at := 0
 	for _, rule := range []string{
-		`ip daddr 203.0.113.10 tcp dport 443 accept comment "public entry"`,
-		`ip6 daddr 2001:db8::10 tcp dport 443 accept comment "public entry"`,
-		`ip daddr 203.0.113.10 drop comment "public entry carries 443 only"`,
-		`ip6 daddr 2001:db8::10 drop comment "public entry carries 443 only"`,
+		`ip daddr 203.0.113.10 tcp dport { 80, 443 } accept comment "public entry"`,
+		`ip6 daddr 2001:db8::10 tcp dport { 80, 443 } accept comment "public entry"`,
+		`ip daddr 203.0.113.10 drop comment "public entry carries 80 and 443 only"`,
+		`ip6 daddr 2001:db8::10 drop comment "public entry carries 80 and 443 only"`,
 		"tcp dport 22 accept",
 	} {
 		i := strings.Index(input[at:], rule)
@@ -1131,11 +1131,11 @@ func TestHostPolicyPublicEntryAddrsLimitEachSource(t *testing.T) {
 		}
 		at := 0
 		for _, rule := range []string{
-			fmt.Sprintf("%s daddr %s tcp dport 443 ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop",
+			fmt.Sprintf("%s daddr %s tcp dport { 80, 443 } ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop",
 				family.nft, family.addr, family.suffix, family.key, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource),
-			fmt.Sprintf("%s daddr %s tcp dport 443 ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop",
+			fmt.Sprintf("%s daddr %s tcp dport { 80, 443 } ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop",
 				family.nft, family.addr, family.suffix, family.key, api.PublicEntryConnsPerSourceMax),
-			fmt.Sprintf(`%s daddr %s tcp dport 443 accept comment "public entry"`, family.nft, family.addr),
+			fmt.Sprintf(`%s daddr %s tcp dport { 80, 443 } accept comment "public entry"`, family.nft, family.addr),
 		} {
 			i := strings.Index(out[at:], rule)
 			if i < 0 {
@@ -1199,12 +1199,12 @@ func TestHostPolicyPublicEntryBackstopExemptsCloudflare(t *testing.T) {
 	if !strings.Contains(out, "elements = { 173.245.48.0/20, 103.21.244.0/22 }") {
 		t.Fatalf("v4 exemption set lacks Cloudflare's ranges:\n%s", out)
 	}
-	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport 443 ip saddr != @public_entry_proxy_v4 ct state new add"); got != 2 {
+	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport { 80, 443 } ip saddr != @public_entry_proxy_v4 ct state new add"); got != 2 {
 		t.Fatalf("v4 backstop rules exempting Cloudflare = %d, want 2:\n%s", got, out)
 	}
 	// ADR-20261104221012: Cloudflare's ranges carry every Cloudflare
 	// customer's traffic, so they get a higher backstop, not none.
-	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport 443 ip saddr @public_entry_proxy_v4 ct state new add"); got != 2 {
+	if got := strings.Count(out, "ip daddr 203.0.113.10 tcp dport { 80, 443 } ip saddr @public_entry_proxy_v4 ct state new add"); got != 2 {
 		t.Fatalf("v4 proxy backstop rules = %d, want 2:\n%s", got, out)
 	}
 	if !strings.Contains(out, fmt.Sprintf("ct count over %d", api.PublicEntryProxyConnsPerSourceMax)) ||
@@ -1214,7 +1214,7 @@ func TestHostPolicyPublicEntryBackstopExemptsCloudflare(t *testing.T) {
 	if strings.Contains(out, "public_entry_proxy_v6") {
 		t.Fatalf("v6 entry exempts a Cloudflare set with no v6 ranges:\n%s", out)
 	}
-	if got := strings.Count(out, "ip6 daddr 2001:db8::10 tcp dport 443 ct state new add"); got != 2 {
+	if got := strings.Count(out, "ip6 daddr 2001:db8::10 tcp dport { 80, 443 } ct state new add"); got != 2 {
 		t.Fatalf("v6 backstop rules = %d, want 2 without an exemption:\n%s", got, out)
 	}
 }

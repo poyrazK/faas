@@ -776,12 +776,12 @@ func (h HostPolicy) Render() string {
 	switch {
 	case len(h.PublicEntryAddrs) > 0:
 		// The drops come before sshd's accept, so the entry addresses carry
-		// 443 and nothing else.
+		// 443, and 80 for the redirect to HTTPS, and nothing else.
 		for _, a := range h.PublicEntryAddrs {
 			writePublicEntryAccept(&b, a, len(publicEntryProxies(h.PublicInputSourceCIDRs, addrFamily(a))) > 0)
 		}
 		for _, a := range h.PublicEntryAddrs {
-			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 443 only")
+			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 80 and 443 only")
 		}
 		b.WriteString("    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary\n")
 	case len(h.PublicInputSourceCIDRs) > 0:
@@ -1098,7 +1098,8 @@ func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Pre
 		suffix, keyType, strings.Join(elements, ", "))
 }
 
-// writePublicEntryAccept admits 443 on a public entry address, after dropping
+// writePublicEntryAccept admits 443, and 80 for gatewayd-public's redirect to
+// HTTPS (ADR-20261127170000), on a public entry address, after dropping
 // a source's new connections past the kernel backstop: the edge's own
 // per-address limits act only on connections the kernel already accepted.
 // With exempt, Cloudflare's ranges get a higher backstop rather than none:
@@ -1108,7 +1109,7 @@ func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
 	family := addrFamily(a)
 	suffix := publicEntrySetSuffix(family)
 	source := publicEntrySourceKey(family)
-	match := fmt.Sprintf("%s daddr %s tcp dport 443", family, a)
+	match := fmt.Sprintf("%s daddr %s tcp dport { 80, 443 }", family, a)
 	if exempt {
 		proxy := match + fmt.Sprintf(" %s saddr @public_entry_proxy_%s", family, suffix)
 		fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop comment %q\n",
@@ -1121,7 +1122,7 @@ func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
 		match, suffix, source, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
 	fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop comment %q\n",
 		match, suffix, source, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
-	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 accept comment %q\n", family, a, "public entry")
+	fmt.Fprintf(b, "    %s daddr %s tcp dport { 80, 443 } accept comment %q\n", family, a, "public entry")
 }
 
 // publicEntrySourceKey is what the entry sets count a source by: an IPv4
