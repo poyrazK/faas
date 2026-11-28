@@ -150,7 +150,9 @@ func (h *Handler) LoadCacheSnapshot(dir string, now time.Time) (int, error) {
 		return 0, nil
 	}
 	path := filepath.Join(dir, cacheSnapshotFile)
-	file, err := os.Open(path)
+	// The unit's own 0700 runtime directory and a fixed file name, never a
+	// customer path.
+	file, err := os.Open(path) //nolint:forbidigo // daemon-owned runtime dir, fixed name
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}

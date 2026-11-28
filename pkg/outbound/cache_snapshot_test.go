@@ -63,6 +63,7 @@ func TestCacheSnapshotCarriesEntriesToTheNextGeneration(t *testing.T) {
 	if !ok {
 		t.Fatal("cached response lost across the hand-over")
 	}
+	defer func() { _ = resp.Body.Close() }()
 	if body, _ := io.ReadAll(resp.Body); string(body) != `{"a":1}` || resp.Header.Get("Content-Type") != "application/json" {
 		t.Fatalf("response = %q %v", body, resp.Header)
 	}
