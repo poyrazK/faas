@@ -42,7 +42,7 @@ func TestInboundWebhookDeliveryPathIsClean(t *testing.T) {
 	t.Parallel()
 	for p, ok := range map[string]bool{
 		"": true, "/": true, "/hooks/stripe": true, "/hooks/stripe/": true,
-		"//evil.example/x": false, "/a/../b": false, "/a/./b": false, "/a//b": false, "/a b": false, `/a\b`: false, "hooks": false,
+		"//": false, "//evil.example/x": false, "/a/../b": false, "/a/./b": false, "/a//b": false, "/a b": false, `/a\b`: false, "hooks": false,
 	} {
 		if got := apidserver.ValidateInboundWebhookDeliveryPath(p) == nil; got != ok {
 			t.Errorf("ValidateInboundWebhookDeliveryPath(%q) ok = %v, want %v", p, got, ok)

@@ -117,7 +117,7 @@ func (s *server) createPlatformTenantWebhook(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	if prob := resolveAndCheckEgress(r.Context(), req.TargetURL); prob != nil {
+	if prob := webhookTargetProblem(resolveAndCheckEgress(r.Context(), req.TargetURL)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -201,7 +201,7 @@ func (s *server) updatePlatformTenantWebhook(w http.ResponseWriter, r *http.Requ
 			api.WriteProblem(w, prob)
 			return
 		}
-		if prob := resolveAndCheckEgress(r.Context(), *req.TargetURL); prob != nil {
+		if prob := webhookTargetProblem(resolveAndCheckEgress(r.Context(), *req.TargetURL)); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}

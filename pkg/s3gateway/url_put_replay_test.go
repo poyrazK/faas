@@ -18,8 +18,13 @@ func TestCompletedURLPutMatches(t *testing.T) {
 		name, body, etag string
 		bytes            int64
 		header           map[string]string
+		unknownLength    bool
 		want             bool
 	}{
+		{name: "chunked same body", body: "abc", etag: md5abc, bytes: 3, unknownLength: true, want: true},
+		{name: "chunked other body", body: "xyz", etag: md5abc, bytes: 3, unknownLength: true},
+		{name: "chunked longer body opaque etag", body: "abcd", etag: `"opaque-etag"`, bytes: 3, unknownLength: true},
+		{name: "chunked same size opaque etag", body: "xyz", etag: `"opaque-etag"`, bytes: 3, unknownLength: true, want: true},
 		{name: "same body", body: "abc", etag: md5abc, bytes: 3, want: true},
 		{name: "other body same size", body: "xyz", etag: md5abc, bytes: 3},
 		{name: "other size", body: "abcd", etag: md5abc, bytes: 3},
@@ -32,6 +37,9 @@ func TestCompletedURLPutMatches(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPut, "/b/k", strings.NewReader(tc.body))
 			for k, v := range tc.header {
 				r.Header.Set(k, v)
+			}
+			if tc.unknownLength {
+				r.ContentLength = -1
 			}
 			got := completedURLPutMatches(r, state.ObjectUploadCompletion{Bytes: tc.bytes, ETag: tc.etag})
 			if got != tc.want {

@@ -81,7 +81,7 @@ func validateInboundWebhookDeliveryPath(deliveryPath string) *api.Problem {
 	// `//host/x` reads as a host-relative URL and `/../` as a traversal; cron
 	// paths refuse both, so delivery paths do too (prod hunt r78).
 	clean := path.Clean(deliveryPath)
-	if clean != deliveryPath && clean+"/" != deliveryPath || strings.ContainsAny(deliveryPath, " \t\r\n\\") {
+	if clean != deliveryPath && (clean == "/" || clean+"/" != deliveryPath) || strings.ContainsAny(deliveryPath, " \t\r\n\\") {
 		return inboundWebhookProblem(http.StatusBadRequest, "delivery_path must be a clean path on the app: no //, . or .. segments, spaces or backslashes")
 	}
 	return nil

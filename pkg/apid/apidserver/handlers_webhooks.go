@@ -455,11 +455,23 @@ func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	var destination *state.AppWebhook
+	var redacted []*state.AppWebhook
 	for i := range hooks {
-		if hooks[i].AccountID == acct.ID && (hooks[i].ID == req.Destination || hooks[i].TargetURL == req.Destination) {
+		if hooks[i].AccountID != acct.ID {
+			continue
+		}
+		if hooks[i].ID == req.Destination || hooks[i].TargetURL == req.Destination {
 			destination = &hooks[i]
 			break
 		}
+		// Lists show legacy credentialed targets as redacted@; accept that
+		// spelling when it names exactly one webhook.
+		if api.RedactURLUserinfo(hooks[i].TargetURL) == req.Destination {
+			redacted = append(redacted, &hooks[i])
+		}
+	}
+	if destination == nil && len(redacted) == 1 {
+		destination = redacted[0]
 	}
 	if destination == nil {
 		// production-us hunt #4: a URL that was never registered answered

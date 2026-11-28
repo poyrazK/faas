@@ -5054,6 +5054,7 @@ func ErrJobQuota(plan Plan, quotaName string, limit, observed int) *Problem {
 var jobQuotaSettings = map[string]string{
 	"ram_mb":          "memory in MB (--ram)",
 	"task_timeout_s":  "task timeout in seconds (--timeout)",
+	"timeout_sec":     "timeout in seconds (--timeout)",
 	"max_parallelism": "parallelism (--parallelism)",
 	"tasks_per_run":   "task count",
 	"retry_max":       "retries (--retries)",

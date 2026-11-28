@@ -130,16 +130,26 @@ func completedURLPutMatches(r *http.Request, c state.ObjectUploadCompletion) boo
 		}
 		size = decoded
 	}
-	if size != c.Bytes {
+	// A body sent with HTTP chunked transfer-encoding has no length up
+	// front; it is measured (and hashed) below instead of refused.
+	unknownLength := size < 0 && !chunked
+	if !unknownLength && size != c.Bytes {
 		return false
 	}
 	want, ok := plainMD5ETag(c.ETag)
-	if !ok || chunked || !c.Encryption.Empty() || r.Body == nil {
+	verifiable := ok && !chunked && c.Encryption.Empty() && r.Body != nil
+	if !verifiable && !unknownLength {
 		return true
+	}
+	if r.Body == nil {
+		return c.Bytes == 0
 	}
 	sum := md5.New() // #nosec G401 -- S3 ETag comparison, not a security hash.
 	n, err := io.Copy(sum, io.LimitReader(r.Body, c.Bytes+1))
-	return err == nil && n == c.Bytes && hex.EncodeToString(sum.Sum(nil)) == want
+	if err != nil || n != c.Bytes {
+		return false
+	}
+	return !verifiable || hex.EncodeToString(sum.Sum(nil)) == want
 }
 
 func plainMD5ETag(etag string) (string, bool) {

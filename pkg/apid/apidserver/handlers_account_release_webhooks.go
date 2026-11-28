@@ -143,7 +143,7 @@ func accountReleaseWebhookInput(ctx context.Context, accountID string, req api.C
 			return state.AppWebhook{}, prob
 		}
 	}
-	if prob := resolveAndCheckEgress(ctx, req.TargetURL); prob != nil {
+	if prob := webhookTargetProblem(resolveAndCheckEgress(ctx, req.TargetURL)); prob != nil {
 		return state.AppWebhook{}, prob
 	}
 	sealed, prob := sealAccountReleaseWebhookSecret(req.WebhookSecret)
@@ -231,7 +231,7 @@ func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccoun
 		if prob := validateWebhookURL(*req.TargetURL); prob != nil {
 			return p, prob
 		}
-		if prob := resolveAndCheckEgress(ctx, *req.TargetURL); prob != nil {
+		if prob := webhookTargetProblem(resolveAndCheckEgress(ctx, *req.TargetURL)); prob != nil {
 			return p, prob
 		}
 		p.TargetURL = req.TargetURL

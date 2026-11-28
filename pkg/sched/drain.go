@@ -897,7 +897,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// them, without spending an attempt, until maintenance is turned off.
 	if app.MaintenanceMode {
 		_ = d.store.FailInvocation(ctx, inv.ID, "app in maintenance mode; delivery held", time.Duration(api.EdgeRuleMaintenanceRetryAfterSeconds)*time.Second, 0)
-		d.log.Info("drain: app in maintenance; deferred", "inv", inv.ID, "app_id", inv.AppID)
+		d.log.Debug("drain: app in maintenance; deferred", "inv", inv.ID, "app_id", inv.AppID)
 		return
 	}
 	// 3. Claim. An app whose invocations may run past 30 s holds a lease
