@@ -56,7 +56,7 @@ func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug s
 		algorithms = audit.Algorithms
 	}
 	warn := func(err error) *mcpGatewayTokenChecks {
-		fix := "gregale mcp policy --path " + quoteCLIArg(path) + " --name " + quoteCLIArg(slug)
+		fix := "gregale mcp server policy --path " + quoteCLIArg(path) + " --name " + quoteCLIArg(slug)
 		fmt.Fprintf(os.Stderr, "warning: Gregale does not check this server's tokens (%v); callers are served but cannot become customers. "+
 			"Fix it, then run `%s`\n", err, fix)
 		return &mcpGatewayTokenChecks{Status: "failed", Reason: err.Error(), FixCommands: []string{fix}}

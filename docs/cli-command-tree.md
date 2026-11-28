@@ -177,6 +177,8 @@ touch them. The tables below map each earlier name.
 | `gregale ai app-limit` | `gregale ai app-limit set` |
 | `gregale ai content-policy` | `gregale ai content-policy get` |
 | `gregale ai content-policy` | `gregale ai content-policy set` |
+| `gregale ai integrations` | `gregale ai integration delete` |
+| `gregale ai integrations` | `gregale ai integration list` |
 | `gregale ai quality-alerts` | `gregale ai quality-alert list` |
 | `gregale ai request-policy` | `gregale ai request-policy get` |
 | `gregale ai request-policy` | `gregale ai request-policy set` |
