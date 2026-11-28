@@ -16,7 +16,8 @@ UPDATE mcp_contract_overrides SET used_by_deployment = $1, used_at = now()
  WHERE id = (SELECT o.id FROM mcp_contract_overrides o
               WHERE o.app_id = $2 AND o.account_id = $3
                 AND o.used_at IS NULL AND o.expires_at > now()
-                AND (o.deployment_id IS NULL OR o.deployment_id = $1)
+                AND (o.deployment_id = $1
+                     OR o.deployment_id IS NULL AND $4::boolean)
               ORDER BY (o.deployment_id IS NULL), o.created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at
 `
@@ -25,12 +26,18 @@ type ClaimMCPContractOverrideParams struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	AccountID    pgtype.UUID
+	AllowUnbound bool
 }
 
 // Consumes an open override of the app for one candidate: one bound to this
 // deployment first, else the oldest unbound one.
 func (q *Queries) ClaimMCPContractOverride(ctx context.Context, db DBTX, arg ClaimMCPContractOverrideParams) (McpContractOverride, error) {
-	row := db.QueryRow(ctx, claimMCPContractOverride, arg.DeploymentID, arg.AppID, arg.AccountID)
+	row := db.QueryRow(ctx, claimMCPContractOverride,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.AllowUnbound,
+	)
 	var i McpContractOverride
 	err := row.Scan(
 		&i.ID,
@@ -51,7 +58,9 @@ const createMCPContractOverride = `-- name: CreateMCPContractOverride :one
 INSERT INTO mcp_contract_overrides (app_id, account_id, reason, created_by, expires_at, deployment_id)
 SELECT $1, $2, $3, $4, $5, $6
  WHERE (SELECT count(*) FROM mcp_contract_overrides o
-         WHERE o.app_id = $1 AND o.used_at IS NULL AND o.expires_at > now()) < $7::bigint
+           LEFT JOIN deployments d ON d.id = o.deployment_id
+         WHERE o.app_id = $1 AND o.used_at IS NULL AND o.expires_at > now()
+           AND (o.deployment_id IS NULL OR d.status IN ('pending', 'building', 'imaging', 'snapshotting'))) < $7::bigint
 RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at
 `
 
@@ -98,12 +107,12 @@ const getMCPContractBaseline = `-- name: GetMCPContractBaseline :one
 SELECT l.account_id, l.version AS listing_version, l.endpoint, l.probe_secret, l.published_at,
        COALESCE(c.candidate, l.contract)::jsonb AS contract,
        COALESCE(c.candidate_sha256, l.contract_sha256)::text AS contract_sha256,
-       COALESCE(c.deployment_id::text, '')::text AS from_deployment
+       (CASE WHEN c.candidate IS NULL THEN '' ELSE c.deployment_id::text END)::text AS from_deployment
   FROM mcp_listings l
   LEFT JOIN LATERAL (
        SELECT k.candidate, k.candidate_sha256, k.deployment_id FROM mcp_contract_checks k
         WHERE k.app_id = l.app_id AND k.account_id = l.account_id AND k.live_at IS NOT NULL
-          AND k.live_at >= l.published_at AND k.candidate IS NOT NULL
+          AND k.live_at >= l.published_at
         ORDER BY k.live_at DESC LIMIT 1) c ON true
  WHERE l.app_id = $1 AND l.contract IS NOT NULL
 `
@@ -120,8 +129,9 @@ type GetMCPContractBaselineRow struct {
 }
 
 // ADR-20261127191645: the tool contract gate for sold MCP servers.
-// The effective baseline: the contract of the candidate that most recently
-// went live (rollbacks included) since the listing was (re)published, else
+// The effective baseline: the contract of the deployment that most recently
+// went live (rollbacks included) since the listing was (re)published. When
+// there is none, or its tools are not known (unverified or unknown), it is
 // the contract the listing was published with.
 func (q *Queries) GetMCPContractBaseline(ctx context.Context, db DBTX, appID pgtype.UUID) (GetMCPContractBaselineRow, error) {
 	row := db.QueryRow(ctx, getMCPContractBaseline, appID)
@@ -167,7 +177,7 @@ const listMCPContractChangelog = `-- name: ListMCPContractChangelog :many
 SELECT k.deployment_id, k.app_id, k.account_id, k.baseline_sha256, k.candidate_sha256, k.candidate, k.verdict, k.changes, k.override_id, k.checked_at, k.accepted_at, k.live_at FROM mcp_contract_checks k
   JOIN mcp_listings l ON l.app_id = k.app_id AND l.account_id = k.account_id
  WHERE k.account_id = $1 AND k.app_id = $2 AND k.accepted_at IS NOT NULL
-   AND k.accepted_at >= l.published_at AND k.verdict <> 'unchanged'
+   AND k.accepted_at >= l.published_at AND k.verdict NOT IN ('unchanged', 'unknown')
  ORDER BY k.accepted_at DESC LIMIT $3
 `
 
@@ -256,9 +266,11 @@ func (q *Queries) ListMCPContractChecks(ctx context.Context, db DBTX, arg ListMC
 }
 
 const listOpenMCPContractOverrides = `-- name: ListOpenMCPContractOverrides :many
-SELECT id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at FROM mcp_contract_overrides
- WHERE account_id = $1 AND app_id = $2 AND used_at IS NULL AND expires_at > now()
- ORDER BY created_at
+SELECT o.id, o.app_id, o.account_id, o.reason, o.created_by, o.created_at, o.expires_at, o.deployment_id, o.used_by_deployment, o.used_at FROM mcp_contract_overrides o
+  LEFT JOIN deployments d ON d.id = o.deployment_id
+ WHERE o.account_id = $1 AND o.app_id = $2 AND o.used_at IS NULL AND o.expires_at > now()
+   AND (o.deployment_id IS NULL OR d.status IN ('pending', 'building', 'imaging', 'snapshotting'))
+ ORDER BY o.created_at
 `
 
 type ListOpenMCPContractOverridesParams struct {
@@ -266,6 +278,8 @@ type ListOpenMCPContractOverridesParams struct {
 	AppID     pgtype.UUID
 }
 
+// Usable overrides: unused, unexpired, and unbound or bound to a deployment
+// that is still a candidate.
 func (q *Queries) ListOpenMCPContractOverrides(ctx context.Context, db DBTX, arg ListOpenMCPContractOverridesParams) ([]McpContractOverride, error) {
 	rows, err := db.Query(ctx, listOpenMCPContractOverrides, arg.AccountID, arg.AppID)
 	if err != nil {

@@ -29,7 +29,6 @@ const RegistrySchema = "https://static.modelcontextprotocol.io/schemas/2025-12-1
 var (
 	registryName = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
 	toolName     = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-	probeSecret  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 )
 
 // Validate checks a publish request and returns the listing to store. hosts
@@ -86,11 +85,14 @@ func Validate(req api.PutMCPListingRequest, accountID, appID string, hosts []str
 	}
 	listing := state.MCPListing{AccountID: accountID, AppID: appID, Title: req.Title, Summary: req.Summary, Endpoint: req.Endpoint,
 		Tools: tools, RegistryName: req.RegistryName, ShowUsage: req.ShowUsage, ProbeSecret: req.ProbeSecret}
-	if req.ProbeSecret != "" && !probeSecret.MatchString(req.ProbeSecret) {
-		return state.MCPListing{}, invalid("probe_secret must name an app secret: letters, digits and _, not starting with a digit")
+	if req.ProbeSecret != "" && api.ValidateEnvKey(req.ProbeSecret) != nil {
+		return state.MCPListing{}, invalid("probe_secret must name an app secret: a letter, then letters, digits and _, at most 128")
+	}
+	if len(req.Contract) > 0 && req.DropContract {
+		return state.MCPListing{}, invalid("contract and drop_contract are exclusive")
 	}
 	if len(req.Contract) == 0 {
-		if req.ProbeSecret != "" {
+		if req.ProbeSecret != "" && req.DropContract {
 			return state.MCPListing{}, invalid("probe_secret is used only with a contract")
 		}
 		return listing, nil
@@ -99,6 +101,35 @@ func Validate(req api.PutMCPListingRequest, accountID, appID string, hosts []str
 	listing.Contract, listing.ContractSHA256, p = canonicalContract(req.Contract, seen)
 	if p != nil {
 		return state.MCPListing{}, p
+	}
+	return listing, nil
+}
+
+// KeepContract completes a republish that sent no contract: unless the
+// request drops it, the listing keeps the contract production deploys are
+// checked against now (current, from MCPContractBaseline; nil when there is
+// none) and its probe secret, so leaving the contract out of a republish
+// cannot end the gate (ADR-20261127191645).
+func KeepContract(req api.PutMCPListingRequest, listing state.MCPListing, current *state.MCPContractBaseline) (state.MCPListing, *api.Problem) {
+	if len(req.Contract) > 0 || req.DropContract {
+		return listing, nil
+	}
+	if current == nil || len(current.Contract) == 0 {
+		if listing.ProbeSecret != "" {
+			return state.MCPListing{}, invalid("probe_secret is used only with a contract")
+		}
+		return listing, nil
+	}
+	listed := map[string]bool{}
+	for _, t := range listing.Tools {
+		listed[t.Name] = true
+	}
+	var p *api.Problem
+	if listing.Contract, listing.ContractSHA256, p = canonicalContract(current.Contract, listed); p != nil {
+		return state.MCPListing{}, p
+	}
+	if listing.ProbeSecret == "" {
+		listing.ProbeSecret = current.ProbeSecret
 	}
 	return listing, nil
 }

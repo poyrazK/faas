@@ -30,12 +30,16 @@ type PutMCPListingRequest struct {
 	ShowUsage bool `json:"show_usage,omitempty"`
 	// Contract is the live server's format-2 catalog contract
 	// (mcphosting.MarshalContract) the CLI took with the tools. Production
-	// deploys are then checked against it (ADR-20261127191645); without it
-	// the listing is not gated.
+	// deploys are then checked against it (ADR-20261127191645). Without
+	// it a republish keeps the contract production deploys are checked
+	// against now, and its probe secret, unless DropContract is set.
 	Contract json.RawMessage `json:"contract,omitempty"`
+	// DropContract republishes without a contract, which ends the gate.
+	DropContract bool `json:"drop_contract,omitempty"`
 	// ProbeSecret names an app secret holding a bearer token for a server
 	// that checks credentials itself; the gate sends it when listing a
-	// candidate's tools.
+	// candidate's tools. Empty on a republish that keeps the contract keeps
+	// the current one.
 	ProbeSecret string `json:"probe_secret,omitempty"`
 }
 

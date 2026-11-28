@@ -2767,8 +2767,9 @@ type Querier interface {
 	GetMCPAdmissionReceipt(ctx context.Context, db DBTX, arg GetMCPAdmissionReceiptParams) ([]byte, error)
 	GetMCPCatalogMonitor(ctx context.Context, db DBTX, arg GetMCPCatalogMonitorParams) ([]byte, error)
 	// ADR-20261127191645: the tool contract gate for sold MCP servers.
-	// The effective baseline: the contract of the candidate that most recently
-	// went live (rollbacks included) since the listing was (re)published, else
+	// The effective baseline: the contract of the deployment that most recently
+	// went live (rollbacks included) since the listing was (re)published. When
+	// there is none, or its tools are not known (unverified or unknown), it is
 	// the contract the listing was published with.
 	GetMCPContractBaseline(ctx context.Context, db DBTX, appID pgtype.UUID) (GetMCPContractBaselineRow, error)
 	GetMCPContractCheck(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (McpContractCheck, error)
@@ -4567,6 +4568,8 @@ type Querier interface {
 	ListNotificationChannels(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]NotificationChannel, error)
 	// Per-account dashboard list (PR-C). Empty slice on miss.
 	ListOIDCTrustPoliciesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOIDCTrustPoliciesForAccountRow, error)
+	// Usable overrides: unused, unexpired, and unbound or bound to a deployment
+	// that is still a candidate.
 	ListOpenMCPContractOverrides(ctx context.Context, db DBTX, arg ListOpenMCPContractOverridesParams) ([]McpContractOverride, error)
 	ListOperationApprovalForms(ctx context.Context, db DBTX, arg ListOperationApprovalFormsParams) ([]CustomerOperationApprovalForm, error)
 	ListOperationChildren(ctx context.Context, db DBTX, arg ListOperationChildrenParams) ([]ListOperationChildrenRow, error)

@@ -69,8 +69,8 @@ func mcpContractAllowBreaking(ctx context.Context, c *Client, slug, reason strin
 	if strings.TrimSpace(reason) == "" {
 		return api.MCPContractOverride{}, errors.New("--reason is required: say why paying customers' tools may break")
 	}
-	if expires < 0 || expires > api.MCPContractOverrideMaxTTL || expires != 0 && expires < time.Minute {
-		return api.MCPContractOverride{}, fmt.Errorf("--expires must be between 1m and %s", api.MCPContractOverrideMaxTTL)
+	if expires < 0 || expires > api.MCPContractOverrideMaxTTL || expires != 0 && expires < api.MCPContractOverrideMinTTL {
+		return api.MCPContractOverride{}, fmt.Errorf("--expires must be between %s and %s", api.MCPContractOverrideMinTTL, api.MCPContractOverrideMaxTTL)
 	}
 	return c.CreateMCPContractOverride(ctx, slug, api.CreateMCPContractOverrideRequest{Reason: reason, ExpiresInSeconds: int(expires / time.Second)})
 }
@@ -79,7 +79,8 @@ func mcpContractAllowBreaking(ctx context.Context, c *Client, slug, reason strin
 // the hook that binds an override to each candidate deployment the deploy
 // queues (ADR-20261127191645), so it cannot admit another deploy. The
 // candidate's build outlasts the request, so the override is in place before
-// the gate runs.
+// the gate runs. When the override cannot be recorded, the hook cancels that
+// deployment rather than let it reach the gate without one.
 func mcpDeployAllowBreaking(ctx context.Context, c *Client, slug, reason string) (func(api.DeploymentResponse), error) {
 	if _, err := c.GetMCPContract(ctx, slug); err != nil {
 		return nil, err
@@ -87,7 +88,12 @@ func mcpDeployAllowBreaking(ctx context.Context, c *Client, slug, reason string)
 	return func(dep api.DeploymentResponse) {
 		override, err := c.CreateMCPContractOverride(ctx, slug, api.CreateMCPContractOverrideRequest{Reason: reason, DeploymentID: dep.ID})
 		if err != nil {
-			_, _ = fmt.Fprintf(osStderr, "warning: could not record the tool contract override for deployment %s: %v; a breaking change will be refused\n", dep.ID, err)
+			_, cancelErr := c.CancelDeployment(ctx, slug, dep.ID, "tool contract override not recorded")
+			if cancelErr != nil {
+				_, _ = fmt.Fprintf(osStderr, "error: could not record the tool contract override for deployment %s (%v) nor cancel it (%v); a breaking change will be refused\n", dep.ID, err, cancelErr)
+				return
+			}
+			_, _ = fmt.Fprintf(osStderr, "error: could not record the tool contract override for deployment %s, so it was cancelled: %v\n", dep.ID, err)
 			return
 		}
 		if !jsonOutput {

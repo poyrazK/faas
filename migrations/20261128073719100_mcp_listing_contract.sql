@@ -19,7 +19,7 @@ ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_contract_chk CHECK (
     OR (jsonb_typeof(contract) = 'object' AND octet_length(contract::text) <= 2097152
         AND contract_sha256 ~ '^[0-9a-f]{64}$')) NOT VALID;
 ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (
-    probe_secret = '' OR probe_secret ~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$') NOT VALID;
+    probe_secret = '' OR probe_secret ~ '^[A-Za-z][A-Za-z0-9_]{0,127}$') NOT VALID;
 -- +goose StatementEnd
 
 -- +goose Down

@@ -114,7 +114,7 @@ func TestMCPContract(t *testing.T) {
 	}
 	if _, err := store.RecordMCPContractCheck(ctx, state.MCPContractCheck{DeploymentID: dep.ID, AppID: appID, AccountID: e.Acct().ID,
 		BaselineSHA256: listing.ContractSHA256, CandidateSHA256: listing.ContractSHA256, Candidate: raw, Verdict: state.MCPContractBreaking,
-		Changes: json.RawMessage(`[{"tool":"search","path":"/tools/search","kind":"removed","severity":"breaking"}]`)}, true); err != nil {
+		Changes: json.RawMessage(`[{"tool":"search","path":"/tools/search","kind":"removed","severity":"breaking"}]`)}, state.MCPContractClaimAny); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {

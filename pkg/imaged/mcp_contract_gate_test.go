@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -107,6 +108,9 @@ func TestApplyMCPToolContract(t *testing.T) {
 		scope         string
 		served        string
 		override      bool
+		bound         bool   // the override is bound to the candidate
+		earlyAttempt  bool   // the recovery window has just opened
+		unclaimed     bool   // the override stays open
 		probe         string // listing probe secret value; the server then requires it
 		secretMissing bool
 		wantStatus    string
@@ -132,6 +136,12 @@ func TestApplyMCPToolContract(t *testing.T) {
 			wantStatus: apihostingreceipt.SmokeSkipped, wantCode: apihostingreceipt.SmokeErrorContractUnavailable, wantVerdict: state.MCPContractUnverified, wantErr: true, wantRequests: true},
 		{name: "override admits an unlistable catalog", served: `not json`, override: true,
 			wantStatus: apihostingreceipt.SmokeVerified, wantVerdict: state.MCPContractUnverified, wantRequests: true},
+		{name: "early unverified attempt keeps an unbound override", served: `not json`, override: true, earlyAttempt: true, unclaimed: true,
+			wantStatus: apihostingreceipt.SmokeSkipped, wantCode: apihostingreceipt.SmokeErrorContractUnavailable, wantVerdict: state.MCPContractUnverified, wantErr: true, wantRequests: true},
+		{name: "early unverified attempt takes a bound override", served: `not json`, override: true, bound: true, earlyAttempt: true,
+			wantStatus: apihostingreceipt.SmokeVerified, wantVerdict: state.MCPContractUnverified, wantRequests: true},
+		{name: "early breaking attempt takes an unbound override", served: `[]`, override: true, earlyAttempt: true,
+			wantStatus: apihostingreceipt.SmokeVerified, wantVerdict: state.MCPContractBreaking, wantRequests: true},
 		{name: "environment branch is not gated", scope: "feature-x", served: `[]`, wantStatus: apihostingreceipt.SmokeVerified},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -168,10 +178,17 @@ func TestApplyMCPToolContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.override {
-				if _, err := store.CreateMCPContractOverride(ctx, state.MCPContractOverride{AppID: app.ID, AccountID: account.ID,
-					Reason: "planned", CreatedBy: "user:" + account.ID, ExpiresAt: time.Now().Add(time.Hour)}, 5); err != nil {
+				o := state.MCPContractOverride{AppID: app.ID, AccountID: account.ID, Reason: "planned", CreatedBy: "user:" + account.ID,
+					ExpiresAt: time.Now().Add(time.Hour)}
+				if tc.bound {
+					o.DeploymentID = candidate.ID
+				}
+				if _, err := store.CreateMCPContractOverride(ctx, o, 5); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if tc.earlyAttempt {
+				ctx = apihostingreceipt.WithVerificationRecoveryDeadline(ctx, time.Now().Add(api.HostingVerificationRecoveryWindow))
 			}
 			gw := &mcpCandidate{tools: tc.served, token: tc.probe}
 			server := httptest.NewServer(gw.handler(candidate.ID))
@@ -205,12 +222,16 @@ func TestApplyMCPToolContract(t *testing.T) {
 				}
 				return
 			}
-			if len(checks) != 1 || checks[0].Verdict != tc.wantVerdict || (checks[0].OverrideID != "") != tc.override {
+			overridden := tc.override && !tc.unclaimed
+			if len(checks) != 1 || checks[0].Verdict != tc.wantVerdict || (checks[0].OverrideID != "") != overridden {
 				t.Fatalf("checks = %+v, want verdict %s", checks, tc.wantVerdict)
 			}
-			if smoke.MCPContract == nil || smoke.MCPContract.Verdict != tc.wantVerdict || smoke.MCPContract.Overridden != tc.override ||
+			if smoke.MCPContract == nil || smoke.MCPContract.Verdict != tc.wantVerdict || smoke.MCPContract.Overridden != overridden ||
 				smoke.MCPContract.BaselineSHA256 != sum {
 				t.Fatalf("receipt report = %+v", smoke.MCPContract)
+			}
+			if open, _ := store.ListOpenMCPContractOverrides(ctx, account.ID, app.ID); (len(open) != 0) != tc.unclaimed {
+				t.Fatalf("open overrides = %+v, want unclaimed %v", open, tc.unclaimed)
 			}
 		})
 	}

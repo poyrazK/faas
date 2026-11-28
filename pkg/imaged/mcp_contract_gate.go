@@ -25,10 +25,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// toolContractBudget bounds opening the session, the optional secret and
-// the catalog discovery of one candidate.
-const toolContractBudget = 45 * time.Second
-
 // ToolContractGate is what imaged needs to run the gate.
 type ToolContractGate struct {
 	Verifier apihostingreceipt.Verifier
@@ -90,13 +86,16 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 		}
 	}
 	report.Verdict, report.ContractSHA256 = check.Verdict, check.CandidateSHA256
-	for i, c := range diff.Changes {
-		if i == api.MCPContractChangesMax {
-			break
-		}
+	// The report carries the changes the check stores, so the receipt, the
+	// owner view and the webhook count the same list.
+	var stored []mcphosting.ContractChange
+	if len(check.Changes) > 0 {
+		_ = json.Unmarshal(check.Changes, &stored)
+	}
+	for _, c := range stored {
 		report.Changes = append(report.Changes, apihostingreceipt.MCPContractChange(c))
 	}
-	recorded, err := store.RecordMCPContractCheck(ctx, check, check.Verdict == state.MCPContractBreaking || check.Verdict == state.MCPContractUnverified)
+	recorded, err := store.RecordMCPContractCheck(ctx, check, contractClaim(ctx, check.Verdict))
 	switch {
 	case errors.Is(err, state.ErrMCPContractOverrideRequired) && check.Verdict == state.MCPContractUnverified:
 		// Without an override, a catalog the platform cannot list is
@@ -127,9 +126,9 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 // error (with the smoke code a retry reports), so the caller records the
 // candidate as unverified, which an override admits.
 func listCandidateContract(ctx context.Context, g ToolContractGate, app state.App, dep state.Deployment, baseline state.MCPContractBaseline, version string) (mcphosting.Contract, string, error) {
-	runCtx, cancel := context.WithTimeout(ctx, toolContractBudget)
+	runCtx, cancel := context.WithTimeout(ctx, api.MCPContractGateBudget)
 	defer cancel()
-	session, err := g.Verifier.OpenCandidateSession(runCtx, app.Slug, dep.ID, HostingHealthPath(app, dep), toolContractBudget+15*time.Second)
+	session, err := g.Verifier.OpenCandidateSession(runCtx, app.Slug, dep.ID, HostingHealthPath(app, dep), api.MCPContractGateBudget+15*time.Second)
 	if err != nil {
 		var publication *apihostingreceipt.ChallengePublicationError
 		if errors.As(err, &publication) {
@@ -144,6 +143,27 @@ func listCandidateContract(ctx context.Context, g ToolContractGate, app state.Ap
 	defer release()
 	candidate, err := discoverCandidateContract(runCtx, session, baseline.Endpoint, token, version)
 	return candidate, apihostingreceipt.SmokeErrorContractUnavailable, err
+}
+
+// contractClaim is the override a check may consume. A breaking candidate
+// takes a bound override or the app's next unbound one. An unverified one
+// takes a bound override at once, but an unbound one only in the last half of
+// the recovery window: a catalog that could not be listed is usually
+// transient, so earlier attempts retry instead of spending an override the
+// seller meant for a breaking change.
+func contractClaim(ctx context.Context, verdict string) state.MCPContractClaim {
+	switch verdict {
+	case state.MCPContractBreaking:
+		return state.MCPContractClaimAny
+	case state.MCPContractUnverified:
+		deadline, ok := apihostingreceipt.VerificationRecoveryDeadline(ctx)
+		if !ok || time.Until(deadline) <= api.HostingVerificationRecoveryWindow/2 {
+			return state.MCPContractClaimAny
+		}
+		return state.MCPContractClaimBound
+	default:
+		return state.MCPContractClaimNone
+	}
 }
 
 // storedChanges encodes at most api.MCPContractChangesMax changes, fewer if
@@ -175,15 +195,15 @@ func contractVerdict(diff mcphosting.ContractDiff, sameSHA bool) string {
 	}
 }
 
-// breakingSummary lists the breaking changes, at most eight, for the
-// deployment's failure detail.
+// breakingSummary lists the breaking changes, at most
+// api.MCPContractBreakingSummaryMax, for the deployment's failure detail.
 func breakingSummary(diff mcphosting.ContractDiff) string {
 	var parts []string
 	for _, c := range diff.Changes {
 		if c.Severity != "breaking" {
 			continue
 		}
-		if len(parts) == 8 {
+		if len(parts) == api.MCPContractBreakingSummaryMax {
 			parts = append(parts, "…")
 			break
 		}
@@ -245,7 +265,7 @@ func openProbeSecret(ctx context.Context, g ToolContractGate, app state.App, dep
 	if g.Secrets == nil || g.NodeName == "" || !ok {
 		return "", nil, errors.New("this node cannot open the MCP probe secret")
 	}
-	until := time.Now().Add(toolContractBudget + api.VerificationLeaseGrace)
+	until := time.Now().Add(api.MCPContractGateBudget + api.VerificationLeaseGrace)
 	if err := leases.PutDeploymentVerificationLease(ctx, dep.ID, app.ID, g.NodeName, until); err != nil {
 		return "", nil, fmt.Errorf("record verification lease: %w", err)
 	}

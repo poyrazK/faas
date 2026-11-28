@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS mcp_contract_checks (
     baseline_sha256  text NOT NULL CHECK (baseline_sha256 ~ '^[0-9a-f]{64}$'),
     candidate_sha256 text CHECK (candidate_sha256 ~ '^[0-9a-f]{64}$'),
     candidate        jsonb CHECK (candidate IS NULL OR (jsonb_typeof(candidate) = 'object' AND octet_length(candidate::text) <= 2097152)),
-    verdict          text NOT NULL CHECK (verdict IN ('unchanged', 'compatible', 'review', 'breaking', 'unverified')),
+    -- 'unknown' marks a deployment that went live without a check (it
+    -- predates the listing or the gate): its tools are unknown, so the
+    -- baseline falls back to the listing's contract.
+    verdict          text NOT NULL CHECK (verdict IN ('unchanged', 'compatible', 'review', 'breaking', 'unverified', 'unknown')),
     changes          jsonb NOT NULL DEFAULT '[]'::jsonb
                      CHECK (jsonb_typeof(changes) = 'array' AND octet_length(changes::text) <= 262144),
     override_id      uuid REFERENCES mcp_contract_overrides(id) ON DELETE SET NULL,
@@ -25,33 +28,62 @@ CREATE TABLE IF NOT EXISTS mcp_contract_checks (
     live_at          timestamptz,
     CHECK ((accepted_at IS NULL) = (live_at IS NULL)),
     CHECK ((candidate IS NULL) = (candidate_sha256 IS NULL)),
-    CHECK ((verdict = 'unverified') = (candidate IS NULL))
+    CHECK ((verdict IN ('unverified', 'unknown')) = (candidate IS NULL))
 );
 CREATE INDEX IF NOT EXISTS mcp_contract_checks_live_idx
     ON mcp_contract_checks (app_id, live_at DESC) WHERE live_at IS NOT NULL;
 
--- Accept the check when its candidate goes live, and tell the seller's
--- webhooks when the accepted contract changed. A rollback that makes an
--- older candidate live again moves live_at (the baseline) but sends nothing.
--- A refused check (breaking or unverified without an override) is never
--- accepted.
+-- Accept the check when its production candidate goes live, and tell the
+-- seller's webhooks when the accepted contract changed. A rollback that makes
+-- an older candidate live again moves live_at (the baseline) but sends
+-- nothing. A refused check (breaking or unverified without an override), or
+-- one made against a baseline that has moved since, is never accepted. A
+-- deployment without a check that goes live records an 'unknown' marker.
 CREATE OR REPLACE FUNCTION accept_mcp_contract_check() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
     accepted mcp_contract_checks%ROWTYPE;
+    prior mcp_contract_checks%ROWTYPE;
+    listing_published timestamptz;
+    listing_sha text;
+    current_sha text;
     event_payload jsonb;
 BEGIN
-    IF NEW.status <> 'live' OR (TG_OP = 'UPDATE' AND OLD.status = 'live') THEN
+    IF NEW.status <> 'live' OR (TG_OP = 'UPDATE' AND OLD.status = 'live')
+       OR COALESCE(NEW.scope, '') NOT IN ('', 'default', 'production') THEN
         RETURN NEW;
+    END IF;
+    SELECT l.published_at, l.contract_sha256 INTO listing_published, listing_sha
+      FROM mcp_listings l WHERE l.app_id = NEW.app_id AND l.contract IS NOT NULL;
+    IF listing_sha IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT * INTO prior FROM mcp_contract_checks WHERE deployment_id = NEW.id FOR UPDATE;
+    IF prior.deployment_id IS NULL THEN
+        INSERT INTO mcp_contract_checks (deployment_id, app_id, account_id, baseline_sha256, verdict, accepted_at, live_at)
+        SELECT NEW.id, NEW.app_id, a.account_id, listing_sha, 'unknown', now(), now() FROM apps a WHERE a.id = NEW.app_id;
+        RETURN NEW;
+    END IF;
+    IF prior.accepted_at IS NULL THEN
+        IF prior.verdict IN ('breaking', 'unverified') AND prior.override_id IS NULL THEN
+            RETURN NEW;
+        END IF;
+        -- The baseline GetMCPContractBaseline returns right now.
+        SELECT COALESCE(k.candidate_sha256, listing_sha) INTO current_sha
+          FROM mcp_contract_checks k
+         WHERE k.app_id = NEW.app_id AND k.live_at IS NOT NULL AND k.live_at >= listing_published
+         ORDER BY k.live_at DESC LIMIT 1;
+        IF COALESCE(current_sha, listing_sha) <> prior.baseline_sha256 THEN
+            RETURN NEW;
+        END IF;
     END IF;
     UPDATE mcp_contract_checks SET live_at = now(), accepted_at = COALESCE(accepted_at, now())
      WHERE deployment_id = NEW.id
-       AND (verdict IN ('unchanged', 'compatible', 'review') OR override_id IS NOT NULL)
     RETURNING * INTO accepted;
     -- now() is fixed within the statement: a first acceptance has
     -- accepted_at = live_at.
-    IF accepted.deployment_id IS NULL OR accepted.verdict = 'unchanged' OR accepted.accepted_at <> accepted.live_at THEN
+    IF accepted.verdict IN ('unchanged', 'unknown') OR accepted.accepted_at <> accepted.live_at THEN
         RETURN NEW;
     END IF;
     event_payload := jsonb_build_object(

@@ -34,9 +34,13 @@ webhook event and a public changelog on the listing page.
    still the name/title/description snapshot. The *effective baseline* is
    the candidate contract of the check whose deployment most recently went
    live (`live_at`, item 3) after the listing's publish time, else the
-   listing's contract, so a rollback restores the contract it serves.
-   Republishing resets it. A listing without a contract (published before
-   this ADR) is not gated until it is republished. Tool definitions the MCP
+   listing's contract, so a rollback restores the contract it serves; a
+   deployment that went live without a check (one made before the listing
+   or the gate) leaves its tools unknown, so the baseline falls back to the
+   listing's contract. Republishing resets it. A republish that sends no
+   contract keeps the effective baseline and its probe secret, unless it
+   sets `drop_contract`, which ends the gate. A listing without a contract
+   (published before this ADR) is not gated until it is republished. Tool definitions the MCP
    client rejects are left out on both sides (publish warns), so a tool
    that turns invalid reads as removed. Publish refuses a contract for an
    `external-oauth` server without a probe secret, which the gate could
@@ -62,7 +66,10 @@ webhook event and a public changelog on the listing page.
      list, or a catalog over the contract cap): unavailable evidence,
      retried through the hosting verification recovery window like other
      unavailable smoke; when the window ends the deployment fails closed.
-     An override also admits it, recorded as `unverified`.
+     An override also admits it, recorded as `unverified`: one bound to
+     the deployment at once, the app's unbound one only in the last half of
+     the recovery window, so a transient failure does not spend an
+     override meant for a breaking change.
    - A refused check is still recorded (no override, never accepted), so
      the owner view shows what was refused. A check stores at most
      `api.MCPContractChangesMax` changes.
@@ -72,7 +79,12 @@ webhook event and a public changelog on the listing page.
    `accepted_at` the first time, so a candidate that fails later never
    moves the baseline. On the first acceptance it queues the
    `mcp.contract.changed` app webhook delivery when the check has changes;
-   a rollback only moves `live_at`. A refused check is never accepted.
+   a rollback only moves `live_at`. A refused check is never accepted, nor
+   one made against a baseline that moved before its deployment went live
+   (two candidates checked against the same baseline: only the first to go
+   live is accepted). A production deployment of a gated app that goes live
+   without a check gets an `unknown` marker row, so it becomes the newest
+   live deployment and the baseline falls back to the listing's contract.
    Every accepted change moves the baseline, compatible additions included,
    so a tool added last week is protected next week.
 4. **Override.** `POST /v1/apps/{slug}/mcp-contract/overrides` (owner, MFA,
@@ -80,9 +92,11 @@ webhook event and a public changelog on the listing page.
    most `api.MCPContractOverrideMaxTTL`, default 1 h). It admits exactly
    one breaking or unverified candidate. An override may name a
    `deployment_id`; then only that deployment uses it, and a check prefers
-   an override bound to its deployment. `mcp server deploy --allow-breaking
+   an override bound to its deployment. One bound to a deployment that
+   ended without using it no longer counts as open. `mcp server deploy --allow-breaking
    --reason TEXT` binds one to each candidate deployment it queues, so a
-   concurrent deploy cannot take it; for a git push the seller runs
+   concurrent deploy cannot take it (when it cannot record one, it cancels
+   that deployment); for a git push the seller runs
    `mcp server contract allow` first, which admits the app's next breaking
    candidate. Creation is serialized per app so the open cap holds.
    Creating one is audited (`mcp_contract.override_created`); its use is
@@ -108,6 +122,9 @@ with a listing, and listings exist only where monetization is released.
   override. That is the intended fail-closed default for paid servers.
 - Each production deploy of a listed server makes a few MCP requests to the
   candidate. Tool calls are never made.
-- Release order: data (migration) → imaged + apid → CLI. Until imaged is
+- Release order: data (migration) → secretd → imaged + apid → CLI.
+  secretd admits the listing's probe secret under a verification lease
+  without a verification contract; before it is released a gate that needs
+  the probe secret reads as unverified. Until imaged is
   released no check runs; until the CLI is released listings carry no
   contract and are not gated.

@@ -185,8 +185,9 @@ func ValidateOverride(req api.CreateMCPContractOverrideRequest) (string, time.Du
 	if req.ExpiresInSeconds != 0 {
 		ttl = time.Duration(req.ExpiresInSeconds) * time.Second
 	}
-	if ttl < time.Minute || ttl > api.MCPContractOverrideMaxTTL {
-		return "", 0, invalid(fmt.Sprintf("expires_in_seconds must be between 60 and %d", int(api.MCPContractOverrideMaxTTL.Seconds()))).
+	if ttl < api.MCPContractOverrideMinTTL || ttl > api.MCPContractOverrideMaxTTL {
+		return "", 0, invalid(fmt.Sprintf("expires_in_seconds must be between %d and %d",
+			int(api.MCPContractOverrideMinTTL.Seconds()), int(api.MCPContractOverrideMaxTTL.Seconds()))).
 			WithLimit(int64(api.MCPContractOverrideMaxTTL.Seconds()), int64(req.ExpiresInSeconds))
 	}
 	return reason, ttl, nil

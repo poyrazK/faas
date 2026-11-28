@@ -942,13 +942,13 @@ type mcpDeployOptions struct {
 	breakingReason                             string
 	// onCandidateQueued sees every candidate deployment this command queues
 	// (the discovery one and the catalog-pinned one).
-	onCandidateQueued func(api.DeploymentResponse)
-	timeout                                    int
-	expectedServing                            *string
-	expectedAppID                              string
-	requireCatalogPin                          bool
-	requireReviewedTools                       bool
-	replay                                     bool
+	onCandidateQueued    func(api.DeploymentResponse)
+	timeout              int
+	expectedServing      *string
+	expectedAppID        string
+	requireCatalogPin    bool
+	requireReviewedTools bool
+	replay               bool
 }
 
 func cmdMCPDeploy(args []string) int {

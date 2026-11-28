@@ -1120,8 +1120,12 @@ gregale mcp server contract show --app my-mcp
 own deployments, so no other deploy can use it. `contract allow` admits the
 app's next breaking production deploy, whichever path it takes, within an
 hour (up to 24 hours with `--expires`). An app can hold at most five open
-overrides. An override also admits a deploy whose tools could not be
-listed. Creating one is audited, and the check that uses it records it.
+overrides (one bound to a deploy that ended unused stops counting). An
+override also admits a deploy whose tools could not be listed: a bound one
+at once, an unbound one only after the check has kept failing for half of
+its 5-minute retry window. If `--allow-breaking` cannot record its
+override, it cancels that deploy. Creating one is audited, and the check
+that uses it records it.
 `show` lists the baseline's tools, the recent checks with their changes
 (refused ones included), and the open overrides.
 
@@ -1136,7 +1140,13 @@ When a deploy that changed the contract goes live, the app webhook event
 both contract digests, whether an override was used, and the changed tool
 names. The listing page and its JSON show the last 20 changes, with no
 schemas and no reasons. A listing published before this check existed is
-not gated until you publish it again. The owner API is
+not gated until you publish it again. Republishing through the API without
+a `contract` keeps the current one and its probe secret; send
+`"drop_contract": true` to end the check. Two deploys checked against the
+same contract cannot both change it: only the first to go live is
+accepted. A production deploy that goes live without a check (a rollback
+to one made before the listing) resets the baseline to the listing's
+contract. The owner API is
 `GET /v1/apps/my-mcp/mcp-contract` and
 `POST /v1/apps/my-mcp/mcp-contract/overrides`
 ([ADR-20261127191645](adr/20261127191645-mcp-tool-contract-gate.md)).

@@ -53,18 +53,46 @@ CREATE FUNCTION public.accept_mcp_contract_check() RETURNS trigger
     AS $$
 DECLARE
     accepted mcp_contract_checks%ROWTYPE;
+    prior mcp_contract_checks%ROWTYPE;
+    listing_published timestamptz;
+    listing_sha text;
+    current_sha text;
     event_payload jsonb;
 BEGIN
-    IF NEW.status <> 'live' OR (TG_OP = 'UPDATE' AND OLD.status = 'live') THEN
+    IF NEW.status <> 'live' OR (TG_OP = 'UPDATE' AND OLD.status = 'live')
+       OR COALESCE(NEW.scope, '') NOT IN ('', 'default', 'production') THEN
         RETURN NEW;
+    END IF;
+    SELECT l.published_at, l.contract_sha256 INTO listing_published, listing_sha
+      FROM mcp_listings l WHERE l.app_id = NEW.app_id AND l.contract IS NOT NULL;
+    IF listing_sha IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT * INTO prior FROM mcp_contract_checks WHERE deployment_id = NEW.id FOR UPDATE;
+    IF prior.deployment_id IS NULL THEN
+        INSERT INTO mcp_contract_checks (deployment_id, app_id, account_id, baseline_sha256, verdict, accepted_at, live_at)
+        SELECT NEW.id, NEW.app_id, a.account_id, listing_sha, 'unknown', now(), now() FROM apps a WHERE a.id = NEW.app_id;
+        RETURN NEW;
+    END IF;
+    IF prior.accepted_at IS NULL THEN
+        IF prior.verdict IN ('breaking', 'unverified') AND prior.override_id IS NULL THEN
+            RETURN NEW;
+        END IF;
+        -- The baseline GetMCPContractBaseline returns right now.
+        SELECT COALESCE(k.candidate_sha256, listing_sha) INTO current_sha
+          FROM mcp_contract_checks k
+         WHERE k.app_id = NEW.app_id AND k.live_at IS NOT NULL AND k.live_at >= listing_published
+         ORDER BY k.live_at DESC LIMIT 1;
+        IF COALESCE(current_sha, listing_sha) <> prior.baseline_sha256 THEN
+            RETURN NEW;
+        END IF;
     END IF;
     UPDATE mcp_contract_checks SET live_at = now(), accepted_at = COALESCE(accepted_at, now())
      WHERE deployment_id = NEW.id
-       AND (verdict IN ('unchanged', 'compatible', 'review') OR override_id IS NOT NULL)
     RETURNING * INTO accepted;
     -- now() is fixed within the statement: a first acceptance has
     -- accepted_at = live_at.
-    IF accepted.deployment_id IS NULL OR accepted.verdict = 'unchanged' OR accepted.accepted_at <> accepted.live_at THEN
+    IF accepted.verdict IN ('unchanged', 'unknown') OR accepted.accepted_at <> accepted.live_at THEN
         RETURN NEW;
     END IF;
     event_payload := jsonb_build_object(
@@ -51845,8 +51873,8 @@ CREATE TABLE public.mcp_contract_checks (
     CONSTRAINT mcp_contract_checks_changes_check CHECK (((jsonb_typeof(changes) = 'array'::text) AND (octet_length((changes)::text) <= 262144))),
     CONSTRAINT mcp_contract_checks_check CHECK (((accepted_at IS NULL) = (live_at IS NULL))),
     CONSTRAINT mcp_contract_checks_check1 CHECK (((candidate IS NULL) = (candidate_sha256 IS NULL))),
-    CONSTRAINT mcp_contract_checks_check2 CHECK (((verdict = 'unverified'::text) = (candidate IS NULL))),
-    CONSTRAINT mcp_contract_checks_verdict_check CHECK ((verdict = ANY (ARRAY['unchanged'::text, 'compatible'::text, 'review'::text, 'breaking'::text, 'unverified'::text])))
+    CONSTRAINT mcp_contract_checks_check2 CHECK (((verdict = ANY (ARRAY['unverified'::text, 'unknown'::text])) = (candidate IS NULL))),
+    CONSTRAINT mcp_contract_checks_verdict_check CHECK ((verdict = ANY (ARRAY['unchanged'::text, 'compatible'::text, 'review'::text, 'breaking'::text, 'unverified'::text, 'unknown'::text])))
 );
 
 
@@ -75666,7 +75694,7 @@ ALTER TABLE ONLY public.mcp_listings
 --
 
 ALTER TABLE public.mcp_listings
-    ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (((probe_secret = ''::text) OR (probe_secret ~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$'::text))) NOT VALID;
+    ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (((probe_secret = ''::text) OR (probe_secret ~ '^[A-Za-z][A-Za-z0-9_]{0,127}$'::text))) NOT VALID;
 
 
 --

@@ -24,6 +24,9 @@ const (
 	MCPContractReview     = "review"
 	MCPContractBreaking   = "breaking"
 	MCPContractUnverified = "unverified"
+	// MCPContractUnknown marks a deployment that went live without a check;
+	// only the deployments trigger records it.
+	MCPContractUnknown = "unknown"
 )
 
 // AppWebhookEventMCPContractChanged is queued when a candidate whose check
@@ -72,13 +75,13 @@ type MCPContractCheck struct {
 
 // MCPContractOverride admits one breaking or unverified candidate.
 type MCPContractOverride struct {
-	ID               string
-	AppID            string
-	AccountID        string
-	Reason           string
-	CreatedBy        string
-	CreatedAt        time.Time
-	ExpiresAt        time.Time
+	ID        string
+	AppID     string
+	AccountID string
+	Reason    string
+	CreatedBy string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 	// DeploymentID binds the override to one deployment; "" admits the
 	// app's next breaking candidate.
 	DeploymentID     string
@@ -92,17 +95,20 @@ type MCPContractStore interface {
 	// MCPContractBaseline returns ErrNotFound when the app has no listing
 	// with a contract.
 	MCPContractBaseline(ctx context.Context, appID string) (MCPContractBaseline, error)
-	// RecordMCPContractCheck records the candidate's check. With
-	// needOverride it consumes an open override in the same transaction (one
-	// bound to this deployment first, else the app's oldest unbound one), or
-	// reuses the one an earlier attempt of the same deployment consumed.
-	// Without one it still records the refused check and returns it with
+	// RecordMCPContractCheck records the candidate's check. With a claim
+	// other than MCPContractClaimNone it consumes an open override in the
+	// same transaction (one bound to this deployment first; with
+	// MCPContractClaimAny else the app's oldest unbound one), or reuses the
+	// one an earlier attempt of the same deployment consumed. Without one it
+	// still records the refused check and returns it with
 	// ErrMCPContractOverrideRequired. A check already accepted is not
 	// rewritten (ErrConflict).
-	RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, needOverride bool) (MCPContractCheck, error)
-	// CreateMCPContractOverride refuses with ErrMCPContractOverrideCap when the app
-	// already has openCap open overrides.
+	RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, claim MCPContractClaim) (MCPContractCheck, error)
+	// CreateMCPContractOverride refuses with ErrMCPContractOverrideCap when
+	// the app already has openCap open overrides.
 	CreateMCPContractOverride(ctx context.Context, o MCPContractOverride, openCap int) (MCPContractOverride, error)
+	// ListOpenMCPContractOverrides lists usable overrides: unused,
+	// unexpired, and unbound or bound to a deployment still a candidate.
 	ListOpenMCPContractOverrides(ctx context.Context, accountID, appID string) ([]MCPContractOverride, error)
 	ListMCPContractChecks(ctx context.Context, accountID, appID string, limit int) ([]MCPContractCheck, error)
 	// ListMCPContractChangelog lists accepted checks that changed the
@@ -110,14 +116,33 @@ type MCPContractStore interface {
 	ListMCPContractChangelog(ctx context.Context, accountID, appID string, limit int) ([]MCPContractCheck, error)
 }
 
+// MCPContractClaim says which overrides a check may consume.
+type MCPContractClaim int
+
+const (
+	// MCPContractClaimNone: the check needs no override.
+	MCPContractClaimNone MCPContractClaim = iota
+	// MCPContractClaimBound: only an override bound to this deployment.
+	MCPContractClaimBound
+	// MCPContractClaimAny: a bound override, else the app's oldest unbound one.
+	MCPContractClaimAny
+)
+
 var (
 	_ MCPContractStore = (*MemStore)(nil)
 	_ MCPContractStore = (*PgStore)(nil)
 )
 
-// ValidMCPContractVerdict reports whether v is a stored verdict.
+// ValidMCPContractVerdict reports whether v is a verdict a check may be
+// recorded with (MCPContractUnknown is only the trigger's marker).
 func ValidMCPContractVerdict(v string) bool {
 	return slices.Contains([]string{MCPContractUnchanged, MCPContractCompatible, MCPContractReview, MCPContractBreaking, MCPContractUnverified}, v)
+}
+
+// mcpContractCandidateStatus: a bound override counts while its deployment
+// can still reach the gate.
+func mcpContractCandidateStatus(s DeploymentStatus) bool {
+	return slices.Contains([]DeploymentStatus{"pending", "building", "imaging", "snapshotting"}, s)
 }
 
 func (m *MemStore) MCPContractBaseline(_ context.Context, appID string) (MCPContractBaseline, error) {
@@ -129,23 +154,29 @@ func (m *MemStore) MCPContractBaseline(_ context.Context, appID string) (MCPCont
 	}
 	b := MCPContractBaseline{AccountID: l.AccountID, AppID: appID, ListingVersion: l.Version, Endpoint: l.Endpoint,
 		ProbeSecret: l.ProbeSecret, PublishedAt: l.PublishedAt, Contract: l.Contract, SHA256: l.ContractSHA256}
-	var newest *MCPContractCheck
-	for _, c := range m.mcpContractChecks {
-		if c.AppID != appID || c.AccountID != l.AccountID || c.LiveAt == nil || c.LiveAt.Before(l.PublishedAt) || c.Candidate == nil {
-			continue
-		}
-		if newest == nil || c.LiveAt.After(*newest.LiveAt) {
-			newest = &c
-		}
-	}
-	if newest != nil {
+	if newest := m.newestLiveMCPContractCheckLocked(l); newest != nil && newest.Candidate != nil {
 		b.Contract, b.SHA256, b.FromDeployment = newest.Candidate, newest.CandidateSHA256, newest.DeploymentID
 	}
 	b.Contract = slices.Clone(b.Contract)
 	return b, nil
 }
 
-func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck, needOverride bool) (MCPContractCheck, error) {
+// newestLiveMCPContractCheckLocked is the check of the deployment that most
+// recently went live since the listing was published.
+func (m *MemStore) newestLiveMCPContractCheckLocked(l MCPListing) *MCPContractCheck {
+	var newest *MCPContractCheck
+	for _, c := range m.mcpContractChecks {
+		if c.AppID != l.AppID || c.AccountID != l.AccountID || c.LiveAt == nil || c.LiveAt.Before(l.PublishedAt) {
+			continue
+		}
+		if newest == nil || c.LiveAt.After(*newest.LiveAt) {
+			newest = &c
+		}
+	}
+	return newest
+}
+
+func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck, claim MCPContractClaim) (MCPContractCheck, error) {
 	if !ValidMCPContractVerdict(c.Verdict) || (c.Verdict == MCPContractUnverified) != (c.Candidate == nil) {
 		return MCPContractCheck{}, ErrInvalidArgument
 	}
@@ -162,8 +193,8 @@ func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck,
 	if exists {
 		c.OverrideID = prev.OverrideID
 	}
-	if needOverride && c.OverrideID == "" {
-		c.OverrideID = m.claimMCPContractOverrideLocked(c)
+	if claim != MCPContractClaimNone && c.OverrideID == "" {
+		c.OverrideID = m.claimMCPContractOverrideLocked(c, claim == MCPContractClaimAny)
 	}
 	if c.Changes == nil {
 		c.Changes = json.RawMessage("[]")
@@ -171,18 +202,18 @@ func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck,
 	c.CheckedAt, c.AcceptedAt, c.LiveAt = time.Now().UTC(), nil, nil
 	c.Candidate, c.Changes = slices.Clone(c.Candidate), slices.Clone(c.Changes)
 	m.mcpContractChecks[c.DeploymentID] = c
-	if needOverride && c.OverrideID == "" {
+	if claim != MCPContractClaimNone && c.OverrideID == "" {
 		return c, ErrMCPContractOverrideRequired
 	}
 	return c, nil
 }
 
-func (m *MemStore) claimMCPContractOverrideLocked(c MCPContractCheck) string {
+func (m *MemStore) claimMCPContractOverrideLocked(c MCPContractCheck, allowUnbound bool) string {
 	now := time.Now().UTC()
 	var oldest *MCPContractOverride
 	for _, o := range m.mcpContractOverrides {
 		if o.AppID != c.AppID || o.AccountID != c.AccountID || o.UsedAt != nil || !o.ExpiresAt.After(now) ||
-			o.DeploymentID != "" && o.DeploymentID != c.DeploymentID {
+			o.DeploymentID != c.DeploymentID && (o.DeploymentID != "" || !allowUnbound) {
 			continue
 		}
 		// A bound override first, then the oldest.
@@ -199,13 +230,21 @@ func (m *MemStore) claimMCPContractOverrideLocked(c MCPContractCheck) string {
 	return oldest.ID
 }
 
+// openMCPContractOverrideLocked mirrors the open filter of the Pg queries.
+func (m *MemStore) openMCPContractOverrideLocked(o MCPContractOverride, now time.Time) bool {
+	if o.UsedAt != nil || !o.ExpiresAt.After(now) {
+		return false
+	}
+	return o.DeploymentID == "" || mcpContractCandidateStatus(m.deployments[o.DeploymentID].Status)
+}
+
 func (m *MemStore) CreateMCPContractOverride(_ context.Context, o MCPContractOverride, openCap int) (MCPContractOverride, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
 	open := 0
 	for _, existing := range m.mcpContractOverrides {
-		if existing.AppID == o.AppID && existing.UsedAt == nil && existing.ExpiresAt.After(now) {
+		if existing.AppID == o.AppID && m.openMCPContractOverrideLocked(existing, now) {
 			open++
 		}
 	}
@@ -226,7 +265,7 @@ func (m *MemStore) ListOpenMCPContractOverrides(_ context.Context, accountID, ap
 	now := time.Now().UTC()
 	out := []MCPContractOverride{}
 	for _, o := range m.mcpContractOverrides {
-		if o.AccountID == accountID && o.AppID == appID && o.UsedAt == nil && o.ExpiresAt.After(now) {
+		if o.AccountID == accountID && o.AppID == appID && m.openMCPContractOverrideLocked(o, now) {
 			out = append(out, o)
 		}
 	}
@@ -249,7 +288,8 @@ func (m *MemStore) ListMCPContractChangelog(_ context.Context, accountID, appID 
 		return []MCPContractCheck{}, nil
 	}
 	return m.mcpContractChecksLocked(limit, func(c MCPContractCheck) bool {
-		return c.AccountID == accountID && c.AppID == appID && c.AcceptedAt != nil && !c.AcceptedAt.Before(l.PublishedAt) && c.Verdict != MCPContractUnchanged
+		return c.AccountID == accountID && c.AppID == appID && c.AcceptedAt != nil && !c.AcceptedAt.Before(l.PublishedAt) &&
+			c.Verdict != MCPContractUnchanged && c.Verdict != MCPContractUnknown
 	}, func(a, b MCPContractCheck) bool { return a.AcceptedAt.After(*b.AcceptedAt) }), nil
 }
 
@@ -268,20 +308,39 @@ func (m *MemStore) mcpContractChecksLocked(limit int, keep func(MCPContractCheck
 }
 
 // acceptMCPContractCheckLocked mirrors the deployments trigger
-// accept_mcp_contract_check: a candidate going live accepts its check and,
-// when the check changed the contract, queues mcp.contract.changed.
+// accept_mcp_contract_check: a production candidate going live accepts its
+// check (unless refused, or made against a baseline that has moved since)
+// and, when the check changed the contract, queues mcp.contract.changed; a
+// deployment without a check records an unknown marker.
 func (m *MemStore) acceptMCPContractCheckLocked(dep Deployment) {
-	c, ok := m.mcpContractChecks[dep.ID]
-	refused := (c.Verdict == MCPContractBreaking || c.Verdict == MCPContractUnverified) && c.OverrideID == ""
-	if !ok || refused {
+	l, listed := m.mcpListings[dep.AppID]
+	if !IsProductionScope(dep.Scope) || !listed || l.Contract == nil {
 		return
 	}
 	now := time.Now().UTC()
+	c, ok := m.mcpContractChecks[dep.ID]
+	if !ok {
+		if m.mcpContractChecks == nil {
+			m.mcpContractChecks = map[string]MCPContractCheck{}
+		}
+		m.mcpContractChecks[dep.ID] = MCPContractCheck{DeploymentID: dep.ID, AppID: dep.AppID, AccountID: l.AccountID,
+			BaselineSHA256: l.ContractSHA256, Verdict: MCPContractUnknown, Changes: json.RawMessage("[]"), CheckedAt: now,
+			AcceptedAt: &now, LiveAt: &now}
+		return
+	}
 	first := c.AcceptedAt == nil
-	c.LiveAt = &now
 	if first {
+		current := l.ContractSHA256
+		if newest := m.newestLiveMCPContractCheckLocked(l); newest != nil && newest.Candidate != nil {
+			current = newest.CandidateSHA256
+		}
+		refused := (c.Verdict == MCPContractBreaking || c.Verdict == MCPContractUnverified) && c.OverrideID == ""
+		if refused || c.BaselineSHA256 != current {
+			return
+		}
 		c.AcceptedAt = &now
 	}
+	c.LiveAt = &now
 	m.mcpContractChecks[dep.ID] = c
 	app, ok := m.apps[dep.AppID]
 	if !ok || !first || c.Verdict == MCPContractUnchanged {
@@ -367,7 +426,7 @@ func (s *PgStore) MCPContractBaseline(ctx context.Context, appID string) (MCPCon
 		Contract: json.RawMessage(row.Contract), SHA256: row.ContractSha256, FromDeployment: row.FromDeployment}, nil
 }
 
-func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, needOverride bool) (MCPContractCheck, error) {
+func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, claim MCPContractClaim) (MCPContractCheck, error) {
 	if !ValidMCPContractVerdict(c.Verdict) || (c.Verdict == MCPContractUnverified) != (c.Candidate == nil) {
 		return MCPContractCheck{}, ErrInvalidArgument
 	}
@@ -391,9 +450,10 @@ func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck
 	case !errors.Is(err, pgx.ErrNoRows):
 		return MCPContractCheck{}, fmt.Errorf("read MCP contract check: %w", err)
 	}
-	if needOverride && overrideID == "" {
+	if claim != MCPContractClaimNone && overrideID == "" {
 		claimed, err := q.ClaimMCPContractOverride(ctx, tx, sqlc.ClaimMCPContractOverrideParams{
-			DeploymentID: uuidToPgtype(c.DeploymentID), AppID: uuidToPgtype(c.AppID), AccountID: uuidToPgtype(c.AccountID)})
+			DeploymentID: uuidToPgtype(c.DeploymentID), AppID: uuidToPgtype(c.AppID), AccountID: uuidToPgtype(c.AccountID),
+			AllowUnbound: claim == MCPContractClaimAny})
 		switch {
 		case err == nil:
 			overrideID = pgUUIDString(claimed.ID)
@@ -418,7 +478,7 @@ func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck
 	if err := tx.Commit(ctx); err != nil {
 		return MCPContractCheck{}, fmt.Errorf("record MCP contract check commit: %w", err)
 	}
-	if needOverride && overrideID == "" {
+	if claim != MCPContractClaimNone && overrideID == "" {
 		// Recorded so the seller sees what was refused; never accepted.
 		return fromMCPContractCheck(row), ErrMCPContractOverrideRequired
 	}

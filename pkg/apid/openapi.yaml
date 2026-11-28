@@ -137027,8 +137027,9 @@ components:
         contract:
           type: object
           additionalProperties: true
-          description: "The live server's format-2 MCP catalog contract, at most 1,000,000 bytes. Production deploys are then held to it; without it the listing is not gated."
-        probe_secret: { type: string, maxLength: 128, description: "App secret holding a bearer token the gate sends when listing a candidate's tools, for a server that checks credentials itself. Needs contract." }
+          description: "The live server's format-2 MCP catalog contract, at most 1,000,000 bytes. Production deploys are then held to it. Without it a republish keeps the contract production deploys are held to now, and its probe_secret, unless drop_contract is set."
+        drop_contract: { type: boolean, description: "Republish without a contract, which ends the tool contract gate. Exclusive with contract." }
+        probe_secret: { type: string, maxLength: 128, pattern: '^[A-Za-z][A-Za-z0-9_]*$', description: "App secret holding a bearer token the gate sends when listing a candidate's tools, for a server that checks credentials itself. Needs a contract, sent or kept; empty on a republish that keeps the contract keeps the current one." }
     MCPListingResponse:
       description: "A sold MCP server's published listing, as its owner sees it."
       type: object
@@ -137130,7 +137131,7 @@ components:
       properties:
         reason: { type: string, minLength: 1, maxLength: 512 }
         expires_in_seconds: { type: integer, minimum: 60, maximum: 86400, description: "Defaults to 3600." }
-        deployment_id: { type: string, format: uuid, description: "Bind the override to one of the app's deployments; without it the app's next breaking production candidate uses it." }
+        deployment_id: { type: string, format: uuid, description: "Bind the override to one of the app's deployments; without it the app's next breaking production candidate uses it, or an unverified one late in its recovery window." }
     MCPContractResponse:
       description: "The tool contract a listed MCP server's production deploys are held to."
       type: object
