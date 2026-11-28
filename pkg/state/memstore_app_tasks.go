@@ -45,6 +45,17 @@ func (m *MemStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if capsAppTaskConcurrency(resolved) {
+		active := 0
+		for _, task := range m.appTasks {
+			if task.AccountID == resolved.AccountID && countsTowardAppTaskConcurrency(task) {
+				active++
+			}
+		}
+		if active >= resolved.MaxActiveTasks {
+			return AppTask{}, &AppTaskConcurrencyError{Limit: resolved.MaxActiveTasks, Active: active}
+		}
+	}
 	return m.createAppTaskLocked(resolved)
 }
 

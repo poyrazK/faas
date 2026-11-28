@@ -1,4 +1,4 @@
--- filename: 20261128134108271_sandbox_storage_hours.sql
+-- filename: 20261128170918790_sandbox_storage_hours.sql
 -- migration-compat: expand
 -- ADR-20261122132055 §8: the stored bytes of each account's paused sandbox
 -- sessions, one row per account and hour, written by agentd's sweep (the
