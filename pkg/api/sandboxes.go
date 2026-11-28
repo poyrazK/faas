@@ -129,6 +129,9 @@ const (
 	// persistent one, or a resume of one that is not paused
 	// (ADR-20261122132055 §1).
 	CodeSandboxNotPausable = "sandbox_not_pausable"
+	// CodeSandboxNotForkable: a fork of a session that is not running or
+	// paused with a capture, or is a task or closing (ADR-20261122132055 §3).
+	CodeSandboxNotForkable = "sandbox_not_forkable"
 	// CodeSandboxUnsupported: the request asks for something sessions do
 	// not offer yet; the detail names it.
 	CodeSandboxUnsupported = "sandbox_unsupported"
@@ -417,6 +420,22 @@ type UpdateSandboxRequest struct {
 	// (ADR-20261122132055 §4); it never shrinks, and the session sees the
 	// new size when it resumes.
 	VolumeGB *int `json:"volume_gb,omitempty"`
+}
+
+// ForkSandboxRequest forks a running or paused session
+// (ADR-20261122132055 §3): Count new sessions (1 when 0, at most the plan's
+// SandboxForkMax) start from its memory and volume as they are now. Kind is
+// the forks' kind, ephemeral when empty; Labels are theirs, the source's
+// when nil.
+type ForkSandboxRequest struct {
+	Count  int               `json:"count,omitempty"`
+	Kind   string            `json:"kind,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// ForkSandboxResponse lists the queued forks, each with its session token.
+type ForkSandboxResponse struct {
+	Forks []Sandbox `json:"forks"`
 }
 
 // Sandbox is one session. Token is a fresh session token for the data plane,

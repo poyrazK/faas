@@ -40,6 +40,10 @@ type ObjectBucket struct {
 	AttemptCount                int32
 	RetryAt                     time.Time
 	LastErrorCode               string
+	// ObjectLockAtCreation is reservation input only, never read back: the
+	// customer asked for Object Lock when creating the bucket, so the
+	// reservation also journals that request (ADR-20261119065000).
+	ObjectLockAtCreation bool
 }
 
 // ObjectBucketStore is separate from Store so test doubles unrelated to

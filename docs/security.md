@@ -259,7 +259,7 @@ Your app controls its own security headers. When a response sets one of
 the headers below, directly or through a `kind=headers` edge rule, Gregale
 sends your value unchanged. When it sets none, Gregale adds a default:
 
-| Header | Default on `*.gregale.dev` | Default on your custom domain |
+| Header | Default on `<slug>.gregale.app` | Default on your custom domain |
 |---|---|---|
 | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | `max-age=31536000` |
 | `X-Content-Type-Options` | `nosniff` | `nosniff` |
@@ -274,9 +274,13 @@ or a `Content-Security-Policy` `frame-ancestors` directive if your pages must
 not be framed, and `Permissions-Policy` to restrict browser features.
 
 ```sh
-gregale edge rule create --app my-api --kind headers --match-host my-api.example.com \
+gregale edge rule create --app my-api --kind headers --match-host @app --match-path '/**' \
   --headers-response-set 'X-Frame-Options:DENY'
 ```
+
+`--match-path '/**'` applies the rule to every path; without it the rule
+matches only the root path `/`. `--match-host @app` covers every host the app
+serves, custom domains included.
 
 Before 2026-10-09 these headers were fixed by the platform, including HSTS
 with `includeSubDomains` on custom domains. Browsers that cached that HSTS
@@ -296,7 +300,7 @@ skipped, since the edge itself refuses most malformed requests. Methods other
 than GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE (WebDAV's `PROPFIND`,
 `PURGE`, `QUERY`) score as rule 911100, which `block` refuses: exclude 911100
 on rules for apps that use them. It works the same on
-`*.gregale.dev` and on your custom domains. `observe`, `warn` and `block` at
+`*.gregale.app` and on your custom domains. `observe`, `warn` and `block` at
 paranoia level 1 are generally available; paranoia level 2 is in preview and
 runs in `observe` only. Warn and block reach accounts one by one as they
 launch: until they reach yours, creating a rule in either mode, or switching
@@ -318,10 +322,10 @@ The rule's `mode` decides what happens to a detection:
 | Mode | Headers and URL | Request body |
 |---|---|---|
 | `observe` (default) | sampled and reported | sampled and reported |
-| `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported |
-| `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported |
+| `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported; with in-path body checks, the first 2 KiB is checked like headers |
+| `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported; with in-path body checks, an attack in the first 2 KiB is answered with `403` |
 
-Checks include cookies. Apps on a `gregale.dev` host share that domain with
+Checks include cookies. Apps on a `gregale.app` host share that domain with
 every other customer's app, and any of their pages can set a cookie your
 visitors' browsers then send to you, so an attack-shaped cookie planted that
 way is blocked by a `block` rule like any other. A detection found only in
@@ -351,15 +355,22 @@ refused: `block` answers
 a penalty box. If your app legitimately receives larger headers (very large
 cookies or tokens), keep the rule in `observe` for those paths.
 
-**`block` does not protect request bodies.** An attack sent in a JSON or form
-body (how most API injection arrives) reaches your app even under `block`:
-checking bodies costs tens to hundreds of milliseconds, so they are inspected
-off the request path, after the request is served, and only a sample of them
-under load. Body detections are reported, never blocked. Protect body
-fields in your app (parameterized queries, output encoding) and declare their
-shape with a `kind=validate` rule, which the edge does enforce. In `warn` and
-`block`, a request without a body is checked in-path only; it is not also
-sampled. Checks on headers and the URL take about 1 ms of CPU
+**`block` protects at most the first 2 KiB of a request body.** In-path
+body checks reach accounts one by one, after strict inspection. Until they
+reach yours, an attack sent in a JSON or form body (how most API injection
+arrives) reaches your app even under `block`: bodies are inspected off the
+request path, after the request is served, and only a sample of them under
+load, and body detections are reported, never blocked. Once they reach
+yours, `warn` and `block` also check the first 2 KiB of the body before your
+app wakes; your app still receives the whole body. A check costs about
+0.1 ms per JSON or form field, so 2 KiB keeps a typical API body to a few
+milliseconds. Content past 2 KiB, compressed bodies (`Content-Encoding`),
+gRPC streams to gRPC apps and WebSocket upgrades are still only sampled and
+reported. Either way, protect body fields
+in your app (parameterized queries, output encoding) and declare their shape
+with a `kind=validate` rule, which the edge enforces on the whole body. In
+`warn` and `block`, a request without a body is checked in-path only; it is
+not also sampled. Checks on headers and the URL take about 1 ms of CPU
 per matched request, and can add several milliseconds when the node is busy.
 A node runs several checks at once, one per processor but one, and a check
 that finds them all busy waits up to 1 ms for a free one. When your app's
@@ -412,8 +423,8 @@ Exclude these rule IDs on rules that match such routes, or narrow the rule's
 | Traffic | CRS rule IDs | Checked |
 |---|---|---|
 | GraphQL query in the URL (`GET /graphql?query={...}`) | 942190 | headers and URL, so `block` rejects it |
-| GraphQL request bodies | 932235, 942290 | body (reported only) |
-| Prose with SQL keywords after a semicolon (`...; select one from the list`) | 942350 | body (reported only) |
+| GraphQL request bodies | 932235, 942290 | body (reported only, or refused by `block` with in-path body checks) |
+| Prose with SQL keywords after a semicolon (`...; select one from the list`) | 942350 | body (reported only, or refused by `block` with in-path body checks) |
 | Content that is SQL, HTML or code: a docs search, a CMS editor, a snippet tool | 942100, 941160 | URL and body |
 
 The WAF accepts any `Content-Type`, or none, and the methods GET, HEAD,

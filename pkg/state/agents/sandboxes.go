@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state/agents/sqlc"
 )
 
@@ -304,8 +306,12 @@ func (s *Store) CloseSandbox(ctx context.Context, accountID, id string) (Sandbox
 	if _, err := s.q.CloseQueuedSandboxSession(ctx, s.pool, params); err != nil {
 		return Sandbox{}, fmt.Errorf("close sandbox session: %w", err)
 	}
-	if _, err := s.q.RequestSandboxSessionClose(ctx, s.pool, sqlc.RequestSandboxSessionCloseParams(params)); err != nil {
+	n, err := s.q.RequestSandboxSessionClose(ctx, s.pool, sqlc.RequestSandboxSessionCloseParams(params))
+	if err != nil {
 		return Sandbox{}, fmt.Errorf("request sandbox session close: %w", err)
+	}
+	if n > 0 {
+		s.nudgeSandboxSession(ctx, id)
 	}
 	return s.Sandbox(ctx, accountID, id)
 }
@@ -358,7 +364,40 @@ func (s *Store) requestPauseOrResume(ctx context.Context, accountID, id string, 
 	if n == 0 {
 		return sb, ErrSandboxNotPausable
 	}
+	if pause {
+		s.nudgeSandboxSession(ctx, id)
+	}
 	return s.Sandbox(ctx, accountID, id)
+}
+
+// nudgeSandboxSession wakes the agentd replica holding session id to renew
+// its lease now (db.NotifySandboxSessionRequest). Best effort: the request
+// is recorded, and the next renewal sees it if the nudge is lost.
+func (s *Store) nudgeSandboxSession(ctx context.Context, id string) {
+	_ = s.q.NotifySandboxSessionRequest(ctx, s.pool, id)
+}
+
+// SandboxSessionRequests streams the ids of sessions apid recorded a pause,
+// close or fork request on, for agentd to renew their leases at once.
+func (s *Store) SandboxSessionRequests(ctx context.Context, log *slog.Logger) (<-chan string, error) {
+	notes, err := db.SubscribeWithReconnect(ctx, s.pool, []string{db.NotifySandboxSessionRequest}, log)
+	if err != nil {
+		return nil, fmt.Errorf("listen for sandbox session requests: %w", err)
+	}
+	ids := make(chan string, 64)
+	go func() {
+		defer close(ids)
+		for n := range notes {
+			if n.Channel != db.NotifySandboxSessionRequest || !isUUID(n.Payload) {
+				continue
+			}
+			select {
+			case ids <- n.Payload:
+			default: // a busy consumer catches up at the next renewal
+			}
+		}
+	}()
+	return ids, nil
 }
 
 func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {

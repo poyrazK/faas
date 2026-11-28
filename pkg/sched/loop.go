@@ -275,6 +275,7 @@ type Loop struct {
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool
+	stageWorkflowSchedules            stageWorkflowSchedulePass
 	tenantWorkflowScheduleMinute      int64
 	tenantWorkflowScheduleAfterApp    string
 	tenantWorkflowScheduleAfterTenant string

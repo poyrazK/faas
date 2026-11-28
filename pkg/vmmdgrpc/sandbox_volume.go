@@ -37,6 +37,10 @@ func (s *Server) WithSandboxVolumes(v *fcvm.SandboxVolumes) *Server {
 // the plan, never with a task.
 func sandboxVolumeFromProto(start *vmmdpb.RunSandboxStart, plan api.Plan) (gb int, backupID string, every time.Duration, problem *api.Problem) {
 	gb, backupID = int(start.GetVolumeGb()), start.GetVolumeBackupId()
+	if source := start.GetVolumeSourceSandboxId(); source != "" && (backupID == "" || !start.GetSessionCapture()) {
+		return 0, "", 0, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox session",
+			"volume_source_sandbox_id goes with a fork's capture and its volume backup")
+	}
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid sandbox session", detail)
 	}
@@ -70,7 +74,10 @@ func sandboxVolumeFromProto(start *vmmdpb.RunSandboxStart, plan api.Plan) (gb in
 // copy when it is the newest backup or newer, otherwise the newest backup
 // restored, otherwise a new one. A volume it cannot prepare is Unavailable:
 // the session waits and is tried again, never booted without its files.
-func (s *Server) prepareSandboxVolume(ctx context.Context, wake *fcvm.SandboxWakeRequest, gb int, backupID string) error {
+func (s *Server) prepareSandboxVolume(ctx context.Context, wake *fcvm.SandboxWakeRequest, gb int, backupID, source string) error {
+	if source == "" {
+		source = wake.SandboxID
+	}
 	v := s.sandboxVolumes
 	if v == nil {
 		return status.Error(codes.Unimplemented, "this vmmd keeps no sandbox volumes")
@@ -88,7 +95,7 @@ func (s *Server) prepareSandboxVolume(ctx context.Context, wake *fcvm.SandboxWak
 			if s.sandboxStorage == nil {
 				return unavailable(errors.New("no store"))
 			}
-			want, err := volbackup.ReadManifest(ctx, s.sandboxStorage, wake.AccountID, wake.SandboxID, backupID)
+			want, err := volbackup.ReadManifest(ctx, s.sandboxStorage, wake.AccountID, source, backupID)
 			if err != nil {
 				return unavailable(err)
 			}
@@ -102,7 +109,7 @@ func (s *Server) prepareSandboxVolume(ctx context.Context, wake *fcvm.SandboxWak
 			return unavailable(errors.New("no store"))
 		}
 		started := time.Now()
-		_, err := v.RestoreBackup(ctx, s.sandboxStorage, wake.AccountID, wake.SandboxID, backupID)
+		_, err := v.RestoreBackupFrom(ctx, s.sandboxStorage, wake.AccountID, source, wake.SandboxID, backupID)
 		s.ops.Observe("SandboxVolumeRestore", time.Since(started), err)
 		if err != nil {
 			return unavailable(err)

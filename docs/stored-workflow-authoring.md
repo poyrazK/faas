@@ -248,6 +248,41 @@ Both require the current `--expected-version`; a successful change advances the
 stored workflow version but does not publish a definition or add a revision. Read the
 stored workflow again before retrying after a version conflict.
 
+## Stored workflows in a stage
+
+A project's stage keeps stored workflows of its own. Pass `--environment` to
+the authoring commands; without it they work on production:
+
+```sh
+gregale workflow stored apply --app billing --env staging --file nightly-report.yaml --expected-version 0
+gregale workflow stored publish --app billing --env staging --name nightly-report --expected-version VERSION
+gregale workflow stored list --app billing --env staging
+gregale workflow run nightly-report --app billing --env staging
+gregale workflow stored revisions list --app billing --env staging --name nightly-report
+gregale workflow stored delete --app billing --env staging --name nightly-report --expected-version VERSION --yes
+```
+
+- A stage runs its manual and schedule workflows on the stage's own live
+  deployment. Publishing one enables it, as in production; start a manual
+  run with `gregale workflow run --env`. Schedules tick only while
+  the stage has a live deployment.
+- Event and webhook workflows can be authored in a stage but stay disabled
+  there, and `resume` refuses them. Tests, live verification, health,
+  failure policies and restoring a revision are not available in a stage
+  yet.
+- Production's schedules, events, webhooks and manual starts never see a
+  stage's workflows, and a stage's runs never see production's. Revision
+  history stays with its environment, and an idempotency key used in one
+  environment never replays a run from another.
+- The plan's workflows-per-app limit counts the workflows of every
+  environment together.
+- A workflow is reached only through its own environment. Until a later
+  release, a name is unique across the app: a stage cannot use a name
+  production uses, or the other way round.
+- Deleting the stage deletes its workflows.
+- Creating or changing a stage's workflow waits until operators turn on
+  stage stored workflows; until then those commands answer 501.
+
 ## Conditional actions
 
 Add `when` to a step to run it only when workflow data matches a predicate:

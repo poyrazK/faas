@@ -260,8 +260,7 @@ func (j *hostedMCPJourney) undoRestoresSetting(t *testing.T) {
 	read := func() int {
 		t.Helper()
 		got := jsonBody(t, j.tg.apiCall(http.MethodGet, "/v1/apps/"+j.probe, nil, j.adminKey(t)))
-		n, _ := got["idle_timeout_s"].(float64)
-		return int(n)
+		return int(num(got, "idle_timeout_s"))
 	}
 	before := read()
 	changed := 120

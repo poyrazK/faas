@@ -8301,9 +8301,16 @@ func (c *Client) RunWorkflow(ctx context.Context, slug, workflowName string, inp
 // Reuse the same key after an uncertain response; a different input with that
 // key returns a conflict. An empty key uses the SDK's per-request default.
 func (c *Client) RunWorkflowWithIdempotencyKey(ctx context.Context, slug, workflowName string, input json.RawMessage, idempotencyKey string) (WorkflowRunResponse, error) {
+	return c.RunWorkflowInEnvironment(ctx, slug, workflowName, "", input, idempotencyKey)
+}
+
+// RunWorkflowInEnvironment starts the run on a project environment's live
+// deployment, with that stage's own stored workflows; "" is production
+// (ADR-20261104120000).
+func (c *Client) RunWorkflowInEnvironment(ctx context.Context, slug, workflowName, environment string, input json.RawMessage, idempotencyKey string) (WorkflowRunResponse, error) {
 	var resp WorkflowRunResponse
 	path := fmt.Sprintf("/v1/apps/%s/workflows/%s/runs", slug, workflowName)
-	err := c.doWithIdempotencyKey(ctx, "POST", path, input, &resp, idempotencyKey)
+	err := c.doWithIdempotencyKey(ctx, "POST", inStoredWorkflowEnvironment(path, environment), input, &resp, idempotencyKey)
 	return resp, err
 }
 

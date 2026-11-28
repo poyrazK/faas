@@ -214,6 +214,8 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 503, "object_storage_checkpoint_active", "Bucket writes are temporarily paused for checkpoint capture."
 	case errors.Is(err, state.ErrObjectUsageStale):
 		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
+	case errors.Is(err, objectstorage.ErrObjectLockRequiresNewBucket):
+		status, code, detail = 409, "object_lock_requires_new_bucket", "This bucket's storage accepts Object Lock only when a bucket is created, and this bucket was created without it. Create a new bucket with Object Lock (`object_lock: true`, `gregale add bucket --object-lock`) and move the objects there."
 	case errors.Is(err, objectstorage.ErrObjectLockPlan):
 		status, code, detail = 403, "object_lock_plan_limit", "The bucket owner's plan does not include this much Object Lock protection: Free includes none, Hobby 90 days, Pro 1 year and Scale 7 years of retention. Choose a shorter retention or upgrade the plan."
 	case errors.Is(err, state.ErrObjectBudget):
@@ -356,6 +358,10 @@ type CreateBucketRequest struct {
 	Region  string `json:"region"`
 	Public  bool   `json:"public"`
 	ServeAt string `json:"serve_at"`
+	// ObjectLock asks for a bucket created with Object Lock. Some providers
+	// accept Object Lock only at creation (ADR-20261119065000). The bucket
+	// is permanently versioned.
+	ObjectLock bool `json:"object_lock,omitempty"`
 }
 
 func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -404,6 +410,10 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	if s.providerRefusingCredentials() {
 		BucketProblem(w, ErrObjectStorageProviderRefused)
+		return
+	}
+	if req.ObjectLock && !s.objectLockCreationCapable(req.Region) {
+		BucketProblem(w, objectstorage.ErrUnsupported)
 		return
 	}
 	if req.Public && !s.Host.ObjectStorage().Accounting.Valid() {
@@ -474,6 +484,11 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 			if old.PublicRead != req.Public || old.ServeAt != req.ServeAt {
 				return old, state.ErrConflict
 			}
+			if req.ObjectLock {
+				if locked, err := objectLockRequired(ctx, st, old); err != nil || !locked {
+					return old, errors.Join(state.ErrConflict, err)
+				}
+			}
 			return old, nil
 		}
 	}
@@ -486,7 +501,7 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 		req.Region = s.Host.ObjectStorage().DefaultRegion
 	}
 	id := uuid.NewString()
-	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}
+	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt, ObjectLockAtCreation: req.ObjectLock}
 	return s.ReserveRegionBucket(ctx, st, want)
 }
 

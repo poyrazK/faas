@@ -97,6 +97,10 @@ export class StorageService {
        * Immutable app path mounted when public is true.
        */
       serve_at?: string;
+      /**
+       * Create the bucket with Object Lock. Permanent; the bucket keeps every object version. Some storage accepts Object Lock only when the bucket is created, so choose it here.
+       */
+      object_lock?: boolean;
     },
   }): CancelablePromise<ObjectBucket | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1552,6 +1556,10 @@ export class StorageService {
        * Create a bucket for an organization application. Immutable app path mounted when public is true.
        */
       serve_at?: string;
+      /**
+       * Create a bucket for an organization application. Create the bucket with Object Lock. Permanent; the bucket keeps every object version. Some storage accepts Object Lock only when the bucket is created, so choose it here.
+       */
+      object_lock?: boolean;
     },
   }): CancelablePromise<ObjectBucket | Problem> {
     return __request(this?.clientConfig ?? OpenAPI, {

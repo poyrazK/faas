@@ -84,6 +84,9 @@ type SandboxVolume struct {
 	// has left the pool and taken its copy and unuploaded backups with it.
 	NodeID         string
 	StoredBackupID string
+	// SourceSandboxID is a fork's source (ADR-20261122132055 §3): BackupID
+	// is the source's backup, which the fork's volume starts from.
+	SourceSandboxID string
 }
 
 // SandboxVolumeBackup is vmmd's report of a stored volume backup.
@@ -105,6 +108,22 @@ type SandboxResume struct {
 	Snapshot    AgentRunSnapshot
 	NodeID      string
 	RequireNode bool
+	// Fork: the capture is another session's (ADR-20261122132055 §3); the
+	// session starts from it whatever its kind. With RequireNode the shared
+	// store does not hold it yet and only its node can restore it.
+	Fork bool
+	// ForkedFrom is the fork's source session, which its guest learns.
+	ForkedFrom string
+}
+
+// SandboxForked is vmmd's answer to a fork: the published fork capture of
+// a session that runs on.
+type SandboxForked struct {
+	Snapshot       AgentRunSnapshot
+	VMStateBytes   int64
+	ForkMs         int64
+	HasBacking     bool
+	VolumeBackupID string
 }
 
 // SandboxPaused is vmmd's answer to a pause: the published capture.
@@ -226,6 +245,8 @@ type SandboxSpec struct {
 	// SessionCapture marks Snapshot as the session's own pause capture
 	// (ADR-20261122132055 §2).
 	SessionCapture bool
+	// ForkedFrom is the source of a fork restored from its fork capture.
+	ForkedFrom string
 	// Volume is the session's workspace volume.
 	Volume SandboxVolume
 }
@@ -252,6 +273,9 @@ const (
 	SandboxOpPersistRecorded
 	SandboxOpAction
 	SandboxOpPause
+	// SandboxOpFork takes a fork capture CaptureID of the running session
+	// (ADR-20261122132055 §3).
+	SandboxOpFork
 )
 
 // SandboxFreeze and SandboxClose are the controls without a payload.
@@ -316,6 +340,10 @@ type SandboxHooks struct {
 	// (ADR-20261122132055 §2); the stream ends cleanly after Paused.
 	Paused       func(ctx context.Context, p SandboxPaused) error
 	PauseRefused func(ctx context.Context, reason string) error
+	// Forked and ForkRefused relay vmmd's answers to a fork
+	// (ADR-20261122132055 §3); the session runs on after either.
+	Forked      func(ctx context.Context, f SandboxForked) error
+	ForkRefused func(ctx context.Context, reason string) error
 	// VolumeBackup relays a backup of the session's volume taken while it
 	// runs (ADR-20261122132055 §4).
 	VolumeBackup func(ctx context.Context, b SandboxVolumeBackup) error
@@ -374,7 +402,16 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		// The capture's node has it in its cache; any node restores it from
 		// the shared store (ADR-20261122132055 §2).
 		req.PreferredNodeIDs = []string{a.Resume.NodeID}
-		if a.Resume.RequireNode {
+		if a.Resume.RequireNode && a.Resume.Fork {
+			if _, active := r.poolNodeState(ctx, a.Resume.NodeID); !active {
+				// A fork pinned to its capture's node has no capture
+				// anywhere else yet: refuse it, and agentd waits for the
+				// upload instead of booting a fork without its source's
+				// memory.
+				return api.NewProblem(503, api.CodeCapacity, "Capture node unavailable",
+					"the fork's capture is only on node "+a.Resume.NodeID+", which is not taking sessions")
+			}
+		} else if a.Resume.RequireNode {
 			switch known, active := r.poolNodeState(ctx, a.Resume.NodeID); {
 			case !known:
 				// The node is gone and its capture with it: the session
@@ -426,6 +463,9 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	if a.Resume != nil {
 		snap := a.Resume.Snapshot
 		spec.Snapshot, spec.SessionCapture = &snap, true
+		if a.Resume.Fork {
+			spec.ForkedFrom = a.Resume.ForkedFrom
+		}
 		// A resumed session is never a warm capture's proof, and its capture
 		// is not the warm cache's to drop.
 		return r.runResumedSandbox(ctx, router, placement, spec, hooks, control)
@@ -473,12 +513,13 @@ func (a SandboxAdmission) validate() error {
 		ramMax, vcpuMax = api.SandboxPersistentRAMMBMax[idx], api.SandboxPersistentVCPUMax[idx]
 	}
 	switch {
-	case a.Resume != nil && (!a.Persistent || a.WorkspaceKey != "" || a.Task != nil || a.Resume.Snapshot.StorageKey == "" ||
+	case a.Resume != nil && (!a.Persistent && !a.Resume.Fork || a.WorkspaceKey != "" || a.Task != nil || a.Resume.Snapshot.StorageKey == "" ||
 		a.Resume.RequireNode && a.Resume.NodeID == ""):
-		return &AgentRunInvalidError{Reason: "only a persistent session resumes, from its capture and without a workspace archive or task"}
-	case a.Volume.GB < 0 || a.Volume.GB > 0 && (!a.Persistent || a.Task != nil || a.WorkspaceKey != "" || a.Volume.GB > api.SandboxVolumeMaxGB[idx]) ||
-		a.Volume.GB == 0 && (a.Volume.BackupID != "" || a.Volume.BackupEvery != 0):
-		return &AgentRunInvalidError{Reason: fmt.Sprintf("a %d GB volume is not a persistent session's within the %s plan", a.Volume.GB, a.Plan)}
+		return &AgentRunInvalidError{Reason: "only a persistent session or a fork resumes, from its capture and without a workspace archive or task"}
+	case a.Volume.GB < 0 || a.Volume.GB > 0 && (!a.Persistent && !a.fork() || a.Task != nil || a.WorkspaceKey != "" || a.Volume.GB > api.SandboxVolumeMaxGB[idx]) ||
+		a.Volume.GB == 0 && (a.Volume.BackupID != "" || a.Volume.BackupEvery != 0 || a.Volume.SourceSandboxID != "") ||
+		a.Volume.SourceSandboxID != "" && (!a.fork() || a.Volume.BackupID == "") || !a.Persistent && a.Volume.BackupEvery != 0:
+		return &AgentRunInvalidError{Reason: fmt.Sprintf("a %d GB volume is not a persistent session's or a fork's within the %s plan", a.Volume.GB, a.Plan)}
 	case a.Persistent && api.SandboxPersistentMax[idx] == 0:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("the %s plan has no persistent sessions", a.Plan)}
 	case a.SandboxID == "" || a.AccountID == "" || !a.Plan.Valid() || api.SandboxMaxLifetimeSec[idx] == 0:
@@ -494,6 +535,9 @@ func (a SandboxAdmission) validate() error {
 	}
 	return nil
 }
+
+// fork reports a session that starts from another session's fork capture.
+func (a SandboxAdmission) fork() bool { return a.Resume != nil && a.Resume.Fork }
 
 // RunSandbox routes one session to its node's vmmd.
 // DeleteSandboxVolume removes a session's workspace volume from one node's
@@ -574,9 +618,10 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot), Browser: spec.Browser,
 		Task:        sandboxTaskToProto(spec.Task),
 		EgressAllow: spec.EgressAllow, EgressDeny: spec.EgressDeny, WebDomainLog: spec.WebDomainLog,
-		SessionCapture: spec.SessionCapture,
+		SessionCapture: spec.SessionCapture, ForkedFrom: spec.ForkedFrom,
 		VolumeGb:       int32(spec.Volume.GB), //nolint:gosec // G115: bounded by the plan's volume cap.
 		VolumeBackupId: spec.Volume.BackupID, VolumeBackupIntervalMs: spec.Volume.BackupEvery.Milliseconds(),
+		VolumeSourceSandboxId: spec.Volume.SourceSandboxID,
 	}}}); err != nil {
 		return liftErr(err)
 	}
@@ -712,6 +757,19 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 			if hooks.PauseRefused != nil {
 				err = hooks.PauseRefused(ctx, event.GetPauseRefused().GetReason())
 			}
+		case event.GetForked() != nil:
+			if hooks.Forked != nil {
+				f := event.GetForked()
+				s := f.GetSnapshot()
+				err = hooks.Forked(ctx, SandboxForked{Snapshot: AgentRunSnapshot{StorageKey: s.GetStorageKey(),
+					VMStateStorageKey: s.GetVmstateStorageKey(), FCVersion: s.GetFcVersion(), MemBytes: s.GetMemBytes()},
+					VMStateBytes: f.GetVmstateBytes(), ForkMs: f.GetForkMs(), HasBacking: f.GetHasBacking(),
+					VolumeBackupID: f.GetVolumeBackupId()})
+			}
+		case event.GetForkRefused() != nil:
+			if hooks.ForkRefused != nil {
+				err = hooks.ForkRefused(ctx, event.GetForkRefused().GetReason())
+			}
 		default:
 			return errors.New("sched: sandbox stream returned an empty event")
 		}
@@ -743,6 +801,10 @@ func sandboxControlFrame(req SandboxControl) *vmmdpb.RunSandboxRequest {
 	case SandboxOpPause:
 		if req.CaptureID != "" {
 			return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Pause{Pause: &vmmdpb.RunSandboxPause{CaptureId: req.CaptureID}}}
+		}
+	case SandboxOpFork:
+		if req.CaptureID != "" {
+			return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Fork{Fork: &vmmdpb.RunSandboxFork{CaptureId: req.CaptureID}}}
 		}
 	case SandboxOpAction:
 		if a := req.Action; a != nil {

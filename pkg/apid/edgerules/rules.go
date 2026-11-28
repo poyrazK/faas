@@ -1090,6 +1090,10 @@ func (s *Service) DeleteEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.RouteSplitProblem(r.Context(), &row, nil); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	convergence, err := s.PrepareEdgeRuleMutationLocked(r.Context(), row.AppID, row.ID, "deleted", unlock, row.MatchHost)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not deleted"))
