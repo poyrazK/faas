@@ -47,7 +47,7 @@ func TestNativeConsentCarriesChosenCapabilitiesToTheGrant(t *testing.T) {
 	f.mu.Lock()
 	mint := f.mints[len(f.mints)-1]
 	f.mu.Unlock()
-	if mint.Purpose != api.CliAuthPurposeMCP || !slices.Equal(mint.Scopes, []string{api.ScopeDeployWrite, api.ScopeSecretsRequest, api.ScopeStorageManage}) {
+	if mint.Purpose != api.CliAuthPurposeMCP || !slices.Equal(mint.Scopes, []string{api.ScopeDeployWrite, api.ScopeConnectApproval, api.ScopeSecretsRequest, api.ScopeStorageManage}) {
 		t.Fatalf("minted %+v", mint)
 	}
 	review := f.consent(flow, "check-login", "", f.server.URL, flow.csrf, true)

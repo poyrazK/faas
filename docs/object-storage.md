@@ -491,8 +491,17 @@ the limit and the days you asked for. Clearing a default and releasing a hold
 always work. Retention set before these caps is kept as it was.
 
 `GET /v1/apps/{app}/buckets/{bucket-id}/object-lock-capabilities` shows what
-your bucket supports. Enabling Object Lock on a bucket is permanent. Each
-change takes an operation ID you choose, which makes retries safe:
+your bucket supports. Enabling Object Lock on a bucket is permanent, and the
+bucket then keeps every object version.
+
+Some storage accepts Object Lock only when a bucket is created.
+Choose it then with `gregale add bucket NAME --app APP --object-lock` (API:
+`"object_lock": true`). Enabling it later on a bucket created without it is
+refused with `409 object_lock_requires_new_bucket` (S3 SDKs:
+`InvalidBucketState`); create a new bucket with Object Lock and move the
+objects there.
+
+Each change takes an operation ID you choose, which makes retries safe:
 
 ```sh
 gregale bucket protection legal-hold my-api BUCKET_ID notes.txt VERSION_ID ON OPERATION_ID

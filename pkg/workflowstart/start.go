@@ -85,7 +85,7 @@ func Start(ctx context.Context, store Store, req Request) (Result, error) {
 	}
 	var fingerprint []byte
 	if req.IdempotencyKey != "" {
-		fingerprint = Fingerprint(input)
+		fingerprint = scopedFingerprint(input, scope)
 		original, err := store.GetWorkflowRunByIdempotencyKey(ctx, req.App.ID, req.Workflow, req.IdempotencyKey, fingerprint, req.TenantID)
 		switch {
 		case err == nil:
@@ -111,7 +111,7 @@ func Start(ctx context.Context, store Store, req Request) (Result, error) {
 		return Result{Problem: api.ErrWorkflowDefinitionNotFound()}, nil //nolint:nilerr // a refusal, not a failure
 	}
 	if stored, ok := store.(state.StoredWorkflowStore); ok {
-		if dep.Workflows, err = stored.EffectiveWorkflowDefinitions(ctx, req.App.ID, dep.Workflows); err != nil {
+		if dep.Workflows, err = runnableDefinitions(ctx, store, stored, req.App, scope, dep.Workflows); err != nil {
 			return Result{}, err
 		}
 	}
@@ -157,4 +157,48 @@ func Start(ctx context.Context, store Store, req Request) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Run: run, Replayed: replayed}, nil
+}
+
+// environmentReader reads one of a project's environments by slug.
+type environmentReader interface {
+	ProjectEnvironmentBySlug(ctx context.Context, accountID, projectID, slug string) (state.ProjectEnvironment, error)
+}
+
+// scopedFingerprint keys a run start's idempotency to its scope as well as
+// its input, so one key never replays a run of another environment.
+// Production keeps the unscoped fingerprint that earlier releases stored.
+func scopedFingerprint(input json.RawMessage, scope string) []byte {
+	fingerprint := Fingerprint(input)
+	if scope == "default" || state.IsProductionScope(scope) {
+		return fingerprint
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("gregale.workflow-run.create.scope:v1\x00"))
+	_, _ = hash.Write([]byte(scope))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(fingerprint)
+	return hash.Sum(nil)
+}
+
+// runnableDefinitions are the workflows a run on the deployment can start:
+// its code workflows plus the stored workflows of the environment that owns
+// the scope. A project stage runs its own runnable stored workflows, never
+// production's (ADR-20261104120000); any other scope keeps production's.
+func runnableDefinitions(ctx context.Context, store Store, stored state.StoredWorkflowStore, app state.App, scope string, manifest json.RawMessage) (json.RawMessage, error) {
+	envs, ok := store.(environmentReader)
+	if !ok || app.ProjectID == "" || scope == "default" || state.IsProductionScope(scope) {
+		return stored.EffectiveWorkflowDefinitions(ctx, app.ID, manifest)
+	}
+	env, err := envs.ProjectEnvironmentBySlug(ctx, app.AccountID, app.ProjectID, scope)
+	if errors.Is(err, state.ErrNotFound) {
+		return stored.EffectiveWorkflowDefinitions(ctx, app.ID, manifest)
+	}
+	if err != nil {
+		return nil, err
+	}
+	records, err := stored.ListStageStoredWorkflows(ctx, app.ID, env.ID)
+	if err != nil {
+		return nil, err
+	}
+	return state.OverlayStageStoredWorkflows(manifest, records)
 }

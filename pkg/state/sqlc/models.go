@@ -1232,6 +1232,13 @@ type ApiKeyApprovalCategory struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+// ADR-20261127160000 the Connect consent that approves a hosted MCP key's deploys; apid is the only writer.
+type ApiKeyConnectGrant struct {
+	KeyID     pgtype.UUID
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
 // ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.
 type ApiKeyProjectLimit struct {
 	KeyID      pgtype.UUID
@@ -17774,6 +17781,20 @@ type SpendCapNoticeOutbox struct {
 	DeliveredAt   pgtype.Timestamptz
 }
 
+type StageWorkflowScheduleCursor struct {
+	EnvironmentID   pgtype.UUID
+	WorkflowName    string
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	LastAdmittedAt  pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type StaticEgressProvisioningGrant struct {
 	SourceID   string
 	AccountID  pgtype.UUID
@@ -17858,6 +17879,7 @@ type StoredWorkflow struct {
 	UpdatedAt        pgtype.Timestamptz
 	TestSuite        []byte
 	TestReport       []byte
+	EnvironmentID    pgtype.UUID
 }
 
 type StoredWorkflowFailureGuard struct {
@@ -17967,6 +17989,7 @@ type StoredWorkflowRevision struct {
 	PublishedByAccountID pgtype.UUID
 	PublishedByApiKeyID  pgtype.UUID
 	CheckEvidence        []byte
+	EnvironmentID        pgtype.UUID
 }
 
 type StripePushDedupe struct {

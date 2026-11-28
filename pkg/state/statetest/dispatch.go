@@ -216,6 +216,7 @@ var memDispatched = map[string]bool{
 	"RouteInsightsDetectedSince":                              true,
 	"RouteMonitorIncidentsSince":                              true,
 	"AIBudgetAlertsSince":                                     true,
+	"CountAccountFailedJobRuns":                               true,
 	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
@@ -931,6 +932,15 @@ func (s *Mem) AIBudgetAlertsSince(p0 context.Context, p1, p2 string, p3 time.Tim
 		return o.AIBudgetAlertsSince(p0, p1, p2, p3, p4)
 	}
 	return s.MemStore.AIBudgetAlertsSince(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) CountAccountFailedJobRuns(p0 context.Context, p1 string, p2, p3 time.Time) (int64, error) {
+	if o, ok := s.over.(interface {
+		CountAccountFailedJobRuns(context.Context, string, time.Time, time.Time) (int64, error)
+	}); ok {
+		return o.CountAccountFailedJobRuns(p0, p1, p2, p3)
+	}
+	return s.MemStore.CountAccountFailedJobRuns(p0, p1, p2, p3)
 }
 
 func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/stageworkflows"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -168,7 +169,7 @@ func (s *server) listStoredWorkflowRevisions(w http.ResponseWriter, r *http.Requ
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
-	revisions, total, err := store.ListStoredWorkflowRevisions(r.Context(), app.ID, r.PathValue("name"), state.StoredWorkflowRevisionListOptions{Limit: limit, Offset: offset})
+	revisions, total, err := store.ListStoredWorkflowRevisions(r.Context(), app.ID, r.PathValue("name"), state.StoredWorkflowRevisionListOptions{Limit: limit, Offset: offset, EnvironmentID: storedWorkflowEnvironment(r.Context())})
 	if err != nil {
 		writeStoredWorkflowError(w, err)
 		return
@@ -199,7 +200,7 @@ func (s *server) getStoredWorkflowRevision(w http.ResponseWriter, r *http.Reques
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
-	revision, err := store.GetStoredWorkflowRevision(r.Context(), app.ID, r.PathValue("name"), version)
+	revision, err := storedWorkflowRevisionInEnvironment(r.Context(), store, app.ID, r.PathValue("name"), version)
 	if err != nil {
 		writeStoredWorkflowError(w, err)
 		return
@@ -234,7 +235,7 @@ func (s *server) restoreStoredWorkflowRevision(w http.ResponseWriter, r *http.Re
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
-	revision, err := store.GetStoredWorkflowRevision(r.Context(), app.ID, r.PathValue("name"), version)
+	revision, err := storedWorkflowRevisionInEnvironment(r.Context(), store, app.ID, r.PathValue("name"), version)
 	if err != nil {
 		writeStoredWorkflowError(w, err)
 		return
@@ -295,6 +296,9 @@ func (s *server) storedWorkflowList(ctx context.Context, app state.App, account 
 	store, ok := s.store.(state.StoredWorkflowStore)
 	if !ok {
 		return response, errors.New("stored workflow storage unavailable")
+	}
+	if envID := storedWorkflowEnvironment(ctx); envID != "" {
+		return s.stageStoredWorkflowList(ctx, store, app, account, envID)
 	}
 	records, err := store.ListStoredWorkflows(ctx, app.ID)
 	if err != nil {
@@ -439,7 +443,8 @@ func (s *server) applyStoredWorkflowMutation(w http.ResponseWriter, r *http.Requ
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
-	if problem := s.storedWorkflowEventsRefusal(r.Context(), store, account, app, r.PathValue("name"), mutation); problem != nil {
+	mutation.EnvironmentID = storedWorkflowEnvironment(r.Context())
+	if problem := s.storedWorkflowEventsRefusal(r.Context(), store, account, app, r.PathValue("name"), mutation); mutation.EnvironmentID == "" && problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -461,6 +466,9 @@ func (s *server) applyStoredWorkflowMutation(w http.ResponseWriter, r *http.Requ
 	}
 	// Return this mutation's version, even if another writer changes it immediately.
 	dep, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, "default")
+	if mutation.EnvironmentID != "" {
+		dep, err = state.Deployment{}, nil // production's manifest is not a stage's
+	}
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
 		writeStoredWorkflowError(w, err)
 		return
@@ -550,6 +558,10 @@ func decodeStoredWorkflowBody(w http.ResponseWriter, r *http.Request, body any) 
 }
 func writeStoredWorkflowError(w http.ResponseWriter, err error) {
 	if problem := api.AsProblem(err); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := stageworkflows.Problem(err); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

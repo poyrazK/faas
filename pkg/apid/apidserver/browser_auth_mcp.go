@@ -98,7 +98,7 @@ func mintMCPAuthCode(input api.CliAuthCodeRequest) (string, []byte, error) {
 func mcpScopeBits(scopes []string) (uint8, bool) {
 	var bits uint8
 	for _, scope := range scopes {
-		i := slices.Index(api.MCPGrantableScopes, scope)
+		i := slices.Index(api.MCPCodeScopes, scope)
 		if i < 0 || bits&(1<<i) != 0 {
 			return 0, false
 		}
@@ -111,12 +111,14 @@ func isMCPAuthCode(raw string) bool {
 	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
 	if len(normalized) == 69 && strings.HasPrefix(normalized, "MC2") {
 		bits, err := strconv.ParseUint(normalized[3:5], 16, 8)
-		return err == nil && bits > 15 && bits < 1<<len(api.MCPGrantableScopes)
+		return err == nil && bits > 15 && bits < 1<<len(api.MCPCodeScopes)
 	}
 	return len(normalized) == 68 && strings.HasPrefix(normalized, "MCP") && strings.ContainsRune("RW0123456789ABCDEF", rune(normalized[3]))
 }
 
-// mcpCodeScopes are the scopes a valid MCP code's purpose digit grants.
+// mcpCodeScopes are the scopes a valid MCP code's purpose digit grants,
+// approvals:connect included; the key never carries that one
+// (withoutConnectApproval).
 func mcpCodeScopes(raw string) []string {
 	raw = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
 	scopes := []string{api.ScopeAppsRead}
@@ -129,7 +131,7 @@ func mcpCodeScopes(raw string) []string {
 		if strings.HasPrefix(raw, "MC2") {
 			bits, _ = strconv.ParseUint(raw[3:5], 16, 8)
 		}
-		for i, scope := range api.MCPGrantableScopes {
+		for i, scope := range api.MCPCodeScopes {
 			if bits&(1<<i) == 0 {
 				continue
 			}
@@ -164,6 +166,7 @@ func mcpCapabilities(raw string) []string {
 		api.ScopeEnvWrite:              "change non-secret environment variables and restore configuration revisions",
 		api.ScopeUsageRead:             "read usage and billing cost summaries",
 		api.ScopeDataRead:              "read your app data: rows of managed PostgreSQL databases (read-only SQL), queued and dead-lettered message bodies, workflow inputs and outputs, object contents, and client IPs and user agents in edge events",
+		api.ScopeConnectApproval:       "deploy, promote, roll back, restart and undo its changes in production without asking you again each time; each one is recorded in your audit log",
 	}
 	var out []string
 	for _, scope := range mcpCodeScopes(raw) {
@@ -172,6 +175,17 @@ func mcpCapabilities(raw string) []string {
 		}
 	}
 	return out
+}
+
+// withoutConnectApproval drops approvals:connect from a sign-in's scopes and
+// reports whether it was there: the exchange records it as a grant, never
+// as a key scope (ADR-20261127160000).
+func withoutConnectApproval(scopes []string) ([]string, bool) {
+	i := slices.Index(scopes, api.ScopeConnectApproval)
+	if i < 0 {
+		return scopes, false
+	}
+	return slices.Delete(slices.Clone(scopes), i, i+1), true
 }
 
 // Preserve the existing CLI audit contract while distinguishing MCP consent.

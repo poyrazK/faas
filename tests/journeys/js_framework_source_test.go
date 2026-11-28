@@ -147,7 +147,7 @@ func expectRunnerNode(t *testing.T, base string, timeout time.Duration) {
 			return false, r.String()
 		}
 		doc := jsonBody(t, r)
-		return str(doc, "exec") == "/usr/local/bin/node" && str(doc, "packageManager") == "" && doc["dep"] == float64(172800000),
+		return str(doc, "exec") == "/usr/local/bin/node" && str(doc, "packageManager") == "" && num(doc, "dep") == 172800000,
 			"serving " + compact(doc)
 	})
 }

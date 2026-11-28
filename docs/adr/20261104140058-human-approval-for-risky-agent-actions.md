@@ -162,3 +162,13 @@ project environment configuration, shared secrets and workload policies on
 every environment (`TargetNone`, as for the project routes above). Deletes
 keep asking as `delete`; rotating a secret keeps asking as `credentials`.
 Validation: `TestClassify`, `TestProductionConfigScope`.
+
+## Amendment (2026-11-27): the Connect consent is the approval
+
+ADR-20261127160000: a hosted MCP connection whose person chose deploy access
+on the Connect screen does not ask again for its production deploys,
+promotions, checked rollbacks, restarts, domain and cron removals,
+configuration changes (with `env:write`) and undo; each such request writes
+the audit event `agent_approval.connect_grant` instead of opening an approval
+request. Organization floors, budgets, protected environments and every
+other request still ask as described here.
