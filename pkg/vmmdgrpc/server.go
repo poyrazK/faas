@@ -291,6 +291,10 @@ type Server struct {
 	// without a close or a pause, by instance, until a reattach takes one
 	// over or its grace ends (ADR-20261122132055 §7).
 	sandboxDetached sync.Map
+	// sandboxDetachMu guards sandboxStopping against a detach in flight: a
+	// stopping vmmd keeps no VM for a reattach (ADR-20261122132055 §7).
+	sandboxDetachMu sync.Mutex
+	sandboxStopping bool
 	// sandboxReattachGrace is how long a detached VM waits; zero is
 	// api.SandboxReattachGraceSec. Tests shorten it.
 	sandboxReattachGrace time.Duration
