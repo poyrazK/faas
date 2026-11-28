@@ -316,6 +316,9 @@ type RedisCache struct {
 	Port           int       `json:"port"`
 	Status         string    `json:"status"`
 	CreatedAt      time.Time `json:"created_at"`
+	// BoundApps are the apps bound to the cache, sorted. Only GET
+	// /v1/redis/{name} fills it.
+	BoundApps []string `json:"bound_apps,omitempty"`
 }
 
 // CreateRedisCacheRequest is POST /v1/redis.
