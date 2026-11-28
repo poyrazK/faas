@@ -92,7 +92,8 @@ class AlertRuleResponse:
     every rule of the app."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
-    deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
+    deployment-specific error_rate_pct or boot_failures evidence, a gt or gte comparison, and recorded predecessor
+    lineage."""
     notify_resolved: bool | Unset = UNSET
     """The webhook also receives a signed alert.resolved event when the rule recovers. Omitted when false."""
     environment_id: UUID | Unset = UNSET
