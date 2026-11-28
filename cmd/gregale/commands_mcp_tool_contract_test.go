@@ -71,7 +71,7 @@ func TestMCPContractCommands(t *testing.T) {
 
 	code, out, errOut := runCLI(t, "mcp", "contract", "show", "--app", "my-mcp")
 	if code != 0 || !strings.Contains(out, "aaaaaaaaaaaa (from listing version 2)") || !strings.Contains(out, "fetch, search") ||
-		!strings.Contains(out, "breaking   dep-1 (live 2026-11-27T12:00:00Z, overridden)") || !strings.Contains(out, "tool_removed /tools/search") ||
+		!strings.Contains(out, "breaking   dep-1 (live 2026-11-27T12:00:00Z, overridden,") || !strings.Contains(out, "tool_removed /tools/search") ||
 		!strings.Contains(out, "app secret MCP_PROBE_TOKEN") {
 		t.Fatalf("show = %d\n%s\n%s", code, out, errOut)
 	}

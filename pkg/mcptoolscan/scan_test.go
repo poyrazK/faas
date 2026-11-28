@@ -27,14 +27,6 @@ func contract(tools ...mcphosting.Tool) mcphosting.Contract {
 	return mcphosting.Contract{Version: 2, ProtocolVersion: mcphosting.ProtocolVersion, Capabilities: []string{"tools"}, Tools: tools}
 }
 
-func rules(r mcptoolscan.Report) map[string]string {
-	out := map[string]string{}
-	for _, f := range r.Findings {
-		out[f.Rule] = f.Severity
-	}
-	return out
-}
-
 func TestScanRules(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

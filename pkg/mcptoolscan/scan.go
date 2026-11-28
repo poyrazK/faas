@@ -399,7 +399,7 @@ func wordBoundary(text string, i int) bool {
 		return true
 	}
 	c := rune(text[i])
-	return !(unicode.IsLetter(c) || unicode.IsDigit(c) || c == '_' || c == '-')
+	return !unicode.IsLetter(c) && !unicode.IsDigit(c) && c != '_' && c != '-'
 }
 
 // excerpt quotes text around [start, end), at most
