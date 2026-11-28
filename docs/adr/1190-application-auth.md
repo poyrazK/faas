@@ -188,8 +188,10 @@ passwords and second-step codes, holds (`429 too_many_attempts`), passes past
 a spent account or recipient budget (CAPTCHA, trusted network), message
 limits (`429 too_many_messages`) and new-device alerts sent. A row stands
 for alike events and counts them: failures and passes per account, network
-and minute; refusals per spent budget until its window ends (the dedupe key
-is derived in SQL from the budget's `window_ends_at`). It names the network
+and minute; refusals per spent budget, account and network until the budget's
+window ends (the dedupe key is derived in SQL from the budget's
+`window_ends_at`); a CAPTCHA pass is recorded after GoTrue's answer, unless
+it is `captcha_failed`. It names the network
 (IPv4 /24, IPv6 /48) and a 16-byte HMAC of the address keyed from the JWT
 secret, never the address (owner's choice: enough to group one source,
 less personal data); the account comes from the sign-in subject or token,
@@ -197,7 +199,11 @@ and an unknown account leaves it empty. Rows go `AUTH_SECURITY_LOG_DAYS`
 (`AuthSecurityLogDaysDefault` 30, up to `AuthSecurityLogMaxDays`) after their
 last event, on the request-driven prune schedule, and with their user.
 Writes are fire-and-forget: a failed write is logged
-(`security_event_failed`), never fails or delays the request. Owners read
+(`security_event_failed`), never fails the request, and at most
+`AuthSecurityEventsInFlight` (1) run at once per instance; further events are
+dropped and counted (`security_events_dropped`, at most once a minute), so
+recording takes at most one of the front's two pool connections and never
+waits on its own row locks during an attack. Owners read
 them with `GET /admin/v1/security-events` (`users:read`; filters user, kind,
 network), `gregale auth activity --security` and the dashboard's Security
 tab; `GET /admin/v1/users/<id>` adds `holds`, the user's spent budgets whose

@@ -50,7 +50,7 @@ const insertStatement = `INSERT INTO gregale_auth.security_events AS e (kind, us
       WHEN $3 = 'email' THEN (SELECT id FROM auth.users WHERE email = $4 AND NOT is_sso_user LIMIT 1)
       WHEN $3 = 'phone' THEN (SELECT id FROM auth.users WHERE phone = $4 LIMIT 1) END,
     $5, $6, $7::jsonb,
-    COALESCE($8, sha256($9::bytea || convert_to((SELECT window_ends_at FROM gregale_auth.attempt_budgets WHERE key = $9)::text, 'UTF8'))),
+    COALESCE($8, sha256($9::bytea || $10::bytea || convert_to((SELECT window_ends_at FROM gregale_auth.attempt_budgets WHERE key = $9)::text, 'UTF8'))),
     $9)
   ON CONFLICT (dedupe) DO UPDATE SET count = e.count + 1, last_at = now(), detail = EXCLUDED.detail`
 
@@ -58,18 +58,40 @@ const insertStatement = `INSERT INTO gregale_auth.security_events AS e (kind, us
 // detail, alike, hold }): userId or subject names the user (an unknown
 // account leaves it empty); alike lists what makes events one row, within a
 // minute; hold is the key of the attempt budget a refusal spent, which makes
-// every refusal by it until it reopens one row.
+// the refusals by it of one account from one network, until it reopens, one
+// row (an address's budget refuses many accounts; an account's, many
+// networks).
+//
+// At most limits.securityEventsInFlight writes run at once, so recording
+// takes at most that many of the front's pool connections and never queues
+// behind itself on one row's lock during an attack: an event past that is
+// dropped, and the number dropped is logged at most once a minute. Counts
+// are then lower bounds.
 export function createSecurityLog({ pool, secret, log = console.error, now = Date.now }) {
   const digest = addressDigester(secret)
   const pending = new Set()
+  let dropped = 0, reported = -Infinity
+  const report = () => {
+    if (!dropped || now() - reported < 60000) return
+    log(JSON.stringify({ level: 'warning', event: 'security_events_dropped', count: dropped }))
+    dropped = 0
+    reported = now()
+  }
   return {
     record(kind, { userId = null, subject = null, address = null, detail = {}, alike = null, hold = null } = {}) {
+      if (pending.size >= limits.securityEventsInFlight) {
+        dropped++
+        report()
+        return Promise.resolve()
+      }
       const [type, value] = subjectParts(subject)
       const user = typeof userId === 'string' && uuid.test(userId) ? userId.toLowerCase() : null
+      const network = address ? networkLabel(address) : null
       const dedupe = alike ? createHash('sha256').update(JSON.stringify([kind, ...alike, Math.floor(now() / 60000)])).digest() : null
-      const work = pool.query(insertStatement, [kind, user, type, value, address ? networkLabel(address) : null, address ? digest(address) : null, JSON.stringify(detail), dedupe, hold])
+      const holder = hold ? createHash('sha256').update(JSON.stringify([kind, user ?? subject, network])).digest() : null
+      const work = pool.query(insertStatement, [kind, user, type, value, network, address ? digest(address) : null, JSON.stringify(detail), dedupe, hold, holder])
         .catch(err => log(JSON.stringify({ level: 'error', event: 'security_event_failed', kind, sqlstate: err?.code ?? null })))
-        .finally(() => pending.delete(work))
+        .finally(() => { pending.delete(work); report() })
       pending.add(work)
       return work
     },

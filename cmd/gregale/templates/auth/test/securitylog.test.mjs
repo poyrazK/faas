@@ -47,6 +47,7 @@ async function harness(t, options) {
       res.setHeader('Content-Type', 'application/json')
       if (req.url.startsWith('/token')) {
         if (parsed.password === 'right') return res.end(JSON.stringify({ access_token: 't', user: { id: user, email: 'ann@example.com' } }))
+        if (!parsed.gotrue_meta_security) { res.statusCode = 400; return res.end('{"error_code":"captcha_failed"}') }
         res.statusCode = 400
         return res.end('{"error_code":"invalid_credentials"}')
       }
@@ -60,8 +61,11 @@ async function harness(t, options) {
   return `http://127.0.0.1:${port}`
 }
 
+// Password sign-ins carry a CAPTCHA token unless they say otherwise; the
+// fake GoTrue refuses those without one with captcha_failed.
 const post = (base, path, body, address = '203.0.113.7', headers = {}) => fetch(`${base}/auth/v1${path}`, {
-  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Real-IP': address, 'User-Agent': 'Mozilla/5.0 Firefox/120.0', ...headers }, body: JSON.stringify(body),
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Real-IP': address, 'User-Agent': 'Mozilla/5.0 Firefox/120.0', ...headers },
+  body: JSON.stringify(body.password && !('gotrue_meta_security' in body) ? { ...body, gotrue_meta_security: { captcha_token: 'ok' } } : body),
 })
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 
@@ -101,9 +105,14 @@ test('wrong passwords, holds and a CAPTCHA pass are recorded by network', async 
   // Past the account budget from other networks, a CAPTCHA passes.
   for (let i = 0; i < limits.passwordFailuresPerAccount; i++) await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'wrong' }, `198.51.${Math.floor(i / 5)}.${i % 5 + 1}`)
   await settle()
-  const [pass] = securityLog.events.filter(event => event.kind === 'captcha_pass')
-  assert.equal(pass.detail.budget, 'password_account')
-  assert.equal(pass.subject, 'email:ann@example.com')
+  const passes = securityLog.events.filter(event => event.kind === 'captcha_pass')
+  assert.ok(passes.length > 0)
+  assert.equal(passes[0].detail.budget, 'password_account')
+  assert.equal(passes[0].subject, 'email:ann@example.com')
+  // GoTrue refusing the CAPTCHA is no pass.
+  await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'wrong', gotrue_meta_security: null }, '192.0.2.200')
+  await settle()
+  assert.equal(securityLog.events.filter(event => event.kind === 'captcha_pass').length, passes.length)
 })
 
 test('a wrong second-step code is recorded against the token\'s user', async t => {
@@ -126,7 +135,7 @@ test('a spent message budget records the recipient it held', async t => {
   assert.equal(refused.status, 429)
   const [limited] = securityLog.events.filter(event => event.kind === 'message_limited')
   assert.equal(limited.subject, 'email:ann@example.com')
-  assert.equal(limited.detail.scope, 'recipient')
+  assert.equal(limited.detail.budget, 'message_recipient')
   assert.equal(limited.detail.limit, 1)
   assert.deepEqual(limited.hold, budgetKey('message-recipient', 'email:ann@example.com'))
 })
@@ -157,10 +166,35 @@ test('recording writes one row per alike events and never fails a request', asyn
   assert.equal(calls[2][1], user)
   assert.equal(calls[2][7], null, 'a hold is grouped by its budget in SQL')
   assert.equal(calls[2][6], '{"budget":"second_step"}')
+  // One budget's refusals of different accounts or networks are rows apart.
+  await log.record('held', { subject: 'email:bob@example.com', address: '203.0.113.7', hold: Buffer.alloc(32, 1) })
+  await log.record('held', { userId: user, address: '198.51.100.7', hold: Buffer.alloc(32, 1) })
+  await log.record('held', { userId: user, address: '203.0.113.99', hold: Buffer.alloc(32, 1) })
+  assert.notDeepEqual(calls[2][9], calls[3][9])
+  assert.notDeepEqual(calls[2][9], calls[4][9])
+  assert.deepEqual(calls[2][9], calls[5][9], 'one account from one network shares a row')
   fail = true
   await log.record('code_failed', { userId: user })
   assert.equal(logged[0].event, 'security_event_failed')
   assert.equal(logged[0].sqlstate, '57P01')
+})
+
+test('recording past its writes in flight drops events and reports them', async () => {
+  let release
+  const blocked = new Promise(resolve => { release = resolve })
+  const calls = [], logged = []
+  let clock = 0
+  const pool = { query: async () => { calls.push(1); await blocked; return { rowCount: 1 } } }
+  const log = createSecurityLog({ pool, secret: 'x'.repeat(32), log: line => logged.push(JSON.parse(line)), now: () => clock })
+  const first = log.record('password_failed', { userId: user })
+  for (let i = 0; i < 5; i++) await log.record('password_failed', { userId: user })
+  assert.equal(calls.length, limits.securityEventsInFlight)
+  clock = 61000
+  release()
+  await first
+  // The first drop is reported at once, the rest a minute later together.
+  assert.deepEqual(logged.map(line => line.count), [1, 4])
+  assert.equal(logged[0].event, 'security_events_dropped')
 })
 
 test('the admin API pages security events and checks its filters', async () => {

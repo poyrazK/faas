@@ -376,7 +376,7 @@ func TestAuthActivitySecurityListsTheProtectionsEvents(t *testing.T) {
 			t.Fatalf("output lacks %q:\n%s", want, text)
 		}
 	}
-	for _, args := range [][]string{{"--security", "--search", "login"}, {"--kind", "held"}, {"--security", "--kind", "nope"}} {
+	for _, args := range [][]string{{"--security", "--search", "login"}, {"--kind", "held"}, {"--security", "--kind", "nope"}, {"--security", "--user", "alice@example.com"}} {
 		if code := main.CmdAuth(append([]string{"activity", "shop-auth"}, args...)); code == 0 {
 			t.Errorf("accepted %v", args)
 		}

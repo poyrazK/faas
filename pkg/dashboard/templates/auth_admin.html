@@ -166,7 +166,7 @@
     password_failed: 'Wrong password', code_failed: 'Wrong second-step code', held: 'Held', captcha_pass: 'Passed a hold with a CAPTCHA',
     trusted_pass: 'Passed a hold from a trusted network', message_limited: 'Message limit reached', new_device_alert: 'New-device email sent',
   }
-  const budgetLabels = { password_address: 'wrong passwords from one address', password_account: 'wrong passwords for the account', second_step: 'wrong second-step codes', message_recipient: 'messages to one recipient' }
+  const budgetLabels = { password_address: 'wrong passwords from one address', password_account: 'wrong passwords for the account', second_step: 'wrong second-step codes', message_recipient: 'messages to one recipient', message_network: 'messages from one network' }
   const securityDetail = detail => [detail?.budget && (budgetLabels[detail.budget] || detail.budget), detail?.scope && ('per ' + detail.scope), detail?.limit && ('limit ' + detail.limit),
     detail?.until && ('until ' + when(detail.until)), detail?.device].filter(Boolean).join(' · ') || '—'
   const say = text => { $('status').textContent = text }
@@ -248,12 +248,15 @@
     })
   }
 
-  // securityQuery reads the Security tab's search: a kind such as held, or
-  // a network such as 203.0.113.0/24.
+  // securityQuery reads the Security tab's search: a kind such as held or
+  // its label, or a network such as 203.0.113.0/24; anything else is null
+  // (nothing can match).
   function securityQuery(text) {
     if (!text) return {}
-    if (securityKinds[text]) return { kind: text }
-    return /^[0-9a-f.:/]+$/i.test(text) ? { network: text } : { kind: text }
+    const wanted = text.toLowerCase()
+    const kind = Object.keys(securityKinds).find(name => name === wanted || securityKinds[name].toLowerCase() === wanted)
+    if (kind) return { kind }
+    return /^[0-9a-f.:/]+$/i.test(text) && /[.:]/.test(text) ? { network: wanted } : null
   }
 
   async function load() {
@@ -281,7 +284,9 @@
         pager(null, data.more)
         say(data.entries.length ? '' : 'No activity matches.')
       } else if (tab === 'security') {
-        const data = await fetchView('/admin/v1/security-events?' + new URLSearchParams({ page: String(page), per_page: String(perPage), ...securityQuery(search) }))
+        const filter = securityQuery(search)
+        if (!filter) { setTable([], []); pager(null, false); say('No security events match. Search for a kind such as held, or a network such as 203.0.113.0/24.'); return }
+        const data = await fetchView('/admin/v1/security-events?' + new URLSearchParams({ page: String(page), per_page: String(perPage), ...filter }))
         setTable(['Last', 'Event', 'Network', 'User', 'Detail'], securityRows(data.entries, true))
         pager(null, data.more)
         say(data.entries.length ? '' : 'No security events match.')

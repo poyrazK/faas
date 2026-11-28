@@ -18550,6 +18550,11 @@ const (
 	// never addresses, and live in the owner's own database.
 	AuthSecurityLogDaysDefault = 30
 	AuthSecurityLogMaxDays     = 365
+	// AuthSecurityEventsInFlight bounds the security-event writes an Auth app
+	// instance runs at once; past it events are dropped (and the count
+	// logged), so recording never takes more of the front's database pool
+	// during an attack.
+	AuthSecurityEventsInFlight = 1
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

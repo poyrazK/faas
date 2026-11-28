@@ -636,7 +636,7 @@ func cmdAuthActivity(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	misused := (*security && *search != "") || (!*security && (*kind != "" || *network != "")) || (*kind != "" && !slices.Contains(authSecurityKinds, *kind)) || len(*network) > 64
+	misused := (*security && *search != "") || (!*security && (*kind != "" || *network != "")) || (*kind != "" && !slices.Contains(authSecurityKinds, *kind)) || len(*network) > 64 || (*security && *user != "" && !authImportUUID.MatchString(*user))
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *limit < 1 || *limit > api.AuthAdminPageSize || len(*search) > 200 || misused {
 		PrintUsage(os.Stderr, "usage: gregale auth activity NAME [--user ID] [--search TEXT | --security [--kind KIND] [--network NET]] [--limit N] [--admin-key-stdin]", "auth")
 		return 1

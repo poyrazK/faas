@@ -331,6 +331,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
   // second step's token names (securitylog.mjs).
   const address = clientAddress(req), who = kind === 'password' ? { subject } : { userId: bearer?.sub }
   const alike = [subject ?? bearer?.sub ?? null, networkLabel(address)]
+  let captchaWaived = false
   try {
     for (const entry of entries) {
       const { count, wait } = await attempts.take(entry)
@@ -338,7 +339,8 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
       if (wait === 0) continue
       if (entry.budget === budgets.passwordAccount) {
         if (captcha && count <= entry.budget.limit * limits.trustedBudgetMultiplier) {
-          securityLog?.record('captcha_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
+          // Recorded once GoTrue, which checks the CAPTCHA, has answered.
+          captchaWaived = true
           continue
         }
         if (await signIns?.trusted(subject, address)) {
@@ -370,6 +372,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
     } catch (err) {
       logFailure('attempt_budget_failed')(err)
     }
+    if (captchaWaived && answer?.error_code !== 'captcha_failed') securityLog?.record('captcha_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
     if (result === 'failure') securityLog?.record(kind === 'password' ? 'password_failed' : 'code_failed', { ...who, address, alike })
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
@@ -395,7 +398,7 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
       const result = await sends.take(recipients, clientAddress(req))
       if (result.refused) {
         const { name, key, recipient, budget, count, wait } = result.refused
-        securityLog?.record('message_limited', { subject: recipient, address: clientAddress(req), hold: key, detail: { scope: name, limit: budget.limit, until: new Date(Date.now() + wait * 1000).toISOString() } })
+        securityLog?.record('message_limited', { subject: recipient, address: clientAddress(req), hold: key, detail: { budget: `message_${name}`, limit: budget.limit, until: new Date(Date.now() + wait * 1000).toISOString() } })
         return limited(res, 'too_many_messages', budget, count, wait, { error_code: 'too_many_messages', scope: name })
       }
       taken = result.taken
