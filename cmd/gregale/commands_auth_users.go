@@ -433,6 +433,29 @@ func authUsersImpersonate(origin, key string, ref authAdminUser, reason string, 
 	return 0
 }
 
+// authHold is a spent budget still holding a user.
+type authHold struct {
+	Budget  string  `json:"budget"`
+	Network *string `json:"network"`
+	Until   string  `json:"until"`
+}
+
+// authHoldsSummary describes a user's holds and how to release them.
+func authHoldsSummary(holds []authHold) string {
+	if len(holds) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(holds))
+	for _, hold := range holds {
+		text := hold.Budget
+		if hold.Network != nil {
+			text += " from " + *hold.Network
+		}
+		parts = append(parts, text+" until "+hold.Until)
+	}
+	return strings.Join(parts, "; ") + " (gregale auth users release)"
+}
+
 func authUsersGet(origin, key string, ref authAdminUser) int {
 	var detail struct {
 		User           authAdminUser `json:"user"`
@@ -444,11 +467,7 @@ func authUsersGet(origin, key string, ref authAdminUser) int {
 			Role string `json:"role"`
 		} `json:"organizations"`
 		// Holds is absent from Auth apps that predate security events.
-		Holds *[]struct {
-			Budget  string  `json:"budget"`
-			Network *string `json:"network"`
-			Until   string  `json:"until"`
-		} `json:"holds"`
+		Holds *[]authHold `json:"holds"`
 	}
 	if err := authAdminCall(http.MethodGet, origin, key, "/admin/v1/users/"+ref.ID, nil, &detail); err != nil {
 		return printErr("Could not read the user", err)
@@ -472,19 +491,7 @@ func authUsersGet(origin, key string, ref authAdminUser) int {
 		{"organizations", strings.Join(orgs, ", ")},
 	}
 	if detail.Holds != nil {
-		holds := make([]string, 0, len(*detail.Holds))
-		for _, hold := range *detail.Holds {
-			text := hold.Budget
-			if hold.Network != nil {
-				text += " from " + *hold.Network
-			}
-			holds = append(holds, text+" until "+hold.Until)
-		}
-		value := "none"
-		if len(holds) > 0 {
-			value = strings.Join(holds, "; ") + " (gregale auth users release)"
-		}
-		rows = append(rows, [2]string{"holds", value})
+		rows = append(rows, [2]string{"holds", authHoldsSummary(*detail.Holds)})
 	}
 	_, _ = fmt.Fprintf(osStdout, "User %s\n", user.ID)
 	for _, row := range rows {

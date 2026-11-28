@@ -366,7 +366,7 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
   }
   // release-holds clears every budget holding the user (securitylog.mjs).
   if (user && parts[2] === 'release-holds' && parts.length === 3 && method === 'POST') {
-    return [200, await releaseHolds(query, user, keyId)]
+    return [200, await releaseHolds(query, user.toLowerCase(), keyId)]
   }
   if (user && parts[2] === 'ban' && parts.length === 3 && method === 'POST') {
     const duration = body?.duration

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
 import { createServer } from '../server.mjs'
-import { budgetKey } from '../attempts.mjs'
+import { budgetKey, budgetOwner, passwordEntries } from '../attempts.mjs'
 import { limits, securityConfig } from '../config.mjs'
 import { activeHolds, addressDigester, createSecurityLog, networkFilter, networkLabel, releaseHolds, securityEvents, securityKinds } from '../securitylog.mjs'
 import { createSends, messageBudgets } from '../sends.mjs'
@@ -177,17 +177,22 @@ test('releasing holds clears every budget that may hold the user and records who
   const query = async (sql, args) => {
     calls.push({ sql, args })
     if (sql.startsWith('SELECT email, phone')) return args[0] === user ? [{ email: 'Ann.Smith+x@Gmail.com', phone: '15551234567' }] : []
-    if (sql.includes('DELETE FROM gregale_auth.attempt_budgets')) return [{ cleared: 4, ended: 2 }]
+    if (sql.includes('DELETE FROM gregale_auth.attempt_budgets')) return [{ cleared: 4, ended: 2, recorded: 1 }]
     return []
   }
-  assert.deepEqual(await releaseHolds(query, user, 'ABCD1234'), { budgets_cleared: 4 })
+  assert.deepEqual(await releaseHolds(query, user.toUpperCase(), 'ABCD1234'), { budgets_cleared: 4 })
+  assert.equal(calls[0].args[0], user, 'an upper-case ID is lower-cased as the front keys budgets')
   const keys = calls[1].args[1].map(key => key.toString('hex'))
   for (const expected of [budgetKey('second-step', user), budgetKey('message-recipient', `user:${user}`), budgetKey('password-account', 'email:ann.smith+x@gmail.com'),
     budgetKey('message-recipient', 'email:annsmith@gmail.com'), budgetKey('password-account', 'phone:15551234567'), budgetKey('message-recipient', 'phone:15551234567')]) {
     assert.ok(keys.includes(expected.toString('hex')), expected.toString('hex'))
   }
   assert.match(calls[1].sql, /user_id = \$1 AND budget_key IS NOT NULL/, 'and the address budgets its events name')
-  assert.deepEqual(calls[2].args, [user, '{"budgets":4,"admin_key":"ABCD1234"}'])
+  assert.match(calls[1].sql, /detail->>'budget' = 'message_recipient'/, 'never a network\'s message budget')
+  assert.deepEqual(calls[1].args[2].map(owner => owner.toString('hex')), [budgetOwner('email:ann.smith+x@gmail.com'), budgetOwner('phone:15551234567')].map(owner => owner.toString('hex')))
+  assert.equal(calls[1].args[3], 'ABCD1234')
+  assert.match(calls[1].sql, /INSERT INTO gregale_auth.security_events/, 'recorded in the same statement')
+  assert.equal(calls.length, 2)
   await assert.rejects(releaseHolds(query, '22222222-2222-4333-8444-555555555555'), /user_not_found/)
   assert.equal(requiredScope('POST', ['users', user, 'release-holds']), 'users:write')
 })
@@ -291,4 +296,10 @@ test('a trusted network\'s pass of a message budget is recorded only once GoTrue
   await post(base, '/otp', { email: 'ann@example.com', refuse: true })
   await settle()
   assert.equal(securityLog.events.filter(event => event.kind === 'trusted_pass').length, 1, 'a request GoTrue refused passed nothing')
+})
+
+test('password budgets name the account they hold', () => {
+  const [address, account] = passwordEntries('email:ann@example.com', '203.0.113.7')
+  assert.deepEqual(address.owner, budgetOwner('email:ann@example.com'))
+  assert.deepEqual(account.owner, budgetOwner('email:ann@example.com'))
 })

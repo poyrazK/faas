@@ -17,6 +17,11 @@ ALTER TABLE gregale_auth.security_events DROP CONSTRAINT security_events_kind_ch
     ADD CONSTRAINT security_events_kind_check CHECK (kind IN ('password_failed', 'code_failed', 'held', 'captcha_pass', 'trusted_pass', 'message_limited', 'new_device_alert', 'released'));
 CREATE INDEX security_events_hold_idx ON gregale_auth.security_events (budget_key) WHERE kind = 'held';
 
+-- An attempt budget may name the account it holds (a digest of its sign-in
+-- subject), so a release finds the account's budgets from every address.
+ALTER TABLE gregale_auth.attempt_budgets ADD COLUMN owner bytea CHECK (owner IS NULL OR octet_length(owner) = 32);
+CREATE INDEX attempt_budgets_owner_idx ON gregale_auth.attempt_budgets (owner) WHERE owner IS NOT NULL;
+
 ALTER TABLE gregale_auth.event_outbox DROP CONSTRAINT event_outbox_type_check,
     ADD CONSTRAINT event_outbox_type_check CHECK (type IN ('auth.user.created', 'auth.user.confirmed', 'auth.user.signed_in', 'auth.user.banned', 'auth.user.unbanned', 'auth.user.deleted', 'auth.user.locked', 'auth.user.new_device'));
 

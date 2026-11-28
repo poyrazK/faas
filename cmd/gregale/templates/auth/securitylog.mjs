@@ -5,7 +5,7 @@
 // (dedupe), so an attack grows a count, not the table. Recording never fails
 // or delays a request: an error is logged and the request goes on.
 import { createHash, createHmac } from 'node:crypto'
-import { addressBucket, budgetKey, goLower } from './attempts.mjs'
+import { addressBucket, budgetKey, budgetOwner, goLower } from './attempts.mjs'
 import { inbox } from './sends.mjs'
 import { HTTPError } from './authz.mjs'
 import { limits } from './config.mjs'
@@ -116,11 +116,13 @@ export function createSecurityLog({ pool, secret, log = console.error, now = Dat
     reported = now()
   }
   const drain = async () => {
+    let raises = false
     while (queue.size) {
       const [id, entry] = queue.entries().next().value
       queue.delete(id)
       try {
         await pool.query(insertStatement, [...entry.args, entry.count])
+        raises ||= entry.args[0] === 'held' || entry.args[0] === 'new_device_alert'
       } catch (err) {
         log(JSON.stringify({ level: 'error', event: 'security_event_failed', kind: entry.args[0], sqlstate: err?.code ?? null }))
       }
@@ -128,7 +130,8 @@ export function createSecurityLog({ pool, secret, log = console.error, now = Dat
     }
     writing = null
     report()
-    written?.()
+    // Only holds and new devices can raise lifecycle events (sql/0027).
+    if (raises) written?.()
   }
   return {
     record(kind, { userId = null, subject = null, address = null, detail = {}, alike = null, hold = null } = {}) {
@@ -196,30 +199,37 @@ export async function activeHolds(query, user) {
 }
 
 // releaseHolds clears every budget that may hold a user (ADR-1190): wrong
-// passwords for each address they sign in with, from every network their
-// security events name, wrong second-step codes, and messages to them. Their
-// open holds end, so the next hold raises auth.user.locked again, and the
-// release is recorded with the admin key that made it. It returns how many
-// budgets were cleared.
-export async function releaseHolds(query, user, keyId = null) {
+// passwords for their email address and phone number from any address
+// (found by budget owner, and by the budgets their held events name),
+// wrong second-step codes, and messages to them; never a budget shared by a
+// network. Their open holds end, so the next hold raises auth.user.locked
+// again, and the release is recorded with the admin key that made it, in
+// the same statement. It returns how many budgets were cleared.
+export async function releaseHolds(query, id, keyId = null) {
+  const user = id.toLowerCase()
   const [found] = await query('SELECT email, phone FROM auth.users WHERE id = $1', [user])
   if (!found) throw new HTTPError(404, 'user_not_found')
-  const keys = [budgetKey('second-step', user), budgetKey('message-recipient', `user:${user}`)]
+  const keys = [budgetKey('second-step', user), budgetKey('message-recipient', `user:${user}`)], owners = []
   if (found.email) {
     const email = goLower(found.email)
     keys.push(budgetKey('password-account', `email:${email}`), budgetKey('message-recipient', inbox(`email:${email}`)))
+    owners.push(budgetOwner(`email:${email}`))
   }
-  if (found.phone) keys.push(budgetKey('password-account', `phone:${found.phone}`), budgetKey('message-recipient', `phone:${found.phone}`))
+  if (found.phone) {
+    keys.push(budgetKey('password-account', `phone:${found.phone}`), budgetKey('message-recipient', `phone:${found.phone}`))
+    owners.push(budgetOwner(`phone:${found.phone}`))
+  }
   const [{ cleared }] = await query(`WITH named AS (
       SELECT DISTINCT budget_key AS key FROM gregale_auth.security_events
-      WHERE user_id = $1 AND budget_key IS NOT NULL AND kind IN ('held', 'message_limited')
+      WHERE user_id = $1 AND budget_key IS NOT NULL
+        AND (kind = 'held' OR (kind = 'message_limited' AND detail->>'budget' = 'message_recipient'))
       UNION SELECT unnest($2::bytea[])),
-    gone AS (DELETE FROM gregale_auth.attempt_budgets b USING named WHERE b.key = named.key RETURNING 1),
+    gone AS (DELETE FROM gregale_auth.attempt_budgets b
+      WHERE b.key IN (SELECT key FROM named) OR b.owner = ANY($3::bytea[]) RETURNING 1),
     ended AS (UPDATE gregale_auth.security_events SET detail = detail || jsonb_build_object('until', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
-      WHERE user_id = $1 AND kind IN ('held', 'message_limited') AND (detail->>'until')::timestamptz > now() RETURNING 1)
-    SELECT (SELECT count(*) FROM gone)::int AS cleared, (SELECT count(*) FROM ended)::int AS ended`, [user, keys])
-  await query(`INSERT INTO gregale_auth.security_events (kind, user_id, detail) VALUES ('released', $1, $2::jsonb)`,
-    [user, JSON.stringify({ budgets: cleared, ...(keyId ? { admin_key: keyId } : {}) })])
+      WHERE user_id = $1 AND kind IN ('held', 'message_limited') AND (detail->>'until')::timestamptz > now() RETURNING 1),
+    recorded AS (INSERT INTO gregale_auth.security_events (kind, user_id, detail)
+      SELECT 'released', $1, jsonb_strip_nulls(jsonb_build_object('budgets', (SELECT count(*) FROM gone), 'admin_key', $4::text)) RETURNING 1)
+    SELECT (SELECT count(*) FROM gone)::int AS cleared, (SELECT count(*) FROM ended)::int AS ended, (SELECT count(*) FROM recorded)::int AS recorded`, [user, keys, owners, keyId])
   return { budgets_cleared: cleared }
 }
-

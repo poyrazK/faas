@@ -276,6 +276,21 @@ test('a refreshed session from an unrecorded network alerts once, not daily', as
   assert.equal(mailer.sent.length, 1)
 })
 
+test('a device noted while alerts were off is still emailed once they are on', async () => {
+  const pool = memorySeen(), mailer = memoryMailer()
+  const off = createSignInSecurity({ pool, mailer, alerts: false, app: 'Shop', templates: async () => ({}), log: () => {} })
+  const on = createSignInSecurity({ pool, mailer, app: 'Shop', templates: async () => ({}), log: () => {} })
+  const home = { userId: user, email: 'ann@example.com', address: '203.0.113.7', userAgent: 'Firefox (Mac)' }
+  await off.record(home)
+  // A refreshed session from a new network and device is noted but not
+  // recorded, so the same refresh after alerts are on is still new.
+  const refresh = { ...home, address: '198.51.100.1', userAgent: 'Lynx', trust: 'known' }
+  assert.equal(await off.record(refresh), 'noted')
+  assert.equal(mailer.sent.length, 0)
+  assert.equal(await on.record(refresh), true)
+  assert.equal(mailer.sent.length, 1)
+})
+
 test('a failed alert lets the next sign-in from that device try again', async () => {
   const pool = memorySeen()
   let failing = true

@@ -639,8 +639,9 @@ gregale auth users release shop-auth ada@example.com
 (`POST /admin/v1/users/ID/release-holds`, scope `users:write`). It clears
 every budget that may hold them: wrong passwords for their email address
 and phone number, from every network their security events name, wrong
-second-step codes, and messages to them. The release is recorded as a
-`released` event with the admin key's ID. If someone is still guessing,
+second-step codes, and messages to them, but never a limit a whole network
+shares. The release is recorded as a `released` event with the admin key's
+ID. If someone is still guessing,
 the next wrong passwords hold the account again.
 
 Entries are kept 30 days after their last event, and go with their user.
@@ -1403,7 +1404,7 @@ The Auth app then publishes these events from its source (`app.<auth app id>`):
 | `auth.user.unbanned` | A ban is lifted | |
 | `auth.user.deleted` | A user is deleted | |
 | `auth.user.locked` | Wrong passwords for the account, or wrong second-step codes, from anywhere spend its budget, so sign-ins are held (once per hold; one address's holds raise none) | `budget` (`password_account` or `second_step`), `until` |
-| `auth.user.new_device` | A sign-in from a network and a device the account had not used in 90 days (whether or not the new-device email is on) | `device`, such as `Firefox on macOS` |
+| `auth.user.new_device` | A sign-in from a network and a device the account had not used in 90 days (whether or not the new-device email is on; once per device kind in 90 days, and once more if you turn the email on) | `device`, such as `Firefox on macOS` |
 
 Events carry the user ID and these facts only, never an address, a phone number or metadata,
 because Gregale stores published events. Look the user up in your own

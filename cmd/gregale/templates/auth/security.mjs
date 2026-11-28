@@ -173,7 +173,9 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
     // it returns 'noted'.
     async alert({ userId, email, address, userAgent, emailing = true }) {
       const at = now()
-      const marker = budgetKey('new-device-alert', userId, deviceKind(userAgent))
+      // Noting without email claims its own marker, so turning alerts on
+      // later still emails about a device noted while they were off.
+      const marker = budgetKey(emailing ? 'new-device-alert' : 'new-device-noted', userId, deviceKind(userAgent))
       const { rowCount } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets AS b (key, failures, window_ends_at)
         VALUES ($1, 1, now() + make_interval(days => $2))
         ON CONFLICT (key) DO UPDATE SET failures = 1, window_ends_at = EXCLUDED.window_ends_at WHERE b.window_ends_at <= now()`, [marker, limits.newDeviceDays])

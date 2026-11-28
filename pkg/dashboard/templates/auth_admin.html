@@ -394,7 +394,8 @@
       actions.append(
         button('Sign out everywhere', () => act('Signing out', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/sign-out', {}, data => 'Ended ' + data.sessions_ended + ' session(s).')),
         // Clears every wrong-password, code and message budget holding them.
-        ...(holds.length ? [button('Release holds', () => act('Releasing', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/release-holds', {}, data => 'Released: ' + data.budgets_cleared + ' budget(s) cleared.'))] : []),
+        // Always offered: a hold whose event was not recorded lists nothing.
+        button('Release holds', () => act('Releasing', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/release-holds', {}, data => 'Released: ' + data.budgets_cleared + ' budget(s) cleared.')),
         duration,
         button('Ban', () => act('Banning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: duration.value }, () => 'Banned and signed out.')),
         ...(banned(user) ? [button('Unban', () => act('Unbanning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: 'none' }, () => 'Unbanned.'))] : []),
