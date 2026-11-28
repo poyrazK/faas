@@ -1968,7 +1968,7 @@ var cliCommands = []cliCommand{
 				{Name: "address", Short: "local address to listen on (default 127.0.0.1)", Value: "A"},
 				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
 			}},
-			{Name: "tasks", Short: "List, show or cancel one-off tasks (app exec, release commands)", Flags: []cliFlag{
+			{Name: "tasks", Short: "List, show, cancel or retry one-off tasks (app exec, release commands)", Flags: []cliFlag{
 				{Name: "limit", Short: "tasks per page (1..200, default 20)", Value: "N"},
 				{Name: "offset", Short: "tasks to skip", Value: "N"},
 			}, Subcommands: []cliSub{
@@ -1978,6 +1978,7 @@ var cliCommands = []cliCommand{
 				}},
 				{Name: "show", Short: "Show one task's status, exit code and output tail", Positionals: []string{"<task-id>"}},
 				{Name: "cancel", Short: "Cancel a queued or running task", Positionals: []string{"<task-id>"}},
+				{Name: "retry", Short: "Run a finished task's command again on the live deployment", Positionals: []string{"<task-id>"}},
 			}},
 			{Name: "security", Short: "Show posture or configure deploy enforcement", Flags: []cliFlag{
 				{Name: "posture", Short: "show the read-only security posture"},

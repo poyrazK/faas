@@ -365,7 +365,13 @@ gregale app tasks my-api                         # newest first
 gregale app tasks my-api --offset 20             # older page
 gregale app tasks show my-api <task-id>          # status, exit code, output tail
 gregale app tasks cancel my-api <task-id>        # stop a queued or running task
+gregale app tasks retry my-api <task-id>         # run a finished task's command again
 ```
+
+`retry` submits the same command, shell mode, timeout and output limit as a
+new task on the app's current live deployment, so it picks up the latest
+release and configuration. It works on finished `app exec` tasks; start an
+interactive session again with `app exec -it`.
 
 The app's dashboard page links to the same history under **View task
 history**. Only the tail of the output is kept, up to the task's

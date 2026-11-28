@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,5 +130,65 @@ func TestCmdAppTasksShowInLinkedCheckoutTakesTheTaskID(t *testing.T) {
 	}
 	if len(paths) != 1 || paths[0] != "/v1/apps/demo/tasks/2bdd4251-f567-4a48-9f66-a155bbfa7751" {
 		t.Fatalf("requests = %v, want the linked app's task", paths)
+	}
+}
+
+// retry re-submits the finished task's command, shell mode, timeout and
+// output limit as a new task.
+func TestCmdAppTasksRetryResubmitsTheCommand(t *testing.T) {
+	var created map[string]any
+	appTasksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-app/tasks/2bdd4251-f567-4a48-9f66-a155bbfa7751":
+			_, _ = w.Write([]byte(appTaskFinishedReceipt))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/my-app/tasks":
+			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(strings.Replace(strings.Replace(appTaskFinishedReceipt, "2bdd4251-f567-4a48-9f66-a155bbfa7751", "6f0e3c1a-9a5b-4c4e-8d2f-0a1b2c3d4e5f", 1), `"status":"failed"`, `"status":"queued"`, 1)))
+		default:
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+	})
+	out, errOut, restore := main.SwapIO(t)
+	defer restore()
+
+	if code := main.CmdAppTasks("my-app", []string{"retry", "2bdd4251-f567-4a48-9f66-a155bbfa7751"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errOut())
+	}
+	command, _ := json.Marshal(created["command"])
+	if string(command) != `["bin/migrate","--to","head"]` || created["timeout_seconds"] != float64(30) || created["max_output_bytes"] != float64(2048) {
+		t.Fatalf("retry request = %v", created)
+	}
+	if !strings.Contains(out.String(), "6f0e3c1a-9a5b-4c4e-8d2f-0a1b2c3d4e5f") || !strings.Contains(out.String(), "tasks show my-app 6f0e3c1a") {
+		t.Fatalf("stdout should name the new task and how to follow it:\n%s", out.String())
+	}
+}
+
+func TestCmdAppTasksRetryRefusesWhatItCannotReproduce(t *testing.T) {
+	for name, tc := range map[string]struct{ from, to, want string }{
+		"still running": {`"status":"failed"`, `"status":"running"`, "still running"},
+		"release":       {`"kind":"manual"`, `"kind":"release"`, "release task"},
+		"interactive":   {`"status":"failed"`, `"status":"failed","interactive":true`, "app exec -it"},
+		"platform":      {`"command":["bin/migrate","--to","head"]`, `"command":["__gregale_port_forward_v1__","5432"]`, "platform command"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			receipt := strings.Replace(appTaskFinishedReceipt, tc.from, tc.to, 1)
+			appTasksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Fatalf("a refused retry must not submit: %s %s", r.Method, r.URL.Path)
+				}
+				_, _ = w.Write([]byte(receipt))
+			})
+			_, errOut, restore := main.SwapIO(t)
+			defer restore()
+			if code := main.CmdAppTasks("my-app", []string{"retry", "2bdd4251-f567-4a48-9f66-a155bbfa7751"}); code == 0 {
+				t.Fatal("retry succeeded")
+			}
+			if !strings.Contains(errOut(), tc.want) {
+				t.Fatalf("stderr = %q, want %q", errOut(), tc.want)
+			}
+		})
 	}
 }
