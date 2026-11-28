@@ -47,6 +47,7 @@ var orgAccountRoutes = []struct{ personal, org string }{
 	{"/v1/billing/status", "/billing/status"},
 	{"/v1/billing/costs", "/billing/costs"},
 	{"/v1/usage", "/usage"},
+	{"/v1/invoices", "/invoices"},
 	{"/v1/billing/budgets", "/billing/budgets"},
 	{"/v1/billing/budgets/", "/billing/budgets/"},
 	{"/v1/postgres/", "/postgres/"},
@@ -107,6 +108,17 @@ func (c *Client) orgRoute(method, path string) (string, error) {
 			return orgBase + route.org + suffix, nil
 		}
 	}
+	// Creating and revoking a key have organization forms with the same
+	// request and response (CreateOrgAPIKeyRequest mirrors CreateKeyRequest),
+	// so flows that mint a key for a new app (auth create --workflows, mcp
+	// connect ci) mint an organization key under --org. Listing and
+	// rotating answer other shapes and are refused below.
+	if bare == "/v1/keys" && method == http.MethodPost {
+		return orgBase + "/keys" + suffix, nil
+	}
+	if id, ok := strings.CutPrefix(bare, "/v1/keys/"); ok && method == http.MethodDelete && id != "" && !strings.Contains(id, "/") {
+		return orgBase + "/keys/" + id + suffix, nil
+	}
 	if under(bare, "/v1/keys") {
 		return "", NewProblem(http.StatusBadRequest, CodeUnsupportedByCLI,
 			"--org does not apply to personal API keys",
@@ -154,13 +166,15 @@ func postgresFlatOnly(rest string) bool {
 // refused rather than answered with personal data the caller would take for
 // the organization's.
 func personalAccountOnly(method, path string) bool {
-	if under(path, "/v1/billing") || under(path, "/v1/usage") || under(path, "/v1/postgres/overage") {
-		return true
-	}
-	switch path {
-	case "/v1/account/managed-postgres-usage", "/v1/account/object-storage-usage",
-		"/v1/account/realtime-history-usage", "/v1/account/export":
-		return true
+	for _, prefix := range []string{
+		"/v1/billing", "/v1/usage", "/v1/invoices", "/v1/postgres/overage",
+		"/v1/account/usage", "/v1/account/billing-runs", "/v1/account/billing-run-schedule",
+		"/v1/account/managed-postgres-usage", "/v1/account/object-storage-usage",
+		"/v1/account/realtime-history-usage", "/v1/account/export",
+	} {
+		if under(path, prefix) {
+			return true
+		}
 	}
 	return method != http.MethodGet && method != http.MethodHead && under(path, "/v1/account")
 }

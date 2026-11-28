@@ -7754,6 +7754,17 @@ func ErrOrgSeatsUnavailable() *Problem {
 		WithDocs(docsBase + "/orgs#member-limits")
 }
 
+// ErrOrgSeatsFull is the 403 an invitation accept answers when the
+// organization's paid plan has no free seat. The invitee is not a member yet,
+// so it names neither the limit nor the headcount; members read those from
+// seat_usage.
+func ErrOrgSeatsFull() *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgMemberCapExceeded,
+		"Organization has no free member seat",
+		"every member seat on this organization's plan is taken; ask its owner to free a seat or upgrade the plan, then accept the invitation again.").
+		WithDocs(docsBase + "/orgs#member-limits")
+}
+
 // ErrOrgRoleForbidden is the 403 returned when the authenticated
 // member lacks the role required for this action. The action
 // rides in the detail so the dashboard can render "you need to

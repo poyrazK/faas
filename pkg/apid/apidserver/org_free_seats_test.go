@@ -61,9 +61,10 @@ func TestAcceptOnFreeOrgAsksForAnUpgrade(t *testing.T) {
 	}
 }
 
-// TestAcceptOnFullOrgReportsActiveMembers pins the observed count on a full
-// paid organization: after a downgrade it can exceed the limit.
-func TestAcceptOnFullOrgReportsActiveMembers(t *testing.T) {
+// TestAcceptOnFullOrgDisclosesNoHeadcount: an accept on a full paid
+// organization (here over its cap after a downgrade) says no seat is free and
+// does not tell the invitee, not yet a member, the limit or headcount.
+func TestAcceptOnFullOrgDisclosesNoHeadcount(t *testing.T) {
 	e, cookie := apidserver.SetupWithSessionFreshStepUpForTest(t)
 	store := *e.Store()
 	ctx := context.Background()
@@ -84,8 +85,8 @@ func TestAcceptOnFullOrgReportsActiveMembers(t *testing.T) {
 		t.Fatalf("accept on full org: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	problem := decodeProblem(t, rec.Body.Bytes())
-	want := "caps this organization at 10 member(s); you have 12."
-	if problem.Code != api.CodeOrgMemberCapExceeded || !strings.Contains(problem.Detail, want) {
-		t.Fatalf("problem = %+v, want detail containing %q", problem, want)
+	if problem.Code != api.CodeOrgMemberCapExceeded || !strings.Contains(problem.Detail, "seat") ||
+		strings.ContainsAny(problem.Detail, "0123456789") || problem.Limit != nil || problem.Observed != nil {
+		t.Fatalf("problem = %+v, want a seat refusal with no limit or headcount", problem)
 	}
 }

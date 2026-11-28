@@ -72,10 +72,13 @@ func extractAutomationFlag(args []string) ([]string, error) {
 				value = rest[0]
 				i++
 			}
-			if strings.TrimSpace(value) == "" || strings.HasPrefix(value, "-") {
+			// Trim first so the checks see the slug the requests will use; a
+			// slug never holds a path, query or space character.
+			value = strings.TrimSpace(value)
+			if value == "" || strings.HasPrefix(value, "-") || strings.ContainsAny(value, "/?#% \t") {
 				return args, errors.New("--org requires an organization slug")
 			}
-			projectOrganization = strings.TrimSpace(value)
+			projectOrganization = value
 			continue
 		}
 		if arg == "--http-retries" || strings.HasPrefix(arg, "--http-retries=") {

@@ -47,6 +47,8 @@ func apidHandlers(t *testing.T) map[string]string {
 var orgRouteShapeExceptions = map[string]string{
 	"PATCH /v1/account/plan": "answers OrgPlanResponse; cmdPlan calls ChangeOrgPlan under --org",
 	"POST /v1/apps":          "createApp and createOrgApp both write through createAppInOrg (AppResponse)",
+	"POST /v1/keys":          "createOrgAPIKey takes the same fields (CreateOrgAPIKeyRequest) and answers APIKeyResponse with the plaintext",
+	"DELETE /v1/keys/{id}":   "revokeOrgAPIKey answers 204 like deleteKey",
 }
 
 // TestOrgRouteMappedHandlersMatch: a mapped route reaches the same handler
@@ -138,7 +140,7 @@ func TestOrgRouteTargetsRegisteredRoutes(t *testing.T) {
 		method, pattern, _ := strings.Cut(route, " ")
 		if !strings.HasPrefix(pattern, "/v1/account") && !strings.HasPrefix(pattern, "/v1/billing") &&
 			!strings.HasPrefix(pattern, "/v1/postgres") && !strings.HasPrefix(pattern, "/v1/usage") &&
-			!strings.HasPrefix(pattern, "/v1/keys") && pattern != "/v1/apps" && pattern != "/v1/apps/{slug}/buckets" {
+			!strings.HasPrefix(pattern, "/v1/keys") && !strings.HasPrefix(pattern, "/v1/invoices") && pattern != "/v1/apps" && pattern != "/v1/apps/{slug}/buckets" {
 			continue
 		}
 		sample := routeParam.ReplaceAllString(pattern, "x1")

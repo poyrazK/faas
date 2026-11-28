@@ -2,7 +2,8 @@
 
 // Package orgseats decides how an organization's member seats answer
 // invitations and accepts: a plan with no seats (Free) refuses invitations and
-// asks for an upgrade, and a full paid plan reports its live member count.
+// asks for an upgrade, and an accept on a full paid plan says no seat is free
+// without disclosing the organization's headcount to the invitee.
 package orgseats
 
 import (
@@ -16,7 +17,6 @@ import (
 type Store interface {
 	OrgByID(ctx context.Context, id string) (state.Org, error)
 	OrgInvitationByTokenHash(ctx context.Context, hash []byte) (state.OrgInvitation, error)
-	CountActiveOrgMembers(ctx context.Context, orgID string) (int, error)
 }
 
 // HasSeats reports whether org's plan can seat members other than its owner
@@ -32,25 +32,20 @@ func NoSeatsProblem(org state.Org) *api.Problem {
 
 // MemberCapProblem is the 403 an accept answers when the store refused it at
 // the member cap. A plan with no seats asks for an upgrade rather than
-// reporting "0 of 0"; a full paid plan reports its limit and the live
-// active-member count, which a downgrade can leave above the limit. Lookups
-// are best effort: the refusal stands either way.
+// reporting "0 of 0"; a full paid plan says every seat is taken. The invitee
+// is not a member yet, so neither answer discloses the organization's limit
+// or headcount. Lookups are best effort: the refusal stands either way.
 func MemberCapProblem(ctx context.Context, store Store, tokenHash []byte) *api.Problem {
 	inv, err := store.OrgInvitationByTokenHash(ctx, tokenHash)
 	if err != nil {
-		return api.ErrOrgMemberCapExceeded(0, 0)
+		return api.ErrOrgSeatsFull()
 	}
 	org, err := store.OrgByID(ctx, inv.OrgID)
 	if err != nil {
-		return api.ErrOrgMemberCapExceeded(0, 0)
+		return api.ErrOrgSeatsFull()
 	}
-	limit := org.Plan.OrgMembersMax()
-	if limit <= 0 {
+	if org.Plan.OrgMembersMax() <= 0 {
 		return api.ErrOrgSeatsUnavailable()
 	}
-	active, err := store.CountActiveOrgMembers(ctx, org.ID)
-	if err != nil {
-		active = limit
-	}
-	return api.ErrOrgMemberCapExceeded(limit, active)
+	return api.ErrOrgSeatsFull()
 }

@@ -35,8 +35,9 @@ not get started from the terminal:
 2. **An accept on a plan with no seats asks for an upgrade.** An invitation
    minted before this change, or before a downgrade, still fails at accept
    with `403 org_member_cap_exceeded`. The detail now tells the invitee to ask
-   the owner to upgrade. A plan that has seats but is full reports its real
-   limit instead of 0.
+   the owner to upgrade. When a paid plan is full, the accept says no seat is
+   free. It does not give the organization's limit or headcount: the invitee
+   is not a member yet, and members read those numbers from `seat_usage`.
 3. **`--org` selects the organization for every call that has an
    organization form.** With `--org SLUG`, the client sends:
    - `POST /v1/apps` to `POST /v1/orgs/SLUG/apps`, so a first deploy creates
@@ -49,17 +50,25 @@ not get started from the terminal:
      connections, cutovers and a few settings), which keep their flat path.
    App-scoped paths are unchanged: app slugs are global, and the server
    authorizes the member's role on a company app (ADR-202610171901).
-4. **`--org` never quietly acts on or shows the personal account.** The
-   monthly usage read (`GET /v1/usage`) goes to the organization's usage.
+4. **`--org` never quietly acts on or shows the personal account.** Some
+   calls go to the organization:
+   - the monthly usage read (`GET /v1/usage`) and the invoice list
+     (`GET /v1/invoices`);
+   - creating and revoking an API key (`POST /v1/keys`,
+     `DELETE /v1/keys/{id}`), whose organization forms take the same fields.
+     So `auth create --workflows` and `mcp connect ci` mint an organization
+     key under `--org` instead of failing halfway.
+
    Under `--org`, these fail in the client with `unsupported_by_cli` before
    they are sent:
-   - personal API keys (`/v1/keys`): the error points to
-     `gregale org key ... --org SLUG`, because organization keys answer in
-     other shapes;
-   - billing and usage calls with no organization form (forecast, FOCUS
-     export, daily and storage usage, budget alert channels, cancel, retry);
-   - the personal usage reads and the account export under `/v1/account`,
-     and the managed PostgreSQL overage setting;
+   - listing and rotating personal keys: the error points to
+     `gregale org key ... --org SLUG`, because those answer in other shapes;
+   - billing, usage and invoice calls with no organization form (forecast,
+     FOCUS export, daily and storage usage, budget alert channels, cancel,
+     retry, invoice refresh and backfill);
+   - the personal reads under `/v1/account` (account usage, billing runs and
+     their schedule, the usage breakdowns and the account export), and the
+     managed PostgreSQL overage setting;
    - any other write to `/v1/account`, including account deletion.
 
    The client's hand-built requests (the streamed account export and account

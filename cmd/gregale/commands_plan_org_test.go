@@ -111,6 +111,25 @@ func TestPlanUnderOrgJSONIsTheOrganizationResult(t *testing.T) {
 	}
 }
 
+// TestOrgFlagRejectsNonSlugs: --org is trimmed before it is checked, so a
+// padded flag-looking value or a path in it never becomes the organization.
+func TestOrgFlagRejectsNonSlugs(t *testing.T) {
+	sink := &orgPlanSink{}
+	startOrgPlanSink(t, sink)
+	_, restore := main.CaptureStdout(t)
+	defer restore()
+	_, restoreErr := main.CaptureStderr(t)
+	defer restoreErr()
+	for _, value := range []string{" -x", "acme/members", "acme?x=1", "   "} {
+		if code := main.Run([]string{"--org=" + value, "billing", "plan", "pro", "--yes"}); code == 0 {
+			t.Errorf("--org=%q accepted", value)
+		}
+	}
+	if len(sink.changes) != 0 {
+		t.Fatalf("plan changed with a rejected --org: %v", sink.changes)
+	}
+}
+
 // TestPlanUnderOrgHintsKeepTheOrg: the retry line after a billing hand-off
 // keeps --org, so pasting it does not change the personal account's plan.
 func TestPlanUnderOrgHintsKeepTheOrg(t *testing.T) {

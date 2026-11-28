@@ -6706,7 +6706,7 @@ func (c *Client) CreateOrgApp(ctx context.Context, slug string, req CreateAppReq
 // slugs are 404 `org_not_found`.
 func (c *Client) GetOrg(ctx context.Context, slug string) (OrgResponse, error) {
 	var out OrgResponse
-	return out, c.do(ctx, "GET", "/v1/orgs/"+slug, nil, &out)
+	return out, c.do(ctx, "GET", "/v1/orgs/"+url.PathEscape(slug), nil, &out)
 }
 
 // ListOrgActivity returns one newest-first page of the organization's global
