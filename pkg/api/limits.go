@@ -12291,6 +12291,11 @@ var (
 	// contract.
 	SandboxPersistentRAMMBMax = [4]int{0, 2048, 8192, 16_384}
 	SandboxPersistentVCPUMax  = [4]int{0, 2, 4, 8}
+	// SandboxLargeShapeRAMMB and SandboxLargeShapeVCPU are the largest shape
+	// any agent-pool node takes (the largest ephemeral one, §5): a session
+	// above either runs only on the nodes that declare large shapes.
+	SandboxLargeShapeRAMMB = 4096
+	SandboxLargeShapeVCPU  = 2
 	// SandboxPausedBytesFreePerAccount is the stored bytes of paused sessions
 	// (captures and volume backups) an account keeps free each month (§8).
 	SandboxPausedBytesFreePerAccount = [4]int64{0, 5 << 30, 25 << 30, 100 << 30}
