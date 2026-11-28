@@ -115,6 +115,8 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 		}
 		clone.capturedCrons = capturedCloneCrons(records)
 		clone.capturedEventSubscriptions = capturedCloneEventSubscriptions(records)
+		clone.capturedConsumers = capturedCloneConsumers(records)
+		clone.capturedAlertRules = capturedCloneAlertRules(records)
 	} else {
 		source, err := readCloneFeatureFlagsTx(ctx, tx, clone.AccountID, clone.ProjectID, clone.SourceSlug)
 		if err != nil {
@@ -182,6 +184,11 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 	if err := checkCloneCronQuotaTx(ctx, tx, clone.capturedCrons, limits, true); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	// Copied keys and alert rules count against the plan's caps
+	// (ADR-20261104120000 amendment 2026-11-28).
+	if err := checkCloneIdentityQuotaTx(ctx, tx, clone, limits); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
 	created, err := insertClonedProjectEnvironment(ctx, tx, clone)
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
@@ -203,6 +210,12 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 	}
 	result, err := copyProjectEnvironmentRows(ctx, tx, clone)
 	if err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if err := copyCapturedConsumersTx(ctx, tx, clone, created, &result); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if err := copyCapturedAlertRulesTx(ctx, tx, clone, created, &result); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	if err := validateClonedEnvironmentPolicyProjections(ctx, tx, clone); err != nil {

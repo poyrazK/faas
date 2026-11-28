@@ -159,6 +159,9 @@ func verifyClonePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironm
 	if err := verifyCloneEventSubscriptionPublicationDB(ctx, tx, op); err != nil {
 		return err
 	}
+	if err := verifyCloneIdentityPublicationDB(ctx, tx, op); err != nil {
+		return err
+	}
 	if err := verifyCloneBucketNotificationPublicationDB(ctx, tx, op); err != nil {
 		return err
 	}

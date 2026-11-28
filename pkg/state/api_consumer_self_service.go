@@ -161,6 +161,7 @@ func (m *MemStore) CloseAPIConsumerSelf(_ context.Context, accountID, consumerID
 		return APIConsumer{}, false, err
 	}
 	m.apiConsumers[c.ID] = c
+	m.cascadeProductionConsumerRevocationLocked(c)
 	m.enqueueAppWebhookEventLocked(c.AccountID, c.AppID, AppWebhookEventConsumerClosed, c.ID, payload, now)
 	return c, true, nil
 }

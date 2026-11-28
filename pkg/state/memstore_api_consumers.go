@@ -110,6 +110,7 @@ func (m *MemStore) RevokeAPIConsumer(_ context.Context, accountID, consumerID st
 		c.UpdatedAt = now
 		c.Status = APIConsumerStatusRevoked
 		m.apiConsumers[c.ID] = c
+		m.cascadeProductionConsumerRevocationLocked(c)
 		if wasActive && c.PlatformTenantID != "" {
 			m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(c, PlatformTenantCustomerOffboardedEvent, now)
 		}

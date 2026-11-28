@@ -952,7 +952,10 @@
       "rule_id"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "via": [
@@ -1009,7 +1012,10 @@
       "window_spec"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app"
     }
@@ -1186,7 +1192,10 @@
       "plan_id"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app"
     }
@@ -1208,7 +1217,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "shared"
     }
   },
   {
@@ -1453,7 +1463,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "live": [
@@ -4695,7 +4708,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "live": [

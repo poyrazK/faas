@@ -8146,6 +8146,93 @@ UPDATE event_subscriptions SET enabled = true, updated_at = now()
 WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
 RETURNING id, app_id;
 
+-- name: ReadProjectEnvironmentCloneConsumers :many
+-- An app's active API consumers in one environment (NULL is production),
+-- without a platform tenant's (ADR-20261104120000 amendment 2026-11-28).
+SELECT id, external_ref, name FROM api_consumers
+WHERE app_id = sqlc.arg(app_id)::uuid AND environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
+  AND status = 'active' AND revoked_at IS NULL AND platform_tenant_id IS NULL
+ORDER BY external_ref;
+
+-- name: ReadProjectEnvironmentCloneConsumerKeys :many
+-- The active keys of captured consumers, without their secrets.
+SELECT id, consumer_id, name, prefix, scopes, expires_at FROM consumer_keys
+WHERE consumer_id = ANY(sqlc.arg(consumer_ids)::uuid[]) AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > now())
+ORDER BY prefix;
+
+-- name: ReadProjectEnvironmentCloneConsumerPlans :many
+SELECT consumer_id, plan_id, effective_from FROM api_consumer_plan_assignments
+WHERE consumer_id = ANY(sqlc.arg(consumer_ids)::uuid[])
+ORDER BY effective_from, plan_id;
+
+-- name: CountProjectEnvironmentCloneUncapturedConsumers :one
+-- Active consumers of the source environment on project apps the clone does
+-- not copy.
+SELECT count(*)::bigint FROM api_consumers c JOIN apps a ON a.id = c.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND c.environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
+  AND c.status = 'active' AND c.revoked_at IS NULL AND c.platform_tenant_id IS NULL
+  AND NOT (c.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
+-- name: InsertProjectEnvironmentCloneConsumer :one
+INSERT INTO api_consumers(account_id, app_id, external_ref, name, environment_id)
+SELECT a.account_id, a.id, sqlc.arg(external_ref)::text, sqlc.arg(name)::text, sqlc.arg(environment_id)::uuid
+FROM apps a WHERE a.id = sqlc.arg(app_id)::uuid
+RETURNING id;
+
+-- name: InsertProjectEnvironmentCloneConsumerKey :execrows
+-- A copied key keeps its source's secret, and is written only while the
+-- source key is still active; the trigger gives it the consumer's
+-- environment.
+INSERT INTO consumer_keys(consumer_id, account_id, app_id, name, prefix, hashed_secret, scopes, expires_at)
+SELECT sqlc.arg(consumer_id)::uuid, k.account_id, k.app_id, sqlc.arg(name)::text, sqlc.arg(prefix)::text, k.hashed_secret,
+    sqlc.arg(scopes)::text[], sqlc.narg(expires_at)::timestamptz
+FROM consumer_keys k WHERE k.id = sqlc.arg(source_key_id)::uuid AND k.revoked_at IS NULL;
+
+-- name: InsertProjectEnvironmentCloneConsumerPlan :exec
+INSERT INTO api_consumer_plan_assignments(account_id, app_id, consumer_id, plan_id, effective_from)
+SELECT c.account_id, c.app_id, c.id, sqlc.arg(plan_id)::uuid, sqlc.arg(effective_from)::timestamptz
+FROM api_consumers c WHERE c.id = sqlc.arg(consumer_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneTargetConsumers :many
+-- Every consumer of an app in one stage, revoked or not.
+SELECT id, external_ref, name, (status = 'active' AND revoked_at IS NULL)::boolean AS active FROM api_consumers
+WHERE app_id = sqlc.arg(app_id)::uuid AND environment_id = sqlc.arg(environment_id)::uuid
+ORDER BY external_ref;
+
+-- name: ReadProjectEnvironmentCloneTargetConsumerKeys :many
+SELECT consumer_id, name, prefix, scopes, expires_at, (revoked_at IS NOT NULL)::boolean AS revoked FROM consumer_keys
+WHERE consumer_id = ANY(sqlc.arg(consumer_ids)::uuid[])
+ORDER BY prefix;
+
+-- name: ReadProjectEnvironmentCloneConsumerSourceActive :one
+-- Whether a captured consumer, and the key if one is named, are still
+-- active.
+SELECT coalesce(bool_and(c.status = 'active' AND c.revoked_at IS NULL
+    AND (sqlc.narg(key_id)::uuid IS NULL OR EXISTS (
+      SELECT 1 FROM consumer_keys k WHERE k.id = sqlc.narg(key_id)::uuid AND k.consumer_id = c.id AND k.revoked_at IS NULL))), false)::boolean AS active
+FROM api_consumers c WHERE c.id = sqlc.arg(consumer_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneAlertRules :many
+-- An app's alert rules in one environment (NULL is production).
+SELECT * FROM alert_rules
+WHERE app_id = sqlc.arg(app_id)::uuid AND environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
+ORDER BY name;
+
+-- name: ReadProjectEnvironmentCloneAlertRuleChannels :many
+SELECT rule_id, channel_id FROM alert_rule_channels
+WHERE rule_id = ANY(sqlc.arg(rule_ids)::uuid[])
+ORDER BY rule_id, channel_id;
+
+-- name: CountProjectEnvironmentCloneUncapturedAlertRules :one
+-- Alert rules of the source environment on project apps the clone does not
+-- copy.
+SELECT count(*)::bigint FROM alert_rules r JOIN apps a ON a.id = r.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND r.environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
+  AND NOT (r.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
 -- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
 SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
        coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid

@@ -12231,6 +12231,51 @@ func (q *Queries) CountProjectEnvironmentClonePostgresVerificationReadBudgets(ct
 	return i, err
 }
 
+const countProjectEnvironmentCloneUncapturedAlertRules = `-- name: CountProjectEnvironmentCloneUncapturedAlertRules :one
+SELECT count(*)::bigint FROM alert_rules r JOIN apps a ON a.id = r.app_id
+WHERE a.project_id = $1::uuid AND a.status <> 'deleted'
+  AND r.environment_id IS NOT DISTINCT FROM $2::uuid
+  AND NOT (r.app_id = ANY($3::uuid[]))
+`
+
+type CountProjectEnvironmentCloneUncapturedAlertRulesParams struct {
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppIds        []pgtype.UUID
+}
+
+// Alert rules of the source environment on project apps the clone does not
+// copy.
+func (q *Queries) CountProjectEnvironmentCloneUncapturedAlertRules(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedAlertRulesParams) (int64, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentCloneUncapturedAlertRules, arg.ProjectID, arg.EnvironmentID, arg.AppIds)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countProjectEnvironmentCloneUncapturedConsumers = `-- name: CountProjectEnvironmentCloneUncapturedConsumers :one
+SELECT count(*)::bigint FROM api_consumers c JOIN apps a ON a.id = c.app_id
+WHERE a.project_id = $1::uuid AND a.status <> 'deleted'
+  AND c.environment_id IS NOT DISTINCT FROM $2::uuid
+  AND c.status = 'active' AND c.revoked_at IS NULL AND c.platform_tenant_id IS NULL
+  AND NOT (c.app_id = ANY($3::uuid[]))
+`
+
+type CountProjectEnvironmentCloneUncapturedConsumersParams struct {
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppIds        []pgtype.UUID
+}
+
+// Active consumers of the source environment on project apps the clone does
+// not copy.
+func (q *Queries) CountProjectEnvironmentCloneUncapturedConsumers(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedConsumersParams) (int64, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentCloneUncapturedConsumers, arg.ProjectID, arg.EnvironmentID, arg.AppIds)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countProjectEnvironmentCloneUncapturedCrons = `-- name: CountProjectEnvironmentCloneUncapturedCrons :one
 SELECT count(*)::bigint FROM crons c JOIN apps a ON a.id = c.app_id
 WHERE a.project_id = $1::uuid AND a.status <> 'deleted'
@@ -37841,6 +37886,83 @@ type InsertProjectEnvironmentCloneConfigurationCaptureParams struct {
 
 func (q *Queries) InsertProjectEnvironmentCloneConfigurationCapture(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConfigurationCaptureParams) error {
 	_, err := db.Exec(ctx, insertProjectEnvironmentCloneConfigurationCapture, arg.OperationID, arg.ConfigurationHash, arg.Configuration)
+	return err
+}
+
+const insertProjectEnvironmentCloneConsumer = `-- name: InsertProjectEnvironmentCloneConsumer :one
+INSERT INTO api_consumers(account_id, app_id, external_ref, name, environment_id)
+SELECT a.account_id, a.id, $1::text, $2::text, $3::uuid
+FROM apps a WHERE a.id = $4::uuid
+RETURNING id
+`
+
+type InsertProjectEnvironmentCloneConsumerParams struct {
+	ExternalRef   string
+	Name          string
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneConsumer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConsumerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentCloneConsumer,
+		arg.ExternalRef,
+		arg.Name,
+		arg.EnvironmentID,
+		arg.AppID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertProjectEnvironmentCloneConsumerKey = `-- name: InsertProjectEnvironmentCloneConsumerKey :execrows
+INSERT INTO consumer_keys(consumer_id, account_id, app_id, name, prefix, hashed_secret, scopes, expires_at)
+SELECT $1::uuid, k.account_id, k.app_id, $2::text, $3::text, k.hashed_secret,
+    $4::text[], $5::timestamptz
+FROM consumer_keys k WHERE k.id = $6::uuid AND k.revoked_at IS NULL
+`
+
+type InsertProjectEnvironmentCloneConsumerKeyParams struct {
+	ConsumerID  pgtype.UUID
+	Name        string
+	Prefix      string
+	Scopes      []string
+	ExpiresAt   pgtype.Timestamptz
+	SourceKeyID pgtype.UUID
+}
+
+// A copied key keeps its source's secret, and is written only while the
+// source key is still active; the trigger gives it the consumer's
+// environment.
+func (q *Queries) InsertProjectEnvironmentCloneConsumerKey(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConsumerKeyParams) (int64, error) {
+	result, err := db.Exec(ctx, insertProjectEnvironmentCloneConsumerKey,
+		arg.ConsumerID,
+		arg.Name,
+		arg.Prefix,
+		arg.Scopes,
+		arg.ExpiresAt,
+		arg.SourceKeyID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertProjectEnvironmentCloneConsumerPlan = `-- name: InsertProjectEnvironmentCloneConsumerPlan :exec
+INSERT INTO api_consumer_plan_assignments(account_id, app_id, consumer_id, plan_id, effective_from)
+SELECT c.account_id, c.app_id, c.id, $1::uuid, $2::timestamptz
+FROM api_consumers c WHERE c.id = $3::uuid
+`
+
+type InsertProjectEnvironmentCloneConsumerPlanParams struct {
+	PlanID        pgtype.UUID
+	EffectiveFrom pgtype.Timestamptz
+	ConsumerID    pgtype.UUID
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneConsumerPlan(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConsumerPlanParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneConsumerPlan, arg.PlanID, arg.EffectiveFrom, arg.ConsumerID)
 	return err
 }
 
@@ -91659,6 +91781,105 @@ func (q *Queries) ReadProjectCanaryRouting(ctx context.Context, db DBTX, appID p
 	return i, err
 }
 
+const readProjectEnvironmentCloneAlertRuleChannels = `-- name: ReadProjectEnvironmentCloneAlertRuleChannels :many
+SELECT rule_id, channel_id FROM alert_rule_channels
+WHERE rule_id = ANY($1::uuid[])
+ORDER BY rule_id, channel_id
+`
+
+func (q *Queries) ReadProjectEnvironmentCloneAlertRuleChannels(ctx context.Context, db DBTX, ruleIds []pgtype.UUID) ([]AlertRuleChannel, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneAlertRuleChannels, ruleIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRuleChannel{}
+	for rows.Next() {
+		var i AlertRuleChannel
+		if err := rows.Scan(&i.RuleID, &i.ChannelID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneAlertRules = `-- name: ReadProjectEnvironmentCloneAlertRules :many
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved, custom_metric_labels, latest_anomaly_evaluation, observe_only, observation_enabled, observed_incidents, environment_scope, recovery_confirmation_checks, environment_id FROM alert_rules
+WHERE app_id = $1::uuid AND environment_id IS NOT DISTINCT FROM $2::uuid
+ORDER BY name
+`
+
+type ReadProjectEnvironmentCloneAlertRulesParams struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+// An app's alert rules in one environment (NULL is production).
+func (q *Queries) ReadProjectEnvironmentCloneAlertRules(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneAlertRulesParams) ([]AlertRule, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneAlertRules, arg.AppID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRule{}
+	for rows.Next() {
+		var i AlertRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Enabled,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.FailureSource,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.CooldownMinutes,
+			&i.State,
+			&i.LastFiredAt,
+			&i.LastEvaluatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Action,
+			&i.PostDeployRollbackWindowSeconds,
+			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
+			&i.McpMinCalls,
+			&i.McpForMinutes,
+			&i.McpReadinessScope,
+			&i.LogQuery,
+			&i.CreatedByAccountID,
+			&i.NotifyResolved,
+			&i.CustomMetricLabels,
+			&i.LatestAnomalyEvaluation,
+			&i.ObserveOnly,
+			&i.ObservationEnabled,
+			&i.ObservedIncidents,
+			&i.EnvironmentScope,
+			&i.RecoveryConfirmationChecks,
+			&i.EnvironmentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneClock = `-- name: ReadProjectEnvironmentCloneClock :one
 SELECT clock_timestamp()::timestamptz AS now
 `
@@ -91728,6 +91949,143 @@ func (q *Queries) ReadProjectEnvironmentCloneConfigurationGuard(ctx context.Cont
 		&i.HeldAt,
 	)
 	return i, err
+}
+
+const readProjectEnvironmentCloneConsumerKeys = `-- name: ReadProjectEnvironmentCloneConsumerKeys :many
+SELECT id, consumer_id, name, prefix, scopes, expires_at FROM consumer_keys
+WHERE consumer_id = ANY($1::uuid[]) AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > now())
+ORDER BY prefix
+`
+
+type ReadProjectEnvironmentCloneConsumerKeysRow struct {
+	ID         pgtype.UUID
+	ConsumerID pgtype.UUID
+	Name       string
+	Prefix     string
+	Scopes     []string
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// The active keys of captured consumers, without their secrets.
+func (q *Queries) ReadProjectEnvironmentCloneConsumerKeys(ctx context.Context, db DBTX, consumerIds []pgtype.UUID) ([]ReadProjectEnvironmentCloneConsumerKeysRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneConsumerKeys, consumerIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneConsumerKeysRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneConsumerKeysRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConsumerID,
+			&i.Name,
+			&i.Prefix,
+			&i.Scopes,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneConsumerPlans = `-- name: ReadProjectEnvironmentCloneConsumerPlans :many
+SELECT consumer_id, plan_id, effective_from FROM api_consumer_plan_assignments
+WHERE consumer_id = ANY($1::uuid[])
+ORDER BY effective_from, plan_id
+`
+
+type ReadProjectEnvironmentCloneConsumerPlansRow struct {
+	ConsumerID    pgtype.UUID
+	PlanID        pgtype.UUID
+	EffectiveFrom pgtype.Timestamptz
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneConsumerPlans(ctx context.Context, db DBTX, consumerIds []pgtype.UUID) ([]ReadProjectEnvironmentCloneConsumerPlansRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneConsumerPlans, consumerIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneConsumerPlansRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneConsumerPlansRow
+		if err := rows.Scan(&i.ConsumerID, &i.PlanID, &i.EffectiveFrom); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneConsumerSourceActive = `-- name: ReadProjectEnvironmentCloneConsumerSourceActive :one
+SELECT coalesce(bool_and(c.status = 'active' AND c.revoked_at IS NULL
+    AND ($1::uuid IS NULL OR EXISTS (
+      SELECT 1 FROM consumer_keys k WHERE k.id = $1::uuid AND k.consumer_id = c.id AND k.revoked_at IS NULL))), false)::boolean AS active
+FROM api_consumers c WHERE c.id = $2::uuid
+`
+
+type ReadProjectEnvironmentCloneConsumerSourceActiveParams struct {
+	KeyID      pgtype.UUID
+	ConsumerID pgtype.UUID
+}
+
+// Whether a captured consumer, and the key if one is named, are still
+// active.
+func (q *Queries) ReadProjectEnvironmentCloneConsumerSourceActive(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConsumerSourceActiveParams) (bool, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneConsumerSourceActive, arg.KeyID, arg.ConsumerID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
+}
+
+const readProjectEnvironmentCloneConsumers = `-- name: ReadProjectEnvironmentCloneConsumers :many
+SELECT id, external_ref, name FROM api_consumers
+WHERE app_id = $1::uuid AND environment_id IS NOT DISTINCT FROM $2::uuid
+  AND status = 'active' AND revoked_at IS NULL AND platform_tenant_id IS NULL
+ORDER BY external_ref
+`
+
+type ReadProjectEnvironmentCloneConsumersParams struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneConsumersRow struct {
+	ID          pgtype.UUID
+	ExternalRef string
+	Name        string
+}
+
+// An app's active API consumers in one environment (NULL is production),
+// without a platform tenant's (ADR-20261104120000 amendment 2026-11-28).
+func (q *Queries) ReadProjectEnvironmentCloneConsumers(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConsumersParams) ([]ReadProjectEnvironmentCloneConsumersRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneConsumers, arg.AppID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneConsumersRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneConsumersRow
+		if err := rows.Scan(&i.ID, &i.ExternalRef, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneCoverageSchema = `-- name: ReadProjectEnvironmentCloneCoverageSchema :many
@@ -93915,6 +94273,92 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetBucketNotifications(ctx conte
 			&i.Rules,
 			&i.ManagedRules,
 			&i.ClonePaused,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneTargetConsumerKeys = `-- name: ReadProjectEnvironmentCloneTargetConsumerKeys :many
+SELECT consumer_id, name, prefix, scopes, expires_at, (revoked_at IS NOT NULL)::boolean AS revoked FROM consumer_keys
+WHERE consumer_id = ANY($1::uuid[])
+ORDER BY prefix
+`
+
+type ReadProjectEnvironmentCloneTargetConsumerKeysRow struct {
+	ConsumerID pgtype.UUID
+	Name       string
+	Prefix     string
+	Scopes     []string
+	ExpiresAt  pgtype.Timestamptz
+	Revoked    bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneTargetConsumerKeys(ctx context.Context, db DBTX, consumerIds []pgtype.UUID) ([]ReadProjectEnvironmentCloneTargetConsumerKeysRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneTargetConsumerKeys, consumerIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneTargetConsumerKeysRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneTargetConsumerKeysRow
+		if err := rows.Scan(
+			&i.ConsumerID,
+			&i.Name,
+			&i.Prefix,
+			&i.Scopes,
+			&i.ExpiresAt,
+			&i.Revoked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneTargetConsumers = `-- name: ReadProjectEnvironmentCloneTargetConsumers :many
+SELECT id, external_ref, name, (status = 'active' AND revoked_at IS NULL)::boolean AS active FROM api_consumers
+WHERE app_id = $1::uuid AND environment_id = $2::uuid
+ORDER BY external_ref
+`
+
+type ReadProjectEnvironmentCloneTargetConsumersParams struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneTargetConsumersRow struct {
+	ID          pgtype.UUID
+	ExternalRef string
+	Name        string
+	Active      bool
+}
+
+// Every consumer of an app in one stage, revoked or not.
+func (q *Queries) ReadProjectEnvironmentCloneTargetConsumers(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetConsumersParams) ([]ReadProjectEnvironmentCloneTargetConsumersRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneTargetConsumers, arg.AppID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneTargetConsumersRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneTargetConsumersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExternalRef,
+			&i.Name,
+			&i.Active,
 		); err != nil {
 			return nil, err
 		}

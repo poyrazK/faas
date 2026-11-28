@@ -260,6 +260,20 @@ func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.T
 			return nil, err
 		}
 		snapshot.EventSubscriptions = &subscriptions
+		identityEnvironment, err := cloneIdentityEnvironmentDB(ctx, tx, op.ProjectID, op.SourceEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		consumers, err := captureCloneConsumersDB(ctx, tx, appID, identityEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Consumers = &consumers
+		rules, err := captureCloneAlertRulesDB(ctx, tx, appID, identityEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.AlertRules = &rules
 		raw, hash, err := encodeCloneWorkloadSnapshot(snapshot)
 		if err != nil {
 			return nil, err
@@ -278,6 +292,13 @@ func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.T
 		return nil, err
 	}
 	if err := requireCloneEventSubscriptionsCapturedDB(ctx, tx, op.ProjectID, op.SourceEnvironment, appIDs); err != nil {
+		return nil, err
+	}
+	identityEnvironment, err := cloneIdentityEnvironmentDB(ctx, tx, op.ProjectID, op.SourceEnvironment)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireCloneIdentitiesCapturedDB(ctx, tx, op.ProjectID, identityEnvironment, appIDs); err != nil {
 		return nil, err
 	}
 	if err := requireCloneNotificationDestinations(records); err != nil {

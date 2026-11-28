@@ -111,6 +111,17 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 			return nil, err
 		}
 		snapshot.EventSubscriptions = &subscriptions
+		identityEnvironment := m.cloneEnvironmentIDLocked(projectID, op.SourceEnvironment)
+		consumers, err := m.captureCloneConsumersLocked(appID, identityEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Consumers = &consumers
+		rules, err := m.captureCloneAlertRulesLocked(appID, identityEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.AlertRules = &rules
 		for _, layer := range m.deploymentSidecarLayers {
 			if layer.DeploymentID == source.ID {
 				snapshot.Layers = append(snapshot.Layers, layer)
@@ -139,6 +150,13 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 		return nil, err
 	}
 	if err := m.requireCloneEventSubscriptionsCapturedLocked(projectID, op.SourceEnvironment, captured); err != nil {
+		return nil, err
+	}
+	identityEnvironment := m.cloneEnvironmentIDLocked(projectID, op.SourceEnvironment)
+	if err := m.requireCloneConsumersCapturedLocked(projectID, identityEnvironment, captured); err != nil {
+		return nil, err
+	}
+	if err := m.requireCloneAlertRulesCapturedLocked(projectID, identityEnvironment, captured); err != nil {
 		return nil, err
 	}
 	notificationRecords := make([]projectCloneWorkloadRecord, 0, len(records))

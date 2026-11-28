@@ -127,6 +127,13 @@ type projectCloneWorkloadSnapshot struct {
 	// environment, copied into the stage paused (ADR-20261104120000
 	// amendment 2026-11-14).
 	EventSubscriptions *projectCloneEventSubscriptions `json:"event_subscriptions,omitempty"`
+	// Consumers are the workload's active API consumers in the source
+	// environment, copied into the stage with their active keys and plan
+	// assignments (ADR-20261104120000 amendment 2026-11-28).
+	Consumers *projectCloneConsumers `json:"consumers,omitempty"`
+	// AlertRules are the workload's alert rules in the source environment,
+	// copied into the stage paused (ADR-20261104120000 amendment 2026-11-28).
+	AlertRules *projectCloneAlertRules `json:"alert_rules,omitempty"`
 	// PublicBuildURLs are the source deployment's recorded build URLs, which
 	// the target deployment carries (ADR-20261104120000 amendment 2026-11-21).
 	PublicBuildURLs map[string]string `json:"public_build_urls,omitempty"`

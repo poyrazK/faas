@@ -1015,6 +1015,12 @@ type Querier interface {
 	CountProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresContentsRow, error)
 	CountProjectEnvironmentClonePostgresCopyReaders(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error)
+	// Alert rules of the source environment on project apps the clone does not
+	// copy.
+	CountProjectEnvironmentCloneUncapturedAlertRules(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedAlertRulesParams) (int64, error)
+	// Active consumers of the source environment on project apps the clone does
+	// not copy.
+	CountProjectEnvironmentCloneUncapturedConsumers(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedConsumersParams) (int64, error)
 	// Crons of the source environment on project apps the clone does not copy.
 	CountProjectEnvironmentCloneUncapturedCrons(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedCronsParams) (int64, error)
 	// Event subscriptions of the source environment on project apps the clone
@@ -3387,6 +3393,12 @@ type Querier interface {
 	InsertProjectEnvironmentCloneCapturedSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedSecretParams) error
 	InsertProjectEnvironmentCloneCapturedVariable(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedVariableParams) error
 	InsertProjectEnvironmentCloneConfigurationCapture(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConfigurationCaptureParams) error
+	InsertProjectEnvironmentCloneConsumer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConsumerParams) (pgtype.UUID, error)
+	// A copied key keeps its source's secret, and is written only while the
+	// source key is still active; the trigger gives it the consumer's
+	// environment.
+	InsertProjectEnvironmentCloneConsumerKey(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConsumerKeyParams) (int64, error)
+	InsertProjectEnvironmentCloneConsumerPlan(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConsumerPlanParams) error
 	// A copied cron starts disabled; clone_paused marks one the source ran.
 	InsertProjectEnvironmentCloneCron(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCronParams) error
 	InsertProjectEnvironmentCloneDatabase(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneDatabaseParams) (ManagedPostgresDatabase, error)
@@ -7232,9 +7244,21 @@ type Querier interface {
 	ReadProjectBindingVerificationRunForBudget(ctx context.Context, db DBTX, arg ReadProjectBindingVerificationRunForBudgetParams) (ProjectBindingVerificationRun, error)
 	ReadProjectCanaryRouting(ctx context.Context, db DBTX, appID pgtype.UUID) (ProjectReleaseCanary, error)
 	ReadProjectDependencyOwner(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadProjectDependencyOwnerRow, error)
+	ReadProjectEnvironmentCloneAlertRuleChannels(ctx context.Context, db DBTX, ruleIds []pgtype.UUID) ([]AlertRuleChannel, error)
+	// An app's alert rules in one environment (NULL is production).
+	ReadProjectEnvironmentCloneAlertRules(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneAlertRulesParams) ([]AlertRule, error)
 	ReadProjectEnvironmentCloneClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationCaptureIdentityParams) (ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow, error)
 	ReadProjectEnvironmentCloneConfigurationGuard(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationGuardParams) (ProjectEnvironmentCloneConfigurationGuard, error)
+	// The active keys of captured consumers, without their secrets.
+	ReadProjectEnvironmentCloneConsumerKeys(ctx context.Context, db DBTX, consumerIds []pgtype.UUID) ([]ReadProjectEnvironmentCloneConsumerKeysRow, error)
+	ReadProjectEnvironmentCloneConsumerPlans(ctx context.Context, db DBTX, consumerIds []pgtype.UUID) ([]ReadProjectEnvironmentCloneConsumerPlansRow, error)
+	// Whether a captured consumer, and the key if one is named, are still
+	// active.
+	ReadProjectEnvironmentCloneConsumerSourceActive(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConsumerSourceActiveParams) (bool, error)
+	// An app's active API consumers in one environment (NULL is production),
+	// without a platform tenant's (ADR-20261104120000 amendment 2026-11-28).
+	ReadProjectEnvironmentCloneConsumers(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConsumersParams) ([]ReadProjectEnvironmentCloneConsumersRow, error)
 	// Include all application-schema tables. Several configuration tables have
 	// neither tenant identity columns nor foreign keys, so ownership heuristics
 	// would silently omit them. Partition children inherit their parent's policy.
@@ -7315,6 +7339,9 @@ type Querier interface {
 	ReadProjectEnvironmentCloneSourceRelease(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceReleaseParams) (string, error)
 	ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadProjectEnvironmentCloneTargetBucketNotifications(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetBucketNotificationsParams) ([]ReadProjectEnvironmentCloneTargetBucketNotificationsRow, error)
+	ReadProjectEnvironmentCloneTargetConsumerKeys(ctx context.Context, db DBTX, consumerIds []pgtype.UUID) ([]ReadProjectEnvironmentCloneTargetConsumerKeysRow, error)
+	// Every consumer of an app in one stage, revoked or not.
+	ReadProjectEnvironmentCloneTargetConsumers(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetConsumersParams) ([]ReadProjectEnvironmentCloneTargetConsumersRow, error)
 	ReadProjectEnvironmentCloneTargetOperationID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetOperationIDParams) (string, error)
 	ReadProjectEnvironmentCloneTargetRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ReadProjectEnvironmentCloneTargetRetirementRow, error)
 	ReadProjectEnvironmentCloneTargetSettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetSettingsParams) (ReadProjectEnvironmentCloneTargetSettingsRow, error)

@@ -29525,6 +29525,7 @@ func (m *MemStore) RevokeConsumerKey(ctx context.Context, accountID, keyID strin
 		now := time.Now().UTC()
 		k.RevokedAt = &now
 		m.consumerKeys[k.ID] = k
+		m.cascadeProductionConsumerKeyRevocationLocked(k)
 	}
 	return k, nil
 }
