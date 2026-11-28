@@ -6539,6 +6539,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				delete(r.Header, name)
 			}
 		}
+		// The trigger delivery path is the platform's: a request it did not
+		// deliver could post records that look like a broker batch (prod hunt
+		// r80). Refused before app lookup, so it never wakes or bills an app.
+		if api.IsTriggerDeliveryPath(r.URL.Path) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+				"Reserved path", "paths under "+api.TriggerDeliveryPathPrefix+" are reserved for Gregale trigger deliveries"))
+			return
+		}
 	}
 	// Direct HTTP calls do not have a scheduler invocation row. Give function
 	// adapters the same public-safe correlation id returned to the caller,

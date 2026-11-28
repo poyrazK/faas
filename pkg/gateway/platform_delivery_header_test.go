@@ -16,6 +16,8 @@ func TestPlatformDeliveryHeadersAreDroppedFromPublicRequests(t *testing.T) {
 		"X-Gregale-Event-Id":              true,
 		"X-Gregale-Event-Subscription-Id": true,
 		"X-Gregale-Operation-Id":          true,
+		"X-Gregale-Batch-Size":            true,
+		"x-gregale-batch-size":            true,
 		"X-Gregale-Trace-Id":              false,
 		"X-Request-Id":                    false,
 		"Content-Type":                    false,

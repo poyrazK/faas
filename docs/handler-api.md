@@ -94,6 +94,12 @@ be trusted:
 | `x-faas-deadline-ms` | milliseconds left in the request's budget at dispatch |
 | `x-faas-invocation-source` | on platform calls only: what made the call, such as `cron`, `inbound_webhook`, `async_invoke` or `replay` |
 | `x-faas-invocation-attempt` | on platform calls only: which delivery attempt this is |
+| `x-gregale-batch-size` | on batched [broker trigger](broker-triggers.md) deliveries only: how many records the body holds |
+
+Paths under `/_triggers/` are reserved for trigger deliveries: Gregale
+answers `404` to any request there that it did not deliver itself, so a
+request your handler receives on that path, or with `x-gregale-batch-size`,
+came from a trigger.
 
 Async, queue and cron calls are delivered at least once. Make them safe to
 repeat with the invocation ID or a key of your own, not the attempt number.

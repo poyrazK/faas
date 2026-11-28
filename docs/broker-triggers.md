@@ -38,6 +38,11 @@ the records you list in `{"batchItemFailures": [{"itemIdentifier": "…"}]}`,
 which are retried; an error or non-2xx response retries the whole batch.
 The [realtime page](realtime.md) shows the batch body and the SDK helpers.
 
+Deliveries arrive as `POST /_triggers/<kind>/<trigger-id>`. That path is
+reserved: Gregale answers `404` to any request there it did not deliver
+itself, and drops `X-Gregale-Batch-Size` from every other request, so a
+public client cannot post records that look like a broker batch.
+
 ## Retries and dead letters
 
 A failed record is retried until it has had `max_attempts` deliveries (up

@@ -1116,7 +1116,7 @@ func (s *SynthServer) dispatchBatchRecordWithin(ctx context.Context, req batchDi
 		AccountID: req.AccountID,
 		Source:    state.InvocationSource(req.Source),
 		Method:    http.MethodPost,
-		Path:      "/_triggers/" + req.Source + "/" + req.TriggerID,
+		Path:      api.TriggerDeliveryPathPrefix + req.Source + "/" + req.TriggerID,
 		Payload:   payload,
 		Headers:   jsonOrEmpty(rec.Headers),
 	}
