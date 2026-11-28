@@ -18,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
-const doctorUsage = "usage: gregale doctor [--strict] [--json] [--app SLUG] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin | --docker-config PATH] [--boot [--env-file FILE]]"
+const doctorUsage = "usage: gregale doctor [--strict] [--json] [--app SLUG] [--source auto|head|worktree] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin | --docker-config PATH] [--boot [--env-file FILE]]"
 
 type doctorImageInspector interface {
 	InspectImage(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error)

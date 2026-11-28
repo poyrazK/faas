@@ -2940,6 +2940,7 @@ var cliCommands = []cliCommand{
 		Examples:  []string{"gregale doctor", "gregale doctor --strict", "gregale doctor --path packages/api", "gregale doctor --image ghcr.io/acme/api:1.2 --boot"},
 		Flags: []cliFlag{
 			{Name: "path", Value: "DIR", Short: "source directory (default: current directory; a positional DIR also works)"},
+			{Name: "source", Value: "auto|head|worktree", ClosedSet: []string{"auto", "head", "worktree"}, Short: "packaging mode to match; use the value you deploy with (auto follows deploy's default)"},
 			{Name: "image", Value: "REF", Short: "inspect the Linux/amd64 image without downloading layers"},
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
 			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},
