@@ -1,0 +1,65 @@
+name: Tinygo tests
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+
+permissions: {}
+
+concurrency:
+  group: tinygo-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        go-version: [1.25.x]
+        # tinygo-version is meant to stay aligned with the one used in corazawaf/coraza-proxy-wasm
+        tinygo-version: [0.40.1]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Setup tinygo
+        uses: acifani/setup-tinygo@db56321a62b9a67922bb9ac8f9d085e218807bb3 # v2
+        with:
+          tinygo-version: ${{ matrix.tinygo-version }}
+
+      - name: Cache TinyGo build
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cache/tinygo
+          key: ${{ runner.os }}-tinygo-${{ matrix.tinygo-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-tinygo-${{ matrix.tinygo-version }}-
+
+      - name: Tests
+        run: tinygo test -v -short ./internal/...
+
+      - name: Tests no_memoize
+        run: tinygo test -v -short -tags=coraza.no_memoize ./internal/...

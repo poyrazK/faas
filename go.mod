@@ -252,7 +252,7 @@ require (
 	github.com/go-toolsmith/typep v1.1.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-xmlfmt/xmlfmt v1.1.3 // indirect
-	github.com/gobwas/glob v0.2.3 // indirect
+	github.com/gobwas/glob v0.2.3
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/golangci/dupl v0.0.0-20260401084720-c99c5cf5c202 // indirect
 	github.com/golangci/go-printf-func-name v0.1.1 // indirect
@@ -412,3 +412,8 @@ require (
 	mvdan.cc/gofumpt v0.12.0 // indirect
 	mvdan.cc/unparam v0.0.0-20260823230713-2fa3d841b0c8 // indirect
 )
+
+// Coraza v3.8.1 with one patch: FindAll caching in internal/collections
+// (ADR-831 amendment 23). Drop this once upstream releases the change; see
+// third_party/coraza/PATCHES.md.
+replace github.com/corazawaf/coraza/v3 => ./third_party/coraza

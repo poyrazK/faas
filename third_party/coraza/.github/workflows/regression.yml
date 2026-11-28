@@ -1,0 +1,135 @@
+name: Regression Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "LICENSE"
+
+permissions: {}
+
+concurrency:
+  group: regression-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [1.25.x]
+        os: [ubuntu-latest]
+        build-flag:
+          - ""
+          - "coraza.rule.mandatory_rule_id_check"
+          - "coraza.rule.case_sensitive_args_keys"
+          - "coraza.rule.no_regex_multiline"
+          - "coraza.no_memoize"
+          - "coraza.rule.rx_prefilter"
+          - "coraza.rule.multiphase_evaluation"
+          - "no_fs_access"
+          - "coraza.rule.multiphase_evaluation,coraza.rule.mandatory_rule_id_check"
+          - "coraza.rule.multiphase_evaluation,coraza.rule.case_sensitive_args_keys"
+          - "coraza.rule.multiphase_evaluation,coraza.rule.no_regex_multiline"
+          - "no_fs_access,coraza.no_memoize"
+          - "coraza.rule.mandatory_rule_id_check,coraza.rule.case_sensitive_args_keys,coraza.rule.no_regex_multiline"
+          - "coraza.rule.multiphase_evaluation,coraza.rule.mandatory_rule_id_check,coraza.rule.case_sensitive_args_keys,coraza.rule.no_regex_multiline,coraza.no_memoize,no_fs_access,coraza.rule.rx_prefilter"
+        include:
+          - go-version: 1.26.x
+            os: ubuntu-latest
+            build-flag: ""
+          - go-version: 1.26.x
+            os: ubuntu-latest
+            build-flag: "coraza.rule.multiphase_evaluation,coraza.rule.mandatory_rule_id_check,coraza.rule.case_sensitive_args_keys,coraza.rule.no_regex_multiline,coraza.no_memoize,no_fs_access"
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      GOLANG_BASE_VERSION: "1.25.x"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+      - name: Tests and coverage
+        env:
+          BUILD_TAGS: ${{ matrix.build-flag }}
+        run: go run mage.go coverage
+      - name: "Codecov: General"
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        if: ${{ matrix.go-version == env.GOLANG_BASE_VERSION }}
+        with:
+          files: build/coverage.txt
+          flags: default,${{ matrix.build-flag }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: "Codecov: Examples"
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        if: ${{ matrix.go-version == env.GOLANG_BASE_VERSION }}
+        with:
+          files: build/coverage-examples.txt
+          flags: examples+${{ matrix.build-flag }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: "Codecov: FTW"
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        if: ${{ matrix.go-version == env.GOLANG_BASE_VERSION }}
+        with:
+          files: build/coverage-ftw.txt
+          flags: ftw,${{ matrix.build-flag }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: "Codecov: Tinygo"
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
+        # only if coverage-tinygo.txt exists
+        if: ${{ matrix.go-version == env.GOLANG_BASE_VERSION && hashFiles('build/coverage-tinygo.txt') != '' }}
+        with:
+          files: build/coverage-tinygo.txt
+          flags: tinygo,${{ matrix.build-flag }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Runs the suite in FIPS 140-3 mode
+  fips:
+    strategy:
+      fail-fast: false
+      matrix:
+        # "only" additionally makes the standard library's non-approved algorithms error or
+        # panic, which is what catches an unguarded md5.Sum/sha1.Sum at package-init time.
+        godebug: ["fips140=on", "fips140=only"]
+        # 1.26 changed FIPS-relevant behavior in crypto/tls (non-approved curves are filtered out
+        # of the defaults), so both the oldest supported and the current release are exercised.
+        go-version: [1.25.x, 1.26.x]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+      # Warm the module cache before enabling FIPS: GODEBUG applies to the go command itself, and
+      # on Go 1.25 it cannot reach proxy.golang.org under fips140=only (the TLS handshake
+      # negotiates X25519, which crypto/ecdh refuses). The test steps then need no network.
+      # TODO: drop this warm-up step and the CurvePreferences pin in http/middleware_test.go once
+      # Go 1.25 is no longer supported.
+      - name: Download dependencies
+        run: |
+          go mod download
+          go -C testing/coreruleset mod download
+      - name: Tests
+        run: GODEBUG=${{ matrix.godebug }} go test ./...
+      - name: FTW tests
+        run: GODEBUG=${{ matrix.godebug }} go test ./testing/coreruleset
+      - name: FTW tests (multiphase evaluation)
+        run: GODEBUG=${{ matrix.godebug }} go test -tags=coraza.rule.multiphase_evaluation ./testing/coreruleset
