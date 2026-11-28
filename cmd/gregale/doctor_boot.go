@@ -27,8 +27,9 @@ import (
 // Boot timings are variables so tests can shorten them.
 var (
 	doctorBootStartupTimeout = 30 * time.Second
-	doctorBootStayUp         = 10 * time.Second
-	doctorBootPoll           = 250 * time.Millisecond
+	// doctorBootStayUp is Gregale's observation window for a new deployment.
+	doctorBootStayUp = api.CharacterizationDeadline
+	doctorBootPoll   = 250 * time.Millisecond
 	// doctorBootRunTimeout bounds `docker run`, which pulls a missing image.
 	doctorBootRunTimeout = 10 * time.Minute
 )
@@ -52,6 +53,9 @@ type doctorBootOptions struct {
 	// deploy is set under `deploy --local-image --boot`, whose fixes name
 	// deploy's flags instead of doctor's.
 	deploy bool
+	// mode is the app's execution mode; a worker or job is judged without
+	// HTTP (doctor_boot_mode.go).
+	mode string
 }
 
 // envFileFlag is the flag that passes env vars to the boot container.
@@ -137,7 +141,10 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 	name := doctorBootContainerName()
 	portSpec := strconv.Itoa(opts.port)
 	args := []string{"run", "--detach", "--name", name, "--platform", "linux/amd64", "--label", "dev.gregale.doctor=boot",
-		"--env", "PORT=" + portSpec, "--publish", "127.0.0.1::" + portSpec}
+		"--env", "PORT=" + portSpec}
+	if !doctorBootNoListener(opts.mode) {
+		args = append(args, "--publish", "127.0.0.1::"+portSpec)
+	}
 	if opts.memoryMB > 0 {
 		// Without --memory-swap Docker allows as much swap again, and an app
 		// over its RAM would slow down instead of being killed as on Gregale.
@@ -151,6 +158,9 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 		args = append(args, "--env-file", opts.envFile)
 	}
 	args = append(args, opts.image)
+	if doctorBootNoListener(opts.mode) {
+		doctorBootRealRunNote(opts.mode)
+	}
 	_, _ = fmt.Fprintf(osStderr, "Starting %s with %s (pulls the image if it is not local)…\n", opts.image, docker.bin)
 	runCtx, cancel := context.WithTimeout(ctx, doctorBootRunTimeout)
 	_, err = docker.run(runCtx, args...)
@@ -173,6 +183,9 @@ type doctorBoot struct {
 }
 
 func (b doctorBoot) check(ctx context.Context) []doctorCheck {
+	if doctorBootNoListener(b.opts.mode) {
+		return b.checkNoListener(ctx)
+	}
 	status, exited, err := b.waitForHTTP(ctx)
 	if err != nil {
 		return []doctorCheck{{Name: "boot-start", Status: "error", Code: "boot_inspect_failed", Hint: err.Error()}}

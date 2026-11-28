@@ -11,15 +11,15 @@ import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner } from './retention.mjs'
-import { budgetKey, budgets, createAttempts, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
+import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createUnusedClientPruner } from './retention.mjs'
+import { addressBucket, budgetKey, budgets, createAttempts, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
 import { signupRefusal } from './signups.mjs'
 import { impersonated, impersonationBlocked } from './impersonation.mjs'
 import { setDomainJoin } from './orgsso.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
-import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registrationOpen, wellKnownPath } from './oauth.mjs'
+import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registeredClients, wellKnownPath } from './oauth.mjs'
 import { createAuthenticator, createRateLimiter, issueToken, isServiceAccountToken, OAuthError, serviceAccountAllowed, tokenRequest, verificationKeys, verifyToken } from './serviceaccounts.mjs'
 
 const prefix = '/auth/v1'
@@ -67,6 +67,7 @@ function serveUI(req, res, ui) {
   }
   return true
 }
+const limitsDocs = 'https://gregale.dev/docs/application-auth#current-limits'
 const hopByHop = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'])
 
 function problem(res, status, code) {
@@ -107,6 +108,39 @@ function serveSettings(req, res, settings) {
   res.end(JSON.stringify(settings))
 }
 
+// serveAdminKey answers /settings/v1/admin-keys/<ID> with one admin key's
+// scopes and expiry, for `gregale auth admin-key list`. A caller must
+// already hold a random ID, which only the owner's secret list shows, and
+// each address has budgets.adminKeyLookup lookups an hour, so the IDs cannot
+// be enumerated. No browser origin may read it. A path that is not an ID is
+// refused before the budget, so scanners never reach the database.
+async function serveAdminKey(req, res, adminKeys, attempts) {
+  if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+  const id = /^\/settings\/v1\/admin-keys\/([0-9A-F]{8})$/.exec(req.url.split('?')[0])?.[1]
+  if (!id) return problem(res, 404, 'not_found')
+  try {
+    if (attempts) {
+      const { count, wait } = await attempts.take({ key: budgetKey('admin-key-lookup', addressBucket(clientAddress(req))), budget: budgets.adminKeyLookup })
+      if (wait > 0) return limited(res, 'too_many_lookups', budgets.adminKeyLookup, count, wait)
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', event: 'admin_key_lookup_failed', sqlstate: err?.code ?? null }))
+    return problem(res, 503, 'auth_unavailable')
+  }
+  const key = adminKeys.find(candidate => candidate.id === id)
+  if (!key) return problem(res, 404, 'not_found')
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+  res.end(JSON.stringify(key))
+}
+
+// limited answers 429 for a spent budget, with the limit, the count so far,
+// the window and where the limits are documented.
+function limited(res, code, budget, observed, wait) {
+  if (res.headersSent) return res.destroy()
+  res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
+  res.end(JSON.stringify({ status: 429, code, limit: budget.limit, observed, window_seconds: budget.seconds, retry_after: wait, docs_url: limitsDocs }))
+}
+
 // readBody buffers a request body up to bodyBytes for an SMS country check.
 function readBody(req, res, bodyBytes, done) {
   const chunks = []
@@ -125,7 +159,7 @@ function tokenReply(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload))
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [] } = {}) {
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
     const bearer = bearerClaims(req.headers.authorization)
@@ -135,6 +169,7 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     // A service account's token is for the application's API, not this host.
     if (isServiceAccountToken(bearer) && !serviceAccountAllowed(req.method, req.url)) return problem(res, 403, 'service_account_token')
     if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
+    if (settings && req.url.split('?')[0].startsWith('/settings/v1/admin-keys/')) return serveAdminKey(req, res, adminKeys, attempts)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
     if (scim && /^\/scim\/v2([/?]|$)/.test(req.url)) return scim(req, res)
@@ -158,8 +193,8 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (bearer === false) return problem(res, 401, 'invalid_token')
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared > bodyBytes) return problem(res, 413, 'request_too_large')
-    if (oauth && req.method === 'POST' && path.split('?')[0] === '/oauth/clients/register') {
-      return oauth.registrationOpen().then(open => open ? proxy(req, res, path, upstreamPort, bodyBytes, oauth) : problem(res, 403, 'oauth_client_limit'), () => problem(res, 503, 'auth_unavailable'))
+    if (oauth && req.method === 'POST' && path.split('?')[0].replace(/\/+$/, '') === '/oauth/clients/register') {
+      return registerClient(req, res, path, upstreamPort, bodyBytes, oauth, attempts)
     }
     // The front answers the client-credentials grant for service accounts
     // and passes every other token request to GoTrue as read.
@@ -202,6 +237,40 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
 // X-Real-IP.
 function clientAddress(req) {
   return String(req.headers['x-real-ip'] ?? req.socket.remoteAddress)
+}
+
+// registerClient passes a dynamic OAuth client registration to GoTrue while
+// the caller's address (an IPv4 address or IPv6 /64) has registrations left
+// in budgets.oauthRegistration, the app holds fewer than limits.oauthClients
+// clients, and fewer than limits.oauthUnusedClients of them are
+// self-registered clients nobody has used. Clients people use and those the
+// owner made therefore always keep limits.oauthClients minus
+// limits.oauthUnusedClients places, whoever floods registration; unused
+// clients are pruned limits.oauthUnusedClientHours after they register
+// (retention.mjs), and owners can still register clients with an admin key.
+async function registerClient(req, res, path, upstreamPort, bodyBytes, oauth, attempts) {
+  try {
+    if (attempts) {
+      const budget = budgets.oauthRegistration
+      const { count, wait } = await attempts.take({ key: budgetKey('oauth-registration', addressBucket(clientAddress(req))), budget })
+      if (wait > 0) { req.resume(); return limited(res, 'too_many_registrations', budget, count, wait) }
+    }
+    const { clients, unused } = await oauth.registeredClients()
+    const refusal = clients >= limits.oauthClients ? [403, 'oauth_client_limit', limits.oauthClients, clients]
+      : unused >= limits.oauthUnusedClients ? [429, 'too_many_unused_clients', limits.oauthUnusedClients, unused] : null
+    if (refusal) {
+      const [status, code, limit, observed] = refusal
+      req.resume()
+      if (res.headersSent) return res.destroy()
+      res.writeHead(status, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', ...(status === 429 ? { 'Retry-After': '3600' } : {}) })
+      return res.end(JSON.stringify({ status, code, limit, observed, docs_url: limitsDocs }))
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', event: 'oauth_registration_failed', sqlstate: err?.code ?? null }))
+    req.resume()
+    return problem(res, 503, 'auth_unavailable')
+  }
+  proxy(req, res, path, upstreamPort, bodyBytes, oauth)
 }
 
 // guardAttempt counts a password sign-in or second-step code against its
@@ -367,7 +436,7 @@ export function start(env = process.env) {
   // Failed secrets count per client address in the database, so instances
   // and wakes share the count; tokens per account stay per instance.
   const attempts = createAttempts(pool)
-  const secretFailures = address => [{ key: budgetKey('service-account-client', address), budget: budgets.serviceAccountClient }]
+  const secretFailures = address => [{ key: budgetKey('service-account-client', addressBucket(address)), budget: budgets.serviceAccountClient }]
   const tokenLimits = { limiter: createRateLimiter(), failures: { check: address => attempts.check(secretFailures(address)), take: address => attempts.fail(secretFailures(address)) } }
   const serviceAccounts = config.serviceAccounts ? { issue: request => issueToken({ pool, signer: signingKey(jwtKeys), issuer: config.api, ...tokenLimits }, request) } : null
   const authz = createAuthzHandler({ pool, authenticate, origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, orgDomains: config.orgDomains, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims, sessions: config.sessions, serviceAccounts: config.serviceAccounts })
@@ -381,11 +450,13 @@ export function start(env = process.env) {
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
     location: location => consentLocation(location, config.gotrueEnv.GOTRUE_SITE_URL, config.external),
-    registrationOpen: () => registrationOpen(pool),
+    registeredClients: () => registeredClients(pool),
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
-  const server = createServer({ authz, ui, realtime, admin, settings: { ...config.settings, admin_keys: adminKeySummary(adminKeys) }, smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
+  const server = createServer({ authz, ui, realtime, admin, // Admin keys are not listed in the public settings; the CLI asks
+    // /settings/v1/admin-keys/<ID> for each key it finds among the secrets.
+    settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
@@ -400,7 +471,8 @@ export function start(env = process.env) {
     console.error(JSON.stringify({ level: 'error', event: 'domain_join_setup_failed', sqlstate: err?.code ?? null }))
   })
   // Activity retention prunes on the same request-driven schedule.
-  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool })]
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool }),
+    ...(config.oauth ? [createUnusedClientPruner({ pool })] : [])]
   for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {
     if (publishesAfter(req)) res.on('finish', () => { events?.poke(); for (const pruner of pruners) pruner.poke() })
