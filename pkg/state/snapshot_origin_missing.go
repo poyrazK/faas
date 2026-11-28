@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // snapshotOriginMissingPrefix starts a replica's last_error when the canonical
@@ -32,37 +35,15 @@ func (s *PgStore) SnapshotsMissingFromOrigin(ctx context.Context, grace time.Dur
 	if grace <= 0 || limit <= 0 {
 		return nil, errors.New("state: snapshots missing from origin: grace and limit must be positive")
 	}
-	rows, err := s.pool.Query(ctx, `
-		select sn.id::text
-		  from snapshots sn
-		 where not sn.stale
-		   and sn.storage_key <> ''
-		   and sn.created_at < now() - make_interval(secs => $1)
-		   and exists (
-		       select 1 from snapshot_replicas r
-		        where r.snapshot_id = sn.id
-		          and r.state = 'failed'
-		          and r.next_attempt_at is null
-		          and r.last_error like $3
-		          and r.updated_at >= sn.created_at + make_interval(secs => $1))
-		 order by sn.created_at
-		 limit $2`, int(grace/time.Second), limit, snapshotOriginMissingPrefix+"%")
+	ids, err := sqlc.New().SnapshotsMissingFromOrigin(ctx, s.pool, sqlc.SnapshotsMissingFromOriginParams{
+		GraceSeconds: grace.Seconds(),
+		ErrorPattern: snapshotOriginMissingPrefix + "%",
+		RowLimit:     int32(min(limit, math.MaxInt32)), // #nosec G115 -- bounded by min
+	})
 	if err != nil {
-		return nil, fmt.Errorf("state: snapshots missing from origin: %w", err)
+		return nil, fmt.Errorf("state: snapshots missing from origin: %w", mapErr(err))
 	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("state: scan snapshots missing from origin: %w", err)
-		}
-		out = append(out, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: snapshots missing from origin: %w", err)
-	}
-	return out, nil
+	return ids, nil
 }
 
 // SnapshotsMissingFromOrigin mirrors PgStore.SnapshotsMissingFromOrigin.

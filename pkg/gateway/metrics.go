@@ -1940,6 +1940,7 @@ func NewMetrics() *Metrics {
 		),
 	}
 	m.deploymentLabels.onAdmit = m.preInstantiateDeploymentClasses
+	m.deploymentLabels.onEvict = m.deleteDeploymentClasses
 	// Pre-instantiate the WS closed label cross-product (issue
 	// #676 / ADR-080 follow-up, PR-B). Same precedent as
 	// tlsOnDemandDenied / accountRateLimited above. The
@@ -2855,6 +2856,15 @@ func (m *Metrics) preInstantiateDeploymentClasses(appID, deploymentID string) {
 	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
 		m.requestDurationByDeployment.WithLabelValues(appID, class, deploymentID)
 	}
+}
+
+// deleteDeploymentClasses drops the zero series of a provisional
+// deployment a request evicted from the admitted set.
+func (m *Metrics) deleteDeploymentClasses(appID, deploymentID string) {
+	if m == nil || m.requestDurationByDeployment == nil {
+		return
+	}
+	m.requestDurationByDeployment.DeletePartialMatch(prometheus.Labels{"app": appID, "deployment": deploymentID})
 }
 
 // PreInstantiateDeployment is a no-op helper for symmetry with

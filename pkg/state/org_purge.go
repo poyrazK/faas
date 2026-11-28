@@ -4,9 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // DeletedOrgPurgeStore releases deleted shared organizations' slugs once their
@@ -27,8 +32,14 @@ const purgedOrgSlugPrefix = "purged-"
 
 // PurgedOrgSlug is the tombstone slug a purged organization keeps: unique (it
 // is derived from the id), within orgs_slug_shape, and never a customer's.
+// An id shorter than 24 characters once its dashes are gone (a MemStore or
+// fixture id, never a uuid) is used whole.
 func PurgedOrgSlug(id string) string {
-	return purgedOrgSlugPrefix + strings.ReplaceAll(id, "-", "")[:24]
+	compact := strings.ToLower(strings.ReplaceAll(id, "-", ""))
+	if len(compact) > 24 {
+		compact = compact[:24]
+	}
+	return purgedOrgSlugPrefix + compact
 }
 
 // IsPurgedOrgSlug reports whether slug is a purge tombstone.
@@ -53,49 +64,24 @@ func (s *PgStore) PurgeDeletedOrgs(ctx context.Context, requestedBefore time.Tim
 		return nil, fmt.Errorf("state: purge deleted orgs: %w", err)
 	}
 	defer rollbackOrgAccess(ctx, tx)
-	rows, err := tx.Query(ctx, `
-		with picked as (
-		    select id, slug
-		      from orgs
-		     where deleted_pending
-		       and not personal_org
-		       and coalesce(deletion_requested_at, updated_at) < $1
-		       and slug not like 'purged-%'
-		     order by coalesce(deletion_requested_at, updated_at)
-		     limit $2
-		     for update skip locked)
-		update orgs o
-		   set slug = 'purged-' || substr(replace(o.id::text, '-', ''), 1, 24), updated_at = now()
-		  from picked p
-		 where o.id = p.id
-		returning o.id::text, p.slug`, requestedBefore, limit)
+	q := sqlc.New()
+	rows, err := q.PurgeDeletedOrgSlugs(ctx, tx, sqlc.PurgeDeletedOrgSlugsParams{
+		RequestedBefore: pgtype.Timestamptz{Time: requestedBefore, Valid: true},
+		RowLimit:        int32(min(limit, math.MaxInt32)), // #nosec G115 -- bounded by min
+	})
 	if err != nil {
 		return nil, fmt.Errorf("state: purge deleted orgs: %w", mapErr(err))
 	}
-	var out []PurgedOrg
-	var ids []string
-	for rows.Next() {
-		var p PurgedOrg
-		if err := rows.Scan(&p.ID, &p.Slug); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("state: scan purged org: %w", err)
-		}
-		out = append(out, p)
-		ids = append(ids, p.ID)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: purge deleted orgs: %w", mapErr(err))
-	}
-	if len(ids) == 0 {
+	if len(rows) == 0 {
 		return nil, nil
 	}
-	if _, err := tx.Exec(ctx, `
-		update org_invitations
-		   set revoked_at = now()
-		 where org_id = any($1::uuid[])
-		   and consumed_at is null
-		   and revoked_at is null`, ids); err != nil {
+	out := make([]PurgedOrg, 0, len(rows))
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, PurgedOrg{ID: row.ID, Slug: row.OldSlug})
+		ids = append(ids, mustPgUUID(row.ID))
+	}
+	if err := q.RevokeOpenOrgInvitations(ctx, tx, ids); err != nil {
 		return nil, fmt.Errorf("state: revoke purged org invitations: %w", mapErr(err))
 	}
 	if err := tx.Commit(ctx); err != nil {

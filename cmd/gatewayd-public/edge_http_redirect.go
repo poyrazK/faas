@@ -57,6 +57,9 @@ func httpsRedirect(platformDomain string) http.Handler {
 			host = name
 		}
 		host = strings.TrimSuffix(host, ".")
+		// A bare IPv6 literal ("[2001:db8::1]", no port) keeps its brackets
+		// through SplitHostPort; strip them so it reads as an IP literal.
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 		w.Header().Set("Connection", "close")
 		switch {
 		case host == "" || strings.ContainsAny(host, "/@\\ ") || r.URL.Host != "":

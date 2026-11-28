@@ -1241,3 +1241,23 @@ func TestHostPolicyPublicEntryAddrsRejectBadInput(t *testing.T) {
 		})
 	}
 }
+
+// An edge without the HTTP redirect listener keeps port 80 closed on its
+// entry addresses (ADR-20261127170000).
+func TestHostPolicyPublicEntryNoHTTPClosesPort80(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
+	p.PublicEntryNoHTTP = true
+	out := p.Render()
+	for _, want := range []string{
+		`ip daddr 203.0.113.10 tcp dport 443 accept comment "public entry"`,
+		`ip daddr 203.0.113.10 drop comment "public entry carries 443 only"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("policy lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "203.0.113.10 tcp dport { 80, 443 }") {
+		t.Fatalf("port 80 still open on the entry address:\n%s", out)
+	}
+}

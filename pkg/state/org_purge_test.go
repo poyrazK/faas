@@ -55,4 +55,8 @@ func TestPurgedOrgSlugFitsTheSlugShape(t *testing.T) {
 	if len(slug) > 32 || !IsPurgedOrgSlug(slug) || slug != "purged-2426a32423844550a6a86860" {
 		t.Fatalf("slug = %q", slug)
 	}
+	// A short non-uuid id (MemStore, fixtures) must not panic the sweep.
+	if short := PurgedOrgSlug("org-1"); short != "purged-org1" {
+		t.Fatalf("short id slug = %q", short)
+	}
 }

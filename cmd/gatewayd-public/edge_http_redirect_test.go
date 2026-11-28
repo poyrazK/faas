@@ -20,6 +20,8 @@ func TestHTTPSRedirect(t *testing.T) {
 		{http.MethodPost, "/hook", "Shop.Gregale.App.:80", http.StatusPermanentRedirect, "https://shop.gregale.app/hook"},
 		{http.MethodGet, "/", "www.customer.example", http.StatusPermanentRedirect, "https://www.customer.example/"},
 		{http.MethodGet, "/", "51.222.39.227", http.StatusNotFound, ""},
+		{http.MethodGet, "/", "[2001:db8::1]", http.StatusNotFound, ""},
+		{http.MethodGet, "/", "[2001:db8::1]:80", http.StatusNotFound, ""},
 		{http.MethodGet, "/", "api.gregale.dev", http.StatusNotFound, ""},
 		{http.MethodGet, "/", "", http.StatusBadRequest, ""},
 	} {

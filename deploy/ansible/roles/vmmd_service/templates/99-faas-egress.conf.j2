@@ -57,6 +57,10 @@ Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS={{ faas_peer_ingress_ports | jo
 # puts these ahead of the Cloudflare ranges below, which stay for a vmmd that
 # predates them: it keeps the node Cloudflare-only instead of open.
 Environment="FAAS_PUBLIC_ENTRY_ADDRS={{ faas_public_entry_addrs | join(',') }}"
+{% if (faas_edge_http_redirect | default(true) | string | lower) not in ["true", "yes", "on", "1"] %}
+# ADR-20261127170000: no redirect listener on this edge, so port 80 stays closed.
+Environment="FAAS_PUBLIC_ENTRY_HTTP=off"
+{% endif %}
 {% endif %}
 {% if faas_peer_entry_addrs | default([]) %}
 # ADR-20261123100000: keep the hairpin of guests' 443 calls to the other
