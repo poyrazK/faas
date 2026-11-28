@@ -49,7 +49,7 @@ export type AlertRuleResponse = {
    */
   edge_rule_id?: string;
   /**
-   * Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage.
+   * Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires deployment-specific error_rate_pct or boot_failures evidence, a gt or gte comparison, and recorded predecessor lineage.
    */
   post_deploy_rollback_window_seconds?: number;
   /**

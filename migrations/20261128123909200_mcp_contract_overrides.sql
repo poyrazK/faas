@@ -1,4 +1,4 @@
--- filename: 20261128073719200_mcp_contract_overrides.sql
+-- filename: 20261128123909200_mcp_contract_overrides.sql
 -- migration-compat: expand
 
 -- +goose Up

@@ -65,9 +65,23 @@ func (s *PgStore) requestHistoricalAlertRollbackTx(ctx context.Context, tx pgx.T
 }
 
 func historicalAlertEvidenceTx(ctx context.Context, tx pgx.Tx, r api.AlertRollback) (api.AlertRollback, bool, error) {
+	e := r.DeploymentEvidence
+	if e != nil && e.Metric == string(AlertMetricBootFailures) {
+		var failures, successes int64
+		if historicalAlertEvidenceSupported(e) && e.WindowStart.Before(e.WindowEnd) {
+			row, err := sqlc.New().ReadDeploymentBootEvidence(ctx, tx, sqlc.ReadDeploymentBootEvidenceParams{
+				AppID: r.AppID, DeploymentID: r.CandidateDeploymentID,
+				WindowStart: pgtype.Timestamptz{Time: e.WindowStart, Valid: true}, WindowEnd: pgtype.Timestamptz{Time: e.WindowEnd, Valid: true}})
+			if err != nil {
+				return r, false, err
+			}
+			failures, successes = row.Failures, row.Successes
+		}
+		r, qualified := qualifyBootFailureEvidence(r, failures, successes, true, time.Now().UTC())
+		return r, qualified, nil
+	}
 	var requests, serverErrors int64
 	var last *time.Time
-	e := r.DeploymentEvidence
 	if historicalAlertEvidenceSupported(e) && e.WindowStart.Before(e.WindowEnd) {
 		row, err := sqlc.New().ReadHistoricalAlertDeploymentEvidence(ctx, tx, sqlc.ReadHistoricalAlertDeploymentEvidenceParams{
 			AccountID: mustPgUUID(r.AccountID), AppID: mustPgUUID(r.AppID), DeploymentID: mustPgUUID(r.CandidateDeploymentID),

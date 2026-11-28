@@ -63,3 +63,25 @@ func TestAlertEvidenceHumanOutput(t *testing.T) {
 		}
 	}
 }
+
+// A boot_failures rollback shows the release's boots, not request counts.
+func TestAlertEvidenceHumanOutputBootFailures(t *testing.T) {
+	var out bytes.Buffer
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = old })
+	r := api.AlertRollback{Status: "pending", Historical: true, DeploymentEvidence: &api.AlertRollbackDeploymentEvidence{Status: "breached", Metric: api.AlertMetricBootFailures, BootFailures: 4, Threshold: 3, Comparison: "gte"}}
+	if code := main.OutputAlertRollback(r); code != 0 {
+		t.Fatal(code)
+	}
+	for _, want := range []string{"deployment evidence: breached", "failed boots: 4 (gte 3), completed boots: 0"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %s", want, out.String())
+		}
+	}
+	for _, unwanted := range []string{"requests:", "error rate:"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Fatalf("boot evidence shows %q: %s", unwanted, out.String())
+		}
+	}
+}

@@ -56,6 +56,7 @@ func TestMCPSeller(t *testing.T) {
 	s.step("sign_in_becomes_customer", j.signInBecomesCustomer)
 	s.check("account_tools_listed", j.accountToolsListed)
 	s.step("tool_cap_refuses", j.toolCapRefuses)
+	s.check("customer_usage_metered", j.customerUsageMetered)
 	s.check("seller_stats", j.sellerStats)
 	s.check("revoked_customer_refused", j.revokedCustomerRefused)
 	s.check("listing_unpublished", j.listingUnpublished)
@@ -183,6 +184,11 @@ func (j *mcpSellerJourney) serverDeployed(t *testing.T) {
 		"--token-env", "MCP_TOKEN", "--timeout", "1200")
 	if res.exit != 0 {
 		t.Fatalf("mcp server deploy %s failed (exit %d): %s\n%s", j.app, res.exit, res.problem(), tail(string(res.stdout), 1500))
+	}
+	// Without the gateway checking its tokens, OAuth callers are served
+	// but never become customers or metered.
+	if !strings.Contains(string(res.stderr), "Gateway checks OAuth tokens") {
+		t.Fatalf("mcp server deploy did not hand token checks to the gateway: %s", tail(string(res.stderr), 1500))
 	}
 }
 
@@ -325,6 +331,34 @@ func (j *mcpSellerJourney) toolCapRefuses(t *testing.T) {
 	if out := j.session.callTool(t, "add", map[string]any{"a": 1, "b": 2}); !strings.Contains(out, "3") {
 		t.Errorf("add after the greet cap = %q", out)
 	}
+}
+
+// customerUsageMetered: the customer's own account_usage counts its calls,
+// so they were attributed to it and metered (a gap the 2026-11-28 prod
+// trial found). Usage arrives asynchronously.
+func (j *mcpSellerJourney) customerUsageMetered(t *testing.T) {
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		usage := object(t, []byte(jsonTail(j.session.callTool(t, "account_usage", map[string]any{}))))
+		if num(usage, "requests") >= mcpSellerToolCap {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("account_usage never counted the customer's %d greet calls: %s", mcpSellerToolCap, compact(usage))
+		}
+		time.Sleep(10 * time.Second)
+	}
+}
+
+// jsonTail is the structured content callTool appends after a tool's text:
+// the last top-level JSON object in out.
+func jsonTail(out string) string {
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i] == '{' && json.Valid([]byte(out[i:])) {
+			return out[i:]
+		}
+	}
+	return "{}"
 }
 
 // sellerStats: the seller sees the sign-in and the greet usage. Usage
