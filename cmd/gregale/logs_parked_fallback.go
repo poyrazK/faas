@@ -113,9 +113,19 @@ func parkedNoOutputMessage(ins api.InstanceResponse) string {
 }
 
 // retainedLineMatches applies --grep to an archived line the way the live
-// stream does: a case-insensitive literal substring.
-func retainedLineMatches(line, grep string) bool {
-	return grep == "" || strings.Contains(strings.ToLower(line), strings.ToLower(grep))
+// stream does: a case-insensitive literal substring of the log line. It
+// matched the whole JSON frame, so `instance`, `stream` or `":"` matched
+// every line (prod hunt r81); a frame that is not a log event keeps the raw
+// match.
+func retainedLineMatches(data, grep string) bool {
+	if grep == "" {
+		return true
+	}
+	var event api.LogEvent
+	if json.Unmarshal([]byte(data), &event) == nil {
+		data = event.Line
+	}
+	return strings.Contains(strings.ToLower(data), strings.ToLower(grep))
 }
 
 // retainedLineLevelMatches applies --level to an archived log frame the way
