@@ -7055,6 +7055,15 @@ type Querier interface {
 	ReadCustomerOperationWorkflowTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadCustomerOperationWorkflowTargetRow, error)
 	ReadDependencyGateTarget(ctx context.Context, db DBTX, arg ReadDependencyGateTargetParams) (ReadDependencyGateTargetRow, error)
 	ReadDeploySettingsLatest(ctx context.Context, db DBTX, appID string) (ReadDeploySettingsLatestRow, error)
+	// ADR-605 amendment 2: a boot_failures rollback judges a completed release on
+	// its own boots in [window_start, window_end]. A failed VM boot (not
+	// mirror-mode, not schedd's own runtime-state failure) counts only when the
+	// same node completed a boot of another deployment in the window, so a node
+	// fault, a fleet-wide incident or an app pinned to a broken node never reads
+	// as the release failing. successes counts the release's completed boots and
+	// restores. The post-deploy window is at most an hour, which bounds both
+	// scans; events_boot_failed_app_at_idx and events_kind_at_idx serve them.
+	ReadDeploymentBootEvidence(ctx context.Context, db DBTX, arg ReadDeploymentBootEvidenceParams) (ReadDeploymentBootEvidenceRow, error)
 	ReadDeploymentConfiguration(ctx context.Context, db DBTX, arg ReadDeploymentConfigurationParams) (ReadDeploymentConfigurationRow, error)
 	ReadDeploymentCronSnapshot(ctx context.Context, db DBTX, arg ReadDeploymentCronSnapshotParams) (ReadDeploymentCronSnapshotRow, error)
 	ReadDeploymentCronState(ctx context.Context, db DBTX, appID string) (ReadDeploymentCronStateRow, error)

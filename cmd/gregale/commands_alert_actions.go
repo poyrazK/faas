@@ -106,7 +106,13 @@ func outputAlertRollback(r api.AlertRollback) int {
 	if r.Historical {
 		_, _ = fmt.Fprintf(osStdout, "  historical rollback: %s\n  operation: %s\n  routing audit: %s\n", r.RollbackPhase, r.RollbackOperationID, r.RollbackRoutingAuditID)
 	}
-	if e := r.DeploymentEvidence; e != nil {
+	if e := r.DeploymentEvidence; e != nil && e.Metric == api.AlertMetricBootFailures {
+		_, _ = fmt.Fprintf(osStdout, "  deployment evidence: %s\n  observation: %s to %s\n  failed boots: %d (%s %.4g), completed boots: %d\n",
+			e.Status, e.WindowStart.Format(time.RFC3339), e.WindowEnd.Format(time.RFC3339), e.BootFailures, e.Comparison, e.Threshold, e.BootSuccesses)
+		if e.Code != "" {
+			_, _ = fmt.Fprintf(osStdout, "  evidence reason: %s\n", e.Code)
+		}
+	} else if e != nil {
 		_, _ = fmt.Fprintf(osStdout, "  deployment evidence: %s\n  observation: %s to %s\n  requests: %d (minimum %d), server errors: %d\n  error rate: %.4g%% (%s %.4g%%)\n",
 			e.Status, e.WindowStart.Format(time.RFC3339), e.WindowEnd.Format(time.RFC3339), e.Requests, e.MinimumRequests, e.ServerErrors, e.ErrorRatePct, e.Comparison, e.Threshold)
 		if e.Code != "" {

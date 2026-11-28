@@ -7148,6 +7148,38 @@ END $$;
 
 
 --
+-- Name: cascade_production_api_consumer_revocation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cascade_production_api_consumer_revocation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  UPDATE api_consumers c SET status = 'revoked', revoked_at = NEW.revoked_at, updated_at = now()
+   WHERE c.app_id = NEW.app_id AND c.external_ref = NEW.external_ref
+     AND c.environment_id IS NOT NULL AND c.revoked_at IS NULL;
+  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: cascade_production_consumer_key_revocation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cascade_production_consumer_key_revocation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  UPDATE consumer_keys k SET revoked_at = NEW.revoked_at
+   WHERE k.app_id = NEW.app_id AND k.prefix = NEW.prefix
+     AND k.environment_id IS NOT NULL AND k.revoked_at IS NULL;
+  RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: check_managed_postgres_resize_receipt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -33241,7 +33273,7 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_environment_scope_chk CHECK (((environment_scope = ''::text) OR ((app_id IS NOT NULL) AND (comparison = ANY (ARRAY['above_baseline'::text, 'below_baseline'::text])) AND (metric = ANY (ARRAY['request_count'::text, 'error_rate_pct'::text, 'latency_p95_ms'::text])) AND (observe_only OR (action = 'webhook'::text)) AND (environment_scope <> 'pr-preview'::text) AND (environment_scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
-    CONSTRAINT alert_rules_failure_count_action_chk CHECK (((metric <> ALL (ARRAY['boot_failures'::text, 'job_failures'::text])) OR (action = 'webhook'::text))),
+    CONSTRAINT alert_rules_failure_actions_chk CHECK ((((metric <> 'job_failures'::text) OR (action = 'webhook'::text)) AND ((metric <> 'boot_failures'::text) OR (action = 'webhook'::text) OR ((action = 'rollback'::text) AND (post_deploy_rollback_window_seconds > 0))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
@@ -95241,6 +95273,13 @@ CREATE TRIGGER api_consumer_environment_guard BEFORE INSERT OR UPDATE ON public.
 
 
 --
+-- Name: api_consumers api_consumer_revocation_cascade; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_consumer_revocation_cascade AFTER UPDATE OF revoked_at ON public.api_consumers FOR EACH ROW WHEN (((old.revoked_at IS NULL) AND (new.revoked_at IS NOT NULL) AND (new.environment_id IS NULL))) EXECUTE FUNCTION public.cascade_production_api_consumer_revocation();
+
+
+--
 -- Name: api_consumers api_consumers_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -97390,6 +97429,13 @@ CREATE TRIGGER compute_nodes_release_activation_update AFTER UPDATE OF release_i
 --
 
 CREATE TRIGGER consumer_key_environment BEFORE INSERT OR UPDATE OF consumer_id, environment_id ON public.consumer_keys FOR EACH ROW EXECUTE FUNCTION public.assign_consumer_key_environment();
+
+
+--
+-- Name: consumer_keys consumer_key_revocation_cascade; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER consumer_key_revocation_cascade AFTER UPDATE OF revoked_at ON public.consumer_keys FOR EACH ROW WHEN (((old.revoked_at IS NULL) AND (new.revoked_at IS NOT NULL) AND (new.environment_id IS NULL))) EXECUTE FUNCTION public.cascade_production_consumer_key_revocation();
 
 
 --

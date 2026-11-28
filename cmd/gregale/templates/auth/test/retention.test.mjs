@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createAnonymousPruner, createAuditPruner, createOrgAuditPruner } from '../retention.mjs'
+import { createAnonymousPruner, createAuditPruner, createOrgAuditPruner, createUnusedClientPruner } from '../retention.mjs'
 import { limits, runtimeConfig } from '../config.mjs'
 
 function fakePool(remaining) {
@@ -12,6 +12,17 @@ function fakePool(remaining) {
     return { rowCount: n }
   } }
 }
+
+test('soft-deletes dynamic OAuth clients nobody used, never the owner\'s', async () => {
+  const pool = fakePool(3)
+  await createUnusedClientPruner({ pool, log: () => {} }).poke()
+  assert.equal(pool.calls.length, 1)
+  const { sql, args } = pool.calls[0]
+  assert.match(sql, /UPDATE auth\.oauth_clients SET deleted_at = now\(\)/)
+  assert.match(sql, /registration_type = 'dynamic'/)
+  for (const table of ['auth.oauth_consents', 'auth.sessions', 'auth.oauth_authorizations']) assert.ok(sql.includes(table), table)
+  assert.deepEqual(args, [limits.oauthUnusedClientHours, limits.auditPruneBatch])
+})
 
 test('prunes old activity in batches, at most once per interval', async () => {
   let clock = 0
