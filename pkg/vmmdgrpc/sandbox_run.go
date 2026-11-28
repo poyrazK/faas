@@ -101,6 +101,9 @@ type sandboxActivity struct {
 	// ended and it waits for a reattach (ADR-20261122132055 §7).
 	gone     atomic.Bool
 	detached atomic.Bool
+	// closing: the owner asked to close; a stream that breaks while the
+	// last records go out leaves nothing to reattach to.
+	closing atomic.Bool
 	// usageStopped: the final usage record was taken.
 	usageStopped bool
 }
@@ -219,6 +222,10 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		return grpcerr.ToStatus(problem)
 	}
 	ctx := stream.Context()
+	// A VM of this instance kept for a reattach that never came is
+	// destroyed before a new one prepares its volume or takes its name; its
+	// grace timer would otherwise destroy the new one.
+	s.dropDetachedSandbox(ctx, wake.Instance)
 	if volumeGB > 0 {
 		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID, first.GetStart().GetVolumeSourceSandboxId()); err != nil {
 			opErr = err
@@ -288,7 +295,8 @@ func (s *Server) endSandboxActivity(instance string, act *sandboxActivity) {
 		act.usage.Stop()
 	}
 	close(act.done)
-	s.sandboxRuns.Delete(instance)
+	// A newer VM of the instance may hold the entry already.
+	s.sandboxRuns.CompareAndDelete(instance, act)
 }
 
 // serveSandbox runs the session's frames and reports until close or the
@@ -337,6 +345,7 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 		case msg := <-frames:
 			switch {
 			case msg.GetClose() != nil:
+				act.closing.Store(true)
 				// The last records go out before the stream ends, so a
 				// closed session's domains and usage are complete.
 				if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {

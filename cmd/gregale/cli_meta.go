@@ -6530,6 +6530,13 @@ var cliCommands = []cliCommand{
 				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
 				{Name: "evict", Short: "allow shrinking below the data the cache holds"},
 			}, Examples: []string{"gregale redis resize sessions --memory 256"}},
+			{Name: "cli", Short: "Send one Redis command to a cache through a bound app", Positionals: []string{"<name>", "<command>", "[arg...]"}, Flags: []cliFlag{
+				{Name: "app", Short: "bound app the command runs through (defaults to the only bound app)", Value: "APP"},
+				{Name: "wait-timeout", Short: "how long to wait for the reply (default 5m)", Value: "DURATION"},
+			}, Notes: []string{
+				"The command runs in a short task VM of the bound app and reaches the cache over its private address, so it obeys the same binding and command rules as the app.",
+				"One command per call; commands that stream (SUBSCRIBE, MONITOR) are refused. Put `--` before a command whose first word starts with a dash.",
+			}, Examples: []string{"gregale redis cli sessions PING", "gregale redis cli sessions --app web LRANGE queue 0 -1"}},
 			{Name: "update", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{

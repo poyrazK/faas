@@ -69,7 +69,16 @@ func (s *server) getRedisCache(w http.ResponseWriter, r *http.Request, acct stat
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, redisCacheResponse(app, cache))
+	response := redisCacheResponse(app, cache)
+	// `gregale redis cli` runs through a bound app; it picks the only one.
+	if grants, ok := s.store.(state.ManagedValkeyGrantStore); ok {
+		bound, err := grants.ListManagedValkeyCacheGrantees(r.Context(), app.ID)
+		if err != nil {
+			s.log.WarnContext(r.Context(), "apid: list managed cache bindings", "cache_app_id", app.ID, "err", err)
+		}
+		response.BoundApps = bound
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // loadRedisCache resolves {name} to the caller's cache app.
