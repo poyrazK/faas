@@ -602,7 +602,8 @@ passwords from a user who forgot theirs:
 | `captcha_pass` | A sign-in past a spent account budget because the app checks a CAPTCHA |
 | `trusted_pass` | A sign-in, or a message, past a spent budget from a network the account trusts |
 | `message_limited` | A message refused because a budget is spent (`429 too_many_messages`) |
-| `new_device_alert` | A new-device email was sent |
+| `new_device_alert` | A sign-in from a network and a device the account had not used in 90 days (`emailed` says whether the new-device email went out) |
+| `released` | An administrator released the user's holds (`budgets` cleared, `admin_key`) |
 
 Alike events share one entry with a count: wrong passwords for one account
 from one network in one minute, or every attempt one spent budget refused
@@ -627,6 +628,21 @@ printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --security --kind hel
 The admin API serves them at `GET /admin/v1/security-events` (scope
 `users:read`; `user`, `kind`, `network`, `page`, `per_page`), and
 `GET /admin/v1/users/ID` lists `holds`.
+
+To let a held user sign in again at once, release their holds: the user
+panel's **Release holds**, or
+
+```sh
+gregale auth users release shop-auth ada@example.com
+```
+
+(`POST /admin/v1/users/ID/release-holds`, scope `users:write`). It clears
+every budget that may hold them: wrong passwords for their email address
+and phone number, from every network their security events name, wrong
+second-step codes, and messages to them, but never a limit a whole network
+shares. The release is recorded as a `released` event with the admin key's
+ID. If someone is still guessing,
+the next wrong passwords hold the account again.
 
 Entries are kept 30 days after their last event, and go with their user.
 Keep them longer or shorter:
@@ -1387,6 +1403,8 @@ The Auth app then publishes these events from its source (`app.<auth app id>`):
 | `auth.user.banned` | A ban starts | `until` |
 | `auth.user.unbanned` | A ban is lifted | |
 | `auth.user.deleted` | A user is deleted | |
+| `auth.user.locked` | Wrong passwords for the account, or wrong second-step codes, from anywhere spend its budget, so sign-ins are held (once per hold; one address's holds raise none) | `budget` (`password_account` or `second_step`), `until` |
+| `auth.user.new_device` | A sign-in from a network and a device the account had not used in 90 days (whether or not the new-device email is on; once per device kind in 90 days, and once more if you turn the email on) | `device`, such as `Firefox on macOS` |
 
 Events carry the user ID and these facts only, never an address, a phone number or metadata,
 because Gregale stores published events. Look the user up in your own
@@ -1449,6 +1467,7 @@ terminal:
 gregale auth users list shop-auth --search example.com
 gregale auth users get shop-auth ada@example.com
 gregale auth users sign-out shop-auth ada@example.com
+gregale auth users release shop-auth ada@example.com   # lift sign-in holds
 gregale auth users ban shop-auth ada@example.com --for 7d
 gregale auth users unban shop-auth ada@example.com
 gregale auth users claims shop-auth ada@example.com --set plan=pro

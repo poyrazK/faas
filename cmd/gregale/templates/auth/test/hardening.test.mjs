@@ -224,7 +224,9 @@ test('a sign-in from a new network and a new device emails the person, once ther
   const racing = await Promise.all([1, 2].map(() => security.record({ ...laptop, address: '192.0.2.3', userAgent: 'Lynx/2.9' })))
   assert.deepEqual(racing.sort(), [false, true], 'one alert per device and day')
   const quiet = createSignInSecurity({ pool, mailer, alerts: false, app: 'Shop', templates: async () => ({}) })
-  assert.equal(await quiet.record({ ...laptop, address: '192.0.2.2', userAgent: 'Wget/1.0' }), false)
+  const sentBefore = mailer.sent.length
+  assert.equal(await quiet.record({ ...laptop, address: '192.0.2.2', userAgent: 'Wget/1.0' }), 'noted', 'with alerts off a new device is noted, not emailed')
+  assert.equal(mailer.sent.length, sentBefore)
   const inserts = pool.queries.filter(sql => sql.startsWith('INSERT')).length
   await security.record(laptop)
   assert.equal(pool.queries.filter(sql => sql.startsWith('INSERT')).length, inserts, 'a fresh record is not written again')
@@ -271,6 +273,21 @@ test('a refreshed session from an unrecorded network alerts once, not daily', as
   const refresh = { ...home, address: '198.51.100.66', userAgent: 'Chrome (Windows)', trust: 'known' }
   assert.equal(await security.record(refresh), true)
   assert.equal(await security.record(refresh), false)
+  assert.equal(mailer.sent.length, 1)
+})
+
+test('a device noted while alerts were off is still emailed once they are on', async () => {
+  const pool = memorySeen(), mailer = memoryMailer()
+  const off = createSignInSecurity({ pool, mailer, alerts: false, app: 'Shop', templates: async () => ({}), log: () => {} })
+  const on = createSignInSecurity({ pool, mailer, app: 'Shop', templates: async () => ({}), log: () => {} })
+  const home = { userId: user, email: 'ann@example.com', address: '203.0.113.7', userAgent: 'Firefox (Mac)' }
+  await off.record(home)
+  // A refreshed session from a new network and device is noted but not
+  // recorded, so the same refresh after alerts are on is still new.
+  const refresh = { ...home, address: '198.51.100.1', userAgent: 'Lynx', trust: 'known' }
+  assert.equal(await off.record(refresh), 'noted')
+  assert.equal(mailer.sent.length, 0)
+  assert.equal(await on.record(refresh), true)
   assert.equal(mailer.sent.length, 1)
 })
 

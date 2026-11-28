@@ -5996,6 +5996,7 @@ var cliCommands = []cliCommand{
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
 				{Name: "sign-out", Short: "End every session of a user", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "release", Short: "Release every sign-in hold on a user (wrong passwords, codes and messages)", Notes: []string{"Recorded as a security event with the admin key."}, Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "ban", Short: "Ban a user for a time and end their sessions", Positionals: []string{"<name>", "<user>"}, Flags: []cliFlag{
 					{Name: "for", Value: "DURATION", Req: true, Short: "hours (24h), days (7d) or forever"},
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
@@ -6039,7 +6040,7 @@ var cliCommands = []cliCommand{
 				{Name: "user", Value: "ID", Short: "only this user's activity (user ID)"},
 				{Name: "search", Value: "TEXT", Short: "an event such as login, or part of an email address"},
 				{Name: "security", Short: "list security events: wrong passwords and codes, holds, passes, message limits, new-device alerts"},
-				{Name: "kind", Value: "KIND", Short: "with --security, only this kind", ClosedSet: []string{"password_failed", "code_failed", "held", "captcha_pass", "trusted_pass", "message_limited", "new_device_alert"}},
+				{Name: "kind", Value: "KIND", Short: "with --security, only this kind", ClosedSet: []string{"password_failed", "code_failed", "held", "captcha_pass", "trusted_pass", "message_limited", "new_device_alert", "released"}},
 				{Name: "network", Value: "NET", Short: "with --security, only this network (203.0.113.0/24)"},
 				{Name: "limit", Value: "N", Short: "entries to show (1-100)"},
 				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},

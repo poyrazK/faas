@@ -191,7 +191,7 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (!signIns || !session || serverAgent(req.headers['user-agent'])) return
     const address = clientAddress(req), userAgent = req.headers['user-agent']
     signIns.record({ ...session, address, userAgent, alert, trust })
-      .then(alerted => alerted && securityLog?.record('new_device_alert', { userId: session.userId, address, detail: { device: deviceLabel(userAgent) } }))
+      .then(alerted => alerted && securityLog?.record('new_device_alert', { userId: session.userId, address, detail: { device: deviceLabel(userAgent), emailed: alerted === true } }))
       .catch(logFailure('sign_in_record_failed'))
   }
   return http.createServer((req, res) => {
@@ -586,7 +586,10 @@ export function start(env = process.env) {
     clientCredentials: config.serviceAccounts,
   } : null
   const signIns = createSignInSecurity({ pool, mailer, alerts: config.security.newDeviceAlerts, app: config.app })
-  const securityLog = createSecurityLog({ pool, secret: config.gotrueEnv.GOTRUE_JWT_SECRET })
+  // Security events can raise lifecycle events (sql/0027), published once
+  // they are written.
+  let lifecyclePublisher = null
+  const securityLog = createSecurityLog({ pool, secret: config.gotrueEnv.GOTRUE_JWT_SECRET, written: () => lifecyclePublisher?.poke() })
   const server = createServer({ authz, ui, realtime, admin, // Admin keys are not listed in the public settings; the CLI asks
     // /settings/v1/admin-keys/<ID> for each key it finds among the secrets.
     settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts,
@@ -596,6 +599,7 @@ export function start(env = process.env) {
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
   const events = lifecycle && createEventPublisher({ pool, config: lifecycle })
+  lifecyclePublisher = events || null
   setLifecycleEvents(pool, Boolean(lifecycle)).then(() => events?.poke(), err => {
     console.error(JSON.stringify({ level: 'error', event: 'lifecycle_events_setup_failed', sqlstate: err?.code ?? null }))
   })

@@ -95,14 +95,17 @@ export function createAttempts(pool) {
       }
     },
     // take counts one use of a budget and returns the count so far and the
-    // seconds until the budget reopens if this use overspent it, or 0.
-    async take({ key, budget }) {
-      const { rows: [row] } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets AS b (key, failures, window_ends_at)
-          VALUES ($1, 1, now() + make_interval(secs => $2))
+    // seconds until the budget reopens if this use overspent it, or 0. An
+    // entry's owner (budgetOwner) names the account it holds, so releasing
+    // that account's holds finds it (sql/0027).
+    async take({ key, budget, owner = null }) {
+      const { rows: [row] } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets AS b (key, failures, window_ends_at, owner)
+          VALUES ($1, 1, now() + make_interval(secs => $2), $3)
         ON CONFLICT (key) DO UPDATE SET
           failures = CASE WHEN b.window_ends_at > now() THEN b.failures + 1 ELSE 1 END,
-          window_ends_at = CASE WHEN b.window_ends_at > now() THEN b.window_ends_at ELSE now() + make_interval(secs => $2) END
-        RETURNING failures, ceil(extract(epoch FROM window_ends_at - now()))::int AS wait`, [key, budget.seconds])
+          window_ends_at = CASE WHEN b.window_ends_at > now() THEN b.window_ends_at ELSE now() + make_interval(secs => $2) END,
+          owner = COALESCE(EXCLUDED.owner, b.owner)
+        RETURNING failures, ceil(extract(epoch FROM window_ends_at - now()))::int AS wait`, [key, budget.seconds, owner])
       return { count: row.failures, wait: row.failures > budget.limit ? Math.max(1, row.wait) : 0 }
     },
     // reserve counts one attempt against every budget and returns the
@@ -185,11 +188,18 @@ export function goQueryValue(query, name) {
   return null
 }
 
+// budgetOwner names the account a budget holds ('email:…' or 'phone:…'),
+// so a release finds its budgets from every address without listing them.
+export function budgetOwner(subject) {
+  return budgetKey('budget-owner', subject)
+}
+
 // passwordEntries are the budgets one password sign-in spends.
 export function passwordEntries(subject, address) {
+  const owner = budgetOwner(subject)
   return [
-    { key: budgetKey('password-address', subject, addressBucket(address)), budget: budgets.passwordAddress },
-    { key: budgetKey('password-account', subject), budget: budgets.passwordAccount },
+    { key: budgetKey('password-address', subject, addressBucket(address)), budget: budgets.passwordAddress, owner },
+    { key: budgetKey('password-account', subject), budget: budgets.passwordAccount, owner },
   ]
 }
 

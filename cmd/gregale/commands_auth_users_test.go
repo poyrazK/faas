@@ -93,7 +93,10 @@ func TestAuthUsersFindsByEmailAndChangesTheUser(t *testing.T) {
 			}, "total": 2, "page": 1, "per_page": 100})
 		case r.Method == "GET" && r.URL.Path == "/admin/v1/users/"+ada:
 			main.WriteJSONTest(w, map[string]any{"user": map[string]any{"id": ada, "email": "ada@example.com", "email_confirmed_at": "2026-10-01T00:00:00Z", "providers": []string{"email", "google"}},
-				"organizations": []map[string]any{{"id": "o1", "slug": "acme", "name": "Acme", "role": "owner"}}, "active_sessions": 2})
+				"organizations": []map[string]any{{"id": "o1", "slug": "acme", "name": "Acme", "role": "owner"}}, "active_sessions": 2,
+				"holds": []map[string]any{{"budget": "password_account", "network": "203.0.113.0/24", "until": "2026-10-25T10:15:00Z"}}})
+		case r.Method == "POST" && r.URL.Path == "/admin/v1/users/"+ada+"/release-holds":
+			main.WriteJSONTest(w, map[string]any{"budgets_cleared": 3})
 		case r.Method == "POST" && r.URL.Path == "/admin/v1/users/"+ada+"/sign-out":
 			main.WriteJSONTest(w, map[string]any{"sessions_ended": 2})
 		case r.Method == "POST" && r.URL.Path == "/admin/v1/users/"+ada+"/ban":
@@ -116,6 +119,7 @@ func TestAuthUsersFindsByEmailAndChangesTheUser(t *testing.T) {
 	for _, step := range [][]string{
 		{"users", "get", "shop-auth", "ada@example.com"},
 		{"users", "sign-out", "shop-auth", ada},
+		{"users", "release", "shop-auth", ada},
 		{"users", "ban", "shop-auth", ada, "--for", "7d"},
 		{"users", "unban", "shop-auth", ada},
 	} {
@@ -133,6 +137,7 @@ func TestAuthUsersFindsByEmailAndChangesTheUser(t *testing.T) {
 		"GET /admin/v1/users?page=1&per_page=100&search=ada%40example.com",
 		"GET /admin/v1/users/" + ada,
 		"POST /admin/v1/users/" + ada + "/sign-out {}",
+		"POST /admin/v1/users/" + ada + "/release-holds {}",
 		"POST /admin/v1/users/" + ada + `/ban {"duration":"168h"}`,
 		"POST /admin/v1/users/" + ada + `/ban {"duration":"none"}`,
 		"DELETE /admin/v1/users/" + ada,
@@ -141,7 +146,7 @@ func TestAuthUsersFindsByEmailAndChangesTheUser(t *testing.T) {
 	if !reflect.DeepEqual(*seen, want) {
 		t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(*seen, "\n"), strings.Join(want, "\n"))
 	}
-	for _, line := range []string{"ada@example.com (confirmed)", "email, google", "2 active", "acme (owner)", "2 sessions ended", "Banned " + ada + " (ada@example.com) until 2026-10-25T10:00:00Z", "Lifted the ban", "Deleted user", "1 organizations they alone belonged to"} {
+	for _, line := range []string{"ada@example.com (confirmed)", "email, google", "2 active", "acme (owner)", "2 sessions ended", "password_account from 203.0.113.0/24 until 2026-10-25T10:15:00Z", "Released the holds on", "3 budgets cleared", "Banned " + ada + " (ada@example.com) until 2026-10-25T10:00:00Z", "Lifted the ban", "Deleted user", "1 organizations they alone belonged to"} {
 		if !strings.Contains(out.String(), line) {
 			t.Fatalf("output lacks %q:\n%s", line, out)
 		}

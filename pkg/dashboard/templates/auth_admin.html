@@ -164,11 +164,12 @@
   // What the sign-in protection did (the Auth app's security events).
   const securityKinds = {
     password_failed: 'Wrong password', code_failed: 'Wrong second-step code', held: 'Held', captcha_pass: 'Passed a hold with a CAPTCHA',
-    trusted_pass: 'Passed a hold from a trusted network', message_limited: 'Message limit reached', new_device_alert: 'New-device email sent',
+    trusted_pass: 'Passed a hold from a trusted network', message_limited: 'Message limit reached', new_device_alert: 'New device', released: 'Holds released',
   }
   const budgetLabels = { password_address: 'wrong passwords from one address', password_account: 'wrong passwords for the account', second_step: 'wrong second-step codes', message_recipient: 'messages to one recipient', message_network: 'messages from one network' }
-  const securityDetail = detail => [detail?.budget && (budgetLabels[detail.budget] || detail.budget), detail?.scope && ('per ' + detail.scope), detail?.limit && ('limit ' + detail.limit),
-    detail?.until && ('until ' + when(detail.until)), detail?.device].filter(Boolean).join(' · ') || '—'
+  const securityDetail = detail => [typeof detail?.budget === 'string' && (budgetLabels[detail.budget] || detail.budget), detail?.scope && ('per ' + detail.scope), detail?.limit && ('limit ' + detail.limit),
+    detail?.until && ('until ' + when(detail.until)), detail?.device, detail?.emailed === true && 'emailed', detail?.emailed === false && 'not emailed',
+    typeof detail?.budgets === 'number' && (detail.budgets + ' budget(s) cleared'), detail?.admin_key && ('by key ' + detail.admin_key)].filter(Boolean).join(' · ') || '—'
   const say = text => { $('status').textContent = text }
 
   function lock(message) {
@@ -392,6 +393,9 @@
       const actions = el('nav', null, { 'aria-label': 'User actions' })
       actions.append(
         button('Sign out everywhere', () => act('Signing out', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/sign-out', {}, data => 'Ended ' + data.sessions_ended + ' session(s).')),
+        // Clears every wrong-password, code and message budget holding them.
+        // Always offered: a hold whose event was not recorded lists nothing.
+        button('Release holds', () => act('Releasing', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/release-holds', {}, data => 'Released: ' + data.budgets_cleared + ' budget(s) cleared.')),
         duration,
         button('Ban', () => act('Banning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: duration.value }, () => 'Banned and signed out.')),
         ...(banned(user) ? [button('Unban', () => act('Unbanning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: 'none' }, () => 'Unbanned.'))] : []),

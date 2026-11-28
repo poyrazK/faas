@@ -619,7 +619,7 @@ type authSecurityEvent struct {
 }
 
 // authSecurityKinds are the security event kinds the Auth app records.
-var authSecurityKinds = []string{"password_failed", "code_failed", "held", "captcha_pass", "trusted_pass", "message_limited", "new_device_alert"}
+var authSecurityKinds = []string{"password_failed", "code_failed", "held", "captcha_pass", "trusted_pass", "message_limited", "new_device_alert", "released"}
 
 // cmdAuthActivity lists GoTrue's audit log through the owner's admin key:
 // sign-ins, sign-ups, password and account changes, newest first. With
