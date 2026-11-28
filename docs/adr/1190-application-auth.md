@@ -383,8 +383,17 @@ unless created with `--no-expiry`, and may be narrowed to `users:read`,
 `emails`. Each `/admin/v1` route needs one scope and a route no scope names
 needs every scope, so a route added later is closed to narrow keys until it
 is mapped. A bare digest, as keys made before scopes were, holds every scope
-and never expires. Secrets are write-only, so `/settings/v1` reports each
-key's ID, scopes and expiry (never its digest) for `admin-key list`. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
+and never expires. Secrets are write-only, so `/settings/v1/admin-keys/<ID>`
+reports one key's ID, scopes and expiry (never its digest) for
+`admin-key list`. That route sends no CORS header, refuses anything but an
+ID before touching the database, and answers
+`AuthAdminKeyLookupsPerAddress` lookups an hour per address, so the 32-bit
+IDs cannot be enumerated. The public `/settings/v1` no longer lists the
+keys, so only someone who holds an ID from the owner's secret list can ask.
+A CLI from before this change reads the list from `/settings/v1` and so
+shows such an app's keys' scopes as unknown until it is upgraded; the keys
+themselves keep working (an accepted break of the N-1 rule, for a
+display-only field). The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
 its script calls the Auth app directly from the owner's browser: apid adds the
 Auth app's exact origin to that page's `connect-src`, and the Auth app answers
 CORS only for the Gregale API origin sealed at creation. apid never receives
@@ -450,8 +459,11 @@ token's signature, so reading the unverified payload there is safe. Nor may
 such a token leave access that outlives the capped session in the person's
 organizations: issuing service-account secrets or invitations, changing
 roles, or changing the organization's second-factor rule, identity
-providers or domains is refused the same way; the operator does those with
-the admin key. Admin keys now carry their IDs so the record names the key
+providers or domains, or taking team actions, is refused the same way; the
+operator does those with the admin key. The check reads the path as the
+routers do (repeated and trailing slashes collapse), and the `/authz/v1`
+router refuses a path with an empty segment, so no spelling of a refused
+path reaches its handler. Admin keys now carry their IDs so the record names the key
 that acted.
 
 ### Lifecycle events and activity
@@ -718,9 +730,11 @@ Existing Auth apps keep running. The CLI shows the `auth` command, the
 template only with `FAAS_APPLICATION_AUTH_ENABLED` set in the shell; without it
 they are absent from help, completions, man pages, the generated reference
 and suggestions, and dispatch treats them as unknown. The customer docs omit
-the Auth page (`docs/application-auth.md`, unlisted) and the public OpenAPI
-omits the mode. Launch reverses these: add the page to
-`docs/customer-pages.json`, the mode to the OpenAPI enums and the managed
+the Auth page (`docs/application-auth.md`, unlisted; `docs/customer-pages.json`
+registers it as unpublished so the Auth app's error `docs_url` links pass the
+docs link check) and the public OpenAPI omits the mode. Launch reverses
+these: drop the page's `unpublished` reason in `docs/customer-pages.json`,
+add the mode to the OpenAPI enums and the managed
 Postgres page, drop the `Unreleased` markers and the `unlisted` entry, and set
 the apid flag.
 
@@ -734,7 +748,24 @@ and MCP clients can act for an application's users with their consent;
 MCP clients do. Owners register clients with an admin key through
 `/admin/v1/oauth/clients` (`gregale auth oauth-clients`); one app holds at
 most `AuthOAuthMaxClients`, and the front refuses self-registration beyond
-that.
+that. Each client address (an IPv4 address or IPv6 /64, as for every
+failed-attempt budget) may self-register `AuthOAuthRegistrationsPerAddress`
+clients per `AuthOAuthRegistrationWindowSeconds` (an `attempt_budgets` row,
+`429 too_many_registrations`), and self-registration pauses while
+`AuthOAuthUnusedClients` self-registered clients nobody has used (no
+consent, session or approved authorization) exist
+(`429 too_many_unused_clients`). Clients people use and those the owner
+made therefore always keep `AuthOAuthMaxClients` minus
+`AuthOAuthUnusedClients` places, however registration is flooded. A
+self-registered client unused, and with no authorization at all in the last
+`AuthOAuthUnusedClientHours`, is soft-deleted that long after it registered,
+as GoTrue deletes clients, by the same request-driven pruning as activity
+retention; owner-made clients are never pruned. Refusals carry the limit,
+the count and the docs URL. What open registration cannot prevent: callers
+in enough networks can keep the unused places full and so pause new
+self-registrations until pruning frees them. Owners then register clients
+with the admin key, which these limits do not touch, or turn
+self-registration off.
 
 GoTrue sends people to `SITE_URL` plus a configured path to approve a
 client. The front redirects that to the hosted consent page on the Auth

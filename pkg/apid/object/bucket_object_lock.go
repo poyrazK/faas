@@ -1,6 +1,7 @@
 package object
 
 import (
+	"context"
 	"io"
 	"net/http"
 
@@ -148,5 +149,34 @@ func (s *Service) objectLockService(b state.ObjectBucket, backend objectstorage.
 	if !measured || !supported || !versioned || !objectstorage.SupportsNativeObjectLock(backend.Provider) {
 		return objectstorage.BucketObjectLockService{}, objectstorage.ErrUnsupported
 	}
-	return objectstorage.BucketObjectLockService{Store: st, Provider: native, Versioning: versioning, BeforeRequest: objectstorage.VersioningRequestRecorder(metrics, b.ID)}, nil
+	return objectstorage.BucketObjectLockService{Store: st, Provider: native, Versioning: versioning, BeforeRequest: objectstorage.VersioningRequestRecorder(metrics, b.ID), CreationOnly: backend.ObjectLock.CreationOnly}, nil
+}
+
+// objectLockCreationCapable reports whether a new bucket in region can be
+// created with Object Lock. Pool members share their Object Lock settings
+// (ADR-20261029174627), so the first placement speaks for the pool.
+func (s *Service) objectLockCreationCapable(region string) bool {
+	if region == "" {
+		region = s.Host.ObjectStorage().DefaultRegion
+	}
+	backends, err := s.Host.ObjectStorage().Placements(region)
+	if err != nil || len(backends) == 0 {
+		return false
+	}
+	if _, ok := s.Host.Store().(state.ObjectBucketObjectLockStore); !ok {
+		return false
+	}
+	return backends[0].ObjectLock.CreationCapable(backends[0].Provider)
+}
+
+// objectLockRequired reports whether b's Object Lock journal requires
+// Object Lock: the bucket was created with it or later enabled.
+// A store without the journal has no Object Lock buckets.
+func objectLockRequired(ctx context.Context, st any, b state.ObjectBucket) (bool, error) {
+	locks, ok := st.(state.ObjectBucketObjectLockStore)
+	if !ok {
+		return false, nil
+	}
+	j, err := locks.GetObjectBucketObjectLock(ctx, b.AccountID, b.AppID, b.ID)
+	return err == nil && j.EnabledRequired, err
 }

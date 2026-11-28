@@ -3290,3 +3290,32 @@ func RunDoctorImageChecksWithLocal(ctx context.Context, ref string, inspector do
 		return img, err == nil
 	})
 }
+
+// SetDoctorBootMemorySources stubs where `doctor --boot` reads the plan, and
+// the --app app's RAM and public host.
+func SetDoctorBootMemorySources(cleanup func(func()), plan func(context.Context) (api.Limits, bool), appInfo func(context.Context, string) (int, string, error)) {
+	oldPlan, oldApp := doctorImagePlanLimits, doctorBootAppInfo
+	doctorImagePlanLimits, doctorBootAppInfo = plan, nil
+	if appInfo != nil {
+		doctorBootAppInfo = func(ctx context.Context, slug string) (doctorBootAppFacts, error) {
+			ram, host, err := appInfo(ctx, slug)
+			return doctorBootAppFacts{ramMB: ram, host: host}, err
+		}
+	}
+	cleanup(func() { doctorImagePlanLimits, doctorBootAppInfo = oldPlan, oldApp })
+}
+
+// SetDoctorBootAppClass stubs the existing app `--boot` reads as one with
+// this workload class.
+func SetDoctorBootAppClass(cleanup func(func()), class string) {
+	old := doctorBootAppInfo
+	doctorBootAppInfo = func(context.Context, string) (doctorBootAppFacts, error) {
+		return doctorBootAppFacts{ramMB: 256, workloadClass: class}, nil
+	}
+	cleanup(func() { doctorBootAppInfo = old })
+}
+
+// RunDeployBootCheck runs `deploy --local-image IMAGE --boot`'s check alone.
+func RunDeployBootCheck(ctx context.Context, image string) int {
+	return runDeployBootCheck(ctx, deployBootFlags{image: image, app: "demo"})
+}

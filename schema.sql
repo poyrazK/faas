@@ -1320,11 +1320,11 @@ BEGIN
         FROM (
             SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
             WHERE NOT EXISTS(SELECT 1 FROM stored_workflows w WHERE w.app_id=target_app
-              AND w.name=definition->>'name' AND w.published IS NOT NULL)
+              AND w.name=definition->>'name' AND w.published IS NOT NULL AND w.environment_id IS NULL)
             UNION ALL
             SELECT CASE WHEN published->'trigger'->>'type' IN ('schedule','event')
              THEN jsonb_set(published, '{trigger,enabled}', to_jsonb(enabled), true) ELSE published END
-            FROM stored_workflows WHERE app_id=target_app AND published IS NOT NULL
+            FROM stored_workflows WHERE app_id=target_app AND published IS NOT NULL AND environment_id IS NULL
         ) effective);
 END;
 $$;
@@ -20888,6 +20888,27 @@ END $$;
 
 
 --
+-- Name: guard_stored_workflow_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_stored_workflow_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.environment_id IS DISTINCT FROM OLD.environment_id THEN
+    RAISE EXCEPTION 'a stored workflow keeps its environment' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+      WHERE a.id = NEW.app_id AND e.id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'a stored workflow environment belongs to its app''s project' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_verified_project_rollback(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -25876,7 +25897,11 @@ BEGIN
   IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve permanent Object Lock history until physical bucket deletion'; END IF;
   RETURN OLD;
  END IF;
- IF NOT FOUND OR b.state<>'ready' OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) THEN
+ -- A bucket created with Object Lock journals its accepted request while it
+ -- is provisioning (ADR-20261119065000). Only that first, waiting request
+ -- may be inserted before the bucket is ready.
+ IF NOT FOUND OR (NEW.account_id,NEW.app_id) IS DISTINCT FROM (b.account_id,b.app_id) OR (b.state<>'ready' AND NOT
+  (TG_OP='INSERT' AND b.state='provisioning' AND NEW.enabled_required AND NEW.state='waiting' AND NOT NEW.dispatched AND NEW.revision=1)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Object Lock configuration requires an owned ready bucket';
  END IF;
  IF TG_OP='INSERT' THEN
@@ -30929,6 +30954,21 @@ $_$;
 
 
 --
+-- Name: stored_workflow_revision_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stored_workflow_revision_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  SELECT w.environment_id INTO NEW.environment_id FROM stored_workflows w
+  WHERE w.app_id = NEW.app_id AND w.name = NEW.name;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: sync_app_task_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -33188,7 +33228,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'route_insights_detected'::text) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text))),
+    CONSTRAINT alert_presets_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'route_insights_detected'::text) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text) OR (metric = ANY (ARRAY['boot_failures'::text, 'job_failures'::text])))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -33277,6 +33317,7 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_environment_scope_chk CHECK (((environment_scope = ''::text) OR ((app_id IS NOT NULL) AND (comparison = ANY (ARRAY['above_baseline'::text, 'below_baseline'::text])) AND (metric = ANY (ARRAY['request_count'::text, 'error_rate_pct'::text, 'latency_p95_ms'::text])) AND (observe_only OR (action = 'webhook'::text)) AND (environment_scope <> 'pr-preview'::text) AND (environment_scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
+    CONSTRAINT alert_rules_failure_count_action_chk CHECK (((metric <> ALL (ARRAY['boot_failures'::text, 'job_failures'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
@@ -33292,7 +33333,7 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
     CONSTRAINT alert_rules_mcp_readiness_action_chk CHECK (((metric <> 'mcp_readiness_unhealthy'::text) OR ((action = 'webhook'::text) AND (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_mcp_readiness_scope_chk CHECK (((mcp_readiness_scope = ''::text) OR ((metric = 'mcp_readiness_unhealthy'::text) AND (app_id IS NOT NULL) AND (mcp_readiness_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text) OR (metric = ANY (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text) OR (metric = 'oom_kills'::text))),
+    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text) OR (metric = ANY (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text) OR (metric = 'oom_kills'::text) OR (metric = ANY (ARRAY['boot_failures'::text, 'job_failures'::text])))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_observe_only_chk CHECK ((((NOT observe_only) AND (NOT observation_enabled)) OR (observe_only AND (NOT enabled) AND (app_id IS NOT NULL) AND (comparison = ANY (ARRAY['above_baseline'::text, 'below_baseline'::text]))))),
     CONSTRAINT alert_rules_observed_incidents_chk CHECK (((observed_incidents IS NULL) OR (jsonb_typeof(observed_incidents) = 'array'::text))),
@@ -63358,10 +63399,13 @@ CREATE TABLE public.sandbox_session_captures (
     consumed_at timestamp with time zone,
     checked_at timestamp with time zone,
     volume_backup_id uuid,
+    purpose text DEFAULT 'pause'::text NOT NULL,
+    uploaded_at timestamp with time zone,
     CONSTRAINT sandbox_session_captures_check CHECK (((state = 'consumed'::text) = (consumed_at IS NOT NULL))),
     CONSTRAINT sandbox_session_captures_check1 CHECK (((state = 'consumed'::text) OR ((fc_version <> ''::text) AND (mem_bytes > 0)))),
     CONSTRAINT sandbox_session_captures_mem_bytes_check CHECK ((mem_bytes >= 0)),
     CONSTRAINT sandbox_session_captures_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_session_captures_purpose_check CHECK ((purpose = ANY (ARRAY['pause'::text, 'fork'::text]))),
     CONSTRAINT sandbox_session_captures_state_check CHECK ((state = ANY (ARRAY['live'::text, 'consumed'::text]))),
     CONSTRAINT sandbox_session_captures_storage_key_check CHECK ((storage_key ~~ 'snap/sandbox-session-%/captures/%/v2/mem'::text)),
     CONSTRAINT sandbox_session_captures_vmstate_bytes_check CHECK ((vmstate_bytes >= 0)),
@@ -63491,6 +63535,9 @@ CREATE TABLE public.sandbox_sessions (
     resumed_cold boolean DEFAULT false NOT NULL,
     forked_from uuid,
     resume_not_before timestamp with time zone,
+    fork_capture_id uuid,
+    fork_requested_at timestamp with time zone,
+    fork_local_refused_at timestamp with time zone,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_durability_check CHECK (((durability IS NULL) OR (durability = ANY (ARRAY['node'::text, 'remote'::text])))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
@@ -63510,7 +63557,7 @@ CREATE TABLE public.sandbox_sessions (
     CONSTRAINT sandbox_sessions_ram_mb_v2_check CHECK ((((ram_mb >= 512) AND (ram_mb <= 32768)) AND ((ram_mb % 512) = 0))),
     CONSTRAINT sandbox_sessions_state_v2_check CHECK ((state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'pausing'::text, 'paused'::text, 'resuming'::text, 'closed'::text, 'expired'::text, 'failed'::text]))),
     CONSTRAINT sandbox_sessions_vcpu_check CHECK (((vcpu IS NULL) OR ((vcpu >= 1) AND (vcpu <= 16)))),
-    CONSTRAINT sandbox_sessions_volume_gb_check CHECK (((volume_gb IS NULL) OR ((kind = 'persistent'::text) AND ((volume_gb >= 1) AND (volume_gb <= 1024)))))
+    CONSTRAINT sandbox_sessions_volume_gb_v2_check CHECK (((volume_gb IS NULL) OR (((kind = 'persistent'::text) OR (forked_from IS NOT NULL)) AND ((volume_gb >= 1) AND (volume_gb <= 1024)))))
 );
 
 
@@ -63603,7 +63650,7 @@ CREATE TABLE public.sandbox_volume_backups (
     CONSTRAINT sandbox_volume_backups_check CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
     CONSTRAINT sandbox_volume_backups_data_chunks_check CHECK ((data_chunks >= 0)),
     CONSTRAINT sandbox_volume_backups_node_id_check CHECK ((node_id <> ''::text)),
-    CONSTRAINT sandbox_volume_backups_reason_check CHECK ((reason = ANY (ARRAY['periodic'::text, 'pause'::text]))),
+    CONSTRAINT sandbox_volume_backups_reason_v2_check CHECK ((reason = ANY (ARRAY['periodic'::text, 'pause'::text, 'fork'::text]))),
     CONSTRAINT sandbox_volume_backups_size_bytes_check CHECK ((size_bytes >= 0)),
     CONSTRAINT sandbox_volume_backups_state_check CHECK ((state = ANY (ARRAY['uploading'::text, 'stored'::text, 'deleted'::text]))),
     CONSTRAINT sandbox_volume_backups_uploaded_bytes_check CHECK ((uploaded_bytes >= 0))
@@ -64500,6 +64547,28 @@ CREATE TABLE public.spend_cap_notice_outbox (
 
 
 --
+-- Name: stage_workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.stage_workflow_schedule_cursors (
+    environment_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    last_admitted_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT stage_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT stage_workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT stage_workflow_schedule_cursors_workflow_name_check CHECK (((length(workflow_name) >= 1) AND (length(workflow_name) <= 128)))
+);
+
+
+--
 -- Name: static_egress_provisioning_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64875,6 +64944,7 @@ CREATE TABLE public.stored_workflow_revisions (
     published_by_account_id uuid NOT NULL,
     published_by_api_key_id uuid,
     check_evidence jsonb,
+    environment_id uuid,
     CONSTRAINT stored_workflow_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
     CONSTRAINT stored_workflow_revisions_name_check CHECK ((length(name) > 0)),
     CONSTRAINT stored_workflow_revisions_version_check CHECK ((version > 0))
@@ -64908,6 +64978,7 @@ CREATE TABLE public.stored_workflows (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     test_suite jsonb,
     test_report jsonb,
+    environment_id uuid,
     CONSTRAINT stored_workflow_test_report_shape CHECK (((test_report IS NULL) OR (jsonb_typeof(test_report) = 'object'::text))),
     CONSTRAINT stored_workflow_test_suite_shape CHECK (((test_suite IS NULL) OR (jsonb_typeof(test_suite) = 'object'::text))),
     CONSTRAINT stored_workflows_check CHECK (((jsonb_typeof(draft) = 'object'::text) AND ((draft ->> 'name'::text) = name))),
@@ -81330,6 +81401,14 @@ ALTER TABLE ONLY public.spend_cap_notice_outbox
 
 
 --
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_pkey PRIMARY KEY (environment_id, workflow_name);
+
+
+--
 -- Name: static_egress_provisioning_grants static_egress_provisioning_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81511,6 +81590,14 @@ ALTER TABLE ONLY public.stored_workflow_publish_receipts
 
 ALTER TABLE ONLY public.stored_workflow_revisions
     ADD CONSTRAINT stored_workflow_revisions_pkey PRIMARY KEY (app_id, name, version);
+
+
+--
+-- Name: stored_workflows stored_workflows_environment_enabled_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.stored_workflows
+    ADD CONSTRAINT stored_workflows_environment_enabled_chk CHECK (((environment_id IS NULL) OR (NOT enabled) OR ((published IS NOT NULL) AND (COALESCE(((published -> 'trigger'::text) ->> 'type'::text), 'manual'::text) = ANY (ARRAY['manual'::text, 'schedule'::text]))))) NOT VALID;
 
 
 --
@@ -87044,6 +87131,13 @@ CREATE INDEX events_at_id_idx ON public.events USING btree (at DESC, id DESC);
 
 
 --
+-- Name: events_boot_failed_app_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_boot_failed_app_at_idx ON public.events USING btree (((data ->> 'app_id'::text)), at DESC) WHERE (kind = 'wake.boot_failed'::text);
+
+
+--
 -- Name: events_data_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -88693,6 +88787,13 @@ CREATE INDEX job_runs_active_idx ON public.job_runs USING btree (account_id, id)
 --
 
 CREATE UNIQUE INDEX job_runs_exclusive_generation_idx ON public.job_runs USING btree (exclusive_operation_id, exclusive_generation) WHERE (exclusive_operation_id IS NOT NULL);
+
+
+--
+-- Name: job_runs_failed_finished_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX job_runs_failed_finished_idx ON public.job_runs USING btree (account_id, finished_at DESC) WHERE (aggregate_status = ANY (ARRAY['failed'::text, 'dead_letter'::text]));
 
 
 --
@@ -93393,10 +93494,10 @@ CREATE INDEX sandbox_session_captures_consumed ON public.sandbox_session_capture
 
 
 --
--- Name: sandbox_session_captures_live; Type: INDEX; Schema: public; Owner: -
+-- Name: sandbox_session_captures_live_pause; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX sandbox_session_captures_live ON public.sandbox_session_captures USING btree (session_id) WHERE (state = 'live'::text);
+CREATE UNIQUE INDEX sandbox_session_captures_live_pause ON public.sandbox_session_captures USING btree (session_id) WHERE ((state = 'live'::text) AND (purpose = 'pause'::text));
 
 
 --
@@ -93845,6 +93946,13 @@ CREATE INDEX spend_cap_notice_pending_idx ON public.spend_cap_notice_outbox USIN
 
 
 --
+-- Name: stage_workflow_schedule_cursors_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX stage_workflow_schedule_cursors_app_idx ON public.stage_workflow_schedule_cursors USING btree (app_id, workflow_name);
+
+
+--
 -- Name: static_egress_provisioning_account_ip_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -93933,6 +94041,20 @@ CREATE INDEX stored_workflow_live_history ON public.stored_workflow_live_verific
 --
 
 CREATE INDEX stored_workflow_live_suite_history ON public.stored_workflow_live_suites USING btree (app_id, name, created_at DESC, id DESC);
+
+
+--
+-- Name: stored_workflows_app_environment_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX stored_workflows_app_environment_name_uniq ON public.stored_workflows USING btree (app_id, name, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid));
+
+
+--
+-- Name: stored_workflows_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX stored_workflows_environment_idx ON public.stored_workflows USING btree (environment_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -102462,6 +102584,20 @@ CREATE TRIGGER status_incidents_legacy_resolution_update AFTER UPDATE OF resolve
 --
 
 CREATE TRIGGER storage_object_deletions_scope BEFORE INSERT OR DELETE OR UPDATE ON public.storage_object_deletions FOR EACH ROW EXECUTE FUNCTION public.storage_object_deletions_scope();
+
+
+--
+-- Name: stored_workflows stored_workflow_environment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER stored_workflow_environment_guard BEFORE INSERT OR UPDATE OF environment_id, app_id ON public.stored_workflows FOR EACH ROW EXECUTE FUNCTION public.guard_stored_workflow_environment();
+
+
+--
+-- Name: stored_workflow_revisions stored_workflow_revision_environment; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER stored_workflow_revision_environment BEFORE INSERT OR UPDATE OF environment_id, app_id, name ON public.stored_workflow_revisions FOR EACH ROW EXECUTE FUNCTION public.stored_workflow_revision_environment();
 
 
 --
@@ -120167,6 +120303,22 @@ ALTER TABLE ONLY public.spend_cap_notice_outbox
 
 
 --
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: status_incident_updates status_incident_updates_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -120295,11 +120447,27 @@ ALTER TABLE ONLY public.stored_workflow_revisions
 
 
 --
+-- Name: stored_workflow_revisions stored_workflow_revisions_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stored_workflow_revisions
+    ADD CONSTRAINT stored_workflow_revisions_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
+
+
+--
 -- Name: stored_workflows stored_workflows_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.stored_workflows
     ADD CONSTRAINT stored_workflows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stored_workflows stored_workflows_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stored_workflows
+    ADD CONSTRAINT stored_workflows_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
 
 
 --

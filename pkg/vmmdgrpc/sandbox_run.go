@@ -95,6 +95,14 @@ type sandboxActivity struct {
 	volume            bool
 	volumeBackupEvery time.Duration
 	volumeBackingUp   atomic.Bool
+	// forking runs one fork capture at a time (ADR-20261122132055 §3).
+	forking atomic.Bool
+	// gone: a pause captured and destroyed the VM; detached: its stream
+	// ended and it waits for a reattach (ADR-20261122132055 §7).
+	gone     atomic.Bool
+	detached atomic.Bool
+	// usageStopped: the final usage record was taken.
+	usageStopped bool
 }
 
 func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
@@ -185,6 +193,10 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = err
 		return err
 	}
+	if first.GetStart().GetReattach() {
+		opErr = s.reattachSandbox(stream, first.GetStart())
+		return opErr
+	}
 	wake, problem := sandboxStartFromProto(first.GetStart())
 	if problem != nil {
 		opErr = problem
@@ -208,7 +220,7 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	}
 	ctx := stream.Context()
 	if volumeGB > 0 {
-		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID); err != nil {
+		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID, first.GetStart().GetVolumeSourceSandboxId()); err != nil {
 			opErr = err
 			return err
 		}
@@ -218,7 +230,11 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = err
 		return grpcerr.ToStatus(toProblem(err))
 	}
+	detached := false
 	defer func() {
+		if detached {
+			return
+		}
 		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sandboxDestroyTimeout)
 		defer cancel()
 		_ = sandboxVMM.Destroy(destroyCtx, wake.Instance)
@@ -239,8 +255,9 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	}
 	s.sandboxRuns.Store(wake.Instance, act)
 	defer func() {
-		close(act.done)
-		s.sandboxRuns.Delete(wake.Instance)
+		if !detached {
+			s.endSandboxActivity(wake.Instance, act)
+		}
 	}()
 	if runner != nil && wake.Browser && wake.Network == api.SandboxNetworkWeb && task == nil {
 		act.runAction = func(ctx context.Context, a *vmmdpb.RunSandboxAction) { s.runSandboxAction(ctx, runner, wake, act, a) }
@@ -256,7 +273,22 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		go runSandboxTask(ctx, runner, wake, *task, act)
 	}
 	opErr = s.serveSandbox(ctx, stream, wake.Instance, act)
+	// A persistent session's VM outlives a lost stream for a reattach
+	// (ADR-20261122132055 §7).
+	if first.GetStart().GetDetachable() && task == nil && opErr != nil {
+		detached = s.detachSandbox(wake, act, sandboxVMM, wakeMethodFrom(inst.Method))
+	}
 	return opErr
+}
+
+// endSandboxActivity takes a session's final usage and forgets it.
+func (s *Server) endSandboxActivity(instance string, act *sandboxActivity) {
+	if act.usage != nil && !act.usageStopped {
+		act.usageStopped = true
+		act.usage.Stop()
+	}
+	close(act.done)
+	s.sandboxRuns.Delete(instance)
 }
 
 // serveSandbox runs the session's frames and reports until close or the
@@ -292,12 +324,6 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 		defer t.Stop()
 		volumeTick = t.C
 	}
-	stopped := false
-	defer func() {
-		if act.usage != nil && !stopped {
-			act.usage.Stop()
-		}
-	}()
 	for {
 		var ev *vmmdpb.RunSandboxEvent
 		select {
@@ -317,7 +343,7 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 					return err
 				}
 				if act.usage != nil {
-					stopped = true
+					act.usageStopped = true
 					u := act.usage.Stop()
 					ev := sandboxUsageEvent(&u)
 					ev.GetUsage().Final = true
@@ -337,11 +363,12 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 				}
 				// The VM is gone: its last records, then paused, end the
 				// stream (ADR-20261122132055 §2).
+				act.gone.Store(true)
 				if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {
 					return err
 				}
 				if act.usage != nil {
-					stopped = true
+					act.usageStopped = true
 					u := act.usage.Stop()
 					final := sandboxUsageEvent(&u)
 					final.GetUsage().Final = true
@@ -350,6 +377,8 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 					}
 				}
 				return stream.Send(paused)
+			case msg.GetFork() != nil:
+				ev = s.forkSandbox(ctx, instance, act, msg.GetFork())
 			case msg.GetPersistGrant() != nil:
 				act.persists.deliver(msg.GetPersistGrant().GetRequestId(), msg)
 			case msg.GetPersistRecorded() != nil:
@@ -555,7 +584,7 @@ func (s *Server) pauseSandbox(ctx context.Context, instance string, act *sandbox
 	if id, err := uuid.Parse(p.GetCaptureId()); err != nil || id.String() != p.GetCaptureId() {
 		return refuse("invalid")
 	}
-	if !act.beginPause() {
+	if act.forking.Load() || !act.beginPause() {
 		return refuse("busy")
 	}
 	defer act.endPause()
@@ -682,7 +711,16 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		wake.Snapshot = &fcvm.Snapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
 			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network == api.SandboxNetworkNone}
 		wake.SessionCapture = true
+		if from := start.GetForkedFrom(); from != "" {
+			if (sandboxproto.Request{Op: sandboxproto.OpForked, ForkedFrom: from}).Validate() != nil || from == wake.SandboxID {
+				return fcvm.SandboxWakeRequest{}, invalid("forked_from must be another session's id")
+			}
+			wake.ForkedFrom = from
+		}
 		return wake, nil
+	}
+	if start.GetForkedFrom() != "" {
+		return fcvm.SandboxWakeRequest{}, invalid("forked_from goes only with a session capture")
 	}
 	if snap := start.GetSnapshot(); snap != nil {
 		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey != "") ||

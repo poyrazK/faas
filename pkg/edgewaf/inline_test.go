@@ -46,8 +46,18 @@ func TestCheckInline(t *testing.T) {
 		// The platform policy applies in-path too: REST methods are allowed.
 		{name: "DELETE is allowed", s: sample(http.MethodDelete, "/api/orders/7", nil, ""),
 			want: gateway.WAFInlineClean},
-		// Bodies are never checked in-path, even when the sample carries one.
-		{name: "attack only in body", s: sample(http.MethodPost, "/api/comments", nil, `{"text":"<script>alert(document.cookie)</script>"}`),
+		// Under strict inspection the body prefix is scored in-path
+		// (amendment 22).
+		{name: "XSS in JSON body", s: sample(http.MethodPost, "/api/comments", nil, `{"text":"<script>alert(document.cookie)</script>"}`),
+			want: gateway.WAFInlineDetected, wantRule: 941100},
+		{name: "SQLi in JSON body", s: sample(http.MethodPost, "/api/items", nil, `{"q":"1' OR 1=1-- "}`),
+			want: gateway.WAFInlineDetected},
+		{name: "benign JSON body", s: sample(http.MethodPost, "/api/orders", nil, `{"sku":"A-100","qty":2,"note":"leave at the door"}`),
+			want: gateway.WAFInlineClean},
+		// Without edge_waf_inline_body the gateway sends the headers of a
+		// body but no bytes; body access must not turn that into a parse
+		// failure.
+		{name: "JSON headers without body bytes", s: withoutBody(sample(http.MethodPost, "/api/orders", nil, `{"q":"1' OR 1=1--"}`)),
 			want: gateway.WAFInlineClean},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,7 +98,7 @@ func TestCheckInlineFailsOpen(t *testing.T) {
 
 	t.Run("app budget exhausted", func(t *testing.T) {
 		i, _ := newClockedInspector(&recordingObserver{})
-		for i.admitInline(attack.AppID) {
+		for i.admitInline(attack.AppID, estimateInline(0)) {
 		}
 		if res := i.CheckInline(attack); res.Outcome != gateway.WAFInlineSkipped || res.SkipReason != gateway.WAFInlineSkipBudget {
 			t.Fatalf("outcome = %s (%s), want skipped (budget)", res.Outcome, res.SkipReason)
@@ -293,6 +303,8 @@ func TestCheckInlineWithoutStrictInspection(t *testing.T) {
 		"TRACE method":         sample(http.MethodTrace, "/", nil, ""),
 		"PHP filter wrapper":   sample(http.MethodGet, "/?f=php://filter/convert.base64-encode/resource=index.php", nil, ""),
 		"a URI past the bound": sample(http.MethodGet, "/search?q="+strings.Repeat("a", 2*api.EdgeWAFMaxInspectURIBytes), nil, ""),
+		// The baseline set never reads the body (amendment 22 is strict only).
+		"attack only in body": sample(http.MethodPost, "/api/comments", nil, `{"text":"<script>alert(document.cookie)</script>"}`),
 	} {
 		if res := i.CheckInline(baseline(s)); res.Outcome != gateway.WAFInlineClean {
 			t.Errorf("%s: outcome = %s (rules %v, categories %v), want clean on the baseline set", name, res.Outcome, res.RuleIDs, res.Categories)
@@ -323,6 +335,55 @@ func TestSampledCheckReportsUninspectedURI(t *testing.T) {
 	short, err := evaluate(waf, sample(http.MethodGet, "/search?q=shoes", nil, ""))
 	if err != nil || short.Detected || short.Oversized {
 		t.Fatalf("short URI = %+v (%v), want clean", short, err)
+	}
+}
+
+// TestCheckInlineChargesBodyUpFront: a check with a body reserves budget for
+// its fields before it runs, so a burst of body checks cannot admit far more
+// work than the app's balance (ADR-831 amendment 22).
+func TestCheckInlineChargesBodyUpFront(t *testing.T) {
+	if full, bare := estimateInline(api.EdgeWAFMaxInlineBodyBytes), estimateInline(0); full < 10*bare {
+		t.Fatalf("estimate for a 2 KiB body = %.1f ms, header-only %.1f ms; want the body to dominate", full, bare)
+	}
+	i := New(&recordingObserver{}, nil)
+	body := `{"a":"` + strings.Repeat("x", api.EdgeWAFMaxInlineBodyBytes) + `"}`
+	if !i.admitInline("app-1", estimateInline(len(body))) {
+		t.Fatal("first body check refused")
+	}
+	admitted := 1
+	for ; admitted < 1000 && i.admitInline("app-1", estimateInline(len(body))); admitted++ {
+	}
+	if burst := int(api.EdgeWAFInlineMsPerAppBurst / estimateInline(api.EdgeWAFMaxInlineBodyBytes)); admitted > burst+1 {
+		t.Errorf("admitted %d body checks before settling, want at most about %d", admitted, burst+1)
+	}
+}
+
+func withoutBody(s gateway.WAFSample) gateway.WAFSample {
+	s.Body = nil
+	return s
+}
+
+// TestCheckInlineBoundsBody: a strict in-path check scores at most
+// api.EdgeWAFMaxInlineBodyBytes of the body (ADR-831 amendment 22). An attack
+// in a cut-off prefix is still found; one past the cut is left to the
+// sampled check.
+func TestCheckInlineBoundsBody(t *testing.T) {
+	i := New(&recordingObserver{}, nil)
+	pad := strings.Repeat("a", 4*api.EdgeWAFMaxInlineBodyBytes)
+	attack := `<script>alert(document.cookie)</script>`
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "attack before the cut of a long body", body: `{"text":"` + attack + `","pad":"` + pad + `"}`, want: gateway.WAFInlineDetected},
+		{name: "attack past the cut", body: `{"pad":"` + pad + `","text":"` + attack + `"}`, want: gateway.WAFInlineClean},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if res := i.CheckInline(sample(http.MethodPost, "/api/comments", nil, tc.body)); res.Outcome != tc.want {
+				t.Fatalf("outcome = %s (rules %v), want %s", res.Outcome, res.RuleIDs, tc.want)
+			}
+		})
 	}
 }
 

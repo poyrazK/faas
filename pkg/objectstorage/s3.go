@@ -99,7 +99,21 @@ func NewS3(c BackendConfig, getenv func(string) string) (Provider, error) {
 }
 
 func (p *S3) CreateBucket(ctx context.Context, bucket string) error {
+	return p.createBucket(ctx, bucket, false)
+}
+
+// CreateObjectLockBucket sends ObjectLockEnabledForBucket in CreateBucket.
+// Providers such as OVHcloud accept Object Lock only here
+// (ADR-20261119065000). The provider enables versioning with it.
+func (p *S3) CreateObjectLockBucket(ctx context.Context, bucket string) error {
+	return p.createBucket(ctx, bucket, true)
+}
+
+func (p *S3) createBucket(ctx context.Context, bucket string, objectLock bool) error {
 	in := &s3.CreateBucketInput{Bucket: aws.String(bucket)}
+	if objectLock {
+		in.ObjectLockEnabledForBucket = aws.Bool(true)
+	}
 	// AWS requires omission in us-east-1; R2 signs with auto but does not
 	// use it as a placement constraint.
 	if p.region != "us-east-1" && p.region != "auto" {

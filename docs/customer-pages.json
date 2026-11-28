@@ -5,6 +5,7 @@
     {"path": "", "source": "docs/quickstart.md"},
     {"path": "account", "source": "docs/account.md"},
     {"path": "agents", "source": "docs/agents.md"},
+    {"path": "application-auth", "source": "docs/application-auth.md", "unpublished": "dark-launched (ADR-1190); published at launch"},
     {"path": "claimable-deploys", "source": "docs/claimable-deploys.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "claude-code", "source": "docs/claude-code.md"},
     {"path": "codex", "source": "docs/codex.md"},

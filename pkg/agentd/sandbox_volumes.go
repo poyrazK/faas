@@ -27,7 +27,8 @@ const sandboxVolumeSweepBatch = 50
 // markVolumeNode records the node a session with a volume booted on, and
 // deletes the stale copy on the node it held before.
 func (s *Sandboxes) markVolumeNode(ctx context.Context, ss *session, node string) error {
-	if ss.claim.VolumeGB <= 0 || ss.claim.Kind != agentstore.SandboxPersistent {
+	// A fork of either kind has its source's volume (ADR-20261122132055 §3).
+	if ss.claim.VolumeGB <= 0 {
 		return nil
 	}
 	prev, err := s.store.MarkSandboxVolumeNode(ctx, ss.claim.ID, ss.claim.LeaseToken, node, ss.claim.VolumeGB)

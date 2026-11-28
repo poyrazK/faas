@@ -526,6 +526,11 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
+			// `app list --limit 0` printed only the usage line, never that
+			// list takes no flags (prod hunt r76).
+			if strings.HasPrefix(args[1], "-") {
+				printCommandValidation(os.Stderr, "app list does not take %s: it lists every app on one page. Use --json and filter, or `gregale app SLUG` for one app.\n", strings.SplitN(args[1], "=", 2)[0])
+			}
 			PrintUsage(os.Stderr, "usage: gregale app list [ls|list|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}

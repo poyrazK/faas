@@ -151,8 +151,8 @@ func TestDecorate_ZeroObservedUsesStatic(t *testing.T) {
 // stable ordering keeps the diff readable when a row is added.
 func TestCodes_SortedAndComplete(t *testing.T) {
 	codes := Codes()
-	if len(codes) != 15 {
-		t.Errorf("Codes() returned %d entries; want 15 customer-facing presets", len(codes))
+	if len(codes) != 17 {
+		t.Errorf("Codes() returned %d entries; want 17 customer-facing presets", len(codes))
 	}
 	// Spot-check the first + last (sorted) entries.
 	if codes[0] != "api_down" {

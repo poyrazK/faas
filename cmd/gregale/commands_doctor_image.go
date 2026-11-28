@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,18 @@ type doctorImageFlags struct {
 	// starts, serves HTTP on 0.0.0.0:$PORT and stays up (doctor_boot.go).
 	boot    bool
 	envFile string
+	// ramMB overrides the boot's memory limit; app is doctor's --app, whose
+	// RAM is the limit otherwise (doctorBootMemory).
+	ramMB int
+	// healthPath is the readiness path --boot probes instead of /.
+	healthPath string
+	app        string
+	// deploy is set by `deploy --local-image --boot`: the app may not exist
+	// yet, ramMB comes from --size, and fixes name deploy's flags.
+	deploy bool
+	// executionMode is the app's lifecycle mode; a worker or job is checked
+	// to keep running or exit 0 instead of serving HTTP.
+	executionMode string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -44,6 +57,9 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.dockerConfig, "docker-config", "", "use the image registry's credentials from this Docker config.json or its directory")
 	fs.BoolVar(&f.boot, "boot", false, "with --image, run the image with local Docker and check it starts, serves HTTP on 0.0.0.0:$PORT and stays up")
 	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
+	fs.IntVar(&f.ramMB, "ram", 0, "with --boot, memory limit in MB (default: --app's RAM, else your plan's default for a new app)")
+	fs.StringVar(&f.healthPath, "healthcheck-path", "", "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does (for example /healthz)")
+	fs.StringVar(&f.executionMode, "execution-mode", "", "with --boot, the app's lifecycle mode: request|service|worker|job; a worker must keep running and a job exit 0, with no HTTP")
 	return f
 }
 
@@ -71,6 +87,20 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	}
 	if visited["env-file"] && (!f.boot || strings.TrimSpace(f.envFile) == "") {
 		return errors.New("--env-file requires --boot and a file path")
+	}
+	if visited["healthcheck-path"] && (!f.boot || !strings.HasPrefix(f.healthPath, "/") || strings.ContainsFunc(f.healthPath, func(r rune) bool { return r <= ' ' || r == 0x7f })) {
+		return errors.New("--healthcheck-path requires --boot and an HTTP path that starts with / and has no spaces")
+	}
+	f.executionMode = strings.TrimSpace(f.executionMode)
+	if visited["execution-mode"] && (!f.boot || !slices.Contains(doctorBootModes, f.executionMode)) {
+		return errors.New("--execution-mode requires --boot and one of request, service, worker or job")
+	}
+	if doctorBootNoListener(f.executionMode) && visited["healthcheck-path"] {
+		return fmt.Errorf("--healthcheck-path probes HTTP, which a %s does not serve", f.executionMode)
+	}
+	// Docker itself refuses a limit below its minimum, with its own message.
+	if visited["ram"] && (!f.boot || f.ramMB <= 0) {
+		return errors.New("--ram requires --boot and a positive memory limit in MB")
 	}
 	if visited["registry-user"] || visited["registry-password-stdin"] {
 		if f.image == "" || f.user == "" || !f.passwordStdin {
@@ -134,7 +164,7 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 	}
 	report := runDoctorImageChecksWithLocal(ctx, flags.image, auth, inspector, readLocalDockerImage)
 	if flags.boot {
-		addDoctorBootChecks(&report, flags)
+		_ = addDoctorBootChecks(context.WithoutCancel(ctx), &report, flags) // not bound by the registry inspection timeout
 	}
 	if asJSON {
 		if err := writeJSON(report); err != nil {
@@ -212,15 +242,23 @@ func doctorImageTailChecks(cfg oci.ImageConfig) []doctorCheck {
 // addDoctorBootChecks runs the image locally and replaces the skipped
 // startup-and-port check with what the run found. It boots even when registry
 // metadata could not be read from the registry or the local Docker store;
-// PORT is then the default serving port.
-func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
+// PORT is then the default serving port. It reports whether Ctrl-C
+// interrupted the boot, which a caller about to act on the result must treat
+// as a failure.
+func addDoctorBootChecks(parent context.Context, report *doctorReport, flags *doctorImageFlags) (interrupted bool) {
 	port := api.DefaultAppPort
 	if report.Image != nil && report.Image.ServingPort > 0 {
 		port = report.Image.ServingPort
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt)
 	defer stop()
-	boot := runDoctorBootChecks(ctx, doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile})
+	app := doctorBootLookupApp(ctx, flags.app, flags.deploy)
+	memoryMB, memorySource := doctorBootMemory(ctx, flags, app)
+	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy, mode: doctorBootMode(flags.executionMode, flags.healthPath, app)}
+	if report.Image != nil {
+		opts.imageHealthcheck = doctorBootImageHealthcheck(report.Image.Healthcheck)
+	}
+	boot := runDoctorBootChecks(ctx, opts)
 	checks := report.Checks[:0]
 	for _, c := range report.Checks {
 		if c.Name != "startup-and-port" {
@@ -231,6 +269,7 @@ func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
 	if report.Image != nil {
 		report.Image.Booted = true
 	}
+	return ctx.Err() != nil
 }
 
 func doctorImageAccessError(err error) doctorCheck {

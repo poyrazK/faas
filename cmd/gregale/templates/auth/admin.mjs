@@ -41,8 +41,9 @@ export function adminKeyHashes(env) {
   return keys
 }
 
-// adminKeySummary is what /settings/v1 reports of the admin keys, so the
-// CLI can list them: IDs, scopes and expiry, never a digest.
+// adminKeySummary is what /settings/v1/admin-keys/<ID> reports of each
+// admin key, so the CLI can list them: ID, scopes and expiry, never a
+// digest. It is looked up by ID, never listed publicly.
 export function adminKeySummary(keys) {
   return keys.map(key => ({ id: key.id, scopes: key.scopes, expires_at: key.expiresAt === null ? null : new Date(key.expiresAt).toISOString() }))
 }

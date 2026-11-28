@@ -34,6 +34,25 @@ faster for large images and is the better choice in CI. Local image deploys are
 being released gradually; an account without them gets "Local image deploys
 unavailable" and can deploy through a registry instead.
 
+Add `--boot` to check the image on your machine first:
+
+```sh
+gregale deploy --local-image team/api:dev --boot --healthcheck-path /healthz
+```
+
+It runs the same checks as `doctor --boot` (below) before the image is saved
+or uploaded, with the deployment's `--healthcheck-path`, the RAM of its
+`--size` (else the app's, or a new app's default) and the app's public host
+when the app exists. A crash, a listener on the wrong address or
+port, an out-of-memory kill or a failing health check stops the deploy with the
+findings, and nothing is uploaded; warnings are printed and the deploy goes on.
+`--boot-env-file FILE` passes variables the app needs to start to the local
+container only; set them on the app with `gregale env` or `gregale secrets` for
+the deployment. A worker or job (`--execution-mode`, or `gregale.yaml`) is
+checked without HTTP, as described below. `--boot` is refused for
+`--healthcheck-grpc` deploys and with `--create-only`.
+Pressing Ctrl-C during the check stops the deploy.
+
 ## Boot the image locally before deploying
 
 `doctor` and `deploy check` read image metadata only. Add `--boot` to also run
@@ -50,7 +69,46 @@ answered `GET /` on `0.0.0.0:$PORT`, and was still running 10 seconds after it
 started. When nothing answers, it reads the container's listening sockets and
 names the mistake, such as a server bound to `127.0.0.1` or to a port other
 than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
-app needs to start with `--env-file` (docker env-file format). The container is
+app needs to start with `--env-file` (docker env-file format).
+
+A worker or job serves no HTTP. Pass `--execution-mode worker` or
+`--execution-mode job` (with `--app SLUG`, an existing worker or job app is
+checked as one without it) and the boot publishes no port and judges the
+process as Gregale does when it first boots a deployment: a process still
+running at the end of Gregale's observation window (the report shows its
+length) is a working worker, a job that exited 0 has completed, and any other
+exit is a startup failure. A worker that exits 0 is a warning, since it would
+stop instead of working; a job still running at the end of the window passes.
+
+The process runs for real on your machine: a job does its whole task, and a
+worker takes real work until the window ends and the container is removed.
+Pass env that points at test resources, never production credentials.
+
+Pass `--healthcheck-path /healthz` (the path you deploy with) to probe the
+app's readiness route instead of `/`. Gregale routes to an instance only once
+that path answers 2xx (after redirects), so `--boot` keeps polling it through
+the startup window and fails with `boot_health_failed` if it never passes. A
+redirect within the container is followed; one elsewhere, such as to the public
+`https://` URL, fails the check, as it does on Gregale. Gregale's probe sends the
+app's public host and `X-Forwarded-Proto: https`; with `--app SLUG` the boot
+sends that app's host too. Without it, a 400 is only a warning, because an app
+that allow-lists its host names (Django `ALLOWED_HOSTS`, Rails `config.hosts`)
+refuses the local address. Without a health path, any answer on `/` counts, as
+it does for readiness by connection.
+
+An image with a `HEALTHCHECK` also gets it run by Docker, every second, with the
+retries scaled so the failure budget (retries × interval) stays the image's:
+an image checked every 30 s with 3 retries can fail for 90 s before it is
+unhealthy, as on Gregale. The start period is unchanged. `boot-healthcheck`
+reports healthy as soon as a check passes; after the startup window it reports
+unhealthy, or still within its retries, with the last check's output.
+
+The container gets the memory the app would get on Gregale, with no swap: the
+RAM of the app named with `--app`, otherwise your plan's default for a new app
+(512 MB when you are not signed in); `--ram MB` sets it directly. An app that
+needs more memory crashes with `boot_oom_killed` here instead of after the
+deploy. Give the app more RAM with `gregale app update APP --ram MB`. The guest
+kernel on Gregale uses a little of the app's RAM, so leave some headroom. The container is
 removed afterwards, and nothing runs on Gregale. On an Apple silicon Mac, Docker
 runs the amd64 image under emulation, so startup is slower than on Gregale.
 Set `GREGALE_DOCKER=podman` to use another Docker-compatible client.

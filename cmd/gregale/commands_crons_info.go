@@ -48,8 +48,7 @@ func cmdCronsInfo(args []string) int {
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale cron get <id>\n")
-		return 1
+		return refuseCronID("get", id)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -133,4 +132,11 @@ func renderCronInfo(w io.Writer, c api.CronResponse) {
 	// A manual run does not move last_fired_at, so a bare "last: —" sat
 	// above "last run: success" on production-us rc.294 (Hunt 14 H14-64).
 	_, _ = fmt.Fprintf(w, "  last scheduled fire: %s\n", last)
+}
+
+// refuseCronID says why a cron verb refused its argument. `cron get nope`
+// printed only the usage line, never that the ID was malformed or where the
+// ID comes from (prod hunt r68).
+func refuseCronID(verb, id string) int {
+	return printErr("Invalid cron ID", fmt.Errorf("%q is not a cron ID; find it in the first column of gregale cron list <app>, then run gregale cron %s <id>", id, verb))
 }

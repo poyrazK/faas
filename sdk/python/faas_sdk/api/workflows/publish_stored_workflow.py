@@ -17,11 +17,18 @@ def _get_kwargs(
     name: str,
     *,
     body: PublishStoredWorkflowRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -29,6 +36,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -92,6 +100,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
+
     if response.status_code == 503:
         response_503 = Problem.from_dict(response.json())
 
@@ -120,6 +133,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PublishStoredWorkflowRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowResponse]:
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
@@ -131,6 +145,7 @@ def sync_detailed(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (PublishStoredWorkflowRequest): Saved draft revision to publish, with explicit YAML
             takeover when needed.
@@ -147,6 +162,7 @@ def sync_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -163,6 +179,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: PublishStoredWorkflowRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowResponse | None:
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
@@ -174,6 +191,7 @@ def sync(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (PublishStoredWorkflowRequest): Saved draft revision to publish, with explicit YAML
             takeover when needed.
@@ -191,6 +209,7 @@ def sync(
         name=name,
         client=client,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -201,6 +220,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: PublishStoredWorkflowRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowResponse]:
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
@@ -212,6 +232,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (PublishStoredWorkflowRequest): Saved draft revision to publish, with explicit YAML
             takeover when needed.
@@ -228,6 +249,7 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -242,6 +264,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: PublishStoredWorkflowRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowResponse | None:
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
@@ -253,6 +276,7 @@ async def asyncio(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (PublishStoredWorkflowRequest): Saved draft revision to publish, with explicit YAML
             takeover when needed.
@@ -271,6 +295,7 @@ async def asyncio(
             name=name,
             client=client,
             body=body,
+            environment=environment,
             idempotency_key=idempotency_key,
         )
     ).parsed
