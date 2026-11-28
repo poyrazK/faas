@@ -7093,6 +7093,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	if allowed, err := e.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
 		return err
 	}
+	// A branch's workloads stay dark until its data is ready: they read
+	// their binding URLs at boot. That holds for the deployments the branch
+	// made and for a pull request's build into its scope (ADR-20261113121342).
+	// The branch data reconciler primes them once the data is ready.
+	if ready, err := e.environmentBranchDataReady(ctx, dep.ID); err != nil || !ready {
+		return err
+	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load workload settings: %w", err)
@@ -7136,13 +7143,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 			return err
 		}
 		if lazy {
-			// The branch's database copies must exist first: the workload reads
-			// its binding URLs at boot. The branch data reconciler primes the
-			// deployment again once they do.
-			ready, err := e.environmentBranchDataReady(ctx, dep.ID)
-			if err != nil || !ready {
-				return err
-			}
+			// Its branch's data is ready (checked above).
 			if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 				return err
 			}

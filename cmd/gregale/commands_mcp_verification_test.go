@@ -321,7 +321,7 @@ func TestMCPReleaseVerificationScalesAcrossRoles(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	code := main.FinishMCPDeployWithSmoke(ctx, main.NewClient(f.control.URL, "operator"), "web", "candidate", cfg, "", roles, nil, nil)
+	code := main.FinishMCPDeployWithSmoke(ctx, main.NewClient(f.control.URL, "operator"), ".", "web", "candidate", cfg, "", roles, nil, nil)
 	if code != 0 || f.promotions.Load() != 1 {
 		t.Fatalf("healthy multi-role deployment rejected: %s", out.String())
 	}
@@ -356,7 +356,7 @@ func TestMCPReleaseVerificationCancellationPreservesServingState(t *testing.T) {
 	defer cancel()
 	f.cancelOnProbe = cancel
 	started := time.Now()
-	code := main.FinishMCPDeployWithSmoke(ctx, main.NewClient(f.control.URL, "operator"), "web", "candidate", cfg, "", roles, nil, nil)
+	code := main.FinishMCPDeployWithSmoke(ctx, main.NewClient(f.control.URL, "operator"), ".", "web", "candidate", cfg, "", roles, nil, nil)
 	if code == 0 || f.promotions.Load() != 0 || f.parks.Load() != 0 || ctx.Err() == nil {
 		t.Fatalf("cancellation changed serving state: code=%d promotions=%d parks=%d error=%v", code, f.promotions.Load(), f.parks.Load(), ctx.Err())
 	}
