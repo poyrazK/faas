@@ -196,17 +196,23 @@ func TestRunSandboxRestoresOnlyItsAccountsSessionCapture(t *testing.T) {
 			FcVersion: "1.10.0", MemBytes: 1 << 30}
 	}
 	for _, tc := range []struct {
-		name string
-		edit func(*vmmdpb.RunSandboxStart)
-		ok   bool
+		name       string
+		edit       func(*vmmdpb.RunSandboxStart)
+		ok         bool
+		forkedFrom string
 	}{
-		{"its own capture", func(s *vmmdpb.RunSandboxStart) { s.Snapshot = snap(own) }, true},
-		{"another account's", func(s *vmmdpb.RunSandboxStart) { s.Snapshot = snap(other) }, false},
-		{"a warm snapshot", func(s *vmmdpb.RunSandboxStart) { s.Snapshot = snap(warm) }, false},
-		{"no snapshot", func(*vmmdpb.RunSandboxStart) {}, false},
+		{"its own capture", func(s *vmmdpb.RunSandboxStart) { s.Snapshot = snap(own) }, true, ""},
+		// adr: 20261122132055 §3 — a fork's guest learns its source.
+		{"a fork", func(s *vmmdpb.RunSandboxStart) { s.Snapshot, s.ForkedFrom = snap(own), "sbx-src" }, true, "sbx-src"},
+		{"a fork of itself", func(s *vmmdpb.RunSandboxStart) { s.Snapshot, s.ForkedFrom = snap(own), "sbx-1" }, false, ""},
+		{"a bad fork source", func(s *vmmdpb.RunSandboxStart) { s.Snapshot, s.ForkedFrom = snap(own), "../x" }, false, ""},
+		{"a fork source without a capture", func(s *vmmdpb.RunSandboxStart) { s.SessionCapture, s.ForkedFrom = false, "sbx-src" }, false, ""},
+		{"another account's", func(s *vmmdpb.RunSandboxStart) { s.Snapshot = snap(other) }, false, ""},
+		{"a warm snapshot", func(s *vmmdpb.RunSandboxStart) { s.Snapshot = snap(warm) }, false, ""},
+		{"no snapshot", func(*vmmdpb.RunSandboxStart) {}, false, ""},
 		{"with a workspace archive", func(s *vmmdpb.RunSandboxStart) {
 			s.Snapshot, s.WorkspaceKey = snap(own), "sandbox-workspaces/acct-1/x.tar.zst"
-		}, false},
+		}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vmm := newSandboxRunVMM()
@@ -234,7 +240,7 @@ func TestRunSandboxRestoresOnlyItsAccountsSessionCapture(t *testing.T) {
 			vmm.mu.Lock()
 			wake := vmm.woken[0]
 			vmm.mu.Unlock()
-			if !wake.SessionCapture || wake.Snapshot == nil || wake.Snapshot.StorageKey != own {
+			if !wake.SessionCapture || wake.Snapshot == nil || wake.Snapshot.StorageKey != own || wake.ForkedFrom != tc.forkedFrom {
 				t.Fatalf("wake = %+v", wake)
 			}
 		})
