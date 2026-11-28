@@ -22,6 +22,12 @@ type aiCallPlan struct {
 	// unmetered marks a write the gateway does not meter that the AI policy
 	// lets through outside the caps (ADR-1432).
 	unmetered bool
+	// outputCappable marks a generation call whose body names no output
+	// ceiling and can take one: when its model's longest response does not
+	// fit the budget left, the gateway writes one that does
+	// (ADR-20261128190000). hasBody is planAICall's, for re-estimating.
+	outputCappable bool
+	hasBody        bool
 }
 
 // aiCallRejection is a guardrail refusal sent before admission.
@@ -95,13 +101,68 @@ func planAICall(r *http.Request, integration Integration, bindingAppID, path str
 	if guarded && !api.OutboundAIModelAllowed(plan.guard.AllowedModels, plan.facts.model) {
 		return nil, &aiCallRejection{http.StatusForbidden, "outbound_ai_model_not_allowed", "The model is not allowed for this app"}
 	}
+	// A ceiling the caller named is the caller's choice; only a call that
+	// names none may be given one to fit the budget.
+	plan.outputCappable = plan.endpoint.generation && plan.endpoint.media == aiMediaNone && ai != nil &&
+		plan.facts.ceilingKnown && plan.facts.outputCeiling == 0
 	if guarded && plan.guard.MaxOutputTokens != nil && plan.endpoint.generation {
 		if rejection := applyOutputCeiling(plan, ai, *plan.guard.MaxOutputTokens); rejection != nil {
 			return nil, rejection
 		}
 	}
+	plan.hasBody = hasBody
 	plan.reserve = estimateAIReservation(r, integration, plan, ai, hasBody)
 	return plan, nil
+}
+
+// capOutputToBudget gives a call that names no output ceiling the largest
+// one whose reservation fits left, rewriting its body and reservation
+// (ADR-20261128190000). A call naming no max_tokens reserves its model's
+// longest response (USD 2.56 on opus-5.5), so under an ordinary daily cap
+// the first call from an SDK that omits it was refused with most of the
+// budget unspent (prod hunt 2026-11-28). The cap is exact: the provider
+// cannot answer past the ceiling the gateway wrote. It reports the per-answer
+// ceiling, or false when the call cannot take one or none of at least
+// api.OutboundAIBudgetOutputCapMinTokens fits.
+func capOutputToBudget(r *http.Request, integration Integration, plan *aiCallPlan, ai *aiRequest, left AIBudgetLeft) (int64, bool) {
+	if plan == nil || ai == nil || !plan.outputCappable || plan.endpoint.batch {
+		return 0, false
+	}
+	minimum := api.OutboundAIBudgetOutputCapMinTokens
+	// Two passes: writing the ceiling lengthens the body by a few bytes,
+	// which the input estimate counts.
+	for range 2 {
+		choices := plan.facts.choiceCount()
+		high := plan.reserve.estimate.OutputTokens/choices - 1
+		reserveAt := func(ceiling int64) aiReservation {
+			trial := *plan
+			trial.facts.outputCeiling = ceiling
+			return estimateAIReservation(r, integration, &trial, ai, plan.hasBody)
+		}
+		if high < minimum || !left.fits(reserveAt(minimum)) {
+			return 0, false
+		}
+		low := minimum // fits
+		for low < high {
+			mid := low + (high-low+1)/2
+			if left.fits(reserveAt(mid)) {
+				low = mid
+			} else {
+				high = mid - 1
+			}
+		}
+		rewritten, ok := withOutputCeiling(plan.endpoint, ai.body, low)
+		if !ok {
+			return 0, false
+		}
+		ai.body = rewritten
+		plan.facts.outputCeiling = low
+		plan.reserve = estimateAIReservation(r, integration, plan, ai, plan.hasBody)
+		if left.fits(plan.reserve) {
+			return low, true
+		}
+	}
+	return 0, false
 }
 
 func applyOutputCeiling(plan *aiCallPlan, ai *aiRequest, ceiling int64) *aiCallRejection {

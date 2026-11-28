@@ -100,8 +100,11 @@ func TestPostgresEndUserDailyTokenLimit(t *testing.T) {
 	// 50 settled + 14 asked does not fit her 60: the budget is not spent, the
 	// call is too big for what is left (prod hunt 2026-11-28).
 	if decision := admit("alice", 14); decision.Granted ||
-		decision.Reason != outbound.ReasonUserDailyTokenLimit+outbound.ReasonReservationSuffix {
-		t.Fatalf("alice past her settled day = %+v", decision)
+		decision.Reason != outbound.ReasonUserDailyTokenLimit+outbound.ReasonReservationSuffix ||
+		// ADR-20261128190000: the room left, so a call naming no ceiling
+		// can be given one that fits.
+		decision.AIBudgetLeft == nil || decision.AIBudgetLeft.Tokens != 10 {
+		t.Fatalf("alice past her settled day = %+v (left %+v)", decision, decision.AIBudgetLeft)
 	}
 	if decision := admit("", 14); !decision.Granted {
 		t.Fatalf("a call without an end user = %+v", decision)

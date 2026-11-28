@@ -535,6 +535,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		GatewayOwn:                     (isInternal || isReplay) && appID == "",
 	}
 	decision, err := h.Backend.Admit(r.Context(), spec)
+	if err == nil && !decision.Granted && decision.AIBudgetLeft != nil && batch == nil && realtime == realtimeNone {
+		// ADR-20261128190000: a call that named no output ceiling and whose
+		// model's longest response did not fit gets one that fits, once.
+		if ceiling, capped := capOutputToBudget(r, integration, aiPlan, aiReq, *decision.AIBudgetLeft); capped {
+			spec.AIReservedTokens, spec.AIReservedCostMillicents = aiPlan.reserve.tokens, aiPlan.reserve.cost
+			if decision, err = h.Backend.Admit(r.Context(), spec); err == nil && decision.Granted {
+				w.Header().Set(AIOutputCappedHeader, strconv.FormatInt(ceiling, 10))
+			}
+		}
+	}
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Warn("outbound: admission failed", "integration_id", metricIntegrationID, "principal", principalID, "err", err)
@@ -1252,6 +1262,12 @@ func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 	}
 	return h.AIGatewayRollout.Allows(integration.AccountID)
 }
+
+// AIOutputCappedHeader carries the output ceiling the gateway wrote into a
+// call that named none so its reservation fits the budget left
+// (ADR-20261128190000). Each answer stops at it; finish_reason "length"
+// (stop_reason "max_tokens") marks one that reached it.
+const AIOutputCappedHeader = "X-Gregale-AI-Output-Capped"
 
 // admissionRefusalProblem names a refused admission by what refused it
 // (prod hunt 2026-11-28): every refusal used to read "budget is exhausted",

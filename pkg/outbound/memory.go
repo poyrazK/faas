@@ -264,7 +264,7 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	inflight := state.inflightReservations(spec.BindingAppID, spec.AIEndUser)
 	reserve := aiReservationFromSpec(spec)
 	user, tracked := state.userUsage[spec.AIEndUser]
-	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
+	if reason, retry, left, limited := aiBudgetFit(utcNow, aiBudgetState{
 		dailyTokens: state.dailyAITokenCount, bindingTokens: state.bindingAITokenCounts[spec.BindingAppID],
 		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost,
 		inflightTokens: inflight.tokens, inflightBindingTokens: inflight.bindingTokens, inflightCost: inflight.cost,
@@ -272,7 +272,7 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 		inflightUserTokens: inflight.userTokens, inflightUserCost: inflight.userCost,
 		userUntracked: spec.AIEndUser != "" && !tracked && len(state.userUsage) >= api.OutboundAIUsersPerDay,
 	}, aiBudgetLimitsFromSpec(spec), reserve); limited {
-		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl, AIBudgetLeft: left}, nil
 	}
 	if reason, retry, limited := aiTagBudgetExhausted(utcNow, state.tagStates(spec), reserve); limited {
 		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
