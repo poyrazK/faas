@@ -460,3 +460,52 @@ func TestStaticEgressIP_PutIPWithoutSetIsRefused(t *testing.T) {
 		t.Fatalf("PUT clear status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestStaticEgressIP_InventoryAddresses pins ADR-20261128090000: an address
+// an operator assigned to the account is listed in available_ips, can be
+// pinned (active=true), and a deleted app's pin does not hold it.
+func TestStaticEgressIP_InventoryAddresses(t *testing.T) {
+	withStaticEgressIPEnabled(t)
+	e := apidserver.Setup(t, api.PlanScale)
+	apidserver.MustSeedApp(t, e, "old-app")
+	apidserver.MustSeedApp(t, e, "new-app")
+	mem, acct := *e.Store(), *e.Acct()
+	node, err := mem.CreateComputeNode(t.Context(), state.ComputeNode{Name: "bhs-2", TargetURL: "tcp://127.0.0.1:1", AdmissionCeilingMB: 1024, VCPUBudget: 2, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := netip.MustParseAddr("203.0.113.42")
+	if err := mem.AddStaticEgressAddress(t.Context(), state.StaticEgressAddress{IP: ip, NodeID: node.ID, AccountID: acct.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(slug string) api.AppStaticEgressIPResponse {
+		t.Helper()
+		rec := e.Do(t, "GET", "/v1/apps/"+slug+"/static-egress-ip", nil, nil)
+		var resp api.AppStaticEgressIPResponse
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &resp) != nil {
+			t.Fatalf("GET %s = %d %s", slug, rec.Code, rec.Body)
+		}
+		return resp
+	}
+	if resp := get("old-app"); resp.Active || len(resp.AvailableIPs) != 1 || resp.AvailableIPs[0] != ip {
+		t.Fatalf("unpinned GET = %+v, want inactive with available_ips [%s]", resp, ip)
+	}
+	if rec := e.Do(t, "PUT", "/v1/apps/old-app/static-egress-ip", staticEgressIPReq(ip.String(), true), nil); rec.Code != http.StatusOK {
+		t.Fatalf("pin inventory address = %d %s", rec.Code, rec.Body)
+	}
+	if resp := get("old-app"); !resp.Active || resp.IP == nil || *resp.IP != ip {
+		t.Fatalf("pinned GET = %+v, want active pin %s", resp, ip)
+	}
+
+	old, err := mem.AppBySlug(t.Context(), "old-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.DeleteApp(t.Context(), old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, "PUT", "/v1/apps/new-app/static-egress-ip", staticEgressIPReq(ip.String(), true), nil); rec.Code != http.StatusOK {
+		t.Fatalf("pin after the old app was deleted = %d %s", rec.Code, rec.Body)
+	}
+}

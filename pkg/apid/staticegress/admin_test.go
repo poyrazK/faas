@@ -16,10 +16,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type memInventory struct {
-	*state.MemStore
-}
-
 type notes struct{ channels, payloads []string }
 
 func (n *notes) Notify(_ context.Context, channel, payload string) error {
@@ -61,7 +57,7 @@ func newFixture(t *testing.T, operator bool) *fixture {
 			}
 			return true, nil
 		},
-		Store: memInventory{st}, Notifier: f.notes, Audit: f.audit,
+		Store: st, Notifier: f.notes, Audit: f.audit,
 	}
 	pass := func(h http.Handler) http.Handler { return h }
 	auth := func(h httpkit.AccountHandler) http.HandlerFunc {
