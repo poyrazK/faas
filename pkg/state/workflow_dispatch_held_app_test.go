@@ -58,7 +58,7 @@ func TestWorkflowDispatchSkipsDeletedAppsAndHeldAccounts(t *testing.T) {
 			t.Skip("store has no abuse hold")
 		}
 		held := newRun()
-		if _, err := holds.SetAccountAbuseHold(ctx, app.AccountID, "test", time.Now().UTC()); err != nil {
+		if _, err := holds.SetAccountAbuseHold(ctx, app.AccountID, AccountAbuseHoldOperator, time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
 		mustNotClaim("abuse-held account")
