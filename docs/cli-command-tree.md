@@ -610,6 +610,7 @@ touch them. The tables below map each earlier name.
 | `gregale queue tail` | `gregale queue watch` |
 | `gregale realtime drain-status` | `gregale realtime drain status` |
 | `gregale realtime send-principal` | `gregale realtime send --principal <PRINCIPAL>` |
+| `gregale redis cli` | `gregale redis exec` |
 | `gregale registry published` | `gregale registry deploy` |
 | `gregale rollback switch` | `gregale release rollback status` |
 | `gregale routes awake` | `gregale api route activity` |

@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	redisCLIUsage = "usage: gregale redis cli NAME [--app APP] [--] COMMAND [ARG...]"
+	redisCLIUsage = "usage: gregale redis exec NAME [--app APP] [--] COMMAND [ARG...]"
 	// redisCLITaskTimeoutSeconds bounds a blocking command (BLPOP and the
 	// like) on the server.
 	redisCLITaskTimeoutSeconds = 120
@@ -176,7 +176,7 @@ func renderRedisCLITask(task api.AppTaskResponse, app string) int {
 		switch task.Failure.Code {
 		case "command_not_found":
 			// guest-init in the app's deployment predates the built-in.
-			PrintFail(osStderr, "%s runs a runtime from before `gregale redis cli`; redeploy it (gregale deploy --name %s) and retry.", app, app)
+			PrintFail(osStderr, "%s runs a runtime from before `gregale redis exec`; redeploy it (gregale deploy --name %s) and retry.", app, app)
 		case "redis_unreachable":
 			// guest-init already printed what to check.
 		default:

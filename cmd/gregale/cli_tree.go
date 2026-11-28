@@ -673,6 +673,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai tag-limit set", "ai tag-limits"},
 	{"ai app-limit get", "ai app-limit"},
 	{"ai app-limit set", "ai app-limit"},
+	{"redis exec", "redis cli"},
 	{"ai integration list", "ai integrations"},
 	{"ai integration delete", "ai integrations"},
 	{"ai request-policy get", "ai request-policy"},
