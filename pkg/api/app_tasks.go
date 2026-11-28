@@ -171,6 +171,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	if IsAppTaskDebugCommand(r.Command) && !ValidAppTaskDebugCommand(r.Command, r.Interactive, r.CommandShell) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("debug sessions require an interactive request, no command_shell, and a command after the debug marker")
 	}
+	if IsAppTaskRedisCommand(r.Command) && !ValidAppTaskRedisCommand(r.Command, r.CommandShell, r.Interactive) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("redis commands run without a shell, non-interactively, against <cache>.svc.gregale:6379, with one command that answers once (not SUBSCRIBE or MONITOR)")
+	}
 	if IsAppTaskSessionBuiltin(r.Command) && (!r.Interactive || !ValidAppTaskSessionBuiltin(r.Command, r.CommandShell, r.TTY)) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("copy and port-forward sessions require an interactive, non-tty request with one argument")
 	}
