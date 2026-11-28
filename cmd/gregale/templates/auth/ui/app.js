@@ -15,7 +15,11 @@ export function allowedRedirect(target, siteURL, redirectURLs) {
   const allowed = [siteURL, ...redirectURLs].some(base => {
     try {
       const b = new URL(base)
-      return url.origin === b.origin && url.pathname.startsWith(b.pathname)
+      // A path prefix counts only at a segment boundary: /callback allows
+      // /callback and /callback/x, not /callback-other.
+      if (url.origin !== b.origin) return false
+      if (url.pathname === b.pathname) return true
+      return url.pathname.startsWith(b.pathname.endsWith('/') ? b.pathname : `${b.pathname}/`)
     } catch { return false }
   })
   return allowed ? url.toString() : siteURL

@@ -362,6 +362,12 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
     const origin = req.headers.origin
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
     if (origin && allowed.has(origin)) Object.assign(headers, { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' })
+    // Every check before route() (impersonation, client and service-account
+    // tokens, the feature gates below) reads the path as written, so a path
+    // with an empty segment, which route() would read without it, is refused.
+    if (/\/\//.test(path) || /\/\//.test((req.url ?? '').split('?')[0])) {
+      req.resume(); res.writeHead(404, headers); return res.end('{"status":404,"code":"not_found"}')
+    }
     if (emailEnabled !== true && emailPath(path)) {
       res.writeHead(404, headers); return res.end('{"status":404,"code":"not_found"}')
     }
