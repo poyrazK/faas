@@ -17,10 +17,15 @@ import { normalizePhone } from './sms.mjs'
 // per budget, so a burst of parallel guesses cannot all pass a check made
 // before any of them failed; an attempt over a budget answers 429 without
 // reaching GoTrue. GoTrue's answer then settles it: a counted failure stays,
-// a success clears the account's budgets, and anything else (a malformed
-// request, an outage) is given back (release). Spending an account's budget from
-// many addresses pauses password sign-in for it until the window ends;
-// magic links, codes, providers and passkeys keep working.
+// a success clears the address's budget and gives back what it counted
+// against the account's (whose failures stay, so the owner signing in does
+// not hand a guesser a fresh budget), and anything else (a malformed
+// request, an outage) is given back (release). Past a spent account budget,
+// server.mjs still lets a sign-in through from a network the account
+// trusts (security.mjs), or with a solved CAPTCHA up to
+// limits.trustedBudgetMultiplier times the budget; elsewhere password
+// sign-in waits for the window to end, while magic links, codes, providers
+// and passkeys keep working.
 
 export const budgets = Object.freeze({
   passwordAddress: { limit: limits.passwordFailuresPerAddress, seconds: limits.attemptWindowSeconds },

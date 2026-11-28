@@ -259,7 +259,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxAsyncResultRetentionSeconds:    86400,
 			// Cron (spec §4.4 paid-only): Free has no crons at all. Handler
 			// returns 402 ErrPlanCronsNotAllowed before the store is touched.
-			CronLimitPerApp: 0, CronLimitPerAccount: 0,
+			CronLimitPerApp: 0, CronLimitPerAccount: 0, AppTaskConcurrency: 2,
 			EventSubscriptionsPerApp: 0, EventSubscriptionsPerAccount: 0,
 			// Issue #475: Free is gated off the reserved eviction tier.
 			// Fail-closed at 0/0 mirrors the cron 0/0 posture above.
@@ -435,7 +435,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// on Pro+ for cost reasons.
 			ScaleUpTargetRPSAllowed: false, ScaleUpTargetCPUAllowed: false,
 			// Cron: Hobby gets 5 per-app and 10 per-account.
-			CronLimitPerApp: 5, CronLimitPerAccount: 10,
+			CronLimitPerApp: 5, CronLimitPerAccount: 10, AppTaskConcurrency: 4,
 			EventSubscriptionsPerApp: 5, EventSubscriptionsPerAccount: 10,
 			// M-2 / ADR-137+138: Hobby's 30 s stop-grace, 30 s
 			// startup-deadline, 5-retry caps. Hobby unlocks worker
@@ -600,7 +600,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #169 / #172: Pro unlocks both RPS and CPU targets.
 			ScaleUpTargetRPSAllowed: true, ScaleUpTargetCPUAllowed: true,
 			// Cron: Pro gets 20 per-app and 50 per-account.
-			CronLimitPerApp: 20, CronLimitPerAccount: 50,
+			CronLimitPerApp: 20, CronLimitPerAccount: 50, AppTaskConcurrency: 10,
 			EventSubscriptionsPerApp: 20, EventSubscriptionsPerAccount: 50,
 			// M-2 / ADR-137+138: Pro doubles Hobby (60 s grace,
 			// 10 retries); the startup deadline is the 30 s cold-boot
@@ -768,7 +768,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #169 / #172: Scale unlocks both targets (same rationale as Pro).
 			ScaleUpTargetRPSAllowed: true, ScaleUpTargetCPUAllowed: true,
 			// Cron: Scale gets 100 per-app and 500 per-account.
-			CronLimitPerApp: 100, CronLimitPerAccount: 500,
+			CronLimitPerApp: 100, CronLimitPerAccount: 500, AppTaskConcurrency: 25,
 			EventSubscriptionsPerApp: 100, EventSubscriptionsPerAccount: 500,
 			// M-2 / ADR-137+138: Scale doubles Pro (120 s grace,
 			// 20 retries); the startup deadline is the 30 s cold-boot
@@ -1078,6 +1078,7 @@ func TestPlansAreMonotonic(t *testing.T) {
 			{"ServiceTCPSessionsPerAccount", lo.ServiceTCPSessionsPerAccount, hi.ServiceTCPSessionsPerAccount},
 			{"CronLimitPerApp", lo.CronLimitPerApp, hi.CronLimitPerApp},
 			{"CronLimitPerAccount", lo.CronLimitPerAccount, hi.CronLimitPerAccount},
+			{"AppTaskConcurrency", lo.AppTaskConcurrency, hi.AppTaskConcurrency},
 			{"EdgeRulesWAFPerApp", lo.EdgeRulesWAFPerApp, hi.EdgeRulesWAFPerApp},
 			{"EdgeRulesChallengePerApp", lo.EdgeRulesChallengePerApp, hi.EdgeRulesChallengePerApp},
 			// Issue #475: per-account reserved-tier cap must be

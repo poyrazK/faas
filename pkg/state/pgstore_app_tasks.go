@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
@@ -141,7 +142,48 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 	if resolved.Kind == AppTaskKindRelease && resolved.ReleaseApprovalPolicyUpdatedAt != nil {
 		return s.createAppTaskWithSandboxSuite(ctx, resolved)
 	}
+	if capsAppTaskConcurrency(resolved) {
+		return s.createCappedAppTask(ctx, resolved)
+	}
 	return createAppTaskOnDB(ctx, s.pool, resolved)
+}
+
+// createCappedAppTask counts the account's active manual tasks and inserts
+// the new one under a per-account advisory lock, so concurrent submissions
+// cannot both pass the count.
+func (s *PgStore) createCappedAppTask(ctx context.Context, resolved CreateAppTaskParams) (AppTask, error) {
+	var task AppTask
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended('gregale.app-task-concurrency.' || $1::text, 0))`, resolved.AccountID); err != nil {
+			return fmt.Errorf("lock app task concurrency: %w", err)
+		}
+		rows, err := tx.Query(ctx, `
+			select command from app_tasks
+			 where account_id = $1 and kind = 'manual'
+			   and status in ('queued', 'restoring', 'running')`, resolved.AccountID)
+		if err != nil {
+			return fmt.Errorf("count active app tasks: %w", err)
+		}
+		commands, err := pgx.CollectRows(rows, pgx.RowTo[[]string])
+		if err != nil {
+			return fmt.Errorf("count active app tasks: %w", err)
+		}
+		active := 0
+		for _, command := range commands {
+			if api.AppTaskCountsTowardConcurrency(command) {
+				active++
+			}
+		}
+		if active >= resolved.MaxActiveTasks {
+			return &AppTaskConcurrencyError{Limit: resolved.MaxActiveTasks, Active: active}
+		}
+		task, err = createAppTaskOnDB(ctx, tx, resolved)
+		return err
+	})
+	if err != nil {
+		return AppTask{}, err
+	}
+	return task, nil
 }
 
 func createAppTaskOnDB(ctx context.Context, db sqlc.DBTX, resolved CreateAppTaskParams) (AppTask, error) {

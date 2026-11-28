@@ -103072,6 +103072,7 @@ func (q *Queries) ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, ar
 
 const releaseManagedPostgresLifecycleLease = `-- name: ReleaseManagedPostgresLifecycleLease :execrows
 UPDATE managed_postgres_databases SET state=$1::text,last_error_code=NULLIF($2::text,''),
+    attempt_count=CASE WHEN $2::text='' THEN 0 ELSE attempt_count END,
     lease_token=NULL,lease_until=NULL,retry_at=$3::timestamptz,updated_at=$4::timestamptz
 WHERE id=$5::uuid AND lease_token=$6::text AND lease_until>$4::timestamptz
 `
@@ -103085,6 +103086,8 @@ type ReleaseManagedPostgresLifecycleLeaseParams struct {
 	LeaseToken string
 }
 
+// A release without an error code is the provider still working, not a
+// failed attempt: it resets the attempt count retry backoff grows with.
 func (q *Queries) ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error) {
 	result, err := db.Exec(ctx, releaseManagedPostgresLifecycleLease,
 		arg.NextState,

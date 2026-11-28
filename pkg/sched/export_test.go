@@ -159,6 +159,14 @@ var MakeEngine = makeEngine
 var MakeLoopForDLQ = makeLoopForDLQ
 var MarshalJSON = marshalJSON
 var MaxPlanRAMMB = maxPlanRAMMB
+var MaxPlanAppLayerMB = maxPlanAppLayerMB
+var CaptureBudgetExpired = captureBudgetExpired
+
+// NewSnapshotCaptureTimeoutError is a capture that ran out of budget.
+func NewSnapshotCaptureTimeoutError(budget time.Duration, err error) error {
+	return &snapshotCaptureTimeoutError{budget: budget, err: err}
+}
+
 var NewAppAndCron = newAppAndCron
 var NewAppTaskCoordinatorFixture = newAppTaskCoordinatorFixture
 var NewBrokerEgressObserver = newBrokerEgressObserver
@@ -781,6 +789,14 @@ func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }
 func (r *fakeVMM) Restores() *int                   { return &r.restores }
 func (r *fakeVMM) SleepFor() *time.Duration         { return &r.sleepFor }
 func (r *fakeVMM) SnapErr() *error                  { return &r.snapErr }
+func (r *fakeVMM) SnapErrSequence() *[]error        { return &r.snapErrSequence }
+
+// SnapDeadline is the deadline the last PauseAndSnapshot call carried.
+func (r *fakeVMM) SnapDeadline() (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapDeadline, r.snapHasDeadline
+}
 
 // SetColdBootHook runs h at the start of every CreateColdBoot.
 func (r *fakeVMM) SetColdBootHook(h func()) { r.coldBootHook = h }

@@ -6350,6 +6350,14 @@ type Limits struct {
 	CronLimitPerApp     int
 	CronLimitPerAccount int
 
+	// AppTaskConcurrency caps how many app tasks (`app exec`, interactive
+	// sessions, `app cp`, `app port-forward`) one account may have queued or
+	// running at once, across all its apps. Each holds a VM of the app's size.
+	// Release commands, command crons and platform probes are not counted.
+	// The hot `app_task_concurrency` runtime-config key overrides it per plan
+	// (pkg/api/app_task_concurrency.go).
+	AppTaskConcurrency int
+
 	// EventSubscriptionsPerApp and EventSubscriptionsPerAccount cap the
 	// enabled event subscriptions (gregale.yaml event_triggers) of one app
 	// and of all apps sharing a billing subject (ADR-20261031130000). Every
@@ -7672,6 +7680,7 @@ var planLimits = map[Plan]Limits{
 		// value the store still reads.
 		CronLimitPerApp:              0,
 		CronLimitPerAccount:          0,
+		AppTaskConcurrency:           2,
 		EventSubscriptionsPerApp:     0,
 		EventSubscriptionsPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
@@ -8124,6 +8133,7 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:              5,
 		CronLimitPerAccount:          10,
+		AppTaskConcurrency:           4,
 		EventSubscriptionsPerApp:     5,
 		EventSubscriptionsPerAccount: 10,
 		// M-2 / ADR-137+138: Hobby gets the documented 30 s
@@ -8577,6 +8587,7 @@ var planLimits = map[Plan]Limits{
 		// run more apps (25) than Hobby (5).
 		CronLimitPerApp:              20,
 		CronLimitPerAccount:          50,
+		AppTaskConcurrency:           10,
 		EventSubscriptionsPerApp:     20,
 		EventSubscriptionsPerAccount: 50,
 		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
@@ -9004,6 +9015,7 @@ var planLimits = map[Plan]Limits{
 		// at the per-app cap, the typical SaaS fan-out.
 		CronLimitPerApp:              100,
 		CronLimitPerAccount:          500,
+		AppTaskConcurrency:           25,
 		EventSubscriptionsPerApp:     100,
 		EventSubscriptionsPerAccount: 500,
 		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138
@@ -18508,6 +18520,40 @@ const (
 	// look up an admin key's scopes by ID in an hour, so IDs cannot be
 	// enumerated.
 	AuthAdminKeyLookupsPerAddress = 60
+	// AuthTrustedNetworkDays is how long a network (an IPv4 address or IPv6
+	// /64) a user signed in from stays trusted: from it, the user's password
+	// sign-ins pass even while their account-wide failure budget is spent,
+	// so a stranger guessing from elsewhere cannot lock them out.
+	AuthTrustedNetworkDays = 30
+	// AuthTrustedNetworkMaxAccounts: a network more accounts than this
+	// signed in from in AuthTrustedNetworkDays (an app's own server, a shared
+	// egress) is trusted for none of them.
+	AuthTrustedNetworkMaxAccounts = 20
+	// AuthTrustedBudgetMultiplier caps the exceptions to a spent budget: a
+	// solved CAPTCHA passes a spent account-wide password budget, and a
+	// trusted network a spent message budget for one recipient, only up to
+	// this many times the budget.
+	AuthTrustedBudgetMultiplier = 4
+	// AuthNewDeviceDays is how long an Auth app remembers the networks and
+	// device kinds a user signed in from; a sign-in from both a network and a
+	// device kind unseen that long emails the user (new-device alerts).
+	// AuthSignInSeenRefreshSeconds is how often one sign-in record is
+	// refreshed, so frequent token refreshes do not each write.
+	AuthNewDeviceDays            = 90
+	AuthSignInSeenRefreshSeconds = 3600
+	// AuthMessagesPerRecipientDefault bounds the sign-in codes, magic links,
+	// password resets and confirmations an Auth app sends in
+	// AuthMessageWindowSeconds to one email address or phone number, unless
+	// the owner sets AUTH_MESSAGES_PER_RECIPIENT, up to
+	// AuthMessagesPerRecipientMax. AUTH_MESSAGES_PER_NETWORK, off by default
+	// because an app sending from its own server asks from one network for
+	// all its users, bounds those one network asks for, up to
+	// AuthMessagesPerNetworkMax. Each message costs the owner money and may
+	// land in a stranger's inbox.
+	AuthMessagesPerRecipientDefault = 5
+	AuthMessagesPerRecipientMax     = 50
+	AuthMessagesPerNetworkMax       = 1000
+	AuthMessageWindowSeconds        = 3600
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

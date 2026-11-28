@@ -21,8 +21,9 @@ export function impersonated(claims) {
 // sessions or delete their account. Nor may it leave access behind that
 // outlives its cap: in the person's organizations it may not issue
 // service-account secrets or invitations, change roles, or change the
-// organization's second-factor rule, identity providers or domains, nor
-// take team actions (which invite and change roles). The operator does
+// organization's second-factor rule, identity providers or domains; team
+// actions that invite or change roles are refused by the team route, which
+// reads the action from the body (team.mjs). The operator does
 // those with the admin key, where they are recorded as the operator's. It
 // may sign itself out.
 export function impersonationBlocked(method, url) {
@@ -42,7 +43,6 @@ export function impersonationBlocked(method, url) {
       if (rest === '' && method === 'PATCH') return true
       if (/^\/(service-accounts|sso|domains)(\/|$)/.test(rest)) return true
       if (rest === '/invitations' && method === 'POST') return true
-      if (rest === '/team-actions' && method === 'POST') return true
       if (/^\/members\/[^/]+$/.test(rest) && method === 'PATCH') return true
     }
   }

@@ -20,6 +20,11 @@ function memoryAttempts() {
       }
       return over ? budgets.passwordAccount.seconds : 0
     },
+    async take({ key, budget }) {
+      counts.set(id(key), (counts.get(id(key)) ?? 0) + 1)
+      const count = counts.get(id(key))
+      return { count, wait: count > budget.limit ? budget.seconds : 0 }
+    },
     async release(entries) { for (const { key } of entries) counts.set(id(key), Math.max(0, (counts.get(id(key)) ?? 0) - 1)) },
     async clear(entries) { for (const { key } of entries) counts.delete(id(key)) },
   }

@@ -5951,6 +5951,9 @@ var cliCommands = []cliCommand{
 				{Name: "single-session", Value: "on|off", Short: "keep only each user's most recently used session", ClosedSet: []string{"on", "off"}},
 				{Name: "org-domains", Value: "on|off", Short: "let organizations verify email domains and let people at them join (needs --autoconfirm off)", ClosedSet: []string{"on", "off"}},
 				{Name: "service-accounts", Value: "on|off", Short: "let organizations make service accounts that get tokens with the client-credentials grant", ClosedSet: []string{"on", "off"}},
+				{Name: "new-device-alerts", Value: "on|off", Short: "email people when their account signs in from a new network and device", ClosedSet: []string{"on", "off"}},
+				{Name: "messages-per-recipient", Value: "N|default", Short: "sign-in codes, links and resets one address or number may be sent an hour"},
+				{Name: "messages-per-network", Value: "N|off", Short: "sign-in messages one network may ask for an hour (off by default)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -6530,6 +6533,13 @@ var cliCommands = []cliCommand{
 				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
 				{Name: "evict", Short: "allow shrinking below the data the cache holds"},
 			}, Examples: []string{"gregale redis resize sessions --memory 256"}},
+			{Name: "cli", Short: "Send one Redis command to a cache through a bound app", Positionals: []string{"<name>", "<command>", "[arg...]"}, Flags: []cliFlag{
+				{Name: "app", Short: "bound app the command runs through (defaults to the only bound app)", Value: "APP"},
+				{Name: "wait-timeout", Short: "how long to wait for the reply (default 5m)", Value: "DURATION"},
+			}, Notes: []string{
+				"The command runs in a short task VM of the bound app and reaches the cache over its private address, so it obeys the same binding and command rules as the app.",
+				"One command per call; commands that stream (SUBSCRIBE, MONITOR) are refused. Put `--` before a command whose first word starts with a dash.",
+			}, Examples: []string{"gregale redis cli sessions PING", "gregale redis cli sessions --app web LRANGE queue 0 -1"}},
 			{Name: "update", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{
