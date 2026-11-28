@@ -1081,7 +1081,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},
 			Audit:      srv.audit, // issue #755 / PR-5.5: emit account.deleted from the sweep
-			ImageBases: srvImageBases{srv: srv, ctx: ctx},
+			ImageBases: srvImageBases{srv: srv},
 		})
 		srv.purgeDeletedApp = graceLoop.PurgeApp
 		go func() { _ = graceLoop.Run(ctx) }()

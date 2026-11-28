@@ -104,11 +104,10 @@ func (s *server) resolveUploadedSourceTree(partPath string, acct state.Account, 
 // through the server's store, opened on first use.
 type srvImageBases struct {
 	srv *server
-	ctx context.Context
 }
 
 func (b srvImageBases) Delete(ctx context.Context, appID string) error {
-	store, err := b.srv.imageBaseStore(b.ctx)
+	store, err := b.srv.imageBaseStore(ctx)
 	if err != nil {
 		return err
 	}
