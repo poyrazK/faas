@@ -2669,12 +2669,24 @@ heartbeat:
 	// ADR-20261122132055 §7: sandbox sessions are not adopted; their owners
 	// pause persistent ones (kept on this node) and end the others while
 	// vmmd still serves their streams.
-	//nolint:contextcheck // the caller ctx is already done; evacuation is shutdown work.
-	impl.EvacuateSandboxes(context.WithoutCancel(ctx), vmmdgrpc.SandboxEvacuateWait, log)
+	// The planned-restart notice goes out before the wait, so wakes during
+	// it are retried, and again after it, since the wait can outlast the
+	// notice.
 	if cfg.AdoptRunningVMs && adoptionReport != nil {
 		// The caller ctx is already done; the notice is shutdown work.
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
+	//nolint:contextcheck // the caller ctx is already done; evacuation is shutdown work.
+	evacuateStarted := time.Now()
+	impl.EvacuateSandboxes(context.WithoutCancel(ctx), vmmdgrpc.SandboxEvacuateWait, log)
+	if cfg.AdoptRunningVMs && adoptionReport != nil && time.Since(evacuateStarted) > time.Second {
+		//nolint:contextcheck // the caller ctx is already done; the notice is shutdown work.
+		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
+	}
+	// Streams the stop cuts from here on end their VMs: the successor
+	// adopts no session, so none is kept for a reattach.
+	//nolint:contextcheck // the caller ctx is already done; this is shutdown work.
+	impl.StopDetachingSandboxes(context.WithoutCancel(ctx))
 	localDataStopped := localData.stop(cfg.AdoptRunningVMs, log)
 	stopGRPC(gsrv, cfg.AdoptRunningVMs, log)
 	<-localDataStopped
