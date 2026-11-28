@@ -6362,6 +6362,11 @@ type Limits struct {
 	// (pkg/api/app_task_concurrency.go).
 	AppTaskConcurrency int
 
+	// AppTaskRetentionDays is how long a finished manual or cron app task
+	// (its record and output tail) is kept before schedd deletes it. Release
+	// tasks and binding verifications are deploy evidence and are kept.
+	AppTaskRetentionDays int
+
 	// EventSubscriptionsPerApp and EventSubscriptionsPerAccount cap the
 	// enabled event subscriptions (gregale.yaml event_triggers) of one app
 	// and of all apps sharing a billing subject (ADR-20261031130000). Every
@@ -7685,6 +7690,7 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerApp:              0,
 		CronLimitPerAccount:          0,
 		AppTaskConcurrency:           2,
+		AppTaskRetentionDays:         7,
 		EventSubscriptionsPerApp:     0,
 		EventSubscriptionsPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
@@ -8138,6 +8144,7 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerApp:              5,
 		CronLimitPerAccount:          10,
 		AppTaskConcurrency:           4,
+		AppTaskRetentionDays:         30,
 		EventSubscriptionsPerApp:     5,
 		EventSubscriptionsPerAccount: 10,
 		// M-2 / ADR-137+138: Hobby gets the documented 30 s
@@ -8592,6 +8599,7 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerApp:              20,
 		CronLimitPerAccount:          50,
 		AppTaskConcurrency:           10,
+		AppTaskRetentionDays:         90,
 		EventSubscriptionsPerApp:     20,
 		EventSubscriptionsPerAccount: 50,
 		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
@@ -9020,6 +9028,7 @@ var planLimits = map[Plan]Limits{
 		CronLimitPerApp:              100,
 		CronLimitPerAccount:          500,
 		AppTaskConcurrency:           25,
+		AppTaskRetentionDays:         180,
 		EventSubscriptionsPerApp:     100,
 		EventSubscriptionsPerAccount: 500,
 		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138

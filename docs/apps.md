@@ -372,6 +372,11 @@ history**. Only the tail of the output is kept, up to the task's
 `--max-output-bytes`; interactive sessions record the command and exit code,
 never the terminal output.
 
+Finished `app exec` and command-cron tasks are deleted, with their output,
+after 7 days on Free, 30 on Hobby, 90 on Pro and 180 on Scale. Release
+commands and `bindings verify` results are kept, since a deployment's
+history refers to them.
+
 Each task runs in its own VM of the app's size, so an account can have only
 so many queued or running at once: 2 on Free, 4 on Hobby, 10 on Pro and 25 on
 Scale, counted across all its apps. `app exec`, interactive sessions,
