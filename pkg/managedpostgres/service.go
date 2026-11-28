@@ -1004,5 +1004,5 @@ func quotaDetail(err error, limit int) error {
 	if errors.Is(err, ErrBranchLimit) {
 		return fmt.Errorf("%w (%d of %d short-lived branches in use)", err, limit, limit)
 	}
-	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)
+	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning, restoring and still-deleting ones count; `gregale postgres list` shows each state); delete one or upgrade the plan", err, limit, limit)
 }
