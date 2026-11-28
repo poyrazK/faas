@@ -2804,3 +2804,5 @@ func PlanWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, w
 
 var GenericInboundWebhookTimestampProblem = genericInboundWebhookTimestampProblem
 var ValidateInboundWebhookDeliveryPath = validateInboundWebhookDeliveryPath
+
+var OverriddenEnvKeyProblem = overriddenEnvKeyProblem
