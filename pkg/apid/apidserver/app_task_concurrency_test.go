@@ -25,14 +25,11 @@ func TestAppTaskConcurrencyCap(t *testing.T) {
 	apidserver.SeedAppTaskDeployment(t, e, "task-cap")
 	setAppTaskConcurrency(t, e, `{"hobby": 1}`)
 
-	submit := func(command ...string) *http.Response {
-		rec := e.Do(t, http.MethodPost, "/v1/apps/task-cap/tasks", api.CreateAppTaskRequest{Command: command}, nil)
-		return rec.Result()
+	rec := e.Do(t, http.MethodPost, "/v1/apps/task-cap/tasks", api.CreateAppTaskRequest{Command: []string{"bin/one"}}, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("first task = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
-	if res := submit("bin/one"); res.StatusCode != http.StatusAccepted {
-		t.Fatalf("first task = %d, want 202", res.StatusCode)
-	}
-	rec := e.Do(t, http.MethodPost, "/v1/apps/task-cap/tasks", api.CreateAppTaskRequest{Command: []string{"bin/two"}}, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/apps/task-cap/tasks", api.CreateAppTaskRequest{Command: []string{"bin/two"}}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusTooManyRequests, api.CodePlanLimitAppTasks)
 	var problem api.Problem
 	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
