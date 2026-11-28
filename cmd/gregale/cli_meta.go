@@ -2014,7 +2014,7 @@ var cliCommands = []cliCommand{
 			{Name: "no-require-authn", Group: "Access and security", Short: "disable the per-deployment token requirement"},
 			{Name: "platform-tenant-required", Group: "Access and security", Short: "require verified customer identity on app traffic (Hobby and above)"},
 			{Name: "no-platform-tenant-required", Group: "Access and security", Short: "allow app traffic without verified customer identity"},
-			{Name: "maintenance", Group: "Request handling", Common: true, Short: "put every request into 503 maintenance mode"},
+			{Name: "maintenance", Group: "Request handling", Common: true, Short: "put every request into 503 maintenance mode; queued, async and cron deliveries wait until it is off"},
 			{Name: "no-maintenance", Group: "Request handling", Common: true, Short: "resume normal request handling"},
 			{Name: "streaming-enabled", Group: "Request handling", Short: "enable streamed responses (plan eligibility is checked by the API)"},
 			{Name: "no-streaming-enabled", Group: "Request handling", Short: "use buffered responses"},
