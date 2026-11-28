@@ -24,6 +24,10 @@
 # imaged's tripwires (sign.key, sign-pub.pem, imaged's ReadWritePaths=,
 # /srv/fc/snap, /srv/fc/sigs) are now in compute_only_service.
 
+- name: control_plane_service — install the reload-or-restart helper
+  # outboundd's restart handler hands off through it (ADR-20261128150000).
+  ansible.builtin.include_tasks: ../../_shared/tasks/reload_or_restart_helper.yml
+
 - name: control_plane_service — validate billing mode
   ansible.builtin.assert:
     that:

@@ -78,3 +78,33 @@ func TestCapabilitiesFollowRuntimeGates(t *testing.T) {
 		}
 	}
 }
+
+// Prod hunt 2026-11-28: AI access tokens were listed as available and could
+// be created, while their documented host answered "No such app".
+func TestAIAccessTokensFollowThePublicHost(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		var response api.CapabilitiesResponse
+		if err := json.Unmarshal(apidserver.CapabilitiesWithAIAccessTokenHost(on).Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, capability := range response.Capabilities {
+			if capability.Key != "ai-access-tokens" {
+				continue
+			}
+			found = true
+			// With the host on, the preview's platform flag (off on a bare
+			// server) still decides; it is never blamed on the host.
+			blamesHost := strings.Contains(capability.UnavailableDetail, "public host")
+			if on && blamesHost {
+				t.Errorf("host on: detail %q still blames the host", capability.UnavailableDetail)
+			}
+			if !on && (capability.Enabled || capability.UnavailableReason != api.CapabilityUnavailableRuntime || !blamesHost) {
+				t.Errorf("host off: enabled %t reason %q detail %q", capability.Enabled, capability.UnavailableReason, capability.UnavailableDetail)
+			}
+		}
+		if !found {
+			t.Fatal("ai-access-tokens missing from the capability list")
+		}
+	}
+}

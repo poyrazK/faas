@@ -2466,6 +2466,14 @@ func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRec
 	return recorder
 }
 
+// CapabilitiesWithAIAccessTokenHost runs GET /v1/capabilities for a Scale
+// account with the AI gateway's public host on or off.
+func CapabilitiesWithAIAccessTokenHost(enabled bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAIAccessTokenHostEnabled(enabled).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})

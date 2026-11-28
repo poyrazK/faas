@@ -3593,6 +3593,10 @@ const (
 	// OutboundAISemanticCacheIndexBytesMax bounds one outboundd process's
 	// semantic index across every integration.
 	OutboundAISemanticCacheIndexBytesMax = 64 << 20
+	// OutboundCacheSnapshotMaxAgeSeconds is the oldest cache snapshot a
+	// starting outboundd loads (ADR-20261128150000): a snapshot left by a
+	// generation that stopped longer ago is stale and deleted unread.
+	OutboundCacheSnapshotMaxAgeSeconds = 600
 	// Managed prompts (ADR 20261114180740): a version's messages, distinct
 	// variables, stop strings and size (messages, defaults and params); the
 	// largest response_format object; description and note lengths; the
