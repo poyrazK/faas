@@ -53,7 +53,7 @@ func TestEndUserDailyLimitsAndAttribution(t *testing.T) {
 		t.Fatalf("alice's first call = %d", got)
 	}
 	limited := call(alice)
-	if limited.Code != http.StatusTooManyRequests || limited.Header().Get("X-Gregale-Outbound-Rejection") != ReasonUserDailyTokenLimit {
+	if limited.Code != http.StatusTooManyRequests || limited.Header().Get("X-Gregale-Outbound-Rejection") != ReasonUserDailyTokenLimit+ReasonReservationSuffix {
 		t.Fatalf("alice over her limit = %d %q", limited.Code, limited.Header().Get("X-Gregale-Outbound-Rejection"))
 	}
 	if got := call(map[string]string{api.OutboundAIUserHeader: "user:bob"}).Code; got != http.StatusOK {
