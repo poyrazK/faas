@@ -116,7 +116,7 @@ var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/capabilities(/.*)?|/dashboard/
 // Path and query parameters are passed verbatim to net/http. The
 // OpenAPI spec constrains every path param to a regex that excludes
 // URL-unsafe characters (slug = ^[a-z0-9-]+$, id = ^[a-f0-9]{32}$,
-// key = ^[A-Z][A-Z0-9_]*$, domain = ^[a-z0-9.\-]+$); apid validates
+// key = ^[A-Za-z][A-Za-z0-9_]*$, domain = ^[a-z0-9.\-]+$); apid validates
 // input with these patterns, so malformed input surfaces as a 4xx
 // Problem rather than a URL-mangled 404. SDK callers that compose
 // slugs from user input should validate against the spec pattern

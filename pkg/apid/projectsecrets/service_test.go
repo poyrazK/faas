@@ -168,7 +168,7 @@ func TestProjectSecretsRejections(t *testing.T) {
 		status             int
 		code               string
 	}{
-		{"invalid key", "PUT", base + "/lower_case", value, http.StatusBadRequest, api.CodeSecretInvalidKey},
+		{"invalid key", "PUT", base + "/1LEADING_DIGIT", value, http.StatusBadRequest, api.CodeSecretInvalidKey},
 		{"platform identity key", "PUT", base + "/FAAS_APP_ID", value, http.StatusBadRequest, api.CodeSecretInvalidKey},
 		{"empty value", "PUT", base + "/TOKEN_A", api.SetProjectEnvironmentSharedSecretRequest{}, http.StatusBadRequest, api.CodeValidation},
 		{"value over the plan size", "PUT", base + "/TOKEN_A", api.SetProjectEnvironmentSharedSecretRequest{Value: strings.Repeat("x", api.MustLimitsFor(api.PlanFree).SecretValueMaxBytes+1)}, http.StatusRequestEntityTooLarge, api.CodeSecretValueTooLarge},

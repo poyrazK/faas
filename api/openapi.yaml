@@ -81231,7 +81231,7 @@ components:
       name: key
       in: path
       required: true
-      schema: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 }
+      schema: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 128 }
       description: Secret key. Must start with a letter; A-Z, 0-9, underscore.
 
     # ADR-090 PR-B: optional `?scope=` query param on the three
@@ -107999,7 +107999,7 @@ components:
       required: [app_id, key, scope, ciphertext, created_at, updated_at]
       properties:
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
+        key: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
         # written to. The GDPR export crosses scopes (operator
         # compliance flow needs every row to be exportable,
@@ -123985,11 +123985,11 @@ components:
 
         - `entrypoint` replaces the OCI image's ENTRYPOINT/CMD argv at exec time.
         - `cmd` is appended to `entrypoint` (mirrors the OCI runtime contract).
-        - `env` is plaintext; env-var keys must match `^[A-Z][A-Z0-9_]*$`; per-value
+        - `env` is plaintext; env-var keys must match `^[A-Za-z][A-Za-z0-9_]*$`; per-value
           byte cap = plan `EnvValueMaxBytes`.
         - `env_secrets` carries `secret:NAME` REFS — the runtime resolver
           strips the prefix and looks up `NAME` against the existing `app_secrets`
-          table. The ref name must match `^[A-Z][A-Z0-9_]*$`.
+          table. The ref name must match `^[A-Za-z][A-Za-z0-9_]*$`.
         - `env` + `env_secrets` share the plan `EnvVarsMax` quota — no bypass by
           mixing the two surfaces.
         - `port` is per-deployment (1..65535; 0 = absent / fall back to image default).
@@ -124013,7 +124013,7 @@ components:
         env:
           type: object
           additionalProperties: { type: string }
-          description: "Plaintext env map applied at boot. Keys: `^[A-Z][A-Z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes."
+          description: "Plaintext env map applied at boot. Keys: `^[A-Za-z][A-Za-z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes."
         env_secrets:
           type: object
           additionalProperties:
@@ -124450,7 +124450,7 @@ components:
         - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
           overridden). Every element non-empty.
         - `env` is plaintext on the wire, sealed at rest. Keys
-          per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
+          per `^[A-Za-z][A-Za-z0-9_]*$`; per-value byte cap = plan
           `EnvValueMaxBytes`. Plaintext values NEVER appear in
           any log, audit, or error.
         - `env_secrets` is a per-sidecar positive allowlist, for example
@@ -124512,7 +124512,7 @@ components:
         env:
           type: object
           additionalProperties: { type: string }
-          description: "Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."
+          description: "Plaintext env map (sealed at rest). Keys `^[A-Za-z][A-Za-z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."
         env_secrets:
           type: object
           additionalProperties: { type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$' }
@@ -128509,7 +128509,7 @@ components:
       type: object
       required: [key, value]
       properties:
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 64 }
+        key: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 64 }
         value: { type: string, maxLength: 8192 }
 
     DiffChange:
@@ -133643,7 +133643,7 @@ components:
       type: object
       required: [key, rotated_at]
       properties:
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DATABASE_URL" }
+        key: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 128, example: "DATABASE_URL" }
         rotated_at: { type: string, format: date-time, example: "2026-08-10T11:37:52.123Z" }
         kid: { type: string, description: "age-1... recipient string of the host identity that sealed this row. Empty if kid was not stampable.", example: "age1q..." }
 
@@ -133655,7 +133655,7 @@ components:
         config_change:
           $ref: '#/components/schemas/ConfigChangeReceipt'
           description: "Present on writes: the config revision recorded and the config guard watching it."
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
+        key: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 128 , example: "DATABASE_URL"}
         # ADR-092 PR-B: scope echoes the env-scope the row was
         # written to. Always populated — flat-list reads render
         # scope='default' so a CLI / dashboard can render
@@ -133739,7 +133739,7 @@ components:
           pattern: '^([a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?|__all__)$'
           maxLength: 40
           example: "staging"
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DATABASE_URL" }
+        key: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 128, example: "DATABASE_URL" }
         secret_class: { type: string, enum: [persistent, ephemeral], description: "Retention class applied to the named secret in this scope; ephemeral disables init and warm captures." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -134571,7 +134571,7 @@ components:
       type: object
       required: [key, scope, created_at, updated_at]
       properties:
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "LOG_LEVEL" }
+        key: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 128, example: "LOG_LEVEL" }
         scope:
           type: string
           pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -134602,7 +134602,7 @@ components:
           pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
           maxLength: 40
           example: "staging"
-        key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL" }
+        key: { type: string, pattern: '^[A-Za-z][A-Za-z0-9_]*$', maxLength: 128, example: "DB_URL" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         value: { type: string, description: "This scope's plaintext value of the variable, included only on a `?values=true` listing." }
@@ -136497,7 +136497,7 @@ components:
       properties:
         key:
           type: string
-          pattern: '^[A-Z][A-Z0-9_]*$'
+          pattern: '^[A-Za-z][A-Za-z0-9_]*$'
           maxLength: 128
           example: "DATABASE_URL"
         kind: { $ref: '#/components/schemas/EnvDiffKind' }

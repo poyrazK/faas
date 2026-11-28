@@ -7,7 +7,7 @@
 //       * happy path PUT + GET + DELETE
 //       * quota over-cap → 403 CodePlanLimitSecrets with limit + observed
 //       * value byte-cap → 413 CodeSecretValueTooLarge BEFORE any seal
-//       * bad key shape → 400 CodeSecretInvalidKey (lowercase, hyphen, digit)
+//       * bad key shape → 400 CodeSecretInvalidKey (hyphen, leading digit)
 //       * delete-not-set → 400 CodeSecretNotFound
 //       * cross-account isolation: 404 for GET/PUT/DELETE on someone else's app
 //       * redaction invariant: GET response body never contains plaintext
@@ -152,11 +152,11 @@ func TestSecretsMatrixPg(t *testing.T) {
 					api.CodeSecretValueTooLarge)
 			})
 
-			t.Run("invalid_key_lowercase", func(t *testing.T) {
+			t.Run("invalid_key_hyphen", func(t *testing.T) {
 				// Key shape is enforced at the handler before any DB work,
 				// so we don't need a clean app — the main app works.
 				assertProblemAPID(t, h, key, http.MethodPut,
-					"/v1/apps/"+slug+"/secrets/lowercase",
+					"/v1/apps/"+slug+"/secrets/bad-key",
 					api.PutAppSecretRequest{Value: "v"},
 					http.StatusBadRequest,
 					api.CodeSecretInvalidKey)

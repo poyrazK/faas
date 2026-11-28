@@ -17658,7 +17658,7 @@ BEGIN
   RAISE EXCEPTION 'scoped service binding requires its original environment target' USING ERRCODE='23514';
  END IF;
  IF TG_OP<>'DELETE' AND EXISTS(SELECT 1 FROM jsonb_each(NEW.variables) v WHERE
-  v.key !~ '^[A-Z][A-Z0-9_]*$' OR length(v.key)>128 OR jsonb_typeof(v.value)<>'string' OR
+  v.key !~ '^[A-Za-z][A-Za-z0-9_]*$' OR length(v.key)>128 OR jsonb_typeof(v.value)<>'string' OR
   octet_length(v.value #>> '{}')>32768) THEN
   RAISE EXCEPTION 'scoped workload variables require valid keys and string values' USING ERRCODE='23514';
  END IF;
@@ -25448,7 +25448,7 @@ CREATE FUNCTION public.project_environment_config_env(config jsonb) RETURNS json
     AS $_$
     SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
       FROM jsonb_each(CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END) e
-     WHERE e.key ~ '^[A-Z][A-Z0-9_]*$' AND length(e.key) <= 128
+     WHERE e.key ~ '^[A-Za-z][A-Za-z0-9_]*$' AND length(e.key) <= 128
        AND jsonb_typeof(e.value) IN ('string', 'number', 'boolean');
 $_$;
 
@@ -27849,7 +27849,7 @@ CREATE TABLE public.app_secrets (
     CONSTRAINT app_secrets_delivery_state_consistent CHECK ((((delivery_status = 'delivered'::text) AND (delivered_version = delivery_version) AND (last_delivery_attempt_at IS NOT NULL) AND (last_delivered_at IS NOT NULL) AND (last_delivery_error_code IS NULL) AND (last_delivered_wake_id IS NOT NULL) AND (last_delivered_instance_id IS NOT NULL)) OR ((delivery_status = 'failed'::text) AND (last_delivery_attempt_at IS NOT NULL) AND (last_delivery_error_code IS NOT NULL) AND ((delivered_version IS NULL) OR (delivered_version < delivery_version))) OR ((delivery_status = 'pending'::text) AND (last_delivery_error_code IS NULL) AND ((delivered_version IS NULL) OR (delivered_version < delivery_version))))),
     CONSTRAINT app_secrets_delivery_status_shape CHECK ((delivery_status = ANY (ARRAY['pending'::text, 'delivered'::text, 'failed'::text]))),
     CONSTRAINT app_secrets_delivery_version_positive CHECK ((delivery_version >= 1)),
-    CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_secrets_key_shape_v2 CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT app_secrets_managed_postgres_owner_chk CHECK ((((managed_postgres_binding_id IS NULL) AND (managed_credential_ref IS NULL) AND (managed_credential_generation IS NULL)) OR ((managed_postgres_binding_id IS NOT NULL) AND (managed_credential_ref IS NOT NULL) AND (managed_credential_generation >= 1)))),
     CONSTRAINT app_secrets_runtime_reload_observation_consistent CHECK ((((last_runtime_reload_version IS NULL) AND (last_runtime_reload_revision IS NULL) AND (last_runtime_reload_projection IS NULL) AND (last_runtime_reload_signal IS NULL) AND (last_runtime_reload_at IS NULL) AND (last_runtime_reload_error_code IS NULL) AND (last_runtime_reload_instance_id IS NULL)) OR ((last_runtime_reload_version IS NOT NULL) AND (last_runtime_reload_revision IS NOT NULL) AND (last_runtime_reload_projection IS NOT NULL) AND (last_runtime_reload_signal IS NOT NULL) AND (last_runtime_reload_at IS NOT NULL) AND (last_runtime_reload_instance_id IS NOT NULL) AND (last_runtime_reload_version >= 1) AND (last_runtime_reload_version <= delivery_version) AND (last_runtime_reload_revision ~ '^[a-f0-9]{64}$'::text) AND (last_runtime_reload_projection = ANY (ARRAY['updated'::text, 'unchanged'::text, 'failed'::text])) AND (last_runtime_reload_signal = ANY (ARRAY['sent'::text, 'queued'::text, 'failed'::text, 'not_attempted'::text])) AND (last_runtime_reload_at IS NOT NULL) AND (last_runtime_reload_instance_id IS NOT NULL) AND (((last_runtime_reload_projection = 'failed'::text) AND (last_runtime_reload_signal = 'not_attempted'::text) AND (last_runtime_reload_error_code IS NOT NULL) AND (last_runtime_reload_error_code = 'projection_failed'::text)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = ANY (ARRAY['sent'::text, 'not_attempted'::text])) AND (last_runtime_reload_error_code IS NULL)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = 'queued'::text) AND (last_runtime_reload_error_code IS NULL)) OR ((last_runtime_reload_projection = 'updated'::text) AND (last_runtime_reload_signal = 'failed'::text) AND (last_runtime_reload_error_code IS NOT NULL) AND (last_runtime_reload_error_code = 'signal_failed'::text)) OR ((last_runtime_reload_projection = 'unchanged'::text) AND (last_runtime_reload_signal = 'not_attempted'::text) AND (last_runtime_reload_error_code IS NULL)))))),
     CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
@@ -27909,7 +27909,7 @@ CREATE TABLE public.project_environment_secrets (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_environment_secrets_ciphertext_present CHECK ((octet_length(ciphertext) > 0)),
     CONSTRAINT project_environment_secrets_environment_slug_shape CHECK ((environment_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'::text)),
-    CONSTRAINT project_environment_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT project_environment_secrets_key_shape_v2 CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT project_environment_secrets_kid_shape CHECK (((kid ~ '^age1[a-z0-9]+$'::text) AND (length(kid) <= 128))),
     CONSTRAINT project_environment_secrets_secret_version_positive CHECK ((secret_version >= 1)),
     CONSTRAINT project_environment_secrets_value_hash_shape CHECK (((length(value_hash) >= 1) AND (length(value_hash) <= 16)))
@@ -34672,7 +34672,7 @@ CREATE TABLE public.app_config_guard_secrets (
     secret_class text,
     CONSTRAINT app_config_guard_secrets_check CHECK ((existed = (ciphertext IS NOT NULL))),
     CONSTRAINT app_config_guard_secrets_check1 CHECK ((existed = (secret_class IS NOT NULL))),
-    CONSTRAINT app_config_guard_secrets_config_key_check CHECK (((config_key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(config_key) <= 128))),
+    CONSTRAINT app_config_guard_secrets_config_key_v2_check CHECK (((config_key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(config_key) <= 128))),
     CONSTRAINT app_config_guard_secrets_secret_class_check CHECK (((secret_class IS NULL) OR (secret_class = ANY (ARRAY['persistent'::text, 'ephemeral'::text]))))
 );
 
@@ -34904,7 +34904,7 @@ CREATE TABLE public.app_environment_secret_refs (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT app_environment_secret_refs_key_v2_check CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (octet_length(key) <= 128))),
     CONSTRAINT app_environment_secret_refs_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)),
-    CONSTRAINT app_environment_secret_refs_secret_name_check CHECK (((secret_name ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(secret_name) <= 128)))
+    CONSTRAINT app_environment_secret_refs_secret_name_v2_check CHECK (((secret_name ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (octet_length(secret_name) <= 128)))
 );
 
 
@@ -35834,7 +35834,7 @@ CREATE TABLE public.app_secret_revocations (
     scope text NOT NULL,
     key text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_secret_revocations_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT app_secret_revocations_key_shape_v2 CHECK (((key ~ '^[A-Za-z][A-Za-z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT app_secret_revocations_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
 );
 

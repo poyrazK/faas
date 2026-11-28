@@ -437,11 +437,12 @@ const (
 )
 
 // SecretKeyPattern is the regex enforced by the app_secrets.key CHECK constraint
-// (migrations/00005_secrets.sql) AND the apid input validator. Uppercase ASCII,
-// digits, underscores; must start with a letter. Plain ASCII keeps the path
+// (migrations/00005_secrets.sql, widened to mixed case by ADR-20261128195037)
+// AND the apid input validator. ASCII letters, digits, underscores; must start
+// with a letter, the same shape as plain variables (EnvKeyPattern). Plain ASCII keeps the path
 // stable across runtimes (no Unicode normalization gotchas) and matches what
 // every shell / k8s / systemd treats as an env-var name.
-const SecretKeyPattern = `^[A-Z][A-Z0-9_]*$`
+const SecretKeyPattern = `^[A-Za-z][A-Za-z0-9_]*$`
 
 // MaxSecretKeyLen bounds the secret key name. Mirrors Unix env-var limits
 // (NAME_MAX is 255 on Linux) and keeps per-row index size reasonable.

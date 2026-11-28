@@ -44,7 +44,7 @@ const (
 	maxEnvChangeKeys    = 50
 )
 
-var envKey = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+var envKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
 type localSourcePlan struct {
 	Uploaded    bool            `json:"uploaded,omitempty"`
@@ -77,7 +77,7 @@ type planEnvChangeArgs struct {
 	App         string            `json:"app" jsonschema:"Existing Gregale app slug"`
 	Project     string            `json:"project,omitempty" jsonschema:"Project slug for a named environment"`
 	Environment string            `json:"environment,omitempty" jsonschema:"Named environment; omit for default"`
-	Values      map[string]string `json:"values" jsonschema:"1 to 50 KEY: value pairs; keys match ^[A-Z][A-Z0-9_]*$, values hold no newlines"`
+	Values      map[string]string `json:"values" jsonschema:"1 to 50 KEY: value pairs; keys match ^[A-Za-z][A-Za-z0-9_]*$, values hold no newlines"`
 	Reason      string            `json:"reason" jsonschema:"Reviewable change reason; at most 280 characters"`
 	Restart     bool              `json:"restart,omitempty" jsonschema:"Restart so values apply now; otherwise on the next cold wake"`
 }
@@ -407,7 +407,7 @@ func envChangeInput(values map[string]string) ([]string, []byte, error) {
 	keys := make([]string, 0, len(values))
 	for key, value := range values {
 		if !envKey.MatchString(key) {
-			return nil, nil, invalid("invalid_argument", "variable names must match ^[A-Z][A-Z0-9_]*$")
+			return nil, nil, invalid("invalid_argument", "variable names must match ^[A-Za-z][A-Za-z0-9_]*$")
 		}
 		if !utf8.ValidString(value) || strings.ContainsAny(value, "\r\n\x00") {
 			return nil, nil, invalid("invalid_argument", "values must be valid UTF-8 without newlines or NUL bytes")

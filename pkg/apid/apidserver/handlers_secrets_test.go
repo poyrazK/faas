@@ -493,8 +493,7 @@ func TestSecrets_ValueTooLarge_RejectsBeforeSeal(t *testing.T) {
 }
 
 func TestSecrets_InvalidKey_400(t *testing.T) {
-	// Three rejection paths:
-	//   * lowercase     → regex fail
+	// Rejection paths (mixed case is valid, ADR-20261128195037):
 	//   * starts digit   → regex fail
 	//   * hyphen (not in class) → regex fail
 	//   * over 128 chars → length fail
@@ -504,8 +503,8 @@ func TestSecrets_InvalidKey_400(t *testing.T) {
 		name string
 		key  string
 	}{
-		{"lowercase", "stripe_key"},
 		{"digit-start", "1FOO"},
+		{"underscore-start", "_FOO"},
 		{"hyphen", "STRIPE-KEY"},
 		{"too-long", strings.Repeat("A", 129)},
 	}
@@ -518,6 +517,29 @@ func TestSecrets_InvalidKey_400(t *testing.T) {
 			}
 			assertProblem(t, rec, 400, api.CodeSecretInvalidKey)
 		})
+	}
+}
+
+// TestSecrets_MixedCaseKey pins ADR-20261128195037: a sealed secret takes
+// the same key shape as a plain variable, so runtime names such as
+// DOTNET_gcServer can be sealed and are listed as written.
+func TestSecrets_MixedCaseKey(t *testing.T) {
+	e := setupSecrets(t, api.PlanHobby)
+	app := createApp(t, e, "key-mixed")
+	for _, key := range []string{"DOTNET_gcServer", "next_public_url"} {
+		rec := e.do(t, "PUT", "/v1/apps/"+app.Slug+"/secrets/"+key, api.PutAppSecretRequest{Value: "v"}, nil)
+		if rec.Code/100 != 2 {
+			t.Fatalf("PUT %s: %d %s, want 2xx", key, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.do(t, "GET", "/v1/apps/"+app.Slug+"/secrets", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("GET secrets: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, key := range []string{"DOTNET_gcServer", "next_public_url"} {
+		if !strings.Contains(rec.Body.String(), `"`+key+`"`) {
+			t.Errorf("list does not contain %s: %s", key, rec.Body.String())
+		}
 	}
 }
 

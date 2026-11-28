@@ -278,7 +278,7 @@ type ListSecretsForAccountResponse struct {
 	NextBefore string                     `json:"next_before,omitempty"`
 }
 
-// ValidateSecretKey returns nil when key matches ^[A-Z][A-Z0-9_]*$ and is
+// ValidateSecretKey returns nil when key matches ^[A-Za-z][A-Za-z0-9_]*$ and is
 // within MaxSecretKeyLen bytes; otherwise it returns the api.Problem-shaped
 // CodeSecretInvalidKey. Returns *Problem directly (not error) so call sites
 // can pass it straight to api.WriteProblem without an AsProblem unwrap — the
@@ -295,7 +295,7 @@ func ValidateSecretKey(key string) *Problem {
 	}
 	re := regexp.MustCompile(SecretKeyPattern)
 	if !re.MatchString(key) {
-		return ErrSecretInvalidKey("must start with a letter and contain only A-Z, 0-9, underscore")
+		return ErrSecretInvalidKey("must start with a letter and contain only letters, digits and underscore")
 	}
 	return nil
 }
