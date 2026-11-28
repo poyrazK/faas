@@ -119,8 +119,8 @@ func TestBuildDeploymentForInsert_FullRootfsPlanDefaultAndOverride(t *testing.T)
 	if problem != nil {
 		t.Fatalf("free buildDeploymentForInsert: %v", problem)
 	}
-	if free.FullRootfsAllowAuto {
-		t.Fatal("Free plan should default full-rootfs auto-fallback off")
+	if !free.FullRootfsAllowAuto {
+		t.Fatal("Free plan should default full-rootfs auto-fallback on (ADR-147 amendment 2026-11-28)")
 	}
 
 	falseValue := false
