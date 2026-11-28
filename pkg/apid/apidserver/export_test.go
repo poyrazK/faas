@@ -264,6 +264,7 @@ const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
 const RouteCostByRequestTime = routeCostByRequestTime
 const RouteCostByRequests = routeCostByRequests
 const RuntimeConfigAppNameBlocklist = runtimeConfigAppNameBlocklist
+const RuntimeConfigAppTaskConcurrency = runtimeConfigAppTaskConcurrency
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
