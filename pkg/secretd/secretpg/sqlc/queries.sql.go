@@ -594,24 +594,28 @@ func (q *Queries) UpsertSecretGrant(ctx context.Context, db DBTX, arg UpsertSecr
 
 const verificationLease = `-- name: VerificationLease :one
 SELECT l.app_id, l.node_name, l.expires_at, d.status, d.scope,
-       c.contract::jsonb AS contract
+       c.contract::jsonb AS contract,
+       COALESCE(m.probe_secret, '')::text AS probe_secret
   FROM deployment_verification_leases l
   JOIN deployments d ON d.id = l.deployment_id AND d.app_id = l.app_id
   LEFT JOIN app_verification_contracts c ON c.app_id = l.app_id
+  LEFT JOIN mcp_listings m ON m.app_id = l.app_id AND m.contract IS NOT NULL
  WHERE l.deployment_id = $1::uuid
 `
 
 type VerificationLeaseRow struct {
-	AppID     pgtype.UUID
-	NodeName  string
-	ExpiresAt pgtype.Timestamptz
-	Status    string
-	Scope     string
-	Contract  []byte
+	AppID       pgtype.UUID
+	NodeName    string
+	ExpiresAt   pgtype.Timestamptz
+	Status      string
+	Scope       string
+	Contract    []byte
+	ProbeSecret string
 }
 
 // The node verifying a deployment, the deployment's status and scope, and the
-// app's stored verification contract (ADR-20261122220000 amendment 2).
+// app's stored verification contract (ADR-20261122220000 amendment 2), and
+// the probe secret its MCP listing names (ADR-20261127191645).
 func (q *Queries) VerificationLease(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (VerificationLeaseRow, error) {
 	row := db.QueryRow(ctx, verificationLease, deploymentID)
 	var i VerificationLeaseRow
@@ -622,6 +626,7 @@ func (q *Queries) VerificationLease(ctx context.Context, db DBTX, deploymentID p
 		&i.Status,
 		&i.Scope,
 		&i.Contract,
+		&i.ProbeSecret,
 	)
 	return i, err
 }

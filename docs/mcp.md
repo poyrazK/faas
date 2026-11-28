@@ -8327,6 +8327,10 @@ stderr tails, waiting up to `wait_seconds` (0–45) for the command to finish.
 Lines that look like credentials, such as an `env` dump, are replaced with
 `[redacted: <kind>]`. `gregale_cancel_command_run` asks a running command to
 stop; work it already did stays done.
+`gregale_list_command_runs` lists the app's recent runs newest first
+(`limit` 1–50, default 10; page with `offset` from `next_offset`): one-off
+commands, release commands and command crons, with status and exit code but no
+output.
 
 ## Query PostgreSQL
 

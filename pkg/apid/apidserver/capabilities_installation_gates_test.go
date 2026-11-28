@@ -78,3 +78,44 @@ func TestCapabilitiesFollowRuntimeGates(t *testing.T) {
 		}
 	}
 }
+
+// Interactive sessions (exec -it, cp, port-forward, postgres connect) need
+// FAAS_INTERACTIVE_APP_TASKS on top of the app-task API; app-tasks alone used
+// to advertise them while every session answered 501.
+func TestInteractiveAppSessionsCapabilityFollowsItsGate(t *testing.T) {
+	read := func(appTasks, interactive bool) (tasks, sessions api.CapabilityStatus) {
+		t.Helper()
+		recorder := apidserver.CapabilitiesWithAppTaskGates(appTasks, interactive)
+		var response api.CapabilitiesResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("status %d: %v", recorder.Code, err)
+		}
+		for _, capability := range response.Capabilities {
+			switch capability.Key {
+			case "app-tasks":
+				tasks = capability
+			case "interactive-app-sessions":
+				sessions = capability
+			}
+		}
+		if tasks.Key == "" || sessions.Key == "" {
+			t.Fatalf("app-tasks or interactive-app-sessions missing from %d capabilities", len(response.Capabilities))
+		}
+		return tasks, sessions
+	}
+	if tasks, sessions := read(false, false); tasks.Enabled || sessions.Enabled {
+		t.Fatalf("app task API off: app-tasks=%v sessions=%v, want both off", tasks.Enabled, sessions.Enabled)
+	}
+	if _, sessions := read(false, true); sessions.Enabled {
+		t.Fatal("interactive sessions advertised while the app-task API is off")
+	}
+	tasks, sessions := read(true, false)
+	if sessions.Enabled {
+		t.Fatal("interactive sessions advertised while FAAS_INTERACTIVE_APP_TASKS is off")
+	}
+	tasksOnly := tasks.Enabled
+	tasks, sessions = read(true, true)
+	if sessions.Enabled != tasks.Enabled || tasks.Enabled != tasksOnly {
+		t.Fatalf("both gates on: app-tasks=%v sessions=%v (app-tasks alone %v); want sessions to follow app-tasks", tasks.Enabled, sessions.Enabled, tasksOnly)
+	}
+}

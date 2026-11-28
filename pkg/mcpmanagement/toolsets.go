@@ -104,6 +104,7 @@ var toolsetOf = map[string]string{
 	"gregale_plan_scale":                        ToolsetOperate,
 	"gregale_apply_operation":                   ToolsetOperate,
 	"gregale_plan_run_command":                  ToolsetOperate,
+	"gregale_list_command_runs":                 ToolsetOperate,
 	"gregale_get_command_run":                   ToolsetOperate,
 	"gregale_cancel_command_run":                ToolsetOperate,
 	"gregale_plan_dead_letter_replay":           ToolsetOperate,

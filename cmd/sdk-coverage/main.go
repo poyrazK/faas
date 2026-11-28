@@ -2464,6 +2464,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/mcp-listing":                                                     "GetMCPListing",
 	"PUT /v1/apps/{slug}/mcp-listing":                                                     "PutMCPListing",
 	"DELETE /v1/apps/{slug}/mcp-listing":                                                  "DeleteMCPListing",
+	"GET /v1/apps/{slug}/mcp-contract":                                                    "GetMCPContract",
+	"POST /v1/apps/{slug}/mcp-contract/overrides":                                         "CreateMCPContractOverride",
 	"GET /v1/consumer-signup/{slug}/listing":                                              "GetPublicMCPListing",
 	"GET /v1/consumer-signup/{slug}/server.json":                                          "GetMCPListingServerJSON",
 	"GET /v1/apps/{slug}/consumer-identities":                                             "ListConsumerIdentities",
