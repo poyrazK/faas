@@ -34,6 +34,24 @@ faster for large images and is the better choice in CI. Local image deploys are
 being released gradually; an account without them gets "Local image deploys
 unavailable" and can deploy through a registry instead.
 
+Add `--boot` to check the image on your machine first:
+
+```sh
+gregale deploy --local-image team/api:dev --boot --healthcheck-path /healthz
+```
+
+It runs the same checks as `doctor --boot` (below) before the image is saved
+or uploaded, with the deployment's `--healthcheck-path`, the RAM of its
+`--size` (else the app's, or a new app's default) and the app's public host
+when the app exists. A crash, a listener on the wrong address or
+port, an out-of-memory kill or a failing health check stops the deploy with the
+findings, and nothing is uploaded; warnings are printed and the deploy goes on.
+`--boot-env-file FILE` passes variables the app needs to start to the local
+container only; set them on the app with `gregale env` or `gregale secrets` for
+the deployment. The check needs HTTP on `$PORT`, so `--boot` is refused for
+workers, jobs and `--healthcheck-grpc` deploys, and with `--create-only`.
+Pressing Ctrl-C during the check stops the deploy.
+
 ## Boot the image locally before deploying
 
 `doctor` and `deploy check` read image metadata only. Add `--boot` to also run

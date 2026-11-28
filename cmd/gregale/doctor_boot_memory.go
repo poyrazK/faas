@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -39,11 +41,16 @@ type doctorBootApp struct {
 	unreadable bool
 }
 
-func doctorBootLookupApp(ctx context.Context, slug string) doctorBootApp {
+func doctorBootLookupApp(ctx context.Context, slug string, mayBeNew bool) doctorBootApp {
 	if slug == "" {
 		return doctorBootApp{}
 	}
 	ram, host, err := doctorBootAppInfo(ctx, slug)
+	var apiErr *api.APIError
+	if err != nil && mayBeNew && errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusNotFound {
+		// A deploy that creates the app: a new app's RAM, and no host yet.
+		return doctorBootApp{slug: slug}
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(osStderr, "Could not read app %s; using the default RAM for a new app and no public host.\n", slug)
 		return doctorBootApp{slug: slug, unreadable: true}
@@ -56,6 +63,9 @@ func doctorBootLookupApp(ctx context.Context, slug string) doctorBootApp {
 // default for a new app, else that default's cap. The second value says
 // which, for the report.
 func doctorBootMemory(ctx context.Context, flags *doctorImageFlags, app doctorBootApp) (int, string) {
+	if flags.ramMB > 0 && flags.deploy {
+		return flags.ramMB, "--size"
+	}
 	if flags.ramMB > 0 {
 		return flags.ramMB, "--ram"
 	}

@@ -2230,6 +2230,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	localImageName := fs.String("local-image", "", "deploy a linux/amd64 image from this machine's Docker without a registry")
+	bootLocalImage := fs.Bool("boot", false, "with --local-image, first run the image with local Docker and stop the deploy if it crashes, listens on the wrong address, runs out of memory or fails its health check")
+	bootEnvFile := fs.String("boot-env-file", "", "with --boot, KEY=VALUE lines for the local boot only, docker env-file format; nothing in it is uploaded")
 	dockerConfigPath := fs.String("docker-config", "", "with --image, save the credential `docker login` stored for the image's registry to the app")
 	imageArchivePath := fs.String("image-archive", "", "deploy a linux/amd64 image from a `docker save` archive without a registry")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
@@ -2518,6 +2520,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	localImage, localImageCode := planLocalImageDeploy(*localImageName, *imageArchivePath, explicit)
 	if localImageCode != 0 {
 		return localImageCode
+	}
+	if err := deployBootFlagProblem(*localImageName, *bootLocalImage, *createOnly, explicit); err != nil {
+		return printErr("Invalid flags", err)
 	}
 	if localImage != nil {
 		*image = localImage.displayName
@@ -4090,7 +4095,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// publication needs to verify the accepted deployment's source identity.
 	if localImage != nil {
 		// Save and convert only now, after every check that could refuse
-		// the deploy: the image can be gigabytes.
+		// the deploy: the image can be gigabytes. --boot runs first, so a
+		// broken image is neither saved nor uploaded.
+		if *bootLocalImage {
+			if err := deployBootModeProblem(*executionMode, healthcheck); err != nil {
+				return printErr("Invalid flags", err)
+			}
+			if code := runDeployBootCheck(ctx, deployBootFlags{image: localImage.sourceName, app: slug, healthPath: *healthcheckPath, envFile: *bootEnvFile, ramMB: deployBootRAMMB(*profile)}); code != 0 {
+				return code
+			}
+		}
 		localImageCleanup, code := localImage.prepare(ctx)
 		defer localImageCleanup()
 		if code != 0 {

@@ -20,7 +20,8 @@ import (
 
 // fakeBootDocker is a Docker client stand-in driven by files in dir: state
 // holds `inspect` output, addr the published address, procnet the
-// container's /proc/net/tcp, image the `image inspect` JSON, health the
+// container's /proc/net/tcp, image the `image inspect` JSON, saved the
+// `image save` output, health the
 // `.State.Health` JSON; runfail makes
 // `run` fail. Every call is logged.
 type fakeBootDocker struct{ dir string }
@@ -37,7 +38,7 @@ inspect) case "$*" in *Health*) cat "$d/health" 2>/dev/null || echo null ;; *) c
 port) cat "$d/addr" 2>/dev/null ;;
 logs) echo "Error: DATABASE_URL is not set" ;;
 exec) cat "$d/procnet" 2>/dev/null || exit 126 ;;
-image) cat "$d/image" 2>/dev/null || { echo "No such image" >&2; exit 1; } ;;
+image) if [ "$2" = save ]; then cp "$d/saved" "$4" || exit 1; else cat "$d/image" 2>/dev/null || { echo "No such image" >&2; exit 1; }; fi ;;
 esac
 `
 	bin := filepath.Join(dir, "docker")
