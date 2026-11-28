@@ -51,15 +51,19 @@ const nextAdapterAsset = "gregale-next-standalone-adapter"
 const nextAdapterSetFlag = "/tmp/gregale-next-standalone-set"
 
 // nextAdapter sets output "standalone" for `next build` unless the app's
-// config chose an output itself. NEXT_ADAPTER_PATH is read by Next 15.5 and
-// later; modifyConfig runs before the build reads the config.
+// config chose an output itself. NEXT_ADAPTER_PATH is read by Next 15.4 and
+// later; modifyConfig runs before the build reads the config. Next 16 passes
+// the phase; Next 15 passes none and calls the adapter only for the
+// production build and server, and the variable is set on the build command
+// alone (ADR-20261124160000 amendment 3).
 const nextAdapter = `"use strict";
 // Written by Gregale: builds with output "standalone" so an app too large
 // for its plan's app layer can ship only the files its server needs.
 module.exports = {
   name: "gregale-standalone",
   modifyConfig(config, ctx) {
-    if (ctx && ctx.phase === "phase-production-build" && !config.output) {
+    const phase = ctx && ctx.phase;
+    if ((phase === undefined || phase === "phase-production-build") && !config.output) {
       config.output = "standalone";
       require("fs").writeFileSync("` + nextAdapterSetFlag + `", "");
     }
@@ -127,9 +131,11 @@ var nextBuildCommands = map[string]bool{
 	"npm run build": true, "pnpm run build": true, "yarn run build": true, "bun run build": true,
 }
 
-// nextMinMajor is the first Next.js major whose adapter hook the builder
-// relies on.
-const nextMinMajor = 16
+// nextMinMajor is the first Next.js major with the adapter hook the builder
+// relies on. It came in 15.4: an app that resolves an older 15 release
+// builds as before, since Next ignores the variable and the adapter never
+// sets the flag the post-build step needs.
+const nextMinMajor = 15
 
 type nextPackage struct {
 	Scripts      map[string]string `json:"scripts"`
@@ -289,7 +295,7 @@ var ErrNotNextStandalone = errors.New("not a next start app")
 
 // StampNextStandalone rewrites a Railpack plan so its build step builds a
 // Next.js app with standalone output. It applies only to an app whose
-// package.json depends on Next 16 or later, builds with `next build` and
+// package.json depends on Next 15 or later, builds with `next build` and
 // starts with `next start` through the package manager; anything
 // else returns ErrNotNextStandalone and the plan is left as it is. capMB is
 // the plan's app layer cap: the build keeps the standalone tree only for an

@@ -8,7 +8,7 @@ every framework shares is on [Deploy a web framework](frameworks.md).
 The app runs as a server, so server components, route handlers, server
 actions and middleware all work.
 
-A Next.js 16 app runs on every plan, Free included. When the `start` script
+A Next.js 16 or 15.4+ app runs on every plan, Free included. When the `start` script
 is `next start`, Gregale builds the app with `output: "standalone"`,
 so `next build` also copies the files the server needs into
 `.next/standalone`. With its full `node_modules`, a small app needs about
@@ -91,7 +91,10 @@ copied into it, when the app's full `/app` (without the build cache) is
 larger than the plan's app layer, as a Next.js app with its `node_modules` is
 on Free and Hobby, and all of these hold:
 
-- `next` 16 or later is in `dependencies`;
+- `next` 15.4 or later is in `dependencies`. Next 15.0 to 15.3 cannot
+  turn on the standalone build for Gregale, so those apps ship
+  `node_modules` and need a plan whose app layer fits it; upgrading to
+  15.5 or 16 is enough;
 - the `build` script runs `next build`;
 - the `start` script is `next start`, with no `prestart` or `poststart`
   script. It may set `-p`/`--port`, `-H`/`--hostname` and

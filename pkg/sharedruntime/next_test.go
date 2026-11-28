@@ -90,7 +90,7 @@ func TestStampNextStandalone(t *testing.T) {
 		plan []byte
 		pkg  string
 	}{
-		{name: "next 15", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, "^16.0.0", "15.5.0", 1)},
+		{name: "next 14", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, "^16.0.0", "14.2.35", 1)},
 		{name: "next only a dev dependency", plan: nextPlan(t, "npm run build"), pkg: `{"scripts":{"build":"next build","start":"next start"},"devDependencies":{"next":"16.4.6"}}`},
 		{name: "start with a project directory", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, `"next start"`, `"next start ./web"`, 1)},
 		{name: "start with an unknown option", plan: nextPlan(t, "npm run build"), pkg: strings.Replace(nextPkg, `"next start"`, `"next start --experimental-https"`, 1)},
@@ -106,6 +106,14 @@ func TestStampNextStandalone(t *testing.T) {
 				t.Fatalf("err = %v, want ErrNotNextStandalone", err)
 			}
 		})
+	}
+	// ADR-20261124160000 amendment 3: Next 15.4 and later read the adapter.
+	if _, err := StampNextStandalone(nextPlan(t, "npm run build"), []byte(strings.Replace(nextPkg, "^16.0.0", "^15.5.0", 1)), testCapMB, 0); err != nil {
+		t.Fatalf("next 15: %v", err)
+	}
+	// Next 15 passes no phase, so the adapter must treat none as the build.
+	if !strings.Contains(nextAdapter, `phase === undefined || phase === "phase-production-build"`) {
+		t.Fatal("adapter ignores a call without a phase (Next 15)")
 	}
 	// ADR-20261124160000 amendment 2: listen flags the standalone server
 	// takes from its environment do not stop the stamp.

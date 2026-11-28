@@ -81,3 +81,45 @@ func TestNextStandaloneStepRuns(t *testing.T) {
 		})
 	}
 }
+
+// ADR-20261124160000 amendment 3: the adapter sets output "standalone" for
+// Next 16's production build and for Next 15's calls, which carry no phase,
+// and leaves an app's own output and every other Next 16 phase alone.
+func TestNextAdapterRuns(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node")
+	}
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "set")
+	adapter := filepath.Join(dir, "adapter.cjs")
+	if err := os.WriteFile(adapter, []byte(strings.ReplaceAll(nextAdapter, nextAdapterSetFlag, flag)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, config, ctx, want string
+		set                     bool
+	}{
+		{name: "next 15 call", config: `{}`, ctx: `undefined`, want: "standalone", set: true},
+		{name: "next 16 build", config: `{}`, ctx: `{phase: "phase-production-build"}`, want: "standalone", set: true},
+		{name: "next 16 dev", config: `{}`, ctx: `{phase: "phase-development-server"}`, want: ""},
+		{name: "next 16 server", config: `{}`, ctx: `{phase: "phase-production-server"}`, want: ""},
+		{name: "app's own output", config: `{output: "export"}`, ctx: `undefined`, want: "export"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = os.Remove(flag)
+			script := `const a = require(process.argv[1]); const c = a.modifyConfig(` + tt.config + `, ` + tt.ctx + `); process.stdout.write(c.output || "")`
+			out, err := exec.Command(node, "-e", script, adapter).Output()
+			if err != nil {
+				t.Fatalf("node: %v", err)
+			}
+			if string(out) != tt.want {
+				t.Fatalf("output = %q, want %q", out, tt.want)
+			}
+			if _, err := os.Stat(flag); (err == nil) != tt.set {
+				t.Fatalf("flag written = %v, want %v", err == nil, tt.set)
+			}
+		})
+	}
+}

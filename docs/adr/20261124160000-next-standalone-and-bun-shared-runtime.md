@@ -123,7 +123,8 @@ with the rest of the shared runtime.
   ~420 MB to ~95 MB on every plan. Both fit the Free plan with room for
   dependencies.
 - A Next.js app that customizes its start (a custom server, `prestart`
-  hooks) or pins Next 15 or older keeps its `node_modules` layer. Listen
+  hooks) or pins Next 15.3 or older keeps its `node_modules` layer (Next
+  15.4 and 15.5 qualify since amendment 3). Listen
   flags on `next start` qualify since amendment 2.
 - Next.js apps whose Node version has no shared runtime (Node 22 is musl,
   others are undeclared) are unchanged; their layer still carries Node.
@@ -134,6 +135,30 @@ with the rest of the shared runtime.
 - A Bun app that starts a Next.js server with `bun run start` still gets
   the standalone tree. A Bun app without it carries Bun (88 MB) plus its
   `node_modules`.
+
+## Amendment 3 (2026-11-28): Next 15.4 and 15.5
+
+Next 15.5 is about 16 % of Next.js downloads and needed Hobby. The build
+hook the adapter uses is already there from 15.4.0: `next build` reads
+`NEXT_ADAPTER_PATH` and calls `modifyConfig`. The decision required Next 16
+only because the adapter acted on `ctx.phase === "phase-production-build"`,
+and Next 15 calls `modifyConfig(config)` with no context, so the adapter did
+nothing.
+
+- The adapter now also acts when the call carries no phase. Next 15 calls
+  it only for the production build and server, and `NEXT_ADAPTER_PATH` is
+  set on the build command alone, so that call is the build. Next 16
+  passes the phase and behaves as before.
+- The stamp applies to Next 15 and later. An app that resolves 15.0 to
+  15.3 builds as before: Next ignores the variable, the adapter never sets
+  its flag, and the post-build step leaves the app whole.
+- The standalone server of 15.4 and 15.5 returns its embedded config
+  before the adapter would run, as Next 16 does, so the adapter path that
+  config carries is never loaded at runtime.
+- A local build of the journey's Next.js fixture on 15.5.29 gives a 58 MB
+  standalone tree beside 317 MB of `node_modules`. The metal subtest
+  `nextjs15-free-standalone` and the journey's `nextjs15` case deploy it on
+  Free.
 
 ## Amendment 2 (2026-11-26): `next start` listen flags
 

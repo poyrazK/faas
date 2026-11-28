@@ -14,6 +14,8 @@
 //   - Next.js on Free started with `next start -p $PORT -H 0.0.0.0`
 //     (ADR-20261124160000 amendment 2): the flags become the standalone
 //     server's environment and the app still ships only the tree.
+//   - Next.js 15.5 on Free (ADR-20261124160000 amendment 3): Next 15 calls
+//     the adapter without a phase, and the app still ships only the tree.
 //   - Bun on Free: imaged keeps mise's Bun install and drops mise's Node.
 //   - pnpm and yarn on Free (ADR-20261125170000): the start script runs on the
 //     runner base's Node, and the layer keeps only /app: no mise Node and no
@@ -123,6 +125,7 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 	nextFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "next-free")
 	nextPro := addSharedRuntimeApp(t, h, pool, api.PlanPro, "next-pro")
 	nextFlags := addSharedRuntimeApp(t, h, pool, api.PlanFree, "next-flags")
+	next15 := addSharedRuntimeApp(t, h, pool, api.PlanFree, "next15-free")
 	bunFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "bun-free")
 	pnpmFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "pnpm-free")
 	yarnFree := addSharedRuntimeApp(t, h, pool, api.PlanFree, "yarn-free")
@@ -133,8 +136,11 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 	}
 	freeCap := int64(api.MustLimitsFor(api.PlanFree).AppLayerMaxMB) << 20
 
-	t.Run("nextjs-free-standalone", func(t *testing.T) {
-		dep := nextFree.deploy(t, journeyFixture(t, "nextjs-standalone"), "cccccccc-0000-4000-8000-000000000001", sharedBaseStallWindow, sharedBaseCeiling)
+	// checkStandalone deploys the Next.js fixture (with replace) to app on
+	// Free and checks it ships and serves only the standalone tree, before
+	// and after a park.
+	checkStandalone := func(t *testing.T, app *sharedRuntimeApp, replace map[string]string, buildID string) {
+		dep := app.deploy(t, journeyFixtureWith(t, "nextjs-standalone", replace), buildID, sharedBaseStallWindow, sharedBaseCeiling)
 		t.Logf("next free: runtime_base=%q app layer=%d bytes (guest-init %d)", dep.RuntimeBase, dep.RootfsBytes, guestInit.Size())
 		if dep.RuntimeBase != "node24" {
 			t.Fatalf("runtime_base = %q, want node24", dep.RuntimeBase)
@@ -144,10 +150,10 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 			t.Fatalf("app layer = %d bytes, want the standalone tree: at most %d", dep.RootfsBytes, limit)
 		}
 		check := func(t *testing.T) {
-			if cwd := nextFree.getJSON(t, "/api/runtime")["cwd"]; cwd != "/app/.next/standalone" {
+			if cwd := app.getJSON(t, "/api/runtime")["cwd"]; cwd != "/app/.next/standalone" {
 				t.Fatalf("server cwd = %v, want /app/.next/standalone", cwd)
 			}
-			page, _ := nextFree.get(t, "/")
+			page, _ := app.get(t, "/")
 			if !strings.Contains(string(page), "journey next standalone") {
 				t.Fatalf("GET /: %q", tailString(string(page), 600))
 			}
@@ -155,15 +161,31 @@ func TestJSFrameworksFitFreeMetal(t *testing.T) {
 			if asset == "" {
 				t.Fatalf("the page links no /_next/static asset: %q", tailString(string(page), 600))
 			}
-			nextFree.get(t, asset)
-			if hello, _ := nextFree.get(t, "/hello.txt"); strings.TrimSpace(string(hello)) != "journey public file" {
+			app.get(t, asset)
+			if hello, _ := app.get(t, "/hello.txt"); strings.TrimSpace(string(hello)) != "journey public file" {
 				t.Fatalf("GET /hello.txt = %q", hello)
 			}
 		}
 		check(t)
-		nextFree.park(t)
+		app.park(t)
 		check(t)
-		nextFree.park(t)
+		app.park(t)
+	}
+
+	t.Run("nextjs-free-standalone", func(t *testing.T) {
+		checkStandalone(t, nextFree, nil, "cccccccc-0000-4000-8000-000000000001")
+	})
+
+	t.Run("nextjs15-free-standalone", func(t *testing.T) {
+		pkg, err := os.ReadFile(filepath.Join("..", "..", "tests", "journeys", "testdata", "nextjs-standalone", "package.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pinned := regexp.MustCompile(`"next": "[^"]+"`).ReplaceAllString(string(pkg), `"next": "15.5.29"`)
+		if pinned == string(pkg) {
+			t.Fatal("fixture has no next dependency")
+		}
+		checkStandalone(t, next15, map[string]string{"package.json": pinned}, "cccccccc-0000-4000-8000-000000000005")
 	})
 
 	t.Run("nextjs-free-start-flags", func(t *testing.T) {
