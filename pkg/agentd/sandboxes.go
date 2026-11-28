@@ -497,13 +497,16 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	}
 	ss.mu.Lock()
 	ready := ss.ready
+	// A stream lost during a pause took the VM with it: vmmd captured it,
+	// or gave up, and destroyed it; nothing is left to reattach to.
+	detachable := ready && !ss.pausing && ss.lateCaptureID == ""
 	ss.mu.Unlock()
 	switch code := status.Code(recvErr); {
 	case ctx.Err() != nil:
 		// The replica is stopping; the lease lapses and the sweeper decides.
 	case claim.Reattach != nil && !ready && code == codes.NotFound:
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeVMLost, "the session's VM ended unexpectedly"})
-	case claim.Reattach != nil && !ready, persistent && ready && code == codes.Unavailable:
+	case claim.Reattach != nil && !ready, persistent && detachable && code == codes.Unavailable:
 		// The VM may run on without a stream: the lease lapses and a claim
 		// reattaches to it within the grace (ADR-20261122132055 §7).
 		s.log.Info("agentd: sandbox stream lost; left for a reattach", "sandbox_id", claim.ID, "cause", code.String())

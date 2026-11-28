@@ -86,7 +86,7 @@ func TestSandboxResumeWaitsForADrainingNodesUpload(t *testing.T) {
 // placement and asks vmmd for the running VM; a node outside the pool holds
 // none.
 func TestSandboxReattachGoesToItsNode(t *testing.T) {
-	runner, router, ledger, node, _ := sandboxRunnerStoreFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
+	runner, router, ledger, node, _ := sandboxRunnerPoolStoreFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
 	a := sandboxAdmission()
 	a.Persistent = true
 	a.Reattach = &sched.SandboxReattach{NodeID: node, Instance: sched.SandboxInstanceID(a.SandboxID)}
