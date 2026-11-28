@@ -182,8 +182,14 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 		TimeoutSeconds:        resolved.TimeoutSeconds,
 		MaxOutputBytes:        resolved.MaxOutputBytes,
 		Interactive:           interactive,
+		CapActiveTasks:        true,
+		MaxActiveTasks:        s.appTaskConcurrency(acct.Plan),
 		CreatedAt:             time.Now().UTC(),
 	})
+	var limitErr *state.AppTaskConcurrencyError
+	if errors.As(err, &limitErr) {
+		return state.AppTask{}, api.ErrPlanLimitAppTasks(acct.Plan, limitErr.Limit, limitErr.Active, app.Slug)
+	}
 	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
 		return state.AppTask{}, appTaskDeploymentUnavailableProblem()
 	}
@@ -332,4 +338,17 @@ func (s *server) cancelAppTask(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	writeJSON(w, http.StatusAccepted, appTaskResponse(row))
+}
+
+// appTaskConcurrency is the account plan's cap on app tasks queued or running
+// at once, from the hot `app_task_concurrency` key; a stored value that no
+// longer parses falls back to the built-in caps.
+func (s *server) appTaskConcurrency(plan api.Plan) int {
+	var overrides map[api.Plan]int
+	if s.runtimeConfig != nil {
+		if parsed, err := api.ParseAppTaskConcurrency(s.runtimeConfig.Value(runtimeConfigAppTaskConcurrency)); err == nil {
+			overrides = parsed
+		}
+	}
+	return api.AppTaskConcurrencyFor(plan, overrides)
 }

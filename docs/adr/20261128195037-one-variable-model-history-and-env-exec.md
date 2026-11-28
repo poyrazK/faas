@@ -54,8 +54,13 @@ Every configuration value is a **variable** with a kind: `sealed` or `plain`.
    `api.SecretKeyPattern` and every database CHECK that pins the uppercase form
    (`app_secrets`, `project_environment_secrets`, `app_config_guard_secrets`,
    `app_environment_secret_refs`, `app_secret_revocations`, and the three SQL
-   functions that filter on it) move to the mixed-case form. Existing keys are
-   unaffected; nothing is renamed. (Owner decision: mixed case for both.)
+   function that filters workload variables) move to the mixed-case form.
+   Existing keys are unaffected; nothing is renamed. (Owner decision: mixed
+   case for both.) One exception: a project environment configuration
+   document keeps ADR-1136's uppercase rule for which keys become variables,
+   because lowercase keys such as `region` already mean "document only" in
+   existing documents; widening it would start delivering them to every
+   service.
 3. **One kind per key per scope.** Writing a key in the other kind replaces it:
    the old row is deleted and the new one written in one transaction, recorded
    as one config revision (`source = env.kind_change`). The API refuses an

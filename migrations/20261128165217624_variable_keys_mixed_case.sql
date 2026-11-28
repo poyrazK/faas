@@ -4,11 +4,11 @@
 -- plain variables (^[A-Za-z][A-Za-z0-9_]*$, <= 128 bytes), so DOTNET_gcServer
 -- or next_public_url can be sealed. Widened: app and project environment
 -- secret keys, guard-retained secret keys, secret reference source names and
--- revocation keys. Also fixes two places that silently refused mixed-case
--- variables the API accepts: project environment configuration
--- (project_environment_config_env dropped lowercase keys, contrary to
--- docs/env.md) and Git-reviewed workload variables (the intent trigger
--- refused what environmentsync validates with api.ValidateEnvKey).
+-- revocation keys. Also lets Git-reviewed workload variables take the mixed
+-- case environmentsync already validates with api.ValidateEnvKey (the intent
+-- trigger refused them). Project environment configuration keeps its
+-- uppercase env grammar (ADR-1136): lowercase document keys stay
+-- document-only.
 -- Each wider CHECK is added NOT VALID under a new name and validated, then
 -- the old one dropped; re-runnable.
 -- +goose NO TRANSACTION
@@ -77,16 +77,6 @@ ALTER TABLE app_config_guard_secrets DROP CONSTRAINT IF EXISTS app_config_guard_
 ALTER TABLE app_environment_secret_refs DROP CONSTRAINT IF EXISTS app_environment_secret_refs_secret_name_check;
 ALTER TABLE app_secret_revocations DROP CONSTRAINT IF EXISTS app_secret_revocations_key_shape;
 
--- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.project_environment_config_env(config jsonb) RETURNS jsonb
-    LANGUAGE sql IMMUTABLE
-    AS $_$
-    SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
-      FROM jsonb_each(CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END) e
-     WHERE e.key ~ '^[A-Za-z][A-Za-z0-9_]*$' AND length(e.key) <= 128
-       AND jsonb_typeof(e.value) IN ('string', 'number', 'boolean');
-$_$;
--- +goose StatementEnd
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.guard_environment_workload_intent() RETURNS trigger
@@ -247,16 +237,6 @@ $restore5$;
 -- +goose StatementEnd
 ALTER TABLE app_secret_revocations DROP CONSTRAINT IF EXISTS app_secret_revocations_key_shape_v2;
 
--- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.project_environment_config_env(config jsonb) RETURNS jsonb
-    LANGUAGE sql IMMUTABLE
-    AS $_$
-    SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
-      FROM jsonb_each(CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END) e
-     WHERE e.key ~ '^[A-Z][A-Z0-9_]*$' AND length(e.key) <= 128
-       AND jsonb_typeof(e.value) IN ('string', 'number', 'boolean');
-$_$;
--- +goose StatementEnd
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.guard_environment_workload_intent() RETURNS trigger

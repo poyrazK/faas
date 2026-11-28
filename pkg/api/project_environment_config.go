@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
@@ -82,6 +83,10 @@ func NormalizeProjectEnvironmentConfig(raw []byte) (json.RawMessage, string, err
 // number or boolean. Strings are delivered as-is, numbers as their JSON text
 // and booleans as "true" or "false"; every other entry stays document-only.
 // The database trigger that invalidates snapshots applies the same rule.
+// projectConfigEnvKeyRe is the ADR-1136 grammar for document keys that
+// become environment variables.
+var projectConfigEnvKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
 func ProjectEnvironmentConfigEnv(values json.RawMessage) (map[string]string, error) {
 	env := map[string]string{}
 	if len(bytes.TrimSpace(values)) == 0 {
@@ -96,7 +101,9 @@ func ProjectEnvironmentConfigEnv(values json.RawMessage) (map[string]string, err
 		// document says which entries are env (LOG_LEVEL) and which stay
 		// document-only (region). App env vars accept mixed case; this
 		// delivery rule, and the snapshot trigger mirroring it, do not.
-		if ValidateSecretKey(key) != nil {
+		// (Sealed keys became mixed case in ADR-20261128195037; this rule
+		// stays uppercase so existing documents keep their meaning.)
+		if len(key) > MaxSecretKeyLen || !projectConfigEnvKeyRe.MatchString(key) {
 			continue
 		}
 		raw = bytes.TrimSpace(raw)

@@ -25448,7 +25448,7 @@ CREATE FUNCTION public.project_environment_config_env(config jsonb) RETURNS json
     AS $_$
     SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
       FROM jsonb_each(CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END) e
-     WHERE e.key ~ '^[A-Za-z][A-Za-z0-9_]*$' AND length(e.key) <= 128
+     WHERE e.key ~ '^[A-Z][A-Z0-9_]*$' AND length(e.key) <= 128
        AND jsonb_typeof(e.value) IN ('string', 'number', 'boolean');
 $_$;
 
@@ -83764,6 +83764,13 @@ CREATE INDEX app_slo_hourly_hour_idx ON public.app_slo_hourly USING btree (hour)
 --
 
 CREATE INDEX app_task_network_address ON public.app_task_networks USING btree (node_id, host_ip) WHERE active;
+
+
+--
+-- Name: app_tasks_account_active_manual_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tasks_account_active_manual_idx ON public.app_tasks USING btree (account_id) WHERE ((kind = 'manual'::text) AND (status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text])));
 
 
 --

@@ -78,11 +78,13 @@ gregale environment config set shop production --file production.json --yes
 ```
 
 `config set` replaces the whole document, so include every key you want to
-keep. A top-level key becomes an environment variable when it is a valid
-variable name (`^[A-Za-z][A-Za-z0-9_]*$`) and its value is a string, number or
-boolean; numbers keep their JSON text and booleans become `true` or `false`.
-Other keys, and objects, arrays and nulls, stay in the document without
-reaching the services. Secret-shaped names such as `*_TOKEN` or `*_PASSWORD`
+keep. A top-level key becomes an environment variable when it is an
+uppercase variable name (`^[A-Z][A-Z0-9_]*$`) and its value is a string,
+number or boolean; numbers keep their JSON text and booleans become `true` or
+`false`. Lowercase and mixed-case keys such as `region` stay in the document
+only; set a mixed-case variable on each service with `gregale env set`.
+Objects, arrays and nulls also stay in the document without reaching the
+services. Secret-shaped names such as `*_TOKEN` or `*_PASSWORD`
 are rejected; keep credentials in [sealed secrets](secrets.md).
 
 A service's own variable with the same key wins, so any service can override a

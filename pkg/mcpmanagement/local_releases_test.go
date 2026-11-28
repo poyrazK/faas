@@ -396,7 +396,7 @@ func TestEnvChangeRefusesSecretsAndBadInput(t *testing.T) {
 	for i := 0; i <= maxEnvChangeKeys; i++ {
 		many[fmt.Sprintf("KEY_%d", i)] = "v"
 	}
-	for _, values := range []map[string]any{{"lower": "v"}, {"MULTI": "a\nB=b"}, many, {}} {
+	for _, values := range []map[string]any{{"9lives": "v"}, {"MULTI": "a\nB=b"}, many, {}} {
 		if out := callTool(t, ctx, cs, "gregale_plan_env_change", map[string]any{"app": "alpha", "values": values, "reason": "x"}, true); toolCode(t, out) != "invalid_argument" {
 			t.Errorf("values %v: %v", values, out)
 		}
