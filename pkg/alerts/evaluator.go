@@ -1198,6 +1198,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
 	case state.AlertMetricOOMKills:
 		return e.observeOOMKills(ctx, rule)
+	case state.AlertMetricBootFailures, state.AlertMetricJobFailures:
+		return e.observeFailureCount(ctx, rule)
 	case state.AlertMetricFailedDeployments:
 		// Postgres-backed. Issue #1233 / ADR-123.
 		// Walks the deployments table per migration 00349.
@@ -1467,6 +1469,39 @@ func (e *Evaluator) observeOOMKills(ctx context.Context, rule state.AlertRule) (
 		n = float64(rows[0].Total)
 	}
 	return n, compareFloat(n, rule.Comparison, rule.Threshold), ""
+}
+
+// observeFailureCount counts the app's failed boots (boot_failures) or the
+// account's failed and dead-lettered job runs (job_failures) within the rule
+// window. A store without state.FailureAlertCounter, or a boot rule without
+// an app, degrades the rule instead of reporting zero failures.
+func (e *Evaluator) observeFailureCount(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	counter, ok := e.store.(state.FailureAlertCounter)
+	if !ok {
+		return 0, false, skipDegraded
+	}
+	now := e.now()
+	since := e.windowStart(rule.WindowSpec, now)
+	var (
+		n   int64
+		err error
+	)
+	switch rule.Metric {
+	case state.AlertMetricBootFailures:
+		if rule.AppID == "" {
+			return 0, false, skipDegraded
+		}
+		n, err = counter.CountAppBootFailures(ctx, rule.AppID, since, now)
+	case state.AlertMetricJobFailures:
+		n, err = counter.CountAccountFailedJobRuns(ctx, rule.AccountID, since, now)
+	default:
+		return 0, false, skipDegraded
+	}
+	if err != nil {
+		e.log.Warn("alerts: count failures", "rule", rule.ID, "metric", rule.Metric, "err", err)
+		return 0, false, skipDegraded
+	}
+	return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
 }
 
 // summariseFailed walks every alertable InvocationSource value and sums

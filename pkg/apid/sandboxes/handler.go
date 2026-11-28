@@ -37,6 +37,7 @@ type Store interface {
 	PauseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
 	ResumeSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
 	GrowPausedSandboxVolume(ctx context.Context, accountID, id string, volumeGB int) (bool, error)
+	ForkSandbox(ctx context.Context, a agentstore.SandboxForkAdmission) ([]agentstore.Sandbox, error)
 	SandboxSnapshot(ctx context.Context, accountID, id string) (agentstore.SandboxSnapshot, error)
 	SandboxSnapshots(ctx context.Context, accountID string, f agentstore.SandboxSnapshotFilter) ([]agentstore.SandboxSnapshot, error)
 	RequestSandboxSnapshotDelete(ctx context.Context, accountID, id string) error
@@ -450,6 +451,9 @@ func (h *Handler) problem(acct state.Account, operation string, err error) *api.
 			"the account has no such snapshot ready to start from; it may have expired or been deleted")
 	case errors.Is(err, agentstore.ErrTenantInactive):
 		return api.NewProblem(http.StatusConflict, api.CodeAgentTenantInactive, "Tenant not active", "the tenant is suspended")
+	case errors.Is(err, agentstore.ErrSandboxNotForkable):
+		return api.NewProblem(http.StatusConflict, api.CodeSandboxNotForkable, "Sandbox cannot be forked",
+			"only a running session, or a paused one with a capture, forks; not a task or a closing session")
 	case errors.Is(err, agentstore.ErrSandboxNotPausable):
 		return api.NewProblem(http.StatusConflict, api.CodeSandboxNotPausable, "Sandbox cannot be paused or resumed",
 			"only a running persistent session pauses, and only a paused one resumes")

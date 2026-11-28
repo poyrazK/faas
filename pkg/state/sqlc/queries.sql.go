@@ -12311,16 +12311,19 @@ func (q *Queries) CountReadinessSubscriptions(ctx context.Context, db DBTX, arg 
 }
 
 const countStoredWorkflowRevisions = `-- name: CountStoredWorkflowRevisions :one
-SELECT count(*) FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2
+SELECT count(*) FROM stored_workflow_revisions
+WHERE app_id=$1 AND name=$2
+  AND environment_id IS NOT DISTINCT FROM $3::uuid
 `
 
 type CountStoredWorkflowRevisionsParams struct {
-	AppID pgtype.UUID
-	Name  string
+	AppID         pgtype.UUID
+	Name          string
+	EnvironmentID pgtype.UUID
 }
 
 func (q *Queries) CountStoredWorkflowRevisions(ctx context.Context, db DBTX, arg CountStoredWorkflowRevisionsParams) (int64, error) {
-	row := db.QueryRow(ctx, countStoredWorkflowRevisions, arg.AppID, arg.Name)
+	row := db.QueryRow(ctx, countStoredWorkflowRevisions, arg.AppID, arg.Name, arg.EnvironmentID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -16593,6 +16596,20 @@ func (q *Queries) DeleteReadinessSubscription(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteStageWorkflowScheduleCursor = `-- name: DeleteStageWorkflowScheduleCursor :exec
+DELETE FROM stage_workflow_schedule_cursors WHERE app_id = $1 AND workflow_name = $2
+`
+
+type DeleteStageWorkflowScheduleCursorParams struct {
+	AppID        pgtype.UUID
+	WorkflowName string
+}
+
+func (q *Queries) DeleteStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg DeleteStageWorkflowScheduleCursorParams) error {
+	_, err := db.Exec(ctx, deleteStageWorkflowScheduleCursor, arg.AppID, arg.WorkflowName)
+	return err
 }
 
 const deleteStaticEgressProvisioningSource = `-- name: DeleteStaticEgressProvisioningSource :exec
@@ -31157,6 +31174,34 @@ func (q *Queries) GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, depl
 	return artifact_id, err
 }
 
+const getStageWorkflowScheduleCursor = `-- name: GetStageWorkflowScheduleCursor :one
+SELECT environment_id, workflow_name, app_id, deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at, updated_at FROM stage_workflow_schedule_cursors WHERE environment_id = $1 AND workflow_name = $2
+`
+
+type GetStageWorkflowScheduleCursorParams struct {
+	EnvironmentID pgtype.UUID
+	WorkflowName  string
+}
+
+func (q *Queries) GetStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetStageWorkflowScheduleCursorParams) (StageWorkflowScheduleCursor, error) {
+	row := db.QueryRow(ctx, getStageWorkflowScheduleCursor, arg.EnvironmentID, arg.WorkflowName)
+	var i StageWorkflowScheduleCursor
+	err := row.Scan(
+		&i.EnvironmentID,
+		&i.WorkflowName,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.TriggerSnapshot,
+		&i.LastEvaluatedAt,
+		&i.ScheduledFor,
+		&i.Status,
+		&i.LastRunID,
+		&i.LastAdmittedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getStoredWorkflowFailurePolicy = `-- name: GetStoredWorkflowFailurePolicy :one
 SELECT jsonb_build_object('policy',jsonb_build_object('version',coalesce(p.version,0),'enabled',coalesce(p.enabled,false),
  'failure_threshold',coalesce(p.failure_threshold,3),'min_completed_runs',coalesce(p.min_completed_runs,5),'window_seconds',coalesce(p.window_seconds,300)),
@@ -31430,7 +31475,7 @@ func (q *Queries) GetStoredWorkflowQueueHealth(ctx context.Context, db DBTX, arg
 }
 
 const getStoredWorkflowRevision = `-- name: GetStoredWorkflowRevision :one
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2 AND version=$3
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence, environment_id FROM stored_workflow_revisions WHERE app_id=$1 AND name=$2 AND version=$3
 `
 
 type GetStoredWorkflowRevisionParams struct {
@@ -31452,6 +31497,7 @@ func (q *Queries) GetStoredWorkflowRevision(ctx context.Context, db DBTX, arg Ge
 		&i.PublishedByAccountID,
 		&i.PublishedByApiKeyID,
 		&i.CheckEvidence,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -58808,6 +58854,107 @@ func (q *Queries) ListSoonestExpiringCustomDomainCerts(ctx context.Context, db D
 	return items, nil
 }
 
+const listStageStoredWorkflows = `-- name: ListStageStoredWorkflows :many
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report, environment_id FROM stored_workflows WHERE app_id=$1 AND environment_id=$2 ORDER BY name
+`
+
+type ListStageStoredWorkflowsParams struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) ListStageStoredWorkflows(ctx context.Context, db DBTX, arg ListStageStoredWorkflowsParams) ([]StoredWorkflow, error) {
+	rows, err := db.Query(ctx, listStageStoredWorkflows, arg.AppID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StoredWorkflow{}
+	for rows.Next() {
+		var i StoredWorkflow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Name,
+			&i.Version,
+			&i.Draft,
+			&i.Published,
+			&i.PublishedVersion,
+			&i.Enabled,
+			&i.UpdatedAt,
+			&i.TestSuite,
+			&i.TestReport,
+			&i.EnvironmentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStageWorkflowScheduleCandidates = `-- name: ListStageWorkflowScheduleCandidates :many
+SELECT a.id AS app_id, e.id AS environment_id, d.id AS deployment_id
+FROM (SELECT DISTINCT w.app_id, w.environment_id FROM stored_workflows w
+      WHERE w.environment_id IS NOT NULL AND w.enabled AND w.published->'trigger'->>'type' = 'schedule') s
+JOIN apps a ON a.id = s.app_id
+JOIN project_environments e ON e.id = s.environment_id AND e.project_id = a.project_id AND e.account_id = a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
+JOIN LATERAL (
+    SELECT dep.id FROM deployments dep
+    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = e.slug
+    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+) d ON true
+WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
+  AND ($1::uuid IS NULL OR a.node_id = $1::uuid)
+  AND ($2::uuid IS NULL
+       OR (a.id, e.id) > ($2::uuid, COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)))
+ORDER BY a.id, e.id LIMIT $4
+`
+
+type ListStageWorkflowScheduleCandidatesParams struct {
+	OwnerNodeID        pgtype.UUID
+	AfterAppID         pgtype.UUID
+	AfterEnvironmentID pgtype.UUID
+	BatchLimit         int32
+}
+
+type ListStageWorkflowScheduleCandidatesRow struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	DeploymentID  pgtype.UUID
+}
+
+// A stage's enabled schedule workflows run on the stage's live deployment
+// (ADR-20261104120000). One row per (app, stage), keyset by both.
+func (q *Queries) ListStageWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListStageWorkflowScheduleCandidatesParams) ([]ListStageWorkflowScheduleCandidatesRow, error) {
+	rows, err := db.Query(ctx, listStageWorkflowScheduleCandidates,
+		arg.OwnerNodeID,
+		arg.AfterAppID,
+		arg.AfterEnvironmentID,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStageWorkflowScheduleCandidatesRow{}
+	for rows.Next() {
+		var i ListStageWorkflowScheduleCandidatesRow
+		if err := rows.Scan(&i.AppID, &i.EnvironmentID, &i.DeploymentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStoredWorkflowFailurePauses = `-- name: ListStoredWorkflowFailurePauses :many
 SELECT name FROM stored_workflow_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
 `
@@ -58999,26 +59146,63 @@ func (q *Queries) ListStoredWorkflowHealthRecentRuns(ctx context.Context, db DBT
 	return items, nil
 }
 
+const listStoredWorkflowNamesOutsideEnvironment = `-- name: ListStoredWorkflowNamesOutsideEnvironment :many
+SELECT name FROM stored_workflows
+WHERE app_id=$1 AND environment_id IS DISTINCT FROM $2::uuid
+`
+
+type ListStoredWorkflowNamesOutsideEnvironmentParams struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+// The app's stored workflow names in its other environments: the per-app
+// plan limit counts them all (ADR-20261104120000).
+func (q *Queries) ListStoredWorkflowNamesOutsideEnvironment(ctx context.Context, db DBTX, arg ListStoredWorkflowNamesOutsideEnvironmentParams) ([]string, error) {
+	rows, err := db.Query(ctx, listStoredWorkflowNamesOutsideEnvironment, arg.AppID, arg.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStoredWorkflowRevisions = `-- name: ListStoredWorkflowRevisions :many
-SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence FROM stored_workflow_revisions
+SELECT app_id, name, version, definition, recorded_at, legacy_snapshot, published_by_account_id, published_by_api_key_id, check_evidence, environment_id FROM stored_workflow_revisions
 WHERE app_id=$1 AND name=$2
+  AND environment_id IS NOT DISTINCT FROM $3::uuid
 ORDER BY version DESC
-LIMIT $3 OFFSET $4
+LIMIT $5 OFFSET $4
 `
 
 type ListStoredWorkflowRevisionsParams struct {
-	AppID  pgtype.UUID
-	Name   string
-	Limit  int32
-	Offset int32
+	AppID         pgtype.UUID
+	Name          string
+	EnvironmentID pgtype.UUID
+	OffsetCount   int32
+	LimitCount    int32
 }
 
+// One environment's revisions (NULL is production): a name freed in one
+// environment never shows the other's history (ADR-20261104120000).
 func (q *Queries) ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg ListStoredWorkflowRevisionsParams) ([]StoredWorkflowRevision, error) {
 	rows, err := db.Query(ctx, listStoredWorkflowRevisions,
 		arg.AppID,
 		arg.Name,
-		arg.Limit,
-		arg.Offset,
+		arg.EnvironmentID,
+		arg.OffsetCount,
+		arg.LimitCount,
 	)
 	if err != nil {
 		return nil, err
@@ -59037,6 +59221,7 @@ func (q *Queries) ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg 
 			&i.PublishedByAccountID,
 			&i.PublishedByApiKeyID,
 			&i.CheckEvidence,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -59049,9 +59234,11 @@ func (q *Queries) ListStoredWorkflowRevisions(ctx context.Context, db DBTX, arg 
 }
 
 const listStoredWorkflows = `-- name: ListStoredWorkflows :many
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 ORDER BY name
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report, environment_id FROM stored_workflows WHERE app_id=$1 AND environment_id IS NULL ORDER BY name
 `
 
+// Production's workflows; a stage's are read by ListStageStoredWorkflows
+// (ADR-20261104120000).
 func (q *Queries) ListStoredWorkflows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]StoredWorkflow, error) {
 	rows, err := db.Query(ctx, listStoredWorkflows, appID)
 	if err != nil {
@@ -59072,6 +59259,7 @@ func (q *Queries) ListStoredWorkflows(ctx context.Context, db DBTX, appID pgtype
 			&i.UpdatedAt,
 			&i.TestSuite,
 			&i.TestReport,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -66649,6 +66837,47 @@ func (q *Queries) LockSourceBuildRuntimeRootfs(ctx context.Context, db DBTX, arg
 	var inputs []byte
 	err := row.Scan(&inputs)
 	return inputs, err
+}
+
+const lockStageWorkflowScheduleTarget = `-- name: LockStageWorkflowScheduleTarget :one
+SELECT a.account_id, d.id AS deployment_id, ac.plan,
+  (SELECT coalesce(jsonb_agg(jsonb_set(w.published, '{trigger,enabled}', to_jsonb(w.enabled), true) ORDER BY w.name), '[]'::jsonb)
+   FROM stored_workflows w WHERE w.app_id = a.id AND w.environment_id = e.id AND w.published IS NOT NULL)::jsonb AS workflows
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
+JOIN project_environments e ON e.id = $1::uuid AND e.project_id = a.project_id AND e.account_id = a.account_id
+JOIN deployments d ON d.app_id = a.id
+WHERE a.id = $2::uuid AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
+  AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
+  AND d.id = (
+      SELECT dep.id FROM deployments dep
+      WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = e.slug
+      ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
+  )
+FOR SHARE OF a,d
+`
+
+type LockStageWorkflowScheduleTargetParams struct {
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+}
+
+type LockStageWorkflowScheduleTargetRow struct {
+	AccountID    pgtype.UUID
+	DeploymentID pgtype.UUID
+	Plan         string
+	Workflows    []byte
+}
+
+func (q *Queries) LockStageWorkflowScheduleTarget(ctx context.Context, db DBTX, arg LockStageWorkflowScheduleTargetParams) (LockStageWorkflowScheduleTargetRow, error) {
+	row := db.QueryRow(ctx, lockStageWorkflowScheduleTarget, arg.EnvironmentID, arg.AppID)
+	var i LockStageWorkflowScheduleTargetRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.DeploymentID,
+		&i.Plan,
+		&i.Workflows,
+	)
+	return i, err
 }
 
 const lockTenantWorkflowScheduleConsumerLink = `-- name: LockTenantWorkflowScheduleConsumerLink :one
@@ -82440,6 +82669,25 @@ type PruneRuntimeUpgradeGatewayReceiptsParams struct {
 
 func (q *Queries) PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error {
 	_, err := db.Exec(ctx, pruneRuntimeUpgradeGatewayReceipts, arg.AppID, arg.MaxAgeSeconds)
+	return err
+}
+
+const pruneStageWorkflowScheduleCursors = `-- name: PruneStageWorkflowScheduleCursors :exec
+DELETE FROM stage_workflow_schedule_cursors c WHERE c.environment_id = $1::uuid
+AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements($2::jsonb) definition
+    WHERE definition->>'name' = c.workflow_name AND definition->'trigger'->>'type' = 'schedule'
+      AND (definition->'trigger'->>'enabled')::boolean IS DISTINCT FROM false
+)
+`
+
+type PruneStageWorkflowScheduleCursorsParams struct {
+	EnvironmentID pgtype.UUID
+	Workflows     []byte
+}
+
+func (q *Queries) PruneStageWorkflowScheduleCursors(ctx context.Context, db DBTX, arg PruneStageWorkflowScheduleCursorsParams) error {
+	_, err := db.Exec(ctx, pruneStageWorkflowScheduleCursors, arg.EnvironmentID, arg.Workflows)
 	return err
 }
 
@@ -110683,8 +110931,8 @@ func (q *Queries) SaveSnapshotPrimeHandoff(ctx context.Context, db DBTX, arg Sav
 }
 
 const saveStoredWorkflow = `-- name: SaveStoredWorkflow :exec
-INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report,environment_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
 ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
  published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
  test_suite=excluded.test_suite,test_report=excluded.test_report
@@ -110701,8 +110949,10 @@ type SaveStoredWorkflowParams struct {
 	UpdatedAt        pgtype.Timestamptz
 	TestSuite        []byte
 	TestReport       []byte
+	EnvironmentID    pgtype.UUID
 }
 
+// environment_id is set on insert only; a workflow keeps its environment.
 func (q *Queries) SaveStoredWorkflow(ctx context.Context, db DBTX, arg SaveStoredWorkflowParams) error {
 	_, err := db.Exec(ctx, saveStoredWorkflow,
 		arg.AppID,
@@ -110715,6 +110965,7 @@ func (q *Queries) SaveStoredWorkflow(ctx context.Context, db DBTX, arg SaveStore
 		arg.UpdatedAt,
 		arg.TestSuite,
 		arg.TestReport,
+		arg.EnvironmentID,
 	)
 	return err
 }
@@ -113329,6 +113580,24 @@ UPDATE workflow_runs SET status='failed',last_error='workflow coordinator lease 
 func (q *Queries) StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, stopUncertainCustomerOperationWorkflow, id)
 	return err
+}
+
+const storedWorkflowEnvironmentByName = `-- name: StoredWorkflowEnvironmentByName :one
+SELECT environment_id FROM stored_workflows WHERE app_id=$1 AND name=$2
+`
+
+type StoredWorkflowEnvironmentByNameParams struct {
+	AppID pgtype.UUID
+	Name  string
+}
+
+// Names are unique per app until the contract release, so a name finds its
+// workflow's environment (NULL is production).
+func (q *Queries) StoredWorkflowEnvironmentByName(ctx context.Context, db DBTX, arg StoredWorkflowEnvironmentByNameParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, storedWorkflowEnvironmentByName, arg.AppID, arg.Name)
+	var environment_id pgtype.UUID
+	err := row.Scan(&environment_id)
+	return environment_id, err
 }
 
 const storedWorkflowFailurePaused = `-- name: StoredWorkflowFailurePaused :one
@@ -117750,6 +118019,46 @@ func (q *Queries) UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourP
 		arg.Hour,
 		arg.Good,
 		arg.Total,
+	)
+	return err
+}
+
+const upsertStageWorkflowScheduleCursor = `-- name: UpsertStageWorkflowScheduleCursor :exec
+INSERT INTO stage_workflow_schedule_cursors (environment_id, workflow_name, app_id, deployment_id, trigger_snapshot,
+    last_evaluated_at, scheduled_for, status, last_run_id, last_admitted_at)
+VALUES ($1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10)
+ON CONFLICT (environment_id, workflow_name) DO UPDATE SET
+    app_id = EXCLUDED.app_id, deployment_id = EXCLUDED.deployment_id, trigger_snapshot = EXCLUDED.trigger_snapshot,
+    last_evaluated_at = EXCLUDED.last_evaluated_at, scheduled_for = EXCLUDED.scheduled_for,
+    status = EXCLUDED.status, last_run_id = EXCLUDED.last_run_id, last_admitted_at = EXCLUDED.last_admitted_at, updated_at = now()
+`
+
+type UpsertStageWorkflowScheduleCursorParams struct {
+	EnvironmentID   pgtype.UUID
+	WorkflowName    string
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	LastAdmittedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertStageWorkflowScheduleCursorParams) error {
+	_, err := db.Exec(ctx, upsertStageWorkflowScheduleCursor,
+		arg.EnvironmentID,
+		arg.WorkflowName,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.TriggerSnapshot,
+		arg.LastEvaluatedAt,
+		arg.ScheduledFor,
+		arg.Status,
+		arg.LastRunID,
+		arg.LastAdmittedAt,
 	)
 	return err
 }

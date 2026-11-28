@@ -8,14 +8,22 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.stored_workflow_revision_response import StoredWorkflowRevisionResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     name: str,
     version: int,
+    *,
+    environment: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -24,6 +32,7 @@ def _get_kwargs(
             name=quote(str(name), safe=""),
             version=quote(str(version), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -90,6 +99,7 @@ def sync_detailed(
     version: int,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowRevisionResponse]:
     """Read one immutable published stored workflow revision.
 
@@ -97,6 +107,7 @@ def sync_detailed(
         slug (str):
         name (str):
         version (int):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -110,6 +121,7 @@ def sync_detailed(
         slug=slug,
         name=name,
         version=version,
+        environment=environment,
     )
 
     response = client.get_httpx_client().request(
@@ -125,6 +137,7 @@ def sync(
     version: int,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowRevisionResponse | None:
     """Read one immutable published stored workflow revision.
 
@@ -132,6 +145,7 @@ def sync(
         slug (str):
         name (str):
         version (int):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,6 +160,7 @@ def sync(
         name=name,
         version=version,
         client=client,
+        environment=environment,
     ).parsed
 
 
@@ -155,6 +170,7 @@ async def asyncio_detailed(
     version: int,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowRevisionResponse]:
     """Read one immutable published stored workflow revision.
 
@@ -162,6 +178,7 @@ async def asyncio_detailed(
         slug (str):
         name (str):
         version (int):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,6 +192,7 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         version=version,
+        environment=environment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -188,6 +206,7 @@ async def asyncio(
     version: int,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowRevisionResponse | None:
     """Read one immutable published stored workflow revision.
 
@@ -195,6 +214,7 @@ async def asyncio(
         slug (str):
         name (str):
         version (int):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,5 +230,6 @@ async def asyncio(
             name=name,
             version=version,
             client=client,
+            environment=environment,
         )
     ).parsed

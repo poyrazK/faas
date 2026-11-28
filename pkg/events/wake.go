@@ -966,13 +966,17 @@ type BootFailed struct {
 	Method     string
 	Reason     string
 	FailedAt   time.Time
+	// Mirror marks a failed boot of a mirror-mode (shadow) instance of a
+	// candidate deployment, not of the live app. The boot_failures alert
+	// metric leaves these out. Written to the payload only when true.
+	Mirror bool
 }
 
 func (e BootFailed) Kind() string     { return WakeBootFailed }
 func (e BootFailed) At() time.Time    { return e.EmitAt }
 func (e BootFailed) Subject() *string { return nil }
 func (e BootFailed) Payload() map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"wake_id":     e.WakeID,
 		"app_id":      e.AppID,
 		"instance_id": e.InstanceID,
@@ -981,6 +985,10 @@ func (e BootFailed) Payload() map[string]any {
 		"reason":      e.Reason,
 		"failed_at":   e.FailedAt.UTC(),
 	}
+	if e.Mirror {
+		out["mirror"] = true
+	}
+	return out
 }
 
 // Readiness200 — vmmd's waitReady saw its first 2xx probe. The

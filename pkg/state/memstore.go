@@ -857,6 +857,7 @@ type MemStore struct {
 	storedWorkflowLiveBaselines           map[string][]api.StoredWorkflowLiveBaseline
 	storedWorkflowLiveBaselineRetirements map[string]api.StoredWorkflowLiveBaselineRetirement
 	workflowSchedules                     map[string]WorkflowScheduleCursor
+	stageWorkflowSchedules                map[string]WorkflowScheduleCursor // environment/name (ADR-20261104120000)
 	workflowTenantSchedules               map[string]WorkflowScheduleCursor
 	workflowScheduleOccurrences           map[string]WorkflowScheduleOccurrence
 	storedWorkflowFailurePolicies         map[string]api.StoredWorkflowFailurePolicy
@@ -4644,6 +4645,14 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for key, subscription := range m.eventSubscriptions {
 		if app, ok := m.eventSubscriptionAppLocked(subscription.AppID); ok && app.ProjectID == projectID && subscription.DeploymentScope == slug {
 			delete(m.eventSubscriptions, key)
+		}
+	}
+	// So do its stored workflows and their revisions (FK ON DELETE CASCADE).
+	for key, workflow := range m.storedWorkflows {
+		if workflow.EnvironmentID == environmentID {
+			delete(m.storedWorkflows, key)
+			delete(m.storedWorkflowRevisions, key)
+			m.deleteStageWorkflowScheduleLocked(environmentID, workflow.Name)
 		}
 	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)

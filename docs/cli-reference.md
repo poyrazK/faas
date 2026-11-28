@@ -252,7 +252,7 @@ gregale deploy --path packages/api --source=worktree
 
 Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--boot] [--env-file <FILE>] [--ram <MB>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--boot] [--env-file <FILE>] [--ram <MB>] [--healthcheck-path <PATH>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -264,6 +264,7 @@ Check local source, an image or project prerequisites before deploying
 | `--boot` | without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT and stays up |  |
 | `--env-file <FILE>` | without --project: with --boot, pass KEY=VALUE lines from this file to the container |  |
 | `--ram <MB>` | without --project: with --boot, the container&#39;s memory limit in MB (default: --app&#39;s RAM, else your plan&#39;s default for a new app) |  |
+| `--healthcheck-path <PATH>` | without --project: with --boot, probe this readiness path instead of / and require 2xx |  |
 | `--strict` | without --project: exit 1 on warnings |  |
 | `--app <SLUG>` | without --project: app whose env and secret names count as declared (defaults to linked context) |  |
 | `--project-slug <SLUG>` | with --project: project slug (defaults to linked context or selected directory) |  |
@@ -7324,21 +7325,23 @@ Create a local stored workflow starter with simulation samples
 
 List stored workflow versions and ownership for an app
 
-`gregale workflow stored list --app <SLUG>`
+`gregale workflow stored list --app <SLUG> [--env <ENV>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 
 #### workflow stored get
 
 Inspect stored workflow state or export a definition
 
-`gregale workflow stored get --app <SLUG> --name <NAME> [--definition-out <PATH>] [--published]`
+`gregale workflow stored get --app <SLUG> [--env <ENV>] --name <NAME> [--definition-out <PATH>] [--published]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--definition-out <PATH>` | export the selected definition as JSON to a new file |  |
 | `--published` | export the published definition instead of the draft |  |
@@ -7437,11 +7440,12 @@ Reports each run&#39;s outcome.
 
 Stop future scheduled and event-triggered admissions
 
-`gregale workflow stored pause --app <SLUG> --name <NAME> --expected-version <N>`
+`gregale workflow stored pause --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current stored workflow version | required |
 
@@ -7449,11 +7453,12 @@ Stop future scheduled and event-triggered admissions
 
 Resume automatic scheduled and event-triggered admissions
 
-`gregale workflow stored resume --app <SLUG> --name <NAME> --expected-version <N>`
+`gregale workflow stored resume --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current stored workflow version | required |
 
@@ -7467,11 +7472,12 @@ Inspect immutable published snapshots
 
 List published revisions for a stored workflow
 
-`gregale workflow stored revisions list --app <SLUG> --name <NAME> [--limit <N>] [--offset <N>]`
+`gregale workflow stored revisions list --app <SLUG> [--env <ENV>] --name <NAME> [--limit <N>] [--offset <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--limit <N>` | page size (1..100, default 50) |  |
 | `--offset <N>` | number of revisions to skip |  |
@@ -7480,11 +7486,12 @@ List published revisions for a stored workflow
 
 Inspect a revision or export its definition
 
-`gregale workflow stored revisions show --app <SLUG> --name <NAME> --revision <N> [--definition-out <PATH>]`
+`gregale workflow stored revisions show --app <SLUG> [--env <ENV>] --name <NAME> --revision <N> [--definition-out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--revision <N>` | published revision number | required |
 | `--definition-out <PATH>` | export the definition as JSON to a new file |  |
@@ -7506,11 +7513,12 @@ Restore a published revision as a draft
 
 Delete a stored workflow using its current version
 
-`gregale workflow stored delete --app <SLUG> --name <NAME> --expected-version <N> --yes [--restore-manifest]`
+`gregale workflow stored delete --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N> --yes [--restore-manifest]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current stored workflow version | required |
 | `--yes` | required explicit confirmation of stored workflow deletion | required |
@@ -7551,11 +7559,12 @@ Does not run steps.
 
 Save a stored workflow definition as a draft
 
-`gregale workflow stored apply --app <SLUG> --file <PATH> --expected-version <N>`
+`gregale workflow stored apply --app <SLUG> [--env <ENV>] --file <PATH> --expected-version <N>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--file <PATH>` | YAML or JSON definition file | required |
 | `--expected-version <N>` | current version; use 0 for a new draft | required |
 
@@ -7563,11 +7572,12 @@ Save a stored workflow definition as a draft
 
 Publish the current stored workflow draft
 
-`gregale workflow stored publish --app <SLUG> --name <NAME> --expected-version <N> [--take-over-manifest] [--scenarios <PATH>] [--require-coverage]`
+`gregale workflow stored publish --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N> [--take-over-manifest] [--scenarios <PATH>] [--require-coverage]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current version of the draft | required |
 | `--take-over-manifest` | explicitly take over YAML ownership |  |
@@ -7795,7 +7805,7 @@ gregale workflow schedule simulate --app billing --workflow nightly --at 2027-03
 
 Trigger a new workflow run
 
-`gregale workflow run [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--app <slug>] [--input <JSON>] [--input-file <PATH|->] [--idempotency-key <KEY>] <workflow-name>`
+`gregale workflow run [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--app <slug>] [--input <JSON>] [--input-file <PATH|->] [--idempotency-key <KEY>] [--env <ENV>] <workflow-name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7806,6 +7816,7 @@ Trigger a new workflow run
 | `--input <JSON>` | JSON input payload (default {}; excludes --input-file) |  |
 | `--input-file <PATH|->` | read one JSON value from a file, or - for stdin; maximum 1 MiB; excludes --input |  |
 | `--idempotency-key <KEY>` | stable key for retrying an uncertain run start |  |
+| `--env <ENV>` | project environment whose live deployment runs it (default production) (also --environment) |  |
 
 Examples:
 
@@ -8651,7 +8662,7 @@ Add an alert rule
 | `--app <slug>` | app slug (defaults to the linked app) |  |
 | `--env <ENV>` | project environment the rule watches; a stage watches its own requests, errors, latency, cold starts or failed invocations; omitted is production (also --environment) |  |
 | `--name <NAME>` | rule name (3..120 chars) | required |
-| `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
+| `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `boot_failures` · `job_failures` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -8722,7 +8733,7 @@ Update one alert rule
 | `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
 | `--name <NAME>` | rule name (3..120 chars) |  |
 | `--enabled` | turn the rule on or off (--enabled=false pauses it) |  |
-| `--metric <METRIC>` | metric | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
+| `--metric <METRIC>` | metric | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `boot_failures` · `job_failures` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |

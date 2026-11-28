@@ -105,10 +105,19 @@ const (
 	// passes. Only vmmd sends it, once, right after the restore: callers'
 	// requests that name it are refused (IsHostOnly).
 	OpTemplateStart = "template_start"
+	// OpForked tells a session restored from another session's fork capture
+	// that it is a fork (ADR-20261122132055 §3): later commands get
+	// GREGALE_FORKED_FROM, and running commands started with
+	// reseed_on_fork get SIGUSR2 to reseed their own PRNG state. Only vmmd
+	// sends it, once, right after the restore.
+	OpForked = "forked"
 )
 
+// ForkedFromEnv names the fork's source session in a fork's commands.
+const ForkedFromEnv = "GREGALE_FORKED_FROM"
+
 // IsHostOnly reports whether only vmmd may send op, never a caller.
-func IsHostOnly(op string) bool { return op == OpTemplateStart }
+func IsHostOnly(op string) bool { return op == OpTemplateStart || op == OpForked }
 
 // Command users (ADR-20261027090013 §10).
 const (
@@ -193,6 +202,10 @@ type Request struct {
 	TimeoutMillis  int64             `json:"timeout_ms,omitempty"`
 	MaxOutputBytes int64             `json:"max_output_bytes,omitempty"`
 	RunAs          string            `json:"run_as,omitempty"`
+	// ReseedOnFork asks for SIGUSR2 when the session this command runs in
+	// is forked: the command runs on in each fork with the memory it had at
+	// the fork, PRNG state included (ADR-20261122132055 §3).
+	ReseedOnFork bool `json:"reseed_on_fork,omitempty"`
 
 	// exec_output, exec_kill
 	Handle       string `json:"handle,omitempty"`
@@ -230,10 +243,21 @@ type Request struct {
 	// template_start; the ready timeout is TimeoutMillis.
 	StartCmd string `json:"start_cmd,omitempty"`
 	ReadyCmd string `json:"ready_cmd,omitempty"`
+
+	// forked: the fork's source session.
+	ForkedFrom string `json:"forked_from,omitempty"`
+}
+
+// ForkedResult answers forked: how many running commands got SIGUSR2.
+type ForkedResult struct {
+	Signaled int `json:"signaled"`
 }
 
 // handleRE is a background command's handle.
 var handleRE = regexp.MustCompile(`^c[0-9a-f]{16}$`)
+
+// forkSourceRE is a session id as forked names it.
+var forkSourceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,127}$`)
 
 // envNameRE is an environment variable name.
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
@@ -279,6 +303,10 @@ func (r Request) Validate() error {
 		err = ValidPreviewPort(r.Port)
 	case OpTemplateStart:
 		err = r.validateTemplateStart()
+	case OpForked:
+		if !forkSourceRE.MatchString(r.ForkedFrom) {
+			err = errors.New("forked_from must be a session id")
+		}
 	default:
 		err = fmt.Errorf("unknown op %q", r.Op)
 	}
@@ -409,6 +437,9 @@ func (r Request) validateExec() error {
 	}
 	if (r.Rows == 0) != (r.Cols == 0) {
 		return errors.New("rows and cols go together")
+	}
+	if r.ReseedOnFork && !r.Background {
+		return errors.New("reseed_on_fork needs background")
 	}
 	return firstError(positive("timeout_ms", r.TimeoutMillis, MaxTimeoutMillis), positive("max_output_bytes", r.MaxOutputBytes, MaxOutputBytes))
 }

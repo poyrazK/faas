@@ -18938,6 +18938,9 @@
       "egress_allow",
       "egress_deny",
       "expires_at",
+      "fork_capture_id",
+      "fork_local_refused_at",
+      "fork_requested_at",
       "forked_from",
       "id",
       "idle_timeout_sec",
@@ -18989,9 +18992,11 @@
       "id",
       "mem_bytes",
       "node_id",
+      "purpose",
       "session_id",
       "state",
       "storage_key",
+      "uploaded_at",
       "vmstate_bytes",
       "vmstate_storage_key",
       "volume_backup_id"
@@ -21245,6 +21250,7 @@
       "app_id",
       "draft",
       "enabled",
+      "environment_id",
       "name",
       "published",
       "published_version",
@@ -21397,6 +21403,7 @@
       "app_id",
       "check_evidence",
       "definition",
+      "environment_id",
       "legacy_snapshot",
       "name",
       "published_by_account_id",
@@ -23893,6 +23900,23 @@
       "target_slug",
       "updated_at",
       "warning"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stage_workflow_schedule_cursors",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "environment_id",
+      "last_admitted_at",
+      "last_evaluated_at",
+      "last_run_id",
+      "scheduled_for",
+      "status",
+      "trigger_snapshot",
+      "updated_at",
+      "workflow_name"
     ],
     "kind": "operational"
   }

@@ -360,6 +360,9 @@ type SandboxSession struct {
 	TaskOutput          []byte
 	Vcpu                pgtype.Int2
 	VolumeGb            pgtype.Int4
+	ForkCaptureID       pgtype.UUID
+	ForkRequestedAt     pgtype.Timestamptz
+	ForkLocalRefusedAt  pgtype.Timestamptz
 	PauseRequestedAt    pgtype.Timestamptz
 	ResumeRequestedAt   pgtype.Timestamptz
 	PausedAt            pgtype.Timestamptz
@@ -381,6 +384,8 @@ type SandboxSessionCapture struct {
 	VmstateBytes      int64
 	HasBacking        bool
 	VolumeBackupID    pgtype.UUID
+	Purpose           string
+	UploadedAt        pgtype.Timestamptz
 	State             string
 	CreatedAt         pgtype.Timestamptz
 	ConsumedAt        pgtype.Timestamptz
