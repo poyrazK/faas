@@ -40,7 +40,7 @@ Verify the tokens wherever they are used:
 
 - **Data API:** `gregale data-api create NAME --database DB --auth shop-auth`,
   then write row-level security policies (see below).
-- **Edge JWT rules:** `gregale edge-rules create --app APP --kind jwt
+- **Edge JWT rules:** `gregale edge rule create --app APP --kind jwt
   --match-host HOST --jwt-auth shop-auth` requires a valid token on a route.
 - **Your own backend:** the Go, Python and Node SDKs (see below).
 
@@ -258,7 +258,7 @@ signing key IDs.
 
 ```sh
 gregale auth providers enable shop-auth google --client-id ID --client-secret-stdin
-gregale auth providers shop-auth
+gregale auth providers list shop-auth
 gregale auth providers disable shop-auth google
 ```
 
