@@ -4602,15 +4602,16 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// without joining the legacy state_transition rows.
 		if e.events != nil {
 			e.events.Emit(ctx, events.BootFailed{
-				EmitAt:     time.Now().UTC(),
-				WakeID:     bootInput.wakeID,
-				AppID:      bootInput.appID,
-				InstanceID: bootInput.insID,
-				NodeID:     bootInput.nodeID,
-				Method:     method,
-				Reason:     "vmm_boot_failed",
-				FailedAt:   time.Now().UTC(),
-				Mirror:     mode == string(state.InstanceModeMirror),
+				EmitAt:       time.Now().UTC(),
+				WakeID:       bootInput.wakeID,
+				AppID:        bootInput.appID,
+				InstanceID:   bootInput.insID,
+				NodeID:       bootInput.nodeID,
+				Method:       method,
+				Reason:       "vmm_boot_failed",
+				FailedAt:     time.Now().UTC(),
+				Mirror:       mode == string(state.InstanceModeMirror),
+				DeploymentID: bootInput.depID,
 			})
 		}
 		// issue #1059 / ADR-127 §3.6 — schedd-side parity
@@ -4770,15 +4771,16 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// the same wake_id (the prior emit at the Phase 3 entry).
 		if e.events != nil {
 			e.events.Emit(ctx, events.BootFailed{
-				EmitAt:     time.Now().UTC(),
-				WakeID:     bootInput.wakeID,
-				AppID:      bootInput.appID,
-				InstanceID: bootInput.insID,
-				NodeID:     bootInput.nodeID,
-				Method:     method,
-				Reason:     "record_runtime_failed",
-				FailedAt:   time.Now().UTC(),
-				Mirror:     mode == string(state.InstanceModeMirror),
+				EmitAt:       time.Now().UTC(),
+				WakeID:       bootInput.wakeID,
+				AppID:        bootInput.appID,
+				InstanceID:   bootInput.insID,
+				NodeID:       bootInput.nodeID,
+				Method:       method,
+				Reason:       "record_runtime_failed",
+				FailedAt:     time.Now().UTC(),
+				Mirror:       mode == string(state.InstanceModeMirror),
+				DeploymentID: bootInput.depID,
 			})
 		}
 		// issue #1059 / ADR-127 §3.6 — schedd-side parity
@@ -4895,6 +4897,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			InstanceID:            bootInput.insID,
 			NodeID:                bootInput.nodeID,
 			Method:                completedMethod,
+			DeploymentID:          bootInput.depID,
 			Tier:                  bootInput.chosenTier,
 			RestoreFallbackReason: restoreFallbackReason,
 			StartedAt:             bootInput.startedAt,
