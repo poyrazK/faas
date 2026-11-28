@@ -4108,7 +4108,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if err := deployBootModeProblem(bootMode, healthcheck); err != nil {
 				return printErr("Invalid flags", err)
 			}
-			if code := runDeployBootCheck(ctx, deployBootFlags{image: localImage.sourceName, app: slug, healthPath: *healthcheckPath, envFile: *bootEnvFile, ramMB: deployBootRAMMB(*profile), mode: bootMode}); code != 0 {
+			if code := runDeployBootCheck(ctx, deployBootFlags{image: localImage.sourceName, app: slug, healthPath: *healthcheckPath, envFile: *bootEnvFile, ramMB: deployBootRAMMB(*profile), mode: bootMode, grpc: deployBootGRPC(healthcheck)}); code != 0 {
 				return code
 			}
 		}

@@ -56,6 +56,10 @@ type doctorBootOptions struct {
 	// mode is the app's execution mode; a worker or job is judged without
 	// HTTP (doctor_boot_mode.go).
 	mode string
+	// grpcHealth probes grpc.health.v1 for grpcService instead of HTTP
+	// (doctor_boot_grpc.go).
+	grpcHealth  bool
+	grpcService string
 }
 
 // envFileFlag is the flag that passes env vars to the boot container.
@@ -185,6 +189,9 @@ type doctorBoot struct {
 func (b doctorBoot) check(ctx context.Context) []doctorCheck {
 	if doctorBootNoListener(b.opts.mode) {
 		return b.checkNoListener(ctx)
+	}
+	if b.opts.grpcHealth {
+		return b.checkGRPC(ctx)
 	}
 	status, exited, err := b.waitForHTTP(ctx)
 	if err != nil {
@@ -380,8 +387,12 @@ func (b doctorBoot) exitedCheck(ctx context.Context, name string, st doctorBootS
 // check reports the generic contract.
 func (b doctorBoot) listenerProblem(ctx context.Context) doctorCheck {
 	port := b.opts.port
+	protocol := "HTTP"
+	if b.opts.grpcHealth {
+		protocol = "gRPC"
+	}
 	c := doctorCheck{Name: "boot-listener", Status: "error", Code: "boot_not_listening",
-		Hint: fmt.Sprintf("Nothing answered HTTP on 0.0.0.0:%d ($PORT) within %s.", port, bootSeconds(doctorBootStartupTimeout)),
+		Hint: fmt.Sprintf("Nothing answered %s on 0.0.0.0:%d ($PORT) within %s.", protocol, port, bootSeconds(doctorBootStartupTimeout)),
 		Fix:  "Bind 0.0.0.0 and read PORT. A worker without an HTTP listener deploys in worker mode."}
 	out, err := b.docker.run(ctx, "exec", b.name, "cat", "/proc/net/tcp", "/proc/net/tcp6")
 	if err != nil && out == "" {
@@ -403,6 +414,10 @@ func (b doctorBoot) listenerProblem(ctx context.Context) doctorCheck {
 	case len(onPort) > 0:
 		c.Hint = fmt.Sprintf("The app accepts connections on %s but did not answer GET %s with HTTP within %s.", onPort[0], b.probePath(), bootSeconds(doctorBootStartupTimeout))
 		c.Fix = "Serve HTTP on $PORT. A non-HTTP TCP service needs an explicit TCP route; a worker deploys in worker mode."
+		if b.opts.grpcHealth {
+			c.Hint = fmt.Sprintf("The app accepts connections on %s but did not answer plaintext gRPC within %s.", onPort[0], bootSeconds(doctorBootStartupTimeout))
+			c.Fix = "Serve plaintext gRPC (h2c) on $PORT: Gregale's probe does not use TLS, and Gregale terminates TLS at its edge."
+		}
 	case len(loopback) > 0:
 		c.Hint = fmt.Sprintf("Listening on %s, not 0.0.0.0:%d; the platform cannot reach a loopback listener.", loopback[0], port)
 		c.Fix = "Bind 0.0.0.0 (or ::) instead of 127.0.0.1/localhost."

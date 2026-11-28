@@ -47,6 +47,9 @@ type doctorImageFlags struct {
 	// executionMode is the app's lifecycle mode; a worker or job is checked
 	// to keep running or exit 0 instead of serving HTTP.
 	executionMode string
+	// grpcHealth probes grpc.health.v1 for grpcService instead of HTTP.
+	grpcHealth  bool
+	grpcService string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -59,6 +62,8 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
 	fs.IntVar(&f.ramMB, "ram", 0, "with --boot, memory limit in MB (default: --app's RAM, else your plan's default for a new app)")
 	fs.StringVar(&f.healthPath, "healthcheck-path", "", "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does (for example /healthz)")
+	fs.BoolVar(&f.grpcHealth, "healthcheck-grpc", false, "with --boot, probe standard gRPC health (grpc.health.v1) on $PORT and require SERVING, as Gregale does")
+	fs.StringVar(&f.grpcService, "healthcheck-grpc-service", "", "with --healthcheck-grpc, the service name to check; empty checks the whole server")
 	fs.StringVar(&f.executionMode, "execution-mode", "", "with --boot, the app's lifecycle mode: request|service|worker|job; a worker must keep running and a job exit 0, with no HTTP")
 	return f
 }
@@ -97,6 +102,18 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	}
 	if doctorBootNoListener(f.executionMode) && visited["healthcheck-path"] {
 		return fmt.Errorf("--healthcheck-path probes HTTP, which a %s does not serve", f.executionMode)
+	}
+	if visited["healthcheck-grpc"] && f.grpcHealth && !f.boot {
+		return errors.New("--healthcheck-grpc requires --boot")
+	}
+	if visited["healthcheck-grpc-service"] && !f.grpcHealth {
+		return errors.New("--healthcheck-grpc-service requires --healthcheck-grpc")
+	}
+	if f.grpcHealth && visited["healthcheck-path"] {
+		return errors.New("choose one readiness probe: --healthcheck-path (HTTP) or --healthcheck-grpc")
+	}
+	if f.grpcHealth && doctorBootNoListener(f.executionMode) {
+		return fmt.Errorf("--healthcheck-grpc probes a server, which a %s does not serve", f.executionMode)
 	}
 	// Docker itself refuses a limit below its minimum, with its own message.
 	if visited["ram"] && (!f.boot || f.ramMB <= 0) {
@@ -254,7 +271,7 @@ func addDoctorBootChecks(parent context.Context, report *doctorReport, flags *do
 	defer stop()
 	app := doctorBootLookupApp(ctx, flags.app, flags.deploy)
 	memoryMB, memorySource := doctorBootMemory(ctx, flags, app)
-	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy, mode: doctorBootMode(flags.executionMode, flags.healthPath, app)}
+	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy, mode: doctorBootMode(flags.executionMode, flags.healthPath != "" || flags.grpcHealth, app), grpcHealth: flags.grpcHealth, grpcService: flags.grpcService}
 	if report.Image != nil {
 		opts.imageHealthcheck = doctorBootImageHealthcheck(report.Image.Healthcheck)
 	}
