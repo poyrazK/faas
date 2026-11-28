@@ -1,8 +1,10 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -167,6 +169,10 @@ func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
 	if _, err := e.store.CreateInstanceWithMode(ctx, app.ID, created.ID, string(state.StateRunning), app.RAMMB, "", "wake-1", string(state.InstanceModeNormal)); err != nil {
 		t.Fatal(err)
 	}
+	// Every refusal is logged by the cache's app ID and route, so one a
+	// customer reports can be traced (one in the 2026-11-24 trial was not).
+	var logs bytes.Buffer
+	e.s.log = slog.New(slog.NewJSONHandler(&logs, nil))
 
 	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{MemoryMB: 128}, map[string]string{"Idempotency-Key": "shrink"}); rec.Code != http.StatusConflict {
 		t.Fatalf("shrink without evict: %d %s", rec.Code, rec.Body.String())
@@ -206,6 +212,24 @@ func TestRedisCacheResizeAndUpgradeHandOff(t *testing.T) {
 	}
 	if rec := e.do(t, "PATCH", "/v1/redis/sessions", api.UpdateRedisCacheRequest{}, map[string]string{"Idempotency-Key": "noop"}); rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("empty change: %d", rec.Code)
+	}
+	var refused []map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+		var entry map[string]any
+		if json.Unmarshal(line, &entry) == nil && entry["msg"] == "apid: redis request refused" {
+			refused = append(refused, entry)
+		}
+	}
+	codes := map[string]bool{}
+	for _, entry := range refused {
+		if entry["app_id"] != app.ID || entry["route"] == "" {
+			t.Fatalf("refusal log lacks app_id or route: %v", entry)
+		}
+		code, _ := entry["code"].(string)
+		codes[code] = true
+	}
+	if !codes["cache_shrink_needs_evict"] || len(refused) != 3 {
+		t.Fatalf("refusal logs = %v, want the two shrinks and the empty change", refused)
 	}
 }
 
