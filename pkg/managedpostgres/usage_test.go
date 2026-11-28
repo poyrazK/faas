@@ -301,10 +301,12 @@ func TestServiceCreateRejectsUnsupportedSpecBeforeAdmission(t *testing.T) {
 
 type usageTestProvider struct {
 	*fakeProvider
-	readings      []MeterReading
-	usageCalls    []string
-	windows       []UsageWindow
-	usageError    func(UsageWindow) error
+	readings   []MeterReading
+	usageCalls []string
+	windows    []UsageWindow
+	usageError func(UsageWindow) error
+	// usageErrorFor, when set, answers per provider resource before usageError.
+	usageErrorFor func(string, UsageWindow) error
 	usageReadings func(UsageWindow) []MeterReading
 	// backgroundCalls counts Usage calls made under WithBackgroundRequests.
 	backgroundCalls int
@@ -325,6 +327,11 @@ func (p *usageTestProvider) Usage(ctx context.Context, providerResourceID string
 	}
 	p.usageCalls = append(p.usageCalls, providerResourceID)
 	p.windows = append(p.windows, window)
+	if p.usageErrorFor != nil {
+		if err := p.usageErrorFor(providerResourceID, window); err != nil {
+			return Usage{}, err
+		}
+	}
 	if p.usageError != nil {
 		if err := p.usageError(window); err != nil {
 			return Usage{}, err
