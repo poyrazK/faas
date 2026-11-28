@@ -162,6 +162,14 @@ func (s *Service) advanceDeploying(ctx context.Context, acct state.Account, spli
 // own hostnames. Routed requests keep the source's host, so the block never
 // matches them, while the source's host rules still do.
 func (s *Service) ensureBlock(ctx context.Context, acct state.Account, source, target state.App, split state.RouteSplit) *api.Problem {
+	// The mark is what the gateway enforces on every host the app has, or
+	// gets later (amendment 6); the host rules below cover a gateway that
+	// predates it.
+	if target.RouteOfAppID != source.ID {
+		if err := s.Store.MarkRouteApp(ctx, target.ID, source.ID); err != nil {
+			return api.ErrCapacity("could not mark the route's app")
+		}
+	}
 	have, prob := s.splitRules(ctx, target, split)
 	if prob != nil {
 		return prob

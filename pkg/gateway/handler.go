@@ -323,6 +323,9 @@ type App struct {
 	ConsumerAuthMode string
 	// PlatformTenantRequired gates app traffic on verified tenant attribution.
 	PlatformTenantRequired bool
+	// RouteOfAppID marks a route split's route app: it serves only requests
+	// its source app's route rule sends it (ADR-20261121170000 amendment 6).
+	RouteOfAppID string
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth mode (open|bearer|basic|ip_allowlist|internal_only). When
 	// mode='open' (the pre-#477 default), ServeHTTP
@@ -6652,7 +6655,9 @@ haveApp:
 	// ADR-732: a request addressed to a production fork never takes the
 	// serving path (no wake, no picker, no cache or edge rules).
 	if forkRequested(r) {
-		h.serveFork(w, r, app)
+		if !h.refuseDirectRouteApp(w, r, app) {
+			h.serveFork(w, r, app)
+		}
 		return
 	}
 	if h.pinAppTrafficPolicy(w, r, &app) {
@@ -6763,6 +6768,10 @@ haveApp:
 	}
 	if routeProbe {
 		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken, h.routeProbeUnbilled(app, probeDeploymentID, probeToken)))
+	}
+	if !deploymentSmoke && !routeProbe && h.refuseDirectRouteApp(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
 	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
