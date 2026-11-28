@@ -171,6 +171,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 	if IsAppTaskDebugCommand(r.Command) && !ValidAppTaskDebugCommand(r.Command, r.Interactive, r.CommandShell) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("debug sessions require an interactive request, no command_shell, and a command after the debug marker")
 	}
+	if IsAppTaskRedisCommand(r.Command) && !ValidAppTaskRedisCommand(r.Command, r.CommandShell, r.Interactive) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("redis commands run without a shell, non-interactively, against <cache>.svc.gregale:6379, with one command that answers once (not SUBSCRIBE or MONITOR)")
+	}
 	if IsAppTaskSessionBuiltin(r.Command) && (!r.Interactive || !ValidAppTaskSessionBuiltin(r.Command, r.CommandShell, r.TTY)) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("copy and port-forward sessions require an interactive, non-tty request with one argument")
 	}
@@ -341,6 +344,31 @@ type AppTaskResponse struct {
 	// only in the create response: its token is shown once.
 	Interactive bool               `json:"interactive,omitempty"`
 	Attach      *AppTaskAttachInfo `json:"attach,omitempty"`
+}
+
+// CommandLine renders the task's command for display as a POSIX shell would
+// read it: a shell task shows its one command string; an argv task quotes
+// each argument that is not plainly safe, so ["sh","-c","echo a; rm b"]
+// shows as sh -c 'echo a; rm b', what actually ran.
+func (t AppTaskResponse) CommandLine() string {
+	if t.CommandShell && len(t.Command) == 1 {
+		return t.Command[0]
+	}
+	quoted := make([]string, len(t.Command))
+	for i, arg := range t.Command {
+		quoted[i] = shellQuoteArg(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuoteArg(arg string) string {
+	if arg != "" && strings.IndexFunc(arg, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') &&
+			(r < '0' || r > '9') && !strings.ContainsRune("_@%+=:,./-", r)
+	}) == -1 {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
 }
 
 // AppTaskAttachInfo is returned once, when an interactive task is created.

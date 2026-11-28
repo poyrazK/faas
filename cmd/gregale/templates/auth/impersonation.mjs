@@ -21,12 +21,16 @@ export function impersonated(claims) {
 // sessions or delete their account. Nor may it leave access behind that
 // outlives its cap: in the person's organizations it may not issue
 // service-account secrets or invitations, change roles, or change the
-// organization's second-factor rule, identity providers or domains. The
-// operator does those with the admin key, where they are recorded as the
-// operator's. It may sign itself out.
+// organization's second-factor rule, identity providers or domains; team
+// actions that invite or change roles are refused by the team route, which
+// reads the action from the body (team.mjs). The operator does
+// those with the admin key, where they are recorded as the operator's. It
+// may sign itself out.
 export function impersonationBlocked(method, url) {
   // GoTrue's router serves /user/ as /user, so trailing slashes go first.
-  const path = url.split('?')[0].replace(/\/+$/, '')
+  // The /authz/v1 router reads //account as /account (and the front refuses
+  // such paths), so repeated slashes are read as one here too.
+  const path = url.split('?')[0].replace(/\/{2,}/g, '/').replace(/\/+$/, '')
   if (method === 'POST' && path === '/auth/v1/logout') return url !== '/auth/v1/logout?scope=local'
   if (method === 'PUT' && path === '/auth/v1/user') return true
   if (/^\/auth\/v1\/(factors|passkeys|user\/identities|reauthenticate)(\/|$)/.test(path)) return true

@@ -6890,8 +6890,13 @@ haveApp:
 		if billingAttributed {
 			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
 			r = withPlanRoute(r, preLabel)
-		} else if jwtTenantPossible {
-			r = withBillingRouteCandidate(r, preLabel)
+		} else {
+			if jwtTenantPossible {
+				r = withBillingRouteCandidate(r, preLabel)
+			}
+			// An MCP OAuth caller becomes a consumer only in the JWT rule,
+			// after edge rewrites; keep the original path's label for it.
+			r = withUnattributedRoute(r, preLabel)
 		}
 		// A route earns one of the app's bounded labels only once the app
 		// answers it (ADR-20261026143210): until then the label is pending

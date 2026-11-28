@@ -129,6 +129,11 @@ func cmdWorkers(args []string) int {
 		if strings.HasPrefix(args[0], "-") {
 			return cmdWorkersList(args)
 		}
+		// A verb word is a mistyped verb, not an app: `worker get nope`
+		// looked up an app named "get" (prod hunt r75).
+		if commonVerbWord(args[0]) {
+			return printUnknownSubcommand(osStderr, "workers", nestedCliCommand("workers"), args[0])
+		}
 		// Convenience: `gregale workers <slug>` implies `gregale workers status <slug>`
 		return cmdWorkersStatus(args)
 	}

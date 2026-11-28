@@ -28,6 +28,19 @@ type PutMCPListingRequest struct {
 	RegistryName string `json:"registry_name,omitempty"`
 	// ShowUsage shows the open customer count on the public page.
 	ShowUsage bool `json:"show_usage,omitempty"`
+	// Contract is the live server's format-2 catalog contract
+	// (mcphosting.MarshalContract) the CLI took with the tools. Production
+	// deploys are then checked against it (ADR-20261127191645). Without
+	// it a republish keeps the contract production deploys are checked
+	// against now, and its probe secret, unless DropContract is set.
+	Contract json.RawMessage `json:"contract,omitempty"`
+	// DropContract republishes without a contract, which ends the gate.
+	DropContract bool `json:"drop_contract,omitempty"`
+	// ProbeSecret names an app secret holding a bearer token for a server
+	// that checks credentials itself; the gate sends it when listing a
+	// candidate's tools. Empty on a republish that keeps the contract keeps
+	// the current one.
+	ProbeSecret string `json:"probe_secret,omitempty"`
 }
 
 // MCPListingResponse is the owner's view of a published listing.
@@ -44,6 +57,10 @@ type MCPListingResponse struct {
 	// PageURL is the public page; ServerJSONURL is set with a registry name.
 	PageURL       string `json:"page_url"`
 	ServerJSONURL string `json:"server_json_url,omitempty"`
+	// ContractSHA256 is the published tool contract's digest; empty when
+	// the listing is not gated.
+	ContractSHA256 string `json:"contract_sha256,omitempty"`
+	ProbeSecret    string `json:"probe_secret,omitempty"`
 }
 
 // MCPListingInstall is how a client adds the server.
@@ -71,6 +88,9 @@ type PublicMCPListingResponse struct {
 	PublishedAt time.Time            `json:"published_at"`
 	// Customers is the open customer count, only when the seller shows it.
 	Customers *int64 `json:"customers,omitempty"`
+	// Changelog lists the tool contract changes shipped since the listing
+	// was published, newest first (ADR-20261127191645).
+	Changelog []MCPContractChangelogEntry `json:"changelog,omitempty"`
 }
 
 // GetMCPListing reads an app's published listing.

@@ -16,7 +16,7 @@ func TestAlertRollbackSelectionFailsClosed(t *testing.T) {
 	base.AppAccountID = base.AccountID
 	candidate := state.AlertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: state.DeployLive, Scope: "default", TrafficPercent: 25, CanaryTotalSteps: 4, CanaryStep: 1, RolloutState: "rolling_out", CreatedAt: now}
 	predecessor := state.AlertRollbackDeployment{ID: uuid.NewString(), AppID: base.AppID, Status: state.DeployLive, Scope: "default", TrafficPercent: 75, CreatedAt: now.Add(-time.Minute)}
-	for _, scenario := range []string{"exact pair", "multiple canaries", "multiple recipients", "newer recipient", "completed candidate", "account wide", "foreign account", "service", "pre-auth", "automation backlog"} {
+	for _, scenario := range []string{"exact pair", "multiple canaries", "multiple recipients", "newer recipient", "completed candidate", "account wide", "foreign account", "service", "pre-auth", "automation backlog", "boot failures canary"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := base
 			f.Deployments = []state.AlertRollbackDeployment{candidate, predecessor}
@@ -45,6 +45,10 @@ func TestAlertRollbackSelectionFailsClosed(t *testing.T) {
 				f.Metric = state.AlertMetricWorkflowDueAge
 			case "pre-auth":
 				f.Metric = state.AlertMetricPreAuthTargetThreshold
+			case "boot failures canary":
+				// An app-wide boot count is no evidence against the
+				// in-flight canary (ADR-605 amendment 2).
+				f.Metric = state.AlertMetricBootFailures
 			}
 			fire := uuid.NewString()
 			r := state.CaptureAlertRollback(strings.ReplaceAll(fire, "-", ""), f, 42, now)

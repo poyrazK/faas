@@ -389,6 +389,20 @@ func TestAuthConfigSMSCountries(t *testing.T) {
 	}
 }
 
+func TestAuthConfigSignInProtection(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, removed, _ := authSettingsWorld(t, nil, nil)
+	captureAuthStdout(t)
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--new-device-alerts", "off", "--messages-per-recipient", "3", "--messages-per-network", "off"}); code != 0 || sealed["AUTH_NEW_DEVICE_ALERTS"] != "0" || sealed["AUTH_MESSAGES_PER_RECIPIENT"] != "3" || !slices.Contains(*removed, "AUTH_MESSAGES_PER_NETWORK") {
+		t.Fatalf("code %d, sealed %v, removed %v", code, sealed, *removed)
+	}
+	for _, args := range [][]string{{"--messages-per-recipient", "0"}, {"--messages-per-network", "lots"}, {"--messages-per-recipient", "51"}, {"--new-device-alerts", "maybe"}} {
+		if code := main.CmdAuth(append([]string{"config", "shop-auth"}, args...)); code == 0 {
+			t.Errorf("accepted %v", args)
+		}
+	}
+}
+
 func TestAuthConfigMoreMFA(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, _, _ := authSettingsWorld(t, nil, nil)

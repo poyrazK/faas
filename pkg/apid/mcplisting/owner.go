@@ -89,7 +89,7 @@ func (o Owner) Put(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body: "+err.Error()))
 		return
 	}
-	listing, problem := Validate(req, app.AccountID, app.ID, o.Host.AppHosts(r.Context(), app))
+	listing, problem := o.validate(r.Context(), req, app)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -100,8 +100,30 @@ func (o Owner) Put(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		api.WriteProblem(w, api.ErrInternal("could not publish the MCP listing"))
 		return
 	}
-	o.Host.Audit(r.Context(), "mcp_listing.published", acct.ID, map[string]any{"app_id": app.ID, "version": stored.Version, "tools": len(stored.Tools)})
+	o.Host.Audit(r.Context(), "mcp_listing.published", acct.ID, map[string]any{"app_id": app.ID, "version": stored.Version, "tools": len(stored.Tools),
+		"contract_sha256": stored.ContractSHA256})
 	httpkit.WriteJSON(w, http.StatusOK, Response(stored, app.Slug, o.Host.PublicOrigin()))
+}
+
+// validate checks the request and, on a republish without a contract, keeps
+// the one production deploys are checked against now.
+func (o Owner) validate(ctx context.Context, req api.PutMCPListingRequest, app state.App) (state.MCPListing, *api.Problem) {
+	listing, problem := Validate(req, app.AccountID, app.ID, o.Host.AppHosts(ctx, app))
+	if problem != nil || len(req.Contract) > 0 || req.DropContract {
+		return listing, problem
+	}
+	var current *state.MCPContractBaseline
+	if gate, ok := o.Host.Store().(state.MCPContractStore); ok {
+		baseline, err := gate.MCPContractBaseline(ctx, app.ID)
+		switch {
+		case err == nil && baseline.AccountID == app.AccountID:
+			current = &baseline
+		case err != nil && !errors.Is(err, state.ErrNotFound):
+			o.Log.Error("read MCP contract baseline", "app_id", app.ID, "err", err)
+			return state.MCPListing{}, api.ErrInternal("could not read the MCP listing's tool contract")
+		}
+	}
+	return KeepContract(req, listing, current)
 }
 
 // Delete unpublishes the listing; 404 when none is published.

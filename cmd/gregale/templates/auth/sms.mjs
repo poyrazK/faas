@@ -22,7 +22,8 @@ export function smsCountries(env) {
 // phone MFA enrolment. A phone MFA challenge texts the enrolled number, which
 // was checked at enrolment.
 export function smsSendPath(method, url) {
-  const path = url.split('?')[0]
+  // GoTrue's router serves /otp/ as /otp, so trailing slashes go first.
+  const path = url.split('?')[0].replace(/\/+$/, '')
   if (method === 'POST') return ['/auth/v1/otp', '/auth/v1/signup', '/auth/v1/resend', '/auth/v1/factors'].includes(path)
   return method === 'PUT' && path === '/auth/v1/user'
 }

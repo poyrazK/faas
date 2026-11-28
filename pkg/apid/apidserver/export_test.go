@@ -2466,6 +2466,14 @@ func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRec
 	return recorder
 }
 
+// CapabilitiesWithAppTaskGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and interactive-session gates set.
+func CapabilitiesWithAppTaskGates(appTasks, interactive bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithInteractiveAppTasksEnabled(interactive).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,6 +27,105 @@ func mcpVerificationCredential(mode string) string {
 	default:
 		return "client access token"
 	}
+}
+
+// syncExternalOAuthGatewayPolicy stores an external-oauth server's gateway
+// policy after a successful deploy, so Gregale also checks its tokens and
+// knows who calls it: OAuth callers then become customers and are metered
+// (ADR-20261124094745). The server keeps checking tokens itself, so a
+// failure only warns; `gregale mcp policy` retries it.
+//
+// The policy is stored only when the verified deploy token would pass it
+// (algorithm, issuer, audience, scopes), so it cannot start refusing the
+// server's callers. --access-audit guest-only keeps the gateway out, and a
+// reviewed --access-audit-algorithms list is the one stored.
+func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug string, cfg mcphosting.Config, token string, audit *mcpAccessAuditOptions) *mcpGatewayTokenChecks {
+	if cfg.Auth.Mode != mcphosting.AuthExternalOAuth {
+		return nil
+	}
+	// The deploy's verification deadline may be nearly spent by promotion;
+	// the policy write gets its own short budget.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	if audit != nil && audit.AuthPlacement == "guest-only" {
+		fmt.Fprintf(os.Stderr, "Gateway leaves token checks to the server (--access-audit guest-only); its OAuth callers cannot become customers\n")
+		return &mcpGatewayTokenChecks{Status: "skipped", Reason: "--access-audit guest-only"}
+	}
+	algorithms := []string{"RS256", "ES256"}
+	if audit != nil && len(audit.Algorithms) != 0 {
+		algorithms = audit.Algorithms
+	}
+	warn := func(err error) *mcpGatewayTokenChecks {
+		fix := "gregale mcp policy --path " + quoteCLIArg(path) + " --name " + quoteCLIArg(slug)
+		fmt.Fprintf(os.Stderr, "warning: Gregale does not check this server's tokens (%v); callers are served but cannot become customers. "+
+			"Fix it, then run `%s`\n", err, fix)
+		return &mcpGatewayTokenChecks{Status: "failed", Reason: err.Error(), FixCommands: []string{fix}}
+	}
+	if err := mcpTokenFitsGatewayPolicy(token, mcpExpectedGatewayAction(cfg, algorithms, c.BaseURL()), cfg.Auth.Scopes); err != nil {
+		return warn(fmt.Errorf("the deploy token would not pass the gateway policy: %w", err))
+	}
+	rule, err := applyMCPGatewayPolicy(ctx, c, slug, cfg, algorithms)
+	if err != nil {
+		return warn(err)
+	}
+	fmt.Fprintf(os.Stderr, "Gateway checks OAuth tokens for %s (edge rule %s)\n", slug, rule.ID)
+	return &mcpGatewayTokenChecks{Status: "on", RuleID: rule.ID}
+}
+
+// mcpGatewayTokenChecks is the deploy receipt's gateway_token_checks: whether
+// the gateway now checks an external-oauth server's tokens, so agents reading
+// --json see a failure and its fix (ADR-20261123230000).
+type mcpGatewayTokenChecks struct {
+	Status      string   `json:"status"` // on, skipped or failed
+	RuleID      string   `json:"rule_id,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+	FixCommands []string `json:"fix_commands,omitempty"`
+}
+
+// mcpTokenFitsGatewayPolicy reports why token, which the server accepted,
+// would fail the gateway policy's checks: algorithm, issuer, audience,
+// exp/sub and endpoint scopes. The signature is not checked here; the
+// server's acceptance and the gateway's JWKS check cover it.
+func mcpTokenFitsGatewayPolicy(token string, action api.EdgeRuleJWTAction, scopes []string) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return errors.New("not a JWT")
+	}
+	var header struct {
+		Alg string `json:"alg"`
+	}
+	var claims struct {
+		Iss   string          `json:"iss"`
+		Sub   string          `json:"sub"`
+		Exp   json.Number     `json:"exp"`
+		Aud   json.RawMessage `json:"aud"`
+		Scope string          `json:"scope"`
+	}
+	for i, out := range []any{&header, &claims} {
+		raw, err := base64.RawURLEncoding.DecodeString(parts[i])
+		if err != nil || json.Unmarshal(raw, out) != nil {
+			return errors.New("not a JWT")
+		}
+	}
+	var audiences []string
+	if json.Unmarshal(claims.Aud, &audiences) != nil {
+		var one string
+		_ = json.Unmarshal(claims.Aud, &one)
+		audiences = []string{one}
+	}
+	switch {
+	case !slices.Contains(action.Algorithms, header.Alg):
+		return fmt.Errorf("it is signed with %s, not one of %s", header.Alg, strings.Join(action.Algorithms, ","))
+	case action.Issuer != "" && claims.Iss != action.Issuer:
+		return fmt.Errorf("its issuer %q is not %q", claims.Iss, action.Issuer)
+	case len(action.Audience) != 0 && !slices.ContainsFunc(audiences, func(a string) bool { return slices.Contains(action.Audience, a) }):
+		return fmt.Errorf("its audience %v is not %v", audiences, action.Audience)
+	case claims.Sub == "" || claims.Exp == "":
+		return errors.New("it has no sub or exp claim")
+	case !api.MCPHasScopes(scopes, strings.Fields(claims.Scope)):
+		return fmt.Errorf("its scope %q lacks %v", claims.Scope, scopes)
+	}
+	return nil
 }
 
 // requireMCPGatewayPolicy refuses to deploy an api-key or oauth-proxy server

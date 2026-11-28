@@ -44,7 +44,9 @@ func New(catalog productcap.Catalog, flags func() *platformflags.Snapshot) *Deci
 	}
 	for _, capability := range catalog.Capabilities {
 		d.parent[capability.ID] = capability.Parent
-		if capability.AlwaysOn {
+		if capability.AlwaysOn || capability.InheritsFlag {
+			// No flag of its own; an inheriting sub-feature is decided by its
+			// ancestors' flags alone.
 			continue
 		}
 		key, ok := platformflags.CapabilityFlag(capability.ID)

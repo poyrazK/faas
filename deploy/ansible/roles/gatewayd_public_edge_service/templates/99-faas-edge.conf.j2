@@ -45,6 +45,11 @@ Environment=FAAS_EDGE_PUBLIC_TLS_KEY_FILE=%d/edge_tls_key
 # client certificate is verified only when given, so a proxied record still
 # works, and the certificate above is publicly trusted.
 Environment=FAAS_EDGE_PUBLIC_FRONT=none
+{% if (faas_edge_http_redirect | default(true) | string | lower) in ["true", "yes", "on", "1"] %}
+# ADR-20261127170000: plain HTTP on the entry addresses gets a 308 to HTTPS
+# instead of a dropped connection.
+Environment=FAAS_EDGE_PUBLIC_HTTP_REDIRECT_ADDR=:{{ faas_edge_public_http_port | default(80) }}
+{% endif %}
 {% if (faas_cloudflare_origin_only | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
 # ADR-20261103163954 §4: a host moved back behind Cloudflare, the flood
 # fallback, arrives from Cloudflare's addresses; the per-address connection

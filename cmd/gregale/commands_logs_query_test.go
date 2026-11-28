@@ -104,8 +104,8 @@ func TestCmdLogsHTTPExplainsHiddenProductionDebugger(t *testing.T) {
 
 	for _, args := range [][]string{{"myapp", "--source", "http"}, {"myapp", "--status", "500"}} {
 		stderr.Reset()
-		if code := main.CmdLogs(args); code != 2 {
-			t.Fatalf("%v exit = %d, want 2; stderr=%s", args, code, stderr.String())
+		if code := main.CmdLogs(args); code != 1 {
+			t.Fatalf("%v exit = %d, want 1; stderr=%s", args, code, stderr.String())
 		}
 		if !strings.Contains(stderr.String(), "production debugger, which is not enabled for this account") {
 			t.Fatalf("%v stderr = %q", args, stderr.String())
@@ -337,8 +337,8 @@ func TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork(t *testing.T) {
 		{"myapp", "--source", "database"},
 		{"myapp", "--route", "/checkout"},
 	} {
-		if code := main.CmdLogs(args); code != 2 {
-			t.Errorf("cmdLogs(%v) = %d, want 2", args, code)
+		if code := main.CmdLogs(args); code != 1 {
+			t.Errorf("cmdLogs(%v) = %d, want 1", args, code)
 		}
 	}
 	if got := hits.Load(); got != 0 {

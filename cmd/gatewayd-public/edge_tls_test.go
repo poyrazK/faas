@@ -395,6 +395,35 @@ func TestEdgeServerErrorsLogOneHandshakeFailureAMinute(t *testing.T) {
 	}
 }
 
+// Prod hunt r72: scanners' handshakes (a bare-IP name, plain HTTP on 443, a
+// hang-up) were most of a node's Warns. They count, but log at Debug; a
+// certificate failure stays a Warn.
+func TestEdgeServerErrorsLogStrangerHandshakesAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	failures := prometheus.NewCounter(prometheus.CounterOpts{Name: "failures"})
+	e := newEdgeServerErrors(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})), failures)
+	for _, line := range []string{
+		"http: TLS handshake error from 198.51.100.7:1: " + errNotAnAppHost.Error() + "\n",
+		"http: TLS handshake error from 198.51.100.7:2: tls: first record does not look like a TLS handshake\n",
+		"http: TLS handshake error from 198.51.100.7:3: EOF\n",
+		"http: TLS handshake error from 198.51.100.7:4: unexpected EOF\n",
+		"http: TLS handshake error from 198.51.100.7:5: read tcp 192.0.2.1:443->198.51.100.7:5: i/o timeout\n",
+		"http: TLS handshake error from 198.51.100.7:6: read tcp 192.0.2.1:443->198.51.100.7:6: read: connection reset by peer\n",
+	} {
+		_, _ = e.Write([]byte(line))
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("scanner handshakes were logged above Debug:\n%s", buf.String())
+	}
+	if got := testutil.ToFloat64(failures); got != 6 {
+		t.Fatalf("failures = %v, want 6", got)
+	}
+	_, _ = e.Write([]byte("http: TLS handshake error from 198.51.100.7:7: remote error: tls: unknown certificate authority\n"))
+	if !strings.Contains(buf.String(), "unknown certificate authority") {
+		t.Fatalf("a certificate failure was not logged:\n%s", buf.String())
+	}
+}
+
 // Hunt 33 P-3: a client resetting during the HTTP/2 preface logged a Warn
 // every few minutes on every node.
 func TestEdgeServerErrorsLogClientResetsAtDebug(t *testing.T) {

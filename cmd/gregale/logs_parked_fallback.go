@@ -46,7 +46,7 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 		}
 		return parkedLogsUnavailable(fmt.Sprintf("%s has no running instance and no instance with activity in the requested window; wake it with `gregale app wake %s`.", slug, slug))
 	}
-	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (started %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)
+	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (ready %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)
 	header += parkedArchivePendingNote(instance, time.Now())
 	_, _ = fmt.Fprintln(osStderr, header)
 	return runLogsExplainingMissingArchive(ctx, slug, deployment, api.LogFilter{Grep: filter.Grep, Level: filter.Level}, &selector, false, explain,

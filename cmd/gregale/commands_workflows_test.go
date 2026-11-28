@@ -136,7 +136,7 @@ func TestCmdWorkflowsStatus_InvalidUUID(t *testing.T) {
 	if code != 1 {
 		t.Errorf("cmdWorkflowsStatus(bad uuid) = %d, want 1", code)
 	}
-	if !strings.Contains(captured, "invalid run ID") {
+	if !strings.Contains(captured, "is not a workflow run ID") {
 		t.Errorf("expected invalid run ID error, got: %s", captured)
 	}
 }
@@ -161,7 +161,7 @@ func TestCmdWorkflowsSteps_InvalidUUID(t *testing.T) {
 	if code != 1 {
 		t.Errorf("cmdWorkflowsSteps(bad uuid) = %d, want 1", code)
 	}
-	if !strings.Contains(captured, "invalid run ID") {
+	if !strings.Contains(captured, "is not a workflow run ID") {
 		t.Errorf("expected invalid run ID error, got: %s", captured)
 	}
 }

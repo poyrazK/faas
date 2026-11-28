@@ -45,6 +45,82 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
 
 
 --
+-- Name: accept_mcp_contract_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.accept_mcp_contract_check() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    accepted mcp_contract_checks%ROWTYPE;
+    prior mcp_contract_checks%ROWTYPE;
+    listing_published timestamptz;
+    listing_sha text;
+    current_sha text;
+    event_payload jsonb;
+BEGIN
+    IF NEW.status <> 'live' OR (TG_OP = 'UPDATE' AND OLD.status = 'live')
+       OR COALESCE(NEW.scope, '') NOT IN ('', 'default', 'production') THEN
+        RETURN NEW;
+    END IF;
+    SELECT l.published_at, l.contract_sha256 INTO listing_published, listing_sha
+      FROM mcp_listings l WHERE l.app_id = NEW.app_id AND l.contract IS NOT NULL;
+    IF listing_sha IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT * INTO prior FROM mcp_contract_checks WHERE deployment_id = NEW.id FOR UPDATE;
+    IF prior.deployment_id IS NULL THEN
+        INSERT INTO mcp_contract_checks (deployment_id, app_id, account_id, baseline_sha256, verdict, accepted_at, live_at)
+        SELECT NEW.id, NEW.app_id, a.account_id, listing_sha, 'unknown', now(), now() FROM apps a WHERE a.id = NEW.app_id;
+        RETURN NEW;
+    END IF;
+    IF prior.accepted_at IS NULL THEN
+        IF prior.verdict IN ('breaking', 'unverified') AND prior.override_id IS NULL THEN
+            RETURN NEW;
+        END IF;
+        -- The baseline GetMCPContractBaseline returns right now.
+        SELECT COALESCE(k.candidate_sha256, listing_sha) INTO current_sha
+          FROM mcp_contract_checks k
+         WHERE k.app_id = NEW.app_id AND k.live_at IS NOT NULL AND k.live_at >= listing_published
+         ORDER BY k.live_at DESC LIMIT 1;
+        IF COALESCE(current_sha, listing_sha) <> prior.baseline_sha256 THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+    UPDATE mcp_contract_checks SET live_at = now(), accepted_at = COALESCE(accepted_at, now())
+     WHERE deployment_id = NEW.id
+    RETURNING * INTO accepted;
+    -- now() is fixed within the statement: a first acceptance has
+    -- accepted_at = live_at.
+    IF accepted.verdict IN ('unchanged', 'unknown') OR accepted.accepted_at <> accepted.live_at THEN
+        RETURN NEW;
+    END IF;
+    event_payload := jsonb_build_object(
+        'app_id', NEW.app_id,
+        'deployment_id', NEW.id,
+        'verdict', accepted.verdict,
+        'baseline_sha256', accepted.baseline_sha256,
+        'contract_sha256', accepted.candidate_sha256,
+        'overridden', accepted.override_id IS NOT NULL,
+        'tools', COALESCE((SELECT jsonb_agg(DISTINCT c->>'tool') FROM jsonb_array_elements(accepted.changes) c
+                            WHERE COALESCE(c->>'tool', '') <> ''), '[]'::jsonb),
+        'changes', jsonb_array_length(accepted.changes)
+    );
+    INSERT INTO app_webhook_deliveries
+        (webhook_id, app_id, account_id, event, payload)
+    SELECT h.id, NEW.app_id, h.account_id, 'mcp.contract.changed', event_payload
+      FROM app_webhooks h
+      JOIN apps a ON a.id = NEW.app_id AND a.account_id = h.account_id
+     WHERE h.scope = 'app'
+       AND h.app_id = NEW.app_id
+       AND h.enabled
+       AND (cardinality(h.event_filter) = 0 OR 'mcp.contract.changed' = ANY(h.event_filter));
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: account_may_see_org_resources(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -33241,7 +33317,7 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_environment_scope_chk CHECK (((environment_scope = ''::text) OR ((app_id IS NOT NULL) AND (comparison = ANY (ARRAY['above_baseline'::text, 'below_baseline'::text])) AND (metric = ANY (ARRAY['request_count'::text, 'error_rate_pct'::text, 'latency_p95_ms'::text])) AND (observe_only OR (action = 'webhook'::text)) AND (environment_scope <> 'pr-preview'::text) AND (environment_scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
-    CONSTRAINT alert_rules_failure_count_action_chk CHECK (((metric <> ALL (ARRAY['boot_failures'::text, 'job_failures'::text])) OR (action = 'webhook'::text))),
+    CONSTRAINT alert_rules_failure_actions_chk CHECK ((((metric <> 'job_failures'::text) OR (action = 'webhook'::text)) AND ((metric <> 'boot_failures'::text) OR (action = 'webhook'::text) OR ((action = 'rollback'::text) AND (post_deploy_rollback_window_seconds > 0))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
@@ -51816,6 +51892,56 @@ CREATE TABLE public.mcp_catalog_monitors (
 
 
 --
+-- Name: mcp_contract_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_contract_checks (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    baseline_sha256 text NOT NULL,
+    candidate_sha256 text,
+    candidate jsonb,
+    verdict text NOT NULL,
+    changes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    override_id uuid,
+    checked_at timestamp with time zone DEFAULT now() NOT NULL,
+    accepted_at timestamp with time zone,
+    live_at timestamp with time zone,
+    CONSTRAINT mcp_contract_checks_baseline_sha256_check CHECK ((baseline_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT mcp_contract_checks_candidate_check CHECK (((candidate IS NULL) OR ((jsonb_typeof(candidate) = 'object'::text) AND (octet_length((candidate)::text) <= 2097152)))),
+    CONSTRAINT mcp_contract_checks_candidate_sha256_check CHECK ((candidate_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT mcp_contract_checks_changes_check CHECK (((jsonb_typeof(changes) = 'array'::text) AND (octet_length((changes)::text) <= 262144))),
+    CONSTRAINT mcp_contract_checks_check CHECK (((accepted_at IS NULL) = (live_at IS NULL))),
+    CONSTRAINT mcp_contract_checks_check1 CHECK (((candidate IS NULL) = (candidate_sha256 IS NULL))),
+    CONSTRAINT mcp_contract_checks_check2 CHECK (((verdict = ANY (ARRAY['unverified'::text, 'unknown'::text])) = (candidate IS NULL))),
+    CONSTRAINT mcp_contract_checks_verdict_check CHECK ((verdict = ANY (ARRAY['unchanged'::text, 'compatible'::text, 'review'::text, 'breaking'::text, 'unverified'::text, 'unknown'::text])))
+);
+
+
+--
+-- Name: mcp_contract_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_contract_overrides (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    reason text NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    deployment_id uuid,
+    used_by_deployment uuid,
+    used_at timestamp with time zone,
+    CONSTRAINT mcp_contract_overrides_check CHECK ((expires_at > created_at)),
+    CONSTRAINT mcp_contract_overrides_check1 CHECK (((used_by_deployment IS NULL) = (used_at IS NULL))),
+    CONSTRAINT mcp_contract_overrides_created_by_check CHECK (((char_length(created_by) >= 1) AND (char_length(created_by) <= 200))),
+    CONSTRAINT mcp_contract_overrides_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512)))
+);
+
+
+--
 -- Name: mcp_listings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -51831,6 +51957,9 @@ CREATE TABLE public.mcp_listings (
     version integer DEFAULT 1 NOT NULL,
     published_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    contract jsonb,
+    contract_sha256 text,
+    probe_secret text DEFAULT ''::text NOT NULL,
     CONSTRAINT mcp_listings_endpoint_check CHECK (((endpoint ~~ 'https://%'::text) AND (char_length(endpoint) <= 2048))),
     CONSTRAINT mcp_listings_registry_name_check CHECK (((registry_name = ''::text) OR (registry_name ~ '^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$'::text))),
     CONSTRAINT mcp_listings_summary_check CHECK ((char_length(summary) <= 500)),
@@ -75600,11 +75729,43 @@ ALTER TABLE ONLY public.mcp_catalog_monitors
 
 
 --
+-- Name: mcp_contract_checks mcp_contract_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_checks
+    ADD CONSTRAINT mcp_contract_checks_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: mcp_contract_overrides mcp_contract_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_overrides
+    ADD CONSTRAINT mcp_contract_overrides_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_listings mcp_listings_contract_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.mcp_listings
+    ADD CONSTRAINT mcp_listings_contract_chk CHECK ((((contract IS NULL) AND (contract_sha256 IS NULL)) OR ((jsonb_typeof(contract) = 'object'::text) AND (octet_length((contract)::text) <= 2097152) AND (contract_sha256 ~ '^[0-9a-f]{64}$'::text)))) NOT VALID;
+
+
+--
 -- Name: mcp_listings mcp_listings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.mcp_listings
     ADD CONSTRAINT mcp_listings_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: mcp_listings mcp_listings_probe_secret_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.mcp_listings
+    ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (((probe_secret = ''::text) OR (probe_secret ~ '^[A-Za-z][A-Za-z0-9_]{0,127}$'::text))) NOT VALID;
 
 
 --
@@ -89623,6 +89784,20 @@ CREATE INDEX managed_valkey_caches_account_idx ON public.managed_valkey_caches U
 
 
 --
+-- Name: mcp_contract_checks_live_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_contract_checks_live_idx ON public.mcp_contract_checks USING btree (app_id, live_at DESC) WHERE (live_at IS NOT NULL);
+
+
+--
+-- Name: mcp_contract_overrides_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_contract_overrides_open_idx ON public.mcp_contract_overrides USING btree (app_id, created_at) WHERE (used_at IS NULL);
+
+
+--
 -- Name: mcp_oauth_retirements_account_history; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -90767,7 +90942,7 @@ CREATE INDEX outbound_ai_batches_reserved_idx ON public.outbound_ai_batches USIN
 -- Name: outbound_ai_budget_alerts_once_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, budget, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(end_user, ''::text), COALESCE(tag, ''::text), period_start, threshold_percent);
+CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, budget, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(end_user, ''::text), COALESCE(tag, ''::text), period_start, threshold_percent, limit_value);
 
 
 --
@@ -97761,6 +97936,13 @@ CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_perc
 --
 
 CREATE TRIGGER deployment_sidecar_layers_cap_trg BEFORE INSERT OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.deployment_sidecar_layers_cap_check();
+
+
+--
+-- Name: deployments deployments_accept_mcp_contract_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_accept_mcp_contract_check AFTER INSERT OR UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.accept_mcp_contract_check();
 
 
 --
@@ -113286,6 +113468,62 @@ ALTER TABLE ONLY public.mcp_catalog_monitors
 
 ALTER TABLE ONLY public.mcp_catalog_monitors
     ADD CONSTRAINT mcp_catalog_monitors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_contract_checks mcp_contract_checks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_checks
+    ADD CONSTRAINT mcp_contract_checks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_contract_checks mcp_contract_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_checks
+    ADD CONSTRAINT mcp_contract_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_contract_checks mcp_contract_checks_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_checks
+    ADD CONSTRAINT mcp_contract_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_contract_checks mcp_contract_checks_override_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_checks
+    ADD CONSTRAINT mcp_contract_checks_override_id_fkey FOREIGN KEY (override_id) REFERENCES public.mcp_contract_overrides(id) ON DELETE SET NULL;
+
+
+--
+-- Name: mcp_contract_overrides mcp_contract_overrides_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_overrides
+    ADD CONSTRAINT mcp_contract_overrides_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_contract_overrides mcp_contract_overrides_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_overrides
+    ADD CONSTRAINT mcp_contract_overrides_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_contract_overrides mcp_contract_overrides_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_overrides
+    ADD CONSTRAINT mcp_contract_overrides_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
