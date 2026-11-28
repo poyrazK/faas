@@ -22,7 +22,13 @@ type Map struct {
 	// summing len(values) across every key on each call made checkArgumentLimit
 	// (called once per Add) quadratic in the number of distinct keys.
 	totalValues int
+	// gen counts writes; all caches FindAll for the generation in allGen.
+	gen    uint64
+	all    []types.MatchData
+	allGen uint64
 }
+
+func (c *Map) generation() uint64 { return c.gen }
 
 var _ collection.Map = &Map{}
 
@@ -121,8 +127,18 @@ func (c *Map) FindString(key string) []types.MatchData {
 	return result
 }
 
-// FindAll returns all map elements.
+// FindAll returns all map elements. Every rule over a collection asks for all
+// of it, so the matches are built once per generation and each caller gets
+// its own copy of the slice (GetField filters it in place).
 func (c *Map) FindAll() []types.MatchData {
+	if c.all == nil || c.allGen != c.gen {
+		c.all = c.buildAll()
+		c.allGen = c.gen
+	}
+	return cloneMatches(c.all)
+}
+
+func (c *Map) buildAll() []types.MatchData {
 	n := 0
 	for _, data := range c.data {
 		n += len(data)
@@ -147,6 +163,15 @@ func (c *Map) FindAll() []types.MatchData {
 	return result
 }
 
+func cloneMatches(m []types.MatchData) []types.MatchData {
+	if len(m) == 0 {
+		return nil
+	}
+	res := make([]types.MatchData, len(m))
+	copy(res, m)
+	return res
+}
+
 // Add adds a new key-value pair to the map.
 func (c *Map) Add(key string, value string) {
 	aVal := keyValue{key: key, value: value}
@@ -155,6 +180,7 @@ func (c *Map) Add(key string, value string) {
 	}
 	c.data[key] = append(c.data[key], aVal)
 	c.totalValues++
+	c.gen++
 }
 
 // Sets the value of a key with the array of strings passed. If the key already exists, it will be overwritten.
@@ -175,6 +201,7 @@ func (c *Map) Set(key string, values []string) {
 	}
 	c.data[key] = dataSlice
 	c.totalValues += len(values) - oldLen
+	c.gen++
 }
 
 // SetIndex sets the value of a key at the specified index. If the key already exists, it will be overwritten.
@@ -185,6 +212,7 @@ func (c *Map) SetIndex(key string, index int, value string) {
 	}
 	values := c.data[key]
 	av := keyValue{key: originalKey, value: value}
+	c.gen++
 
 	switch {
 	case len(values) == 0:
@@ -208,6 +236,7 @@ func (c *Map) Remove(key string) {
 	}
 	c.totalValues -= len(c.data[key])
 	delete(c.data, key)
+	c.gen++
 }
 
 // Name returns the name of the map/collection.
@@ -221,6 +250,7 @@ func (c *Map) Reset() {
 		delete(c.data, k)
 	}
 	c.totalValues = 0
+	c.gen++
 }
 
 // Format updates the passed strings.Builder with the formatted map key/values.

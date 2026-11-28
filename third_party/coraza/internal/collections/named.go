@@ -98,7 +98,11 @@ func (c *NamedCollection) String() string {
 type NamedCollectionNames struct {
 	variable   variables.RuleVariable
 	collection *NamedCollection
+	all        []types.MatchData
+	allGen     uint64
 }
+
+func (c *NamedCollectionNames) generation() uint64 { return c.collection.gen }
 
 func (c *NamedCollectionNames) FindRegex(key *regexp.Regexp) []types.MatchData {
 	n := 0
@@ -153,6 +157,14 @@ func (c *NamedCollectionNames) Get(key string) []string {
 }
 
 func (c *NamedCollectionNames) FindAll() []types.MatchData {
+	if c.all == nil || c.allGen != c.collection.gen {
+		c.all = c.buildAll()
+		c.allGen = c.collection.gen
+	}
+	return cloneMatches(c.all)
+}
+
+func (c *NamedCollectionNames) buildAll() []types.MatchData {
 	n := 0
 	for _, data := range c.collection.data {
 		n += len(data)

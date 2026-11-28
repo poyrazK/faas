@@ -46,7 +46,13 @@ func (c *ConcatCollection) Name() string {
 type ConcatKeyed struct {
 	data     []collection.Keyed
 	variable variables.RuleVariable
+	// all caches FindAll while every part reports the generations in gens.
+	all  []types.MatchData
+	gens []uint64
 }
+
+// generational is a collection that counts its writes.
+type generational interface{ generation() uint64 }
 
 var _ collection.Keyed = &ConcatKeyed{}
 
@@ -84,13 +90,50 @@ func (c *ConcatKeyed) FindString(key string) []types.MatchData {
 	return res
 }
 
-// FindAll returns all matches for all collections
+// FindAll returns all matches for all collections. When every part counts its
+// writes the result is built once per generation; the matches are copies
+// carrying the concatenated variable, so the parts' cached matches stay as
+// they are.
 func (c *ConcatKeyed) FindAll() []types.MatchData {
-	var res []types.MatchData
-	for _, d := range c.data {
-		res = append(res, replaceVariable(c.variable, d.FindAll())...)
+	if !c.cacheValid() {
+		var res []types.MatchData
+		for _, d := range c.data {
+			res = append(res, d.FindAll()...)
+		}
+		res = replaceVariable(c.variable, res)
+		if !c.recordGens() {
+			return res
+		}
+		c.all = res
 	}
-	return res
+	return cloneMatches(c.all)
+}
+
+func (c *ConcatKeyed) cacheValid() bool {
+	if c.all == nil || len(c.gens) != len(c.data) {
+		return false
+	}
+	for i, d := range c.data {
+		g, ok := d.(generational)
+		if !ok || g.generation() != c.gens[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *ConcatKeyed) recordGens() bool {
+	gens := make([]uint64, len(c.data))
+	for i, d := range c.data {
+		g, ok := d.(generational)
+		if !ok {
+			c.all, c.gens = nil, nil
+			return false
+		}
+		gens[i] = g.generation()
+	}
+	c.gens = gens
+	return true
 }
 
 // Name returns the name for the current CollectionconcatCollection
@@ -99,10 +142,14 @@ func (c *ConcatKeyed) Name() string {
 }
 
 // replaceVariable ensures a returned match references the variable of a concatenated variable,
-// not original one.
+// not original one. It copies the matches rather than changing them: a part's
+// FindAll hands out matches it keeps cached. md must be a slice the caller owns.
 func replaceVariable(v variables.RuleVariable, md []types.MatchData) []types.MatchData {
-	for _, m := range md {
-		m.(*corazarules.MatchData).Variable_ = v
+	buf := make([]corazarules.MatchData, len(md))
+	for i, m := range md {
+		buf[i] = *m.(*corazarules.MatchData)
+		buf[i].Variable_ = v
+		md[i] = &buf[i]
 	}
 	return md
 }

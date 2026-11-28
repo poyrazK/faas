@@ -100,9 +100,19 @@ func BenchmarkInlineBody(b *testing.B) {
 	}
 	form := strings.Repeat("field=value+for+the+account&", 64)
 	text := strings.Repeat("lorem ipsum dolor sit amet ", 128)
+	// fields cuts the 2 KiB JSON body after n values, as CheckInline does
+	// with api.EdgeWAFMaxInlineBodyFields.
+	fields := func(n int) string {
+		body, _ := boundBodyFields([]byte(jsonBody(2048, "")), "application/json", n)
+		return string(body)
+	}
 	for _, tc := range []struct{ name, body, contentType string }{
 		{"none", "", ""},
 		{"json-tiny", `{"a":1}`, "application/json"},
+		{"json-6-fields", fields(6), "application/json"},
+		{"json-12-fields", fields(12), "application/json"},
+		{"json-16-fields", fields(16), "application/json"},
+		{"json-32-fields", fields(32), "application/json"},
 		{"json-512", jsonBody(512, ""), "application/json"},
 		{"json-2KiB", jsonBody(2048, ""), "application/json"},
 		{"form-512", form[:512], "application/x-www-form-urlencoded"},
