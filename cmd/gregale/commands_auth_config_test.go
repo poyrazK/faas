@@ -396,7 +396,13 @@ func TestAuthConfigSignInProtection(t *testing.T) {
 	if code := main.CmdAuth([]string{"config", "shop-auth", "--new-device-alerts", "off", "--messages-per-recipient", "3", "--messages-per-network", "off"}); code != 0 || sealed["AUTH_NEW_DEVICE_ALERTS"] != "0" || sealed["AUTH_MESSAGES_PER_RECIPIENT"] != "3" || !slices.Contains(*removed, "AUTH_MESSAGES_PER_NETWORK") {
 		t.Fatalf("code %d, sealed %v, removed %v", code, sealed, *removed)
 	}
-	for _, args := range [][]string{{"--messages-per-recipient", "0"}, {"--messages-per-network", "lots"}, {"--messages-per-recipient", "51"}, {"--new-device-alerts", "maybe"}} {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--security-log-days", "90"}); code != 0 || sealed["AUTH_SECURITY_LOG_DAYS"] != "90" {
+		t.Fatalf("log days: code %d, sealed %v", code, sealed)
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--security-log-days", "default"}); code != 0 || !slices.Contains(*removed, "AUTH_SECURITY_LOG_DAYS") {
+		t.Fatalf("log days default: code %d, removed %v", code, *removed)
+	}
+	for _, args := range [][]string{{"--messages-per-recipient", "0"}, {"--messages-per-network", "lots"}, {"--messages-per-recipient", "51"}, {"--new-device-alerts", "maybe"}, {"--security-log-days", "0"}, {"--security-log-days", "366"}, {"--security-log-days", "forever"}} {
 		if code := main.CmdAuth(append([]string{"config", "shop-auth"}, args...)); code == 0 {
 			t.Errorf("accepted %v", args)
 		}

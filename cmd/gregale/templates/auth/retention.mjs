@@ -49,6 +49,14 @@ const unusedClientStatement = `UPDATE auth.oauth_clients SET deleted_at = now() 
 const signInSeenStatement = `DELETE FROM gregale_auth.sign_in_seen WHERE key IN (
     SELECT key FROM gregale_auth.sign_in_seen WHERE last_seen < now() - make_interval(days => $1) LIMIT $2)`
 
+// Security events (sql/0026) AUTH_SECURITY_LOG_DAYS after their last one.
+const securityEventStatement = `DELETE FROM gregale_auth.security_events WHERE id IN (
+    SELECT id FROM gregale_auth.security_events WHERE last_at < now() - make_interval(days => $1) LIMIT $2)`
+
+export function createSecurityEventPruner(options) {
+  return createPruner({ ...options, statement: securityEventStatement, event: 'security_events' })
+}
+
 export function createSignInSeenPruner(options) {
   return createPruner({ ...options, days: limits.newDeviceDays, statement: signInSeenStatement, event: 'sign_in_seen' })
 }

@@ -60,6 +60,11 @@ type HandoffOptions struct {
 	// Checks are sent to the successor before it accepts traffic; a failed
 	// one stops it and rejects the hand-off (handoff_check.go).
 	Checks []HandoffCheck
+	// Prepare runs once the cgroup memory check has passed, before any
+	// socket or process effect: state handed to the successor through a
+	// file is written here so it does not count against the headroom the
+	// check measures (outboundd's caches, ADR-20261128150000).
+	Prepare func()
 
 	// Test seams: whether the process runs under systemd, the main-PID
 	// notification and its confirmation, the cgroup memory check, how freed
@@ -125,6 +130,9 @@ func Handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 	if err := waitForMemory(ctx, opts.memoryAllowed, opts.freeMemory, opts.memoryWait, opts.memoryPoll); err != nil {
 		return 0, fmt.Errorf("wire: hand-off refused: %w", err)
+	}
+	if opts.Prepare != nil {
+		opts.Prepare()
 	}
 	endPredecessor(opts.Log)
 

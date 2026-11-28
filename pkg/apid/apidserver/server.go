@@ -792,6 +792,12 @@ type server struct {
 	// must not call them available (prod findings 2026-11-15 #25).
 	tcpListenersEnabled bool
 	udpListenersEnabled bool
+	// aiAccessTokenHostEnabled says whether the edge serves the AI
+	// gateway's public host (FAAS_AI_ACCESS_TOKEN_HOST_ENABLED, rendered
+	// from faas_ai_gateway_public_enabled). Without it an AI access token
+	// has nowhere to be used: ai.gregale.dev answered "No such app" while
+	// the capability was listed (prod hunt 2026-11-28).
+	aiAccessTokenHostEnabled bool
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
@@ -1296,6 +1302,11 @@ func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 // listeners, for the capability list.
 func (s *server) WithListenersEnabled(tcp, udp bool) *server {
 	s.tcpListenersEnabled, s.udpListenersEnabled = tcp, udp
+	return s
+}
+
+func (s *server) WithAIAccessTokenHostEnabled(enabled bool) *server {
+	s.aiAccessTokenHostEnabled = enabled
 	return s
 }
 
@@ -4532,7 +4543,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreatePromptEvaluation)))))
 	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListPromptEvaluations)))))
 	mux.HandleFunc("GET /v1/outbound/ai-prompt-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetPromptEvaluation)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.aiAccessTokenHost(s.outboundAI.CreateAccessToken))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
 	// ADR 20261022153155: an app's AI calls by deployment.
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListDeployments)))))

@@ -308,7 +308,13 @@ func TestSignInProtection(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(set, map[string]string{"AUTH_NEW_DEVICE_ALERTS": "0", "AUTH_MESSAGES_PER_RECIPIENT": "3"}) || !reflect.DeepEqual(unset, []string{"AUTH_MESSAGES_PER_NETWORK"}) {
 		t.Fatalf("set %v unset %v err %v", set, unset, err)
 	}
-	for _, bad := range []Change{{MessagesPerRecipient: ptr(-1)}, {MessagesPerRecipient: ptr(51)}, {MessagesPerNetwork: ptr(1001)}} {
+	if set, unset, err := (Change{SecurityLogDays: ptr(90)}).Secrets(); err != nil || set["AUTH_SECURITY_LOG_DAYS"] != "90" || len(unset) != 0 {
+		t.Fatalf("log days: set %v unset %v err %v", set, unset, err)
+	}
+	if _, unset, err := (Change{SecurityLogDays: ptr(0)}).Secrets(); err != nil || !reflect.DeepEqual(unset, []string{"AUTH_SECURITY_LOG_DAYS"}) {
+		t.Fatalf("log days default: unset %v err %v", unset, err)
+	}
+	for _, bad := range []Change{{MessagesPerRecipient: ptr(-1)}, {MessagesPerRecipient: ptr(51)}, {MessagesPerNetwork: ptr(1001)}, {SecurityLogDays: ptr(366)}, {SecurityLogDays: ptr(-1)}} {
 		if _, _, err := bad.Secrets(); err == nil {
 			t.Errorf("%+v accepted", bad)
 		}
