@@ -138,7 +138,7 @@ func TestEgressFlowLoggerWritesBlockedAttempts(t *testing.T) {
 
 // failingFlowStore fails inserts of blocked (or allowed) rows on demand.
 type failingFlowStore struct {
-	*state.MemStore
+	mem                      *state.MemStore
 	failBlocked, failAllowed bool
 }
 
@@ -146,13 +146,21 @@ func (s *failingFlowStore) InsertEgressFlows(ctx context.Context, records []stat
 	if len(records) > 0 && (records[0].Blocked && s.failBlocked || !records[0].Blocked && s.failAllowed) {
 		return errors.New("statement timeout")
 	}
-	return s.MemStore.InsertEgressFlows(ctx, records)
+	return s.mem.InsertEgressFlows(ctx, records)
+}
+
+func (s *failingFlowStore) ListEgressFlows(ctx context.Context, f state.EgressFlowFilter) ([]state.EgressFlowRecord, error) {
+	return s.mem.ListEgressFlows(ctx, f)
+}
+
+func (s *failingFlowStore) DeleteEgressFlowsBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
+	return s.mem.DeleteEgressFlowsBefore(ctx, cutoff, limit)
 }
 
 // A failed blocked insert does not cost the allowed flows, and a failed
 // insert is retried on the next poll while the pair is still in the set.
 func TestEgressFlowLoggerInsertsSetsSeparatelyAndRetries(t *testing.T) {
-	store := &failingFlowStore{MemStore: state.NewMemStore(), failBlocked: true}
+	store := &failingFlowStore{mem: state.NewMemStore(), failBlocked: true}
 	flows := []netns.EgressFlow{flow("198.51.100.10", 443)}
 	drops := []netns.EgressFlow{{Addr: netip.MustParseAddr("198.51.100.25"), Protocol: "tcp", Port: 25}}
 	list := func(context.Context, string) ([]netns.EgressFlow, error) { return flows, nil }
