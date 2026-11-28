@@ -72,6 +72,62 @@ func Canonical(t testing.TB, port int) ([]byte, string) {
 	return out.Bytes(), res.ManifestDigest
 }
 
+// CanonicalLayers returns the canonical archive of a linux/amd64 image with
+// one layer per body (each a file named after its content), and its manifest
+// digest. Images that share a body share that layer wherever it sits.
+func CanonicalLayers(t testing.TB, bodies ...string) ([]byte, string) {
+	t.Helper()
+	var layers [][]byte
+	var diffIDs, paths []string
+	for i, body := range bodies {
+		named := sha256.Sum256([]byte(body))
+		layer := tarOf(t, "f"+hex.EncodeToString(named[:4]), []byte(body))
+		sum := sha256.Sum256(layer)
+		layers = append(layers, layer)
+		diffIDs = append(diffIDs, "sha256:"+hex.EncodeToString(sum[:]))
+		paths = append(paths, fmt.Sprintf("layer%d/layer.tar", i))
+	}
+	config, err := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64",
+		"config": map[string]any{"Cmd": []string{"/layer0"}},
+		"rootfs": map[string]any{"type": "layers", "diff_ids": diffIDs}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := json.Marshal([]map[string]any{{"Config": "config.json", "RepoTags": []string{"local/app:latest"}, "Layers": paths}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var save bytes.Buffer
+	tw := tar.NewWriter(&save)
+	write := func(name string, body []byte) {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("config.json", config)
+	for i, l := range layers {
+		write(paths[i], l)
+	}
+	write("manifest.json", manifest)
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	in := filepath.Join(dir, "save.tar")
+	if err := os.WriteFile(in, save.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	res, err := ociarchive.Convert(in, "", dir, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes(), res.ManifestDigest
+}
+
 func tarOf(t testing.TB, name string, body []byte) []byte {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

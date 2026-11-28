@@ -52,6 +52,8 @@ type Summary struct {
 	LayerBytes     int64
 	// ExposedPort is the image's single declared TCP port, or 0.
 	ExposedPort int
+	// LayerDescriptors are the manifest's layers, in order.
+	LayerDescriptors []oci.Descriptor
 }
 
 type index struct {
@@ -243,7 +245,7 @@ func summarize(indexBytes []byte, blobs map[string]blobInfo) (Summary, error) {
 		total += layer.Size
 	}
 	port, _ := oci.SingleTCPExposedPort(config.ExposedPorts)
-	return Summary{ManifestDigest: desc.Digest, ConfigDigest: manifest.Config.Digest, Layers: len(manifest.Layers), LayerBytes: total, ExposedPort: port}, nil
+	return Summary{ManifestDigest: desc.Digest, ConfigDigest: manifest.Config.Digest, Layers: len(manifest.Layers), LayerBytes: total, ExposedPort: port, LayerDescriptors: manifest.Layers}, nil
 }
 
 // CheckPlatform refuses an image config that is not linux/amd64.
