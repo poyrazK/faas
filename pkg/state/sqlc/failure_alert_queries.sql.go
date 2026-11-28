@@ -63,3 +63,62 @@ func (q *Queries) CountAppBootFailures(ctx context.Context, db DBTX, arg CountAp
 	err := row.Scan(&total)
 	return total, err
 }
+
+const readDeploymentBootEvidence = `-- name: ReadDeploymentBootEvidence :one
+SELECT
+  (SELECT count(*)
+     FROM events f
+    WHERE f.kind = 'wake.boot_failed'
+      AND f.data->>'app_id' = $1::text
+      AND f.data->>'deployment_id' = $2::text
+      AND f.data->>'reason' = 'vmm_boot_failed'
+      AND NOT (f.data ? 'mirror')
+      AND f.at >= $3::timestamptz
+      AND f.at <= $4::timestamptz
+      AND EXISTS (
+        SELECT 1 FROM events c
+         WHERE c.kind = 'wake.boot_completed'
+           AND c.at >= $3::timestamptz
+           AND c.at <= $4::timestamptz
+           AND c.data->>'node_id' = f.data->>'node_id'
+           AND c.data->>'deployment_id' IS DISTINCT FROM $2::text))::bigint AS failures,
+  (SELECT count(*)
+     FROM events s
+    WHERE s.kind = 'wake.boot_completed'
+      AND s.data->>'app_id' = $1::text
+      AND s.data->>'deployment_id' = $2::text
+      AND s.at >= $3::timestamptz
+      AND s.at <= $4::timestamptz)::bigint AS successes
+`
+
+type ReadDeploymentBootEvidenceParams struct {
+	AppID        string
+	DeploymentID string
+	WindowStart  pgtype.Timestamptz
+	WindowEnd    pgtype.Timestamptz
+}
+
+type ReadDeploymentBootEvidenceRow struct {
+	Failures  int64
+	Successes int64
+}
+
+// ADR-605 amendment 2: a boot_failures rollback judges a completed release on
+// its own boots in [window_start, window_end]. A failed VM boot (not
+// mirror-mode, not schedd's own runtime-state failure) counts only when the
+// same node completed a boot of another deployment in the window, so a node
+// fault, a fleet-wide incident or an app pinned to a broken node never reads
+// as the release failing. successes counts the release's completed boots and
+// restores. The post-deploy window is at most an hour, which bounds both
+// scans; events_boot_failed_app_at_idx and events_kind_at_idx serve them.
+func (q *Queries) ReadDeploymentBootEvidence(ctx context.Context, db DBTX, arg ReadDeploymentBootEvidenceParams) (ReadDeploymentBootEvidenceRow, error) {
+	row := db.QueryRow(ctx, readDeploymentBootEvidence,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WindowStart,
+		arg.WindowEnd,
+	)
+	var i ReadDeploymentBootEvidenceRow
+	err := row.Scan(&i.Failures, &i.Successes)
+	return i, err
+}

@@ -31,6 +31,19 @@ func newHistoricalAlertEvidence(r api.AlertRollback, f alertRollbackFacts, cutov
 	if start.Before(first) {
 		start = first
 	}
+	if f.Metric == AlertMetricBootFailures {
+		// Boot events are written as they happen, so the window ends at the
+		// fire, and starts no earlier than the cutover: boots of this
+		// deployment from before the cutover were a canary's, not the
+		// release's.
+		end, start = r.FiredAt.UTC(), r.FiredAt.Add(-historicalAlertMetricWindow(f.WindowSpec)).UTC()
+		if start.Before(cutover) {
+			start = cutover.UTC()
+		}
+		return &api.AlertRollbackDeploymentEvidence{Version: 1, DeploymentID: r.CandidateDeploymentID,
+			Metric: string(f.Metric), Comparison: string(f.Comparison), Threshold: f.Threshold, WindowSpec: string(f.WindowSpec),
+			CutoverAt: cutover.UTC(), WindowStart: start, WindowEnd: end, Status: "pending"}
+	}
 	return &api.AlertRollbackDeploymentEvidence{Version: 1, DeploymentID: r.CandidateDeploymentID,
 		Metric: string(f.Metric), Comparison: string(f.Comparison), Threshold: f.Threshold, WindowSpec: string(f.WindowSpec),
 		CutoverAt: cutover.UTC(), WindowStart: start, WindowEnd: end, MinimumRequests: api.AlertRollbackEvidenceMinRequests, Status: "pending"}
@@ -77,8 +90,58 @@ func historicalAlertEvidenceSupported(e *api.AlertRollbackDeploymentEvidence) bo
 // a post-deploy rollback window on any other rule, which could fire but never
 // roll back.
 func HistoricalAlertRollbackSupported(metric, comparison, windowSpec string, threshold float64) bool {
-	return metric == string(AlertMetricErrorRate) && (comparison == string(AlertGt) || comparison == string(AlertGte)) &&
-		api.IsFiniteFloat(threshold) && threshold >= 0 && threshold <= 100 && historicalAlertMetricWindow(AlertWindowSpec(windowSpec)) > 0
+	if comparison != string(AlertGt) && comparison != string(AlertGte) || !api.IsFiniteFloat(threshold) || threshold < 0 ||
+		historicalAlertMetricWindow(AlertWindowSpec(windowSpec)) <= 0 {
+		return false
+	}
+	switch metric {
+	case string(AlertMetricErrorRate):
+		return threshold <= 100
+	case string(AlertMetricBootFailures):
+		// A completed release is judged on its own boots (ADR-605
+		// amendment 2).
+		return true
+	}
+	return false
+}
+
+// qualifyBootFailureEvidence is qualifyHistoricalAlertEvidence for a
+// boot_failures rule (ADR-605 amendment 2). The release qualifies only when
+// its own failed boots meet the rule and it has not booted or restored once
+// in the window: a node fault under a healthy release fails some boots but
+// not all, and a release that crashes on start fails every one.
+func qualifyBootFailureEvidence(r api.AlertRollback, failures, successes int64, available bool, now time.Time) (api.AlertRollback, bool) {
+	r = cloneAlertRollback(r)
+	e := r.DeploymentEvidence
+	if e == nil {
+		return alertRollbackProgress(r, "failed", "alert_rollback_evidence_missing", nil), false
+	}
+	now = now.UTC()
+	e.CheckedAt, e.LastSampleAt = &now, nil
+	e.BootFailures, e.BootSuccesses = failures, successes
+	finish := func(status, evidenceStatus, code string) (api.AlertRollback, bool) {
+		e.Status, e.Code = evidenceStatus, code
+		return alertRollbackProgress(r, status, code, nil), false
+	}
+	if !historicalAlertEvidenceSupported(e) || e.Metric != string(AlertMetricBootFailures) {
+		return finish("failed", "unsupported", "alert_rollback_metric_unsupported")
+	}
+	if now.Before(r.FiredAt) || !now.Before(r.FiredAt.Add(api.AlertRollbackEvidenceMaxCheckDelay)) {
+		return finish("failed", "expired", "alert_rollback_evidence_expired")
+	}
+	if !available {
+		return finish("blocked", "unavailable", "alert_rollback_telemetry_unavailable")
+	}
+	if !e.WindowStart.Before(e.WindowEnd) || failures < 0 || successes < 0 {
+		return finish("blocked", "insufficient", "alert_rollback_evidence_insufficient")
+	}
+	n := float64(failures)
+	breached := failures > 0 && successes == 0 && (n > e.Threshold || e.Comparison == string(AlertGte) && n == e.Threshold)
+	if !breached {
+		return finish("failed", "healthy", "alert_rollback_deployment_healthy")
+	}
+	e.Status, e.Code = "breached", ""
+	return alertRollbackProgress(r, "pending", "", nil), true
 }
 
 // qualifyHistoricalAlertEvidence returns whether an intent may be accepted.

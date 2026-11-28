@@ -97,6 +97,11 @@ func captureAlertRollback(id string, f alertRollbackFacts, observed float64, at 
 	if candidate.ID == "" {
 		return captureHistoricalAlertRollback(r, f)
 	}
+	if f.Metric == AlertMetricBootFailures {
+		// An app-wide boot failure count is no evidence against one
+		// in-flight deployment (ADR-605 amendment 2).
+		return fail("alert_rollback_metric_unsupported")
+	}
 	r.CandidateDeploymentID, r.Scope = candidate.ID, normalizedDeploymentScope(candidate.Scope)
 	if f.Service {
 		return captureServiceAlertPredecessor(r, f, candidate)
