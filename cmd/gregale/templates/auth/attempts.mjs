@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isIPv4, isIPv6 } from 'node:net'
 import { limits } from './config.mjs'
 import { normalizePhone } from './sms.mjs'
 
@@ -26,7 +27,38 @@ export const budgets = Object.freeze({
   passwordAccount: { limit: limits.passwordFailuresPerAccount, seconds: limits.attemptWindowSeconds },
   secondStep: { limit: limits.secondStepFailuresPerUser, seconds: limits.attemptWindowSeconds },
   serviceAccountClient: { limit: limits.serviceAccountTokensPerMinute, seconds: 60 },
+  // Dynamic OAuth client registrations, counted whether or not they succeed:
+  // the app holds at most limits.oauthClients, so one address must not be
+  // able to take them all.
+  oauthRegistration: { limit: limits.oauthRegistrationsPerAddress, seconds: limits.oauthRegistrationWindowSeconds },
+  // Lookups of one admin key by ID (/settings/v1/admin-keys/<ID>), so the
+  // IDs cannot be enumerated.
+  adminKeyLookup: { limit: limits.adminKeyLookupsPerAddress, seconds: 3600 },
 })
+
+// addressBucket is the client address a budget counts against: an IPv4
+// address itself (also when written as an IPv4-mapped IPv6 address, dotted
+// or in hex), and an IPv6 address's /64, since one subscriber usually holds
+// a whole /64 and could otherwise give every attempt a fresh address. A
+// value that is not an address is used as written.
+export function addressBucket(address) {
+  let value = String(address ?? '').trim().toLowerCase().replace(/^\[(.*)\]$/, '$1').split('%')[0]
+  if (!isIPv6(value)) return value
+  const groups = part => part ? part.split(':') : []
+  const width = list => list.reduce((n, group) => n + (group.includes('.') ? 2 : 1), 0)
+  let full = groups(value)
+  if (value.includes('::')) {
+    const [head, tail] = value.split('::').map(groups)
+    full = [...head, ...Array(8 - width(head) - width(tail)).fill('0'), ...tail]
+  }
+  // A dotted IPv4 tail becomes its two groups.
+  full = full.flatMap(group => group.includes('.') ? (([a, b, c, d]) => [((a << 8) | b).toString(16), ((c << 8) | d).toString(16)])(group.split('.').map(Number)) : [group])
+  const numbers = full.map(group => Number.parseInt(group, 16))
+  if (numbers.slice(0, 5).every(n => n === 0) && numbers[5] === 0xffff) {
+    return [numbers[6] >> 8, numbers[6] & 255, numbers[7] >> 8, numbers[7] & 255].join('.')
+  }
+  return `${numbers.slice(0, 4).map(n => n.toString(16)).join(':')}::/64`
+}
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -56,6 +88,17 @@ export function createAttempts(pool) {
             failures = CASE WHEN b.window_ends_at > now() THEN b.failures + 1 ELSE 1 END,
             window_ends_at = CASE WHEN b.window_ends_at > now() THEN b.window_ends_at ELSE now() + make_interval(secs => $2) END`, [key, budget.seconds])
       }
+    },
+    // take counts one use of a budget and returns the count so far and the
+    // seconds until the budget reopens if this use overspent it, or 0.
+    async take({ key, budget }) {
+      const { rows: [row] } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets AS b (key, failures, window_ends_at)
+          VALUES ($1, 1, now() + make_interval(secs => $2))
+        ON CONFLICT (key) DO UPDATE SET
+          failures = CASE WHEN b.window_ends_at > now() THEN b.failures + 1 ELSE 1 END,
+          window_ends_at = CASE WHEN b.window_ends_at > now() THEN b.window_ends_at ELSE now() + make_interval(secs => $2) END
+        RETURNING failures, ceil(extract(epoch FROM window_ends_at - now()))::int AS wait`, [key, budget.seconds])
+      return { count: row.failures, wait: row.failures > budget.limit ? Math.max(1, row.wait) : 0 }
     },
     // reserve counts one attempt against every budget and returns the
     // seconds until the first one it overspent reopens, or 0.
@@ -101,15 +144,46 @@ export function signInSubject(raw) {
   const fields = name => Object.entries(body).filter(([key]) => key.toLowerCase() === name)
   const email = fields('email'), phone = fields('phone')
   if (email.length > 1 || phone.length > 1) throw new Error('ambiguous')
-  if (typeof email[0]?.[1] === 'string' && email[0][1] !== '') return `email:${email[0][1].toLowerCase()}`
+  if (typeof email[0]?.[1] === 'string' && email[0][1] !== '') return `email:${goLower(email[0][1])}`
   if (typeof phone[0]?.[1] === 'string' && phone[0][1] !== '') return `phone:${normalizePhone(phone[0][1])}`
+  return null
+}
+
+// goLower lowercases as Go's strings.ToLower does, which GoTrue v2.197.0
+// uses to find an account (LOWER(email) = strings.ToLower(input)): one code
+// point at a time with the simple mapping. JavaScript's toLowerCase uses the
+// full mapping, which turns U+0130 (İ) into two code points where Go gives
+// "i", so "alİce@x" would otherwise sign in to alice@x with its own budget.
+export function goLower(value) {
+  let out = ''
+  for (const char of value) out += char === 'İ' ? 'i' : char.toLowerCase()
+  return out
+}
+
+// goQueryValue returns the first value of name in a query string as Go's
+// url.ParseQuery (and so GoTrue's r.FormValue) reads it: a pair containing
+// a semicolon, or with an invalid escape, is dropped rather than read. Node's
+// URLSearchParams keeps both, so "grant_type=x;&grant_type=password" would
+// otherwise read as "x;" here and "password" in GoTrue.
+export function goQueryValue(query, name) {
+  for (const pair of query.split('&')) {
+    if (pair === '' || pair.includes(';')) continue
+    const at = pair.indexOf('=')
+    const [rawKey, rawValue] = at === -1 ? [pair, ''] : [pair.slice(0, at), pair.slice(at + 1)]
+    let key, value
+    try {
+      key = decodeURIComponent(rawKey.replaceAll('+', ' '))
+      value = decodeURIComponent(rawValue.replaceAll('+', ' '))
+    } catch { continue }
+    if (key === name) return value
+  }
   return null
 }
 
 // passwordEntries are the budgets one password sign-in spends.
 export function passwordEntries(subject, address) {
   return [
-    { key: budgetKey('password-address', subject, address), budget: budgets.passwordAddress },
+    { key: budgetKey('password-address', subject, addressBucket(address)), budget: budgets.passwordAddress },
     { key: budgetKey('password-account', subject), budget: budgets.passwordAccount },
   ]
 }
@@ -129,9 +203,9 @@ export function guardedPath(method, path) {
   // GoTrue's router serves a path with trailing slashes as the path.
   const route = raw.replace(/\/+$/, '')
   if (route === '/token') {
-    // GoTrue reads the grant from the query (r.FormValue); the password
-    // grant's fields come from the JSON body.
-    return new URLSearchParams(query).get('grant_type') === 'password' ? 'password' : null
+    // GoTrue reads the grant from the query (r.FormValue), parsed as Go
+    // parses it; the password grant's fields come from the JSON body.
+    return goQueryValue(query, 'grant_type') === 'password' ? 'password' : null
   }
   return /^\/factors\/(recovery-codes|[0-9a-fA-F-]{36})\/verify$/.test(route) ? 'second-step' : null
 }

@@ -67,10 +67,19 @@ type deploymentLabelSet struct {
 	mu       sync.Mutex
 	capByApp map[string]int                 // appID → plan cap (cached on first sight)
 	admitted map[string]map[string]struct{} // appID → deploymentID → {}
+	// provisional holds ids admitted by admitSeen (a recorded target)
+	// that no request has used yet: appID → deploymentID → {}. When an
+	// app's cap is full, a request evicts one of these rather than
+	// collapsing to __other__, so a release staged with --no-traffic or
+	// an idle canary never takes the slot of the release that serves.
+	provisional map[string]map[string]struct{}
 	// onAdmit runs once per real deployment id the set admits, outside
 	// the lock. Metrics uses it to create the deployment's status-class
 	// series at zero; see NewMetrics.
 	onAdmit func(appID, deploymentID string)
+	// onEvict runs, outside the lock, for a provisional id a request
+	// evicted; Metrics deletes its zero series.
+	onEvict func(appID, deploymentID string)
 }
 
 // newDeploymentLabelSet constructs a fresh admission set with
@@ -79,8 +88,9 @@ type deploymentLabelSet struct {
 // per-app sub-map; subsequent admits are O(1) hits.
 func newDeploymentLabelSet() *deploymentLabelSet {
 	return &deploymentLabelSet{
-		capByApp: make(map[string]int),
-		admitted: make(map[string]map[string]struct{}),
+		capByApp:    make(map[string]int),
+		admitted:    make(map[string]map[string]struct{}),
+		provisional: make(map[string]map[string]struct{}),
 	}
 }
 
@@ -103,20 +113,30 @@ func newDeploymentLabelSet() *deploymentLabelSet {
 // inserts. The Prometheus observe at the call site happens
 // AFTER admit returns, so it is outside the critical section.
 func (s *deploymentLabelSet) admit(appID string, plan api.Plan, deploymentID string) string {
-	label, fresh := s.admitLocked(appID, plan, deploymentID)
+	return s.admitFrom(appID, plan, deploymentID, false)
+}
+
+// admitFrom runs admitLocked and its callbacks; provisional marks an id
+// admitted from a recorded target rather than a request.
+func (s *deploymentLabelSet) admitFrom(appID string, plan api.Plan, deploymentID string, provisional bool) string {
+	label, fresh, evicted := s.admitLocked(appID, plan, deploymentID, provisional)
+	if evicted != "" && s.onEvict != nil {
+		s.onEvict(appID, evicted)
+	}
 	if fresh && s.onAdmit != nil {
 		s.onAdmit(appID, label)
 	}
 	return label
 }
 
-// admitLocked is admit's decision; fresh reports a real id admitted now.
-func (s *deploymentLabelSet) admitLocked(appID string, plan api.Plan, deploymentID string) (string, bool) {
+// admitLocked is admit's decision; fresh reports a real id admitted now,
+// evicted a provisional id it removed to make room.
+func (s *deploymentLabelSet) admitLocked(appID string, plan api.Plan, deploymentID string, provisional bool) (label string, fresh bool, evicted string) {
 	switch deploymentID {
 	case "":
-		return emptyDeploymentLabel, false
+		return emptyDeploymentLabel, false, ""
 	case otherDeploymentLabel:
-		return otherDeploymentLabel, false
+		return otherDeploymentLabel, false, ""
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,15 +154,57 @@ func (s *deploymentLabelSet) admitLocked(appID string, plan api.Plan, deployment
 		s.admitted[appID] = appMap
 	}
 	appMap := s.admitted[appID]
+	pending := s.provisional[appID]
 	if _, ok := appMap[deploymentID]; ok {
-		return deploymentID, false
+		if !provisional {
+			delete(pending, deploymentID) // a request makes it permanent
+		}
+		return deploymentID, false, ""
 	}
 	// Real-id budget is exactly `cap - reservedCount`, not
 	// `cap - reservedCount - 2`. Without the subtraction the
 	// reserved labels steal two slots from the real-id budget.
 	if len(appMap)-reservedDeploymentCnt >= cap {
-		return otherDeploymentLabel, false
+		if provisional || len(pending) == 0 {
+			return otherDeploymentLabel, false, ""
+		}
+		// A request outranks a provisional id; the map stays at cap.
+		for id := range pending {
+			evicted = id
+			break
+		}
+		delete(pending, evicted)
+		delete(appMap, evicted)
 	}
 	appMap[deploymentID] = struct{}{}
-	return deploymentID, true
+	if provisional {
+		if pending == nil {
+			pending = make(map[string]struct{})
+			s.provisional[appID] = pending
+		}
+		pending[deploymentID] = struct{}{}
+	}
+	return deploymentID, true, evicted
+}
+
+// admitSeen admits deploymentID for an app this process has already admitted
+// a request for, whose plan cap is cached, and does nothing for an unseen app.
+// A route update calls it when it learns an app's targets (a new release's
+// first RUNNING instance), so the release's status-class series exist at zero
+// before its first request rather than being created by it: created by the
+// first request, a burst that lands before the next scrape is lost to
+// increase() (prod hunt r58 follow-up). An unseen app gets its series from
+// its first request, as before. The id stays provisional until a request
+// uses it, and a request for another id evicts it when the cap is full.
+func (s *deploymentLabelSet) admitSeen(appID, deploymentID string) {
+	if s == nil || appID == "" || deploymentID == "" {
+		return
+	}
+	s.mu.Lock()
+	_, seen := s.capByApp[appID]
+	s.mu.Unlock()
+	if seen {
+		// The plan is ignored: the app's cap is already cached.
+		s.admitFrom(appID, "", deploymentID, true)
+	}
 }

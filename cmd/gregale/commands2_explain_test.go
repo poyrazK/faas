@@ -169,8 +169,8 @@ func TestCmdLogsExplainRejectsJSONMode(t *testing.T) {
 	_, readStderr, restore := main.SwapIO(t)
 	defer restore()
 
-	if code := main.CmdLogs([]string{"myapp", "--explain"}); code != 2 {
-		t.Fatalf("cmdLogs = %d, want 2", code)
+	if code := main.CmdLogs([]string{"myapp", "--explain"}); code != 1 {
+		t.Fatalf("cmdLogs = %d, want 1", code)
 	}
 	if stderr := readStderr(); !strings.Contains(stderr, `"code":"validation_failed"`) {
 		t.Fatalf("expected typed validation problem, got %q", stderr)

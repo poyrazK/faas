@@ -81,6 +81,9 @@ func (p *Provider) Usage(ctx context.Context, providerResourceID string, window 
 		}
 		return managedpostgres.Usage{}, managedpostgres.ErrUnavailable
 	}
+	if !reportsConsumption(response.Projects[0]) {
+		return managedpostgres.Usage{}, managedpostgres.ErrUsageNotReported
+	}
 	if err := validateConsumptionCoverage(response.Projects[0], window); err != nil {
 		return managedpostgres.Usage{}, err
 	}
@@ -125,6 +128,20 @@ func atUTCMidnight(value time.Time) bool {
 
 func firstOfUTCMonth(value time.Time) bool {
 	return atUTCMidnight(value) && value.Day() == 1
+}
+
+// reportsConsumption tells a project Neon has no timeframe for at all from a
+// partial or malformed report. Neon stops reporting a deleted project at the
+// last hour that closed before the deletion: in production on 2026-11-27, two
+// idle projects deleted at 19:07 came back with no periods for 19:00–20:00,
+// and still none 14 hours later.
+func reportsConsumption(project projectConsumption) bool {
+	for _, period := range project.Periods {
+		if len(period.Consumption) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // A zero-valued metric may be omitted by Neon, but absent time coverage does

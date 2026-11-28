@@ -495,6 +495,26 @@ const (
 	UnverifiedAccountExpiryBatch = 100
 )
 
+// DeletedOrgPurgeAfter is how long a deleted shared organization keeps its
+// slug before apid's hourly purge releases it (ADR-061 amendment 1); one
+// sweep purges at most DeletedOrgPurgeBatch.
+const (
+	DeletedOrgPurgeAfter = 30 * 24 * time.Hour
+	DeletedOrgPurgeBatch = 100
+)
+
+// schedd's sweep of snapshots whose object is missing from the canonical
+// store (prod hunt r72): a snapshot must be SnapshotOriginMissingGrace old
+// when a node's fan-out found it missing before schedd marks it stale (a
+// capture's upload lands well inside it); the sweep runs every
+// SnapshotOriginMissingInterval and retires at most SnapshotOriginMissingBatch
+// per pass.
+const (
+	SnapshotOriginMissingGrace    = time.Hour
+	SnapshotOriginMissingInterval = 5 * time.Minute
+	SnapshotOriginMissingBatch    = 50
+)
+
 // Customer-granted support access (ADR-20261116163508). A grant lasts
 // SupportGrantDefaultTTL unless its owner or admin picks another duration,
 // at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A
@@ -12265,6 +12285,10 @@ var (
 	SandboxPersistentRunMaxSec    = [4]int{0, 86_400, 259_200, 604_800}
 	SandboxPausedRetentionDays    = [4]int{0, 7, 30, 90}
 	SandboxResumeWaitSec          = 30
+	// SandboxReattachGraceSec is how long vmmd keeps a persistent session's VM
+	// running after its stream ended without a close or a pause, for agentd
+	// to take it over again (§7: schedd and agentd restarts).
+	SandboxReattachGraceSec = 120
 	// SandboxForkMax bounds the forks one request makes (§3).
 	SandboxForkMax = [4]int{0, 1, 10, 100}
 	// SandboxVolumeMaxGB bounds a persistent session's workspace volume, and
@@ -12278,6 +12302,11 @@ var (
 	// contract.
 	SandboxPersistentRAMMBMax = [4]int{0, 2048, 8192, 16_384}
 	SandboxPersistentVCPUMax  = [4]int{0, 2, 4, 8}
+	// SandboxLargeShapeRAMMB and SandboxLargeShapeVCPU are the largest shape
+	// any agent-pool node takes (the largest ephemeral one, §5): a session
+	// above either runs only on the nodes that declare large shapes.
+	SandboxLargeShapeRAMMB = 4096
+	SandboxLargeShapeVCPU  = 2
 	// SandboxPausedBytesFreePerAccount is the stored bytes of paused sessions
 	// (captures and volume backups) an account keeps free each month (§8).
 	SandboxPausedBytesFreePerAccount = [4]int64{0, 5 << 30, 25 << 30, 100 << 30}
@@ -18432,6 +18461,23 @@ const (
 	// AuthOAuthMaxClients bounds the OAuth clients one Auth app holds,
 	// registered by the owner or by the clients themselves (RFC 7591).
 	AuthOAuthMaxClients = 1000
+	// AuthOAuthRegistrationsPerAddress bounds the clients one client address
+	// (an IPv4 address or IPv6 /64) may self-register in
+	// AuthOAuthRegistrationWindowSeconds. Self-registration also stops while
+	// AuthOAuthUnusedClients self-registered clients nobody has used (no
+	// consent, session or approved authorization) exist, so clients people
+	// use and the owner's keep AuthOAuthMaxClients minus that many places
+	// whoever floods registration. An unused client with no authorization in
+	// the last AuthOAuthUnusedClientHours is soft-deleted that long after it
+	// registered.
+	AuthOAuthRegistrationsPerAddress   = 10
+	AuthOAuthRegistrationWindowSeconds = 3600
+	AuthOAuthUnusedClients             = 500
+	AuthOAuthUnusedClientHours         = 24
+	// AuthAdminKeyLookupsPerAddress bounds how often one client address may
+	// look up an admin key's scopes by ID in an hour, so IDs cannot be
+	// enumerated.
+	AuthAdminKeyLookupsPerAddress = 60
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

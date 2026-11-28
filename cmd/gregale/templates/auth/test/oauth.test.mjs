@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
 import { createHmac, generateKeyPairSync } from 'node:crypto'
-import { consentPath, oauthAudience, oauthEnv, runtimeConfig } from '../config.mjs'
+import { consentPath, limits, oauthAudience, oauthEnv, runtimeConfig } from '../config.mjs'
 import { createHookServer, hookEnv, newHookSecret } from '../email.mjs'
 import { accessTokenClaims, bearerClaims, clientInput, clientTokenAllowed, consentLocation, isClientToken, oauthRoute, wellKnownPath } from '../oauth.mjs'
 import { createServer } from '../server.mjs'
@@ -137,7 +137,7 @@ test('the front confines client tokens and steers consent to the hosted page', a
   let open = true
   const oauth = {
     location: location => consentLocation(location, site, external),
-    registrationOpen: async () => open,
+    registeredClients: async () => ({ clients: open ? 0 : limits.oauthClients, unused: 0 }),
     resource: async id => id === 'auth_1' ? 'https://mcp.shop.example.com/mcp' : null,
   }
   const { base, seen } = await front(t, oauth, (req, res) => {

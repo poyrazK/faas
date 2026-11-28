@@ -380,3 +380,29 @@ a role-permission change without an explicit test edit:
   the authn surface) for the authz surface. Together the two
   tests cover both halves of spec §11's "every authenticated route
   must be wrapped" defence.
+
+## Amendment 1 (2026-11-27): purging deleted shared organizations
+
+The `deleted_pending → hard-delete` step above was never built: a deleted
+shared organization kept its slug and stayed in every member's `org list`
+forever (prod hunt r73: `audit-1001-org`, deleted 2026-09-30).
+
+- **List.** `GET /v1/orgs` leaves out `deleted_pending` organizations;
+  `?include_deleted=true` (CLI `gregale org list --all`) keeps them.
+- **Purge.** apid sweeps hourly (`pkg/apid/orgpurge`). A shared organization
+  whose deletion was requested more than `api.DeletedOrgPurgeAfter` (30
+  days) ago takes the tombstone slug `purged-<first 24 hex of its id>`,
+  which frees its old slug, and its open invitations are revoked. The sweep
+  claims rows with `for update skip locked`, so several apids may run it.
+- **Why a tombstone, not a row delete.** 46 tables reference `orgs`, 19 of
+  them `ON DELETE RESTRICT` (retained billing, usage and audit records that
+  keep their financial subject, ADR-202610171904). Deleting the row would be
+  refused, or would cascade into records that must be retained. The row stays,
+  `deleted_pending`, with its memberships kept for audit attribution; only the
+  slug and pending invitations are released.
+- **Reserved prefix.** `api.ValidateOrgSlug` refuses slugs starting with
+  `purged-`. Personal organizations are untouched: they follow the
+  account's ADR-021 erasure.
+- The Free-organization limit still counts an organization deleted this UTC
+  month (ADR-20261104211412); purging does not change that.
+

@@ -102,6 +102,7 @@ func main() {
 			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
 		}
 	}
+	policy.PublicEntryNoHTTP = strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_PUBLIC_ENTRY_HTTP")), "off")
 	if raw := pickValue(*peerEntryAddrs, "FAAS_PEER_ENTRY_ADDRS"); raw != "" {
 		for _, entry := range strings.Split(raw, ",") {
 			addr, err := netip.ParseAddr(strings.TrimSpace(entry))

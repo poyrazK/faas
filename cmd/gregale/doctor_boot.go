@@ -27,8 +27,9 @@ import (
 // Boot timings are variables so tests can shorten them.
 var (
 	doctorBootStartupTimeout = 30 * time.Second
-	doctorBootStayUp         = 10 * time.Second
-	doctorBootPoll           = 250 * time.Millisecond
+	// doctorBootStayUp is Gregale's observation window for a new deployment.
+	doctorBootStayUp = api.CharacterizationDeadline
+	doctorBootPoll   = 250 * time.Millisecond
 	// doctorBootRunTimeout bounds `docker run`, which pulls a missing image.
 	doctorBootRunTimeout = 10 * time.Minute
 )
@@ -49,6 +50,20 @@ type doctorBootOptions struct {
 	// imageHealthcheck is the image's enabled HEALTHCHECK, which Docker runs
 	// (doctor_boot_health.go); nil when it has none.
 	imageHealthcheck *api.AppManifestHealthcheck
+	// deploy is set under `deploy --local-image --boot`, whose fixes name
+	// deploy's flags instead of doctor's.
+	deploy bool
+	// mode is the app's execution mode; a worker or job is judged without
+	// HTTP (doctor_boot_mode.go).
+	mode string
+}
+
+// envFileFlag is the flag that passes env vars to the boot container.
+func (o doctorBootOptions) envFileFlag() string {
+	if o.deploy {
+		return "--boot-env-file"
+	}
+	return "--env-file"
 }
 
 // doctorDocker runs the local Docker client. GREGALE_DOCKER selects a
@@ -126,7 +141,10 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 	name := doctorBootContainerName()
 	portSpec := strconv.Itoa(opts.port)
 	args := []string{"run", "--detach", "--name", name, "--platform", "linux/amd64", "--label", "dev.gregale.doctor=boot",
-		"--env", "PORT=" + portSpec, "--publish", "127.0.0.1::" + portSpec}
+		"--env", "PORT=" + portSpec}
+	if !doctorBootNoListener(opts.mode) {
+		args = append(args, "--publish", "127.0.0.1::"+portSpec)
+	}
 	if opts.memoryMB > 0 {
 		// Without --memory-swap Docker allows as much swap again, and an app
 		// over its RAM would slow down instead of being killed as on Gregale.
@@ -140,6 +158,9 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 		args = append(args, "--env-file", opts.envFile)
 	}
 	args = append(args, opts.image)
+	if doctorBootNoListener(opts.mode) {
+		doctorBootRealRunNote(opts.mode)
+	}
 	_, _ = fmt.Fprintf(osStderr, "Starting %s with %s (pulls the image if it is not local)…\n", opts.image, docker.bin)
 	runCtx, cancel := context.WithTimeout(ctx, doctorBootRunTimeout)
 	_, err = docker.run(runCtx, args...)
@@ -162,6 +183,9 @@ type doctorBoot struct {
 }
 
 func (b doctorBoot) check(ctx context.Context) []doctorCheck {
+	if doctorBootNoListener(b.opts.mode) {
+		return b.checkNoListener(ctx)
+	}
 	status, exited, err := b.waitForHTTP(ctx)
 	if err != nil {
 		return []doctorCheck{{Name: "boot-start", Status: "error", Code: "boot_inspect_failed", Hint: err.Error()}}
@@ -209,16 +233,20 @@ func (b doctorBoot) httpCheck(status int) doctorCheck {
 		}
 		if status == http.StatusBadRequest && b.opts.probeHost == "" {
 			// Gregale's probe sends the app's public host; this one could not.
+			fix := "Pass --app SLUG so the probe sends that app's public host, as Gregale does."
+			if b.opts.deploy {
+				fix = "The app has no public host yet, so the local probe could not send one; Gregale's probe will. Allow 127.0.0.1 for the local boot with " + b.opts.envFileFlag() + ", or deploy without --boot."
+			}
 			return doctorCheck{Name: "boot-http", Status: "warn", Detail: detail,
 				Hint: fmt.Sprintf("GET %s answered 400 to a request for host %s. An app that allow-lists its host names (Django ALLOWED_HOSTS, Rails config.hosts) refuses it, but Gregale's probe sends the app's public host.", b.opts.healthPath, "127.0.0.1"),
-				Fix:  "Pass --app SLUG so the probe sends that app's public host, as Gregale does."}
+				Fix:  fix}
 		}
 		return doctorCheck{Name: "boot-http", Status: "error", Code: "boot_health_failed", Detail: detail,
 			Hint: fmt.Sprintf("GET %s last answered %d, and no answer within %s was 2xx. Gregale marks an instance ready only once its health path answers 2xx, so the deploy would fail.", b.opts.healthPath, status, bootSeconds(doctorBootStartupTimeout)),
-			Fix:  "Make the health path answer 2xx once the app can serve (a redirect counts only if it ends in 2xx), check that the path is right, and set env vars the app needs with --env-file."}
+			Fix:  "Make the health path answer 2xx once the app can serve (a redirect counts only if it ends in 2xx), check that the path is right, and set env vars the app needs with " + b.opts.envFileFlag() + "."}
 	}
 	if status >= 500 {
-		return doctorCheck{Name: "boot-http", Status: "warn", Detail: detail, Hint: fmt.Sprintf("GET / answered %d. The platform marks an instance ready once the port accepts connections (or its health check passes), but every request may fail the same way.", status), Fix: "Check the container logs (`docker logs`) for the error; set env vars the app needs with --env-file, or pass --healthcheck-path to probe the app's health route."}
+		return doctorCheck{Name: "boot-http", Status: "warn", Detail: detail, Hint: fmt.Sprintf("GET / answered %d. The platform marks an instance ready once the port accepts connections (or its health check passes), but every request may fail the same way.", status), Fix: "Check the container logs (`docker logs`) for the error; set env vars the app needs with " + b.opts.envFileFlag() + ", or pass --healthcheck-path to probe the app's health route."}
 	}
 	return doctorCheck{Name: "boot-http", Status: "ok", Detail: detail}
 }
@@ -330,12 +358,15 @@ func (b doctorBoot) stayUp(ctx context.Context) doctorCheck {
 func (b doctorBoot) exitedCheck(ctx context.Context, name string, st doctorBootState) doctorCheck {
 	c := doctorCheck{Name: name, Status: "error", Code: "boot_exited",
 		Hint: fmt.Sprintf("The container exited with code %d after %s.", st.exitCode, bootSeconds(time.Since(b.started))),
-		Fix:  "Read the container output; an app that needs env vars to start can get them with --env-file. A request-serving app must keep running and serve HTTP on 0.0.0.0:$PORT; a one-off task belongs in `gregale run`."}
+		Fix:  "Read the container output; an app that needs env vars to start can get them with " + b.opts.envFileFlag() + ". A request-serving app must keep running and serve HTTP on 0.0.0.0:$PORT; a one-off task belongs in `gregale run`."}
 	if st.oomKilled {
 		c.Code, c.Hint = "boot_oom_killed", fmt.Sprintf("The container was killed for running out of memory after %s.", bootSeconds(time.Since(b.started)))
 		if b.opts.memoryMB > 0 {
 			c.Hint = fmt.Sprintf("The container ran out of its %d MB of memory (%s) after %s; on Gregale the app would crash the same way.", b.opts.memoryMB, b.opts.memorySource, bootSeconds(time.Since(b.started)))
 			c.Fix = "Lower the app's memory use (heap or worker settings), or give the app more RAM with `gregale app update APP --ram MB`, up to your plan's limit; check again with `--ram MB`."
+			if b.opts.deploy {
+				c.Fix = "Lower the app's memory use (heap or worker settings), or deploy with a larger --size, up to your plan's limit."
+			}
 		}
 	}
 	if tail := b.docker.logTail(ctx, b.name); tail != "" {
