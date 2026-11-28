@@ -11,7 +11,7 @@ import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner } from './retention.mjs'
+import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createUnusedClientPruner } from './retention.mjs'
 import { budgetKey, budgets, createAttempts, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
@@ -100,11 +100,21 @@ export function upstreamPath(url) {
 }
 
 // /settings/v1 is public: the CLI and the dashboard read the running app's
-// configuration here because app secrets are write-only.
-function serveSettings(req, res, settings) {
+// configuration here because app secrets are write-only. Admin keys are not
+// listed: /settings/v1/admin-keys/<ID> reports one key's scopes and expiry
+// to a caller that already knows its random ID, which only the owner's
+// secret list shows.
+function serveSettings(req, res, settings, adminKeys) {
   if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+  const path = req.url.split('?')[0]
+  let payload = settings
+  if (path !== '/settings/v1') {
+    const id = /^\/settings\/v1\/admin-keys\/([0-9A-F]{8})$/.exec(path)?.[1]
+    payload = id ? adminKeys.find(key => key.id === id) : undefined
+    if (!payload) return problem(res, 404, 'not_found')
+  }
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' })
-  res.end(JSON.stringify(settings))
+  res.end(JSON.stringify(payload))
 }
 
 // readBody buffers a request body up to bodyBytes for an SMS country check.
@@ -125,7 +135,7 @@ function tokenReply(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload))
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [] } = {}) {
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
     const bearer = bearerClaims(req.headers.authorization)
@@ -134,7 +144,7 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (impersonated(bearer) && impersonationBlocked(req.method, req.url)) return problem(res, 403, 'impersonation_restricted')
     // A service account's token is for the application's API, not this host.
     if (isServiceAccountToken(bearer) && !serviceAccountAllowed(req.method, req.url)) return problem(res, 403, 'service_account_token')
-    if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
+    if (settings && /^\/settings\/v1(\/admin-keys\/[^/]*)?$/.test(req.url.split('?')[0])) return serveSettings(req, res, settings, adminKeys)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
     if (scim && /^\/scim\/v2([/?]|$)/.test(req.url)) return scim(req, res)
@@ -158,8 +168,8 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (bearer === false) return problem(res, 401, 'invalid_token')
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared > bodyBytes) return problem(res, 413, 'request_too_large')
-    if (oauth && req.method === 'POST' && path.split('?')[0] === '/oauth/clients/register') {
-      return oauth.registrationOpen().then(open => open ? proxy(req, res, path, upstreamPort, bodyBytes, oauth) : problem(res, 403, 'oauth_client_limit'), () => problem(res, 503, 'auth_unavailable'))
+    if (oauth && req.method === 'POST' && path.split('?')[0].replace(/\/+$/, '') === '/oauth/clients/register') {
+      return registerClient(req, res, path, upstreamPort, bodyBytes, oauth, attempts)
     }
     // The front answers the client-credentials grant for service accounts
     // and passes every other token request to GoTrue as read.
@@ -202,6 +212,29 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
 // X-Real-IP.
 function clientAddress(req) {
   return String(req.headers['x-real-ip'] ?? req.socket.remoteAddress)
+}
+
+// registerClient passes a dynamic OAuth client registration to GoTrue while
+// the app holds fewer than limits.oauthClients clients and the caller's
+// address has registrations left in its budget (budgets.oauthRegistration),
+// so no single address can fill the app's clients.
+async function registerClient(req, res, path, upstreamPort, bodyBytes, oauth, attempts) {
+  try {
+    if (attempts) {
+      const wait = await attempts.reserve([{ key: budgetKey('oauth-registration', clientAddress(req)), budget: budgets.oauthRegistration }])
+      if (wait > 0) {
+        req.resume()
+        if (res.headersSent) return res.destroy()
+        res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
+        return res.end(JSON.stringify({ status: 429, code: 'too_many_registrations', retry_after: wait }))
+      }
+    }
+    if (!(await oauth.registrationOpen())) { req.resume(); return problem(res, 403, 'oauth_client_limit') }
+  } catch {
+    req.resume()
+    return problem(res, 503, 'auth_unavailable')
+  }
+  proxy(req, res, path, upstreamPort, bodyBytes, oauth)
 }
 
 // guardAttempt counts a password sign-in or second-step code against its
@@ -385,7 +418,7 @@ export function start(env = process.env) {
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
-  const server = createServer({ authz, ui, realtime, admin, settings: { ...config.settings, admin_keys: adminKeySummary(adminKeys) }, smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
+  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
@@ -400,7 +433,8 @@ export function start(env = process.env) {
     console.error(JSON.stringify({ level: 'error', event: 'domain_join_setup_failed', sqlstate: err?.code ?? null }))
   })
   // Activity retention prunes on the same request-driven schedule.
-  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool })]
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool }),
+    ...(config.oauth ? [createUnusedClientPruner({ pool })] : [])]
   for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {
     if (publishesAfter(req)) res.on('finish', () => { events?.poke(); for (const pruner of pruners) pruner.poke() })

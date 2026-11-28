@@ -482,3 +482,34 @@ func fetchAuthSettings(ctx context.Context, app api.AppResponse) (authPublicSett
 	}
 	return settings, nil
 }
+
+// fetchAuthAdminKey reads one admin key's scopes and expiry from the running
+// app (/settings/v1/admin-keys/<ID>). The app reports a key only to a caller
+// that names its ID, so its public settings never list them. ok is false when
+// the running app does not report the key: not loaded yet, or a template
+// that lists keys in /settings/v1 instead.
+func fetchAuthAdminKey(ctx context.Context, app api.AppResponse, id string) (authAdminKeySetting, bool) {
+	external, err := authExternalOrigin(app)
+	if err != nil || !authAdminKeyID.MatchString(id) {
+		return authAdminKeySetting{}, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, external+"/settings/v1/admin-keys/"+id, nil)
+	if err != nil {
+		return authAdminKeySetting{}, false
+	}
+	response, err := authAdminHTTPClient.Do(request)
+	if err != nil {
+		return authAdminKeySetting{}, false
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return authAdminKeySetting{}, false
+	}
+	var key authAdminKeySetting
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<10)).Decode(&key); err != nil || key.ID != id {
+		return authAdminKeySetting{}, false
+	}
+	return key, true
+}

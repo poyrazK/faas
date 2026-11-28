@@ -189,10 +189,12 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		Scopes    []string `json:"scopes,omitempty"`
 		ExpiresAt *string  `json:"expires_at"`
 	}
-	// The running app reports each key's scopes and expiry (secrets are
-	// write-only); a key it does not report is not loaded yet.
+	// The running app reports each key's scopes and expiry by ID (secrets are
+	// write-only); a key it does not report is not loaded yet. Apps on an
+	// older template list them in /settings/v1 instead.
 	running := map[string]authAdminKeySetting{}
-	if found, err := client.GetApp(ctx, app); err == nil {
+	found, appErr := client.GetApp(ctx, app)
+	if appErr == nil {
 		if settings, err := fetchAuthSettings(ctx, found); err == nil {
 			for _, k := range settings.AdminKeys {
 				running[k.ID] = k
@@ -203,7 +205,10 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 	for _, secret := range list.Secrets {
 		if authAdminKeyName.MatchString(secret.Key) {
 			id := strings.TrimPrefix(secret.Key, authAdminKeyPrefix)
-			k := running[id]
+			k, listed := running[id]
+			if !listed && appErr == nil {
+				k, _ = fetchAuthAdminKey(ctx, found, id)
+			}
 			rows = append(rows, keyRow{ID: id, CreatedAt: secret.CreatedAt, Scopes: k.Scopes, ExpiresAt: k.ExpiresAt})
 		}
 	}

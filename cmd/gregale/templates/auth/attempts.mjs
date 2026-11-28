@@ -26,6 +26,10 @@ export const budgets = Object.freeze({
   passwordAccount: { limit: limits.passwordFailuresPerAccount, seconds: limits.attemptWindowSeconds },
   secondStep: { limit: limits.secondStepFailuresPerUser, seconds: limits.attemptWindowSeconds },
   serviceAccountClient: { limit: limits.serviceAccountTokensPerMinute, seconds: 60 },
+  // Dynamic OAuth client registrations, counted whether or not they succeed:
+  // the app holds at most limits.oauthClients, so one address must not be
+  // able to take them all.
+  oauthRegistration: { limit: limits.oauthRegistrationsPerAddress, seconds: limits.oauthRegistrationWindowSeconds },
 })
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -101,8 +105,39 @@ export function signInSubject(raw) {
   const fields = name => Object.entries(body).filter(([key]) => key.toLowerCase() === name)
   const email = fields('email'), phone = fields('phone')
   if (email.length > 1 || phone.length > 1) throw new Error('ambiguous')
-  if (typeof email[0]?.[1] === 'string' && email[0][1] !== '') return `email:${email[0][1].toLowerCase()}`
+  if (typeof email[0]?.[1] === 'string' && email[0][1] !== '') return `email:${goLower(email[0][1])}`
   if (typeof phone[0]?.[1] === 'string' && phone[0][1] !== '') return `phone:${normalizePhone(phone[0][1])}`
+  return null
+}
+
+// goLower lowercases as Go's strings.ToLower does, which GoTrue v2.197.0
+// uses to find an account (LOWER(email) = strings.ToLower(input)): one code
+// point at a time with the simple mapping. JavaScript's toLowerCase uses the
+// full mapping, which turns U+0130 (İ) into two code points where Go gives
+// "i", so "alİce@x" would otherwise sign in to alice@x with its own budget.
+export function goLower(value) {
+  let out = ''
+  for (const char of value) out += char === 'İ' ? 'i' : char.toLowerCase()
+  return out
+}
+
+// goQueryValue returns the first value of name in a query string as Go's
+// url.ParseQuery (and so GoTrue's r.FormValue) reads it: a pair containing
+// a semicolon, or with an invalid escape, is dropped rather than read. Node's
+// URLSearchParams keeps both, so "grant_type=x;&grant_type=password" would
+// otherwise read as "x;" here and "password" in GoTrue.
+export function goQueryValue(query, name) {
+  for (const pair of query.split('&')) {
+    if (pair === '' || pair.includes(';')) continue
+    const at = pair.indexOf('=')
+    const [rawKey, rawValue] = at === -1 ? [pair, ''] : [pair.slice(0, at), pair.slice(at + 1)]
+    let key, value
+    try {
+      key = decodeURIComponent(rawKey.replaceAll('+', ' '))
+      value = decodeURIComponent(rawValue.replaceAll('+', ' '))
+    } catch { continue }
+    if (key === name) return value
+  }
   return null
 }
 
@@ -129,9 +164,9 @@ export function guardedPath(method, path) {
   // GoTrue's router serves a path with trailing slashes as the path.
   const route = raw.replace(/\/+$/, '')
   if (route === '/token') {
-    // GoTrue reads the grant from the query (r.FormValue); the password
-    // grant's fields come from the JSON body.
-    return new URLSearchParams(query).get('grant_type') === 'password' ? 'password' : null
+    // GoTrue reads the grant from the query (r.FormValue), parsed as Go
+    // parses it; the password grant's fields come from the JSON body.
+    return goQueryValue(query, 'grant_type') === 'password' ? 'password' : null
   }
   return /^\/factors\/(recovery-codes|[0-9a-fA-F-]{36})\/verify$/.test(route) ? 'second-step' : null
 }

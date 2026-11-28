@@ -18421,6 +18421,14 @@ const (
 	// AuthOAuthMaxClients bounds the OAuth clients one Auth app holds,
 	// registered by the owner or by the clients themselves (RFC 7591).
 	AuthOAuthMaxClients = 1000
+	// AuthOAuthRegistrationsPerAddress bounds the clients one client address
+	// may self-register in AuthOAuthRegistrationWindowSeconds, so no single
+	// caller fills AuthOAuthMaxClients; a self-registered client nobody used
+	// (no consent, session or approved authorization) is soft-deleted
+	// AuthOAuthUnusedClientHours after it registered.
+	AuthOAuthRegistrationsPerAddress   = 10
+	AuthOAuthRegistrationWindowSeconds = 3600
+	AuthOAuthUnusedClientHours         = 24
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

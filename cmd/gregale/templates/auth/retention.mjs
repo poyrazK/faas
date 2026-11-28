@@ -29,6 +29,23 @@ const orgAuditStatement = `DELETE FROM gregale_auth.org_audit_log WHERE id IN (
 const attemptStatement = `DELETE FROM gregale_auth.attempt_budgets WHERE key IN (
     SELECT key FROM gregale_auth.attempt_budgets WHERE window_ends_at < now() - make_interval(days => $1) LIMIT $2)`
 
+// Dynamically registered OAuth clients nobody ever used: no consent, no
+// session and no approved authorization limits.oauthUnusedClientHours after
+// registration. They are soft-deleted as GoTrue deletes clients, so they no
+// longer count towards limits.oauthClients and registration stays open for
+// real clients. Clients the owner made (registration_type 'manual') are kept.
+const unusedClientStatement = `UPDATE auth.oauth_clients SET deleted_at = now() WHERE id IN (
+    SELECT c.id FROM auth.oauth_clients c
+    WHERE c.registration_type = 'dynamic' AND c.deleted_at IS NULL AND c.created_at < now() - make_interval(hours => $1)
+      AND NOT EXISTS (SELECT 1 FROM auth.oauth_consents x WHERE x.client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM auth.sessions s WHERE s.oauth_client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM auth.oauth_authorizations a WHERE a.client_id = c.id AND a.status = 'approved')
+    LIMIT $2)`
+
+export function createUnusedClientPruner(options) {
+  return createPruner({ ...options, days: limits.oauthUnusedClientHours, statement: unusedClientStatement, event: 'unused_oauth_clients' })
+}
+
 export function createAttemptPruner(options) {
   return createPruner({ ...options, days: 1, statement: attemptStatement, event: 'attempt_budgets' })
 }

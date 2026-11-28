@@ -383,8 +383,10 @@ unless created with `--no-expiry`, and may be narrowed to `users:read`,
 `emails`. Each `/admin/v1` route needs one scope and a route no scope names
 needs every scope, so a route added later is closed to narrow keys until it
 is mapped. A bare digest, as keys made before scopes were, holds every scope
-and never expires. Secrets are write-only, so `/settings/v1` reports each
-key's ID, scopes and expiry (never its digest) for `admin-key list`. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
+and never expires. Secrets are write-only, so `/settings/v1/admin-keys/<ID>`
+reports one key's ID, scopes and expiry (never its digest) for
+`admin-key list`; the public `/settings/v1` no longer lists the keys, so
+only someone who already holds an ID from the owner's secret list can ask. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
 its script calls the Auth app directly from the owner's browser: apid adds the
 Auth app's exact origin to that page's `connect-src`, and the Auth app answers
 CORS only for the Gregale API origin sealed at creation. apid never receives
@@ -450,8 +452,11 @@ token's signature, so reading the unverified payload there is safe. Nor may
 such a token leave access that outlives the capped session in the person's
 organizations: issuing service-account secrets or invitations, changing
 roles, or changing the organization's second-factor rule, identity
-providers or domains is refused the same way; the operator does those with
-the admin key. Admin keys now carry their IDs so the record names the key
+providers or domains, or taking team actions, is refused the same way; the
+operator does those with the admin key. The check reads the path as the
+routers do (repeated and trailing slashes collapse), and the `/authz/v1`
+router refuses a path with an empty segment, so no spelling of a refused
+path reaches its handler. Admin keys now carry their IDs so the record names the key
 that acted.
 
 ### Lifecycle events and activity
@@ -734,7 +739,14 @@ and MCP clients can act for an application's users with their consent;
 MCP clients do. Owners register clients with an admin key through
 `/admin/v1/oauth/clients` (`gregale auth oauth-clients`); one app holds at
 most `AuthOAuthMaxClients`, and the front refuses self-registration beyond
-that.
+that. So that no one caller can fill those places, each client address may
+self-register `AuthOAuthRegistrationsPerAddress` clients per
+`AuthOAuthRegistrationWindowSeconds` (an `attempt_budgets` row, refused with
+`429 too_many_registrations`), and a self-registered client with no consent,
+session or approved authorization `AuthOAuthUnusedClientHours` after it
+registered is soft-deleted, as GoTrue deletes clients, by the same
+request-driven pruning as activity retention. Clients the owner made are
+never pruned.
 
 GoTrue sends people to `SITE_URL` plus a configured path to approve a
 client. The front redirects that to the hosted consent page on the Auth
