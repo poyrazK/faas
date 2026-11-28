@@ -382,13 +382,15 @@ func cmdAIUsage(args []string) int {
 		usage.DailyTokenCount, formatOptionalCount(usage.DailyTokenLimit))
 	_, _ = fmt.Fprintf(osStdout, "Cost today: %s / %s   %s month to date: %s / %s\n", financialMoney(usage.DailyCostMillicents),
 		formatOptionalMoney(usage.DailyCostLimitMillicents), usage.Month, financialMoney(usage.MonthlyCostMillicents), formatOptionalMoney(usage.MonthlyCostLimitMillicents))
+	// Callers are app IDs or "runs"; print slugs (prod hunt 2026-11-28).
+	slugs := appSlugsByID(client)
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tCACHE HITS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST\tSAVED\tQUALITY\tSCORE")
 	var saved int64
 	for _, item := range usage.Items {
 		itemSaved := item.CacheSavedMillicents + item.PromptCacheSavedMillicents
 		saved += itemSaved
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n", item.Caller, item.Model, item.Requests,
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n", aiCallerLabel(slugs, item.Caller), item.Model, item.Requests,
 			item.CachedRequests, item.ErrorRequests, item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item),
 			financialMoney(item.CostMillicents), formatSaved(itemSaved), formatQuality(item), formatScore(item))
 	}
@@ -397,4 +399,12 @@ func cmdAIUsage(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Saved today by the response cache and prompt caching: %s\n", formatSaved(saved))
 	}
 	return 0
+}
+
+// aiCallerLabel prints an app caller by slug; "runs" stays as is.
+func aiCallerLabel(slugs map[string]string, caller string) string {
+	if caller == "runs" {
+		return caller
+	}
+	return appLabel(slugs, caller)
 }
