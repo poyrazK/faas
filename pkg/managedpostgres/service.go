@@ -317,8 +317,10 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 
 // RestoreWithResult also reports whether this invocation reserved the target.
 // Callers must compensate only resources they created, never adopted restores.
-// Its error comes with a zero Database except ErrConflict for a copy another
-// worker is making right now (leasedRestore): the provisioning row, not ready.
+// Its error comes with a zero Database except ErrConflict for a copy still
+// being made (restoreInProgress): another worker holds it, or the provider
+// accepted it and it waits for its next check. That row is provisioning and
+// need not be leased.
 func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
 	// A restore copies a database that exists, so it is recovery, not a new
 	// database: the operations gate decides (ADR-20261103091657).
@@ -392,7 +394,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		}
 		database, err := s.Reconcile(ctx, existing.AccountID, existing.ID)
 		if errors.Is(err, ErrConflict) && database.ID == "" {
-			database = s.leasedRestore(ctx, existing)
+			database = s.restoreInProgress(ctx, existing)
 		}
 		return database, false, err
 	}
@@ -555,14 +557,14 @@ func restoreMatchesSourceDefinition(target, source Database) bool {
 		(target.ProviderResourceID == "" || target.ProviderResourceID != source.ProviderResourceID && target.ProviderResourceID != databaseDataResource(source))
 }
 
-// leasedRestore is a restore's copy still being made: another worker holds
+// restoreInProgress is a restore's copy still being made: another worker holds
 // its lease right now, or the provider accepted it and it waits for its next
 // check (released with no error code). Restore answers its conflict with that
 // row so a caller can tell a copy in progress from a failed one (an
 // environment branch waits instead of backing off; prod 2026-11-27 and
 // 2026-11-28, backoffs held a branch's data for 24 s). Any other conflict (a
 // failed, deleting or backed-off copy) keeps the empty row.
-func (s *Service) leasedRestore(ctx context.Context, existing Database) Database {
+func (s *Service) restoreInProgress(ctx context.Context, existing Database) Database {
 	current, err := s.store.Get(ctx, existing.AccountID, existing.ID)
 	now := s.now()
 	if err != nil || current.State != StateProvisioning {
@@ -577,10 +579,12 @@ func (s *Service) leasedRestore(ctx context.Context, existing Database) Database
 }
 
 // A restore the provider accepted but has not finished is checked again
-// every restorePendingQuickPoll for its first restorePendingQuickWindow: a
-// point-in-time branch is usually ready within seconds, and the poll interval
-// kept a copy that was ready waiting 15 s for its next check (prod
-// 2026-11-28: an environment branch's data took 22 s, 16 of them waiting).
+// every restorePendingQuickPoll for its first 10 s and every 2 s up to
+// restorePendingQuickWindow: a point-in-time branch is usually ready within
+// seconds, and the poll interval kept a copy that was ready waiting 15 s for
+// its next check (prod 2026-11-28: an environment branch's data took 22 s, 16
+// of them waiting). A check is a few provider API reads (no database
+// connection), about 20 per restore in that window.
 const (
 	restorePendingQuickPoll   = time.Second
 	restorePendingQuickWindow = 30 * time.Second
@@ -589,10 +593,15 @@ const (
 // pendingPollDelay is when a database the provider is still making is
 // checked again.
 func pendingPollDelay(database Database, now time.Time, poll time.Duration) time.Duration {
-	if database.RestoreSourceResourceID != "" && now.Sub(database.CreatedAt) < restorePendingQuickWindow {
+	age := now.Sub(database.CreatedAt)
+	switch {
+	case database.RestoreSourceResourceID == "" || age >= restorePendingQuickWindow:
+		return poll
+	case age < 10*time.Second:
 		return min(poll, restorePendingQuickPoll)
+	default:
+		return min(poll, 2*restorePendingQuickPoll)
 	}
-	return poll
 }
 
 func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (Database, error) {
@@ -727,8 +736,15 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
 	switch observed.Status {
-	case ProviderStatusPending, ProviderStatusDeleting:
+	case ProviderStatusPending:
 		if err := s.release(ctx, database.ID, leaseToken, StateProvisioning, "", pendingPollDelay(database, now, s.pollInterval)); err != nil {
+			return Database{}, err
+		}
+		return s.store.Get(ctx, accountID, databaseID)
+	case ProviderStatusDeleting:
+		// The provider is removing what it made: not progress, so it keeps
+		// a code (no quick poll, not a copy in progress) and its attempts.
+		if err := s.release(ctx, database.ID, leaseToken, StateProvisioning, "provider_deleting", s.pollInterval); err != nil {
 			return Database{}, err
 		}
 		return s.store.Get(ctx, accountID, databaseID)

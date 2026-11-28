@@ -81,9 +81,38 @@ func TestPendingRestoreIsCheckedSoonAndReadsAsInProgress(t *testing.T) {
 	if wait := target.RetryAt.Sub(now); wait != restorePendingQuickPoll {
 		t.Fatalf("next check of a pending restore in %s; want %s", wait, restorePendingQuickPoll)
 	}
+	// Waiting on the provider is not a failed attempt: quick checks must not
+	// grow the backoff of a later real error.
+	if target.AttemptCount != 0 || target.LastErrorCode != "" {
+		t.Fatalf("pending restore attempts=%d code=%q; want 0 and no code", target.AttemptCount, target.LastErrorCode)
+	}
 	again, created, err := s.RestoreWithResult(t.Context(), request)
 	if !errors.Is(err, ErrConflict) || created || again.ID != target.ID || again.State != StateProvisioning {
 		t.Fatalf("retry before the next check = %+v created=%v err=%v; want the copy in progress with a conflict", again, created, err)
+	}
+}
+
+// A restore the provider is removing is neither polled quickly nor a copy in
+// progress.
+func TestDeletingRestoreIsNotInProgress(t *testing.T) {
+	p := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady, inspectStatus: ProviderStatusDeleting}
+	s := testService(t, testRegistry(t, p, nil), NewMemoryStore())
+	source, err := s.Create(t.Context(), CreateRequest{AccountID: "account", Name: "source", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.provisionStatus = ProviderStatusDeleting
+	now := source.CreatedAt.Add(10 * time.Second)
+	s.now = func() time.Time { return now }
+	s.pollInterval = 15 * time.Second
+	request := RestoreDatabaseRequest{AccountID: "account", SourceDatabaseID: source.ID, Name: "target", PointInTime: source.CreatedAt}
+	target, err := s.Restore(t.Context(), request)
+	if err != nil || target.State != StateProvisioning || target.LastErrorCode != "provider_deleting" || target.RetryAt.Sub(now) != s.pollInterval {
+		t.Fatalf("restore = %+v, %v; want provisioning with provider_deleting, next check on the poll interval", target, err)
+	}
+	again, _, err := s.RestoreWithResult(t.Context(), request)
+	if !errors.Is(err, ErrConflict) || again.ID != "" {
+		t.Fatalf("retry = %+v, %v; want a bare conflict", again, err)
 	}
 }
 
@@ -98,6 +127,7 @@ func TestPendingPollDelay(t *testing.T) {
 		want     time.Duration
 	}{
 		{"young restore", Database{RestoreSourceResourceID: "src", CreatedAt: now.Add(-5 * time.Second)}, time.Second},
+		{"restore past 10 s", Database{RestoreSourceResourceID: "src", CreatedAt: now.Add(-15 * time.Second)}, 2 * time.Second},
 		{"old restore", Database{RestoreSourceResourceID: "src", CreatedAt: now.Add(-time.Minute)}, poll},
 		{"new database", Database{CreatedAt: now.Add(-5 * time.Second)}, poll},
 	} {
