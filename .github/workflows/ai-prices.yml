@@ -1,0 +1,27 @@
+name: ai-prices
+
+# ADR-994: the AI gateway prices calls from a catalog generated from
+# LiteLLM. A model released after the catalog has no price, and the gateway
+# refuses its calls under any cost cap until the catalog is regenerated
+# (prod hunt 2026-11-28: claude-fable-5-2 was refused for five weeks). A
+# weekly check says when a regeneration would add or reprice models.
+on:
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Compare the catalog with LiteLLM's newest prices
+        run: make ai-prices-check

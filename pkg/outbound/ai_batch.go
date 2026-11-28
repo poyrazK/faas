@@ -101,18 +101,30 @@ type batchRequestBody struct {
 	MaxTokens           *int64 `json:"max_tokens"`
 	MaxCompletionTokens *int64 `json:"max_completion_tokens"`
 	MaxOutputTokens     *int64 `json:"max_output_tokens"`
+	// N and BestOf ask for several answers, each up to the ceiling (prod
+	// hunt 2026-11-28).
+	N      *int64 `json:"n"`
+	BestOf *int64 `json:"best_of"`
 }
 
+// outputCeiling is the output one request of the batch can produce: its
+// per-answer ceiling times the answers it asks for.
 func (b batchRequestBody) outputCeiling(generation bool) int64 {
 	if !generation {
 		return 0
 	}
-	for _, ceiling := range []*int64{b.MaxCompletionTokens, b.MaxOutputTokens, b.MaxTokens} {
-		if ceiling != nil && *ceiling > 0 {
-			return *ceiling
+	choices := int64(1)
+	for _, count := range []*int64{b.N, b.BestOf} {
+		if count != nil && *count > choices {
+			choices = min(*count, aiChoicesMax)
 		}
 	}
-	return api.OutboundAIDefaultOutputReserveTokens
+	for _, ceiling := range []*int64{b.MaxCompletionTokens, b.MaxOutputTokens, b.MaxTokens} {
+		if ceiling != nil && *ceiling > 0 {
+			return min(*ceiling, api.OutboundAIMaxTokensPerResponse) * choices
+		}
+	}
+	return api.OutboundAIDefaultOutputReserveTokens * choices
 }
 
 // estimateAnthropicBatch reads the inline requests of a Message Batches
