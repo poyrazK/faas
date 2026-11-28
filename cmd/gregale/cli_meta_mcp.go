@@ -277,7 +277,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
 			}},
 		}},
-		{Name: "listing", Short: "Publish a sold server's public page: tools, plans, sign-up and install links", Subcommands: []cliSub{
+		{Name: "listing", Short: "Publish a sold server's public page with plans and install links", Subcommands: []cliSub{
 			{Name: "publish", Short: "List the live server's tools and publish or refresh the page", Notes: []string{
 				"Republish after changing tools: the page shows the tools as of the last publish. A republish keeps the title, summary, registry name and usage setting unless you pass them; --summary \"\" clears the summary and --show-usage=false hides the count.",
 				"The app needs sign-up set up (gregale api consumer signup set) and API monetization on the account.",

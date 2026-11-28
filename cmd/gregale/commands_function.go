@@ -24,9 +24,13 @@ const functionUsage = "usage: gregale function types [--path <dir>] [--check]"
 const functionTypesProjectSlug = "project"
 
 func cmdFunction(args []string) int {
-	if len(args) == 0 || args[0] != "types" {
+	if len(args) == 0 {
 		PrintUsage(os.Stderr, functionUsage, "functions")
 		return 1
+	}
+	if args[0] != "types" {
+		// `function get nope` printed only the types usage (prod hunt r75).
+		return printUnknownSubcommand(os.Stderr, "function", nestedCliCommand("function"), args[0])
 	}
 	return cmdFunctionTypes(args[1:], os.Stdout)
 }

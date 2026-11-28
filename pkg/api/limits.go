@@ -495,6 +495,26 @@ const (
 	UnverifiedAccountExpiryBatch = 100
 )
 
+// DeletedOrgPurgeAfter is how long a deleted shared organization keeps its
+// slug before apid's hourly purge releases it (ADR-061 amendment 1); one
+// sweep purges at most DeletedOrgPurgeBatch.
+const (
+	DeletedOrgPurgeAfter = 30 * 24 * time.Hour
+	DeletedOrgPurgeBatch = 100
+)
+
+// schedd's sweep of snapshots whose object is missing from the canonical
+// store (prod hunt r72): a snapshot must be SnapshotOriginMissingGrace old
+// when a node's fan-out found it missing before schedd marks it stale (a
+// capture's upload lands well inside it); the sweep runs every
+// SnapshotOriginMissingInterval and retires at most SnapshotOriginMissingBatch
+// per pass.
+const (
+	SnapshotOriginMissingGrace    = time.Hour
+	SnapshotOriginMissingInterval = 5 * time.Minute
+	SnapshotOriginMissingBatch    = 50
+)
+
 // Customer-granted support access (ADR-20261116163508). A grant lasts
 // SupportGrantDefaultTTL unless its owner or admin picks another duration,
 // at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A

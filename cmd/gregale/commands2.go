@@ -5936,6 +5936,9 @@ func cmdDomains(args []string) int {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
 		}
+		if err := domainNotURL(*domain); err != nil {
+			return printErr("Invalid domain", err)
+		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
@@ -6574,6 +6577,11 @@ func cmdKeys(args []string) int {
 			PrintUsage(os.Stderr, "usage: gregale key create <label> [--agent] [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 1
 		}
+		if strings.TrimSpace(positional[0]) == "" {
+			// `key create ""` minted a key `key list` shows as "-", which
+			// nobody can tell apart later (prod hunt r64).
+			return printErr("Invalid label", errors.New("the key label cannot be blank; name what the key is for, e.g. gregale key create ci-deploy"))
+		}
 		projects := splitList(*projectsCSV)
 		if flagWasSet(fs, "projects") && len(projects) == 0 {
 			return printErr("Invalid projects", errors.New("--projects must name at least one project"))
@@ -6804,8 +6812,10 @@ func cmdUsage(args []string) int {
 	case "object-storage":
 		return cmdUsageObjectStorage(args[1:])
 	}
-	PrintUsage(os.Stderr, "usage: gregale billing usage [--month YYYY-MM] | gregale billing usage summary [--month YYYY-MM] | gregale billing usage daily [--day YYYY-MM-DD] | gregale billing usage storage [--day YYYY-MM-DD]", "usage")
-	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
+	// `usage basic-hello` printed the usage line and then the unknown
+	// subcommand, the usage twice over (prod hunt r76). Name the word once,
+	// say the rows are per app already, and list the subcommands.
+	printCommandValidation(os.Stderr, "unknown usage subcommand %q: `gregale billing usage` lists every app's usage for the month.\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "usage", parent, args[0])
 }
 
@@ -7657,7 +7667,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	if *explain && jsonOutput {
 		if err := validateJSONLogExplanation(fs, *deployment, *follow); err != nil {
 			PrintUsage(osStderr, err.Error(), "logs")
-			return 2
+			return 1
 		}
 	}
 	if fs.NArg() > 1 {
@@ -7666,73 +7676,73 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	}
 	if logsFlagWasSet(fs, "deployment") && logsFlagWasSet(fs, "release") {
 		PrintUsage(os.Stderr, "--release and --deployment are aliases; use only one", "logs")
-		return 2
+		return 1
 	}
 	httpQueryRequested := logsFlagWasSet(fs, "status") || logsFlagWasSet(fs, "route") ||
 		logsFlagWasSet(fs, "request") || logsFlagWasSet(fs, "trace") || logsFlagWasSet(fs, "limit") || logsFlagWasSet(fs, "all")
 	logSource, sourceErr := normalizeLogsSource(*source, httpQueryRequested)
 	if sourceErr != nil {
 		PrintUsage(os.Stderr, sourceErr.Error(), "logs")
-		return 2
+		return 1
 	}
 	if logSource == logsSourceRuntime && httpQueryRequested {
 		PrintUsage(os.Stderr, "--status, --route, --request, --trace, --limit, and --all require --source http", "logs")
-		return 2
+		return 1
 	}
 	if logSource == logsSourceHTTP && !*dryRun && capabilityHiddenForRun(httpLogsCapability, false) {
 		return printHTTPLogsUnavailable()
 	}
 	if logsFlagWasSet(fs, "status") && (*status < 100 || *status > 599) {
 		PrintUsage(os.Stderr, "--status must be between 100 and 599", "logs")
-		return 2
+		return 1
 	}
 	if logSource == logsSourceHTTP && (*limit < 1 || *limit > 200) {
 		PrintUsage(os.Stderr, "--limit must be between 1 and 200", "logs")
-		return 2
+		return 1
 	}
 	if logsFlagWasSet(fs, "request") && strings.TrimSpace(*requestID) == "" {
 		PrintUsage(os.Stderr, "--request requires a non-empty request id", "logs")
-		return 2
+		return 1
 	}
 	if logsFlagWasSet(fs, "trace") && !validTraceID(strings.TrimSpace(*traceID)) {
 		PrintUsage(os.Stderr, "--trace must be a 32-character lowercase W3C trace id", "logs")
-		return 2
+		return 1
 	}
 	if err := validateHTTPLogRoute(*route); err != nil {
 		PrintUsage(os.Stderr, err.Error(), "logs")
-		return 2
+		return 1
 	}
 	if strings.TrimSpace(*requestID) != "" && strings.TrimSpace(*traceID) != "" {
 		PrintUsage(os.Stderr, "--request and --trace are mutually exclusive", "logs")
-		return 2
+		return 1
 	}
 	if strings.TrimSpace(*requestID) != "" && (*all || logsFlagWasSet(fs, "limit")) {
 		PrintUsage(os.Stderr, "--request cannot be combined with --all or --limit", "logs")
-		return 2
+		return 1
 	}
 	if strings.TrimSpace(*traceID) != "" && *all {
 		PrintUsage(os.Stderr, "--trace cannot be combined with --all; trace results are already bounded", "logs")
-		return 2
+		return 1
 	}
 	archiveRequested := *archive || *archiveInstance != "" || *archiveDate != ""
 	var archiveSelector *api.ArchiveLogSelector
 	if archiveRequested {
 		if !*archive || *archiveInstance == "" || *archiveDate == "" {
 			PrintUsage(os.Stderr, "--archive, --instance ID, and --date today|yesterday|YYYY-MM-DD must be used together", "logs")
-			return 2
+			return 1
 		}
 		if logSource == logsSourceHTTP || *follow || *deployment != "" || *grep != "" || *since != "" || *level != "" || httpQueryRequested {
 			PrintUsage(os.Stderr, "--archive cannot be combined with HTTP queries, --follow, --release, --deployment, --grep, --since, or --level", "logs")
-			return 2
+			return 1
 		}
 		if !archiveLogInstancePattern.MatchString(*archiveInstance) {
 			PrintUsage(os.Stderr, "--instance must be 1..128 ASCII letters, numbers, dots, underscores, or hyphens (for example, instance-123); spaces and slashes are not allowed", "logs")
-			return 2
+			return 1
 		}
 		resolvedDate, err := resolveArchiveLogDate(*archiveDate, time.Now())
 		if err != nil {
 			PrintUsage(os.Stderr, err.Error(), "logs")
-			return 2
+			return 1
 		}
 		*archiveDate = resolvedDate
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
@@ -7747,16 +7757,16 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 			}
 			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --grep, --level, --explain, or --archive; drop %s to read runtime logs",
 				flags, verb, flags), "logs")
-			return 2
+			return 1
 		}
 		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --grep, --level, --explain, or --archive", "logs")
-		return 2
+		return 1
 	}
 	if logSource == logsSourceHTTP && *follow && (strings.TrimSpace(*requestID) != "" || strings.TrimSpace(*traceID) != "" || *all || logsFlagWasSet(fs, "limit")) {
 		// --follow polls new request rows; a single-request lookup or a
 		// full-window read has nothing to follow.
 		PrintUsage(os.Stderr, "--follow prints new HTTP requests as they are recorded; drop --request, --trace, --limit, or --all (filter with --route, --status, or --release)", "logs")
-		return 2
+		return 1
 	}
 	// Validate --level early so a typo costs the customer a network
 	// round-trip; --since is validated next so the SDK never sees a
@@ -7767,13 +7777,13 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	// `event: error` SSE frame.
 	if *level != "" && !api.IsValidLogLevel(*level) {
 		PrintUsage(os.Stderr, "--level must be one of: info, warn, error", "logs")
-		return 2
+		return 1
 	}
 	now := time.Now()
 	normalizedSince, sinceErr := normalizeLogsSince(*since, logSource, now)
 	if sinceErr != nil {
 		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
-		return 2
+		return 1
 	}
 	slug := ""
 	if pos, mergeErr := mergeAppFlag(fs.Args(), *app, 1); mergeErr != nil {
@@ -7812,7 +7822,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		}
 		deploymentRef = resolved
 		if logSource != logsSourceHTTP && !archiveRequested {
-			if code, handled := buildLogsForUnrunDeployment(context.Background(), logsClient, deploymentRef, *follow); handled {
+			if code, handled := buildLogsForUnrunDeployment(context.Background(), logsClient, slug, deploymentRef, *follow); handled {
 				return code
 			}
 		}
@@ -7867,16 +7877,16 @@ func cmdLogsTail(args []string) int {
 	}
 	if *follow {
 		PrintFail(os.Stderr, "--follow is redundant with `logs tail` (alias always follows); drop the flag")
-		return 2
+		return 1
 	}
 	if *level != "" && !api.IsValidLogLevel(*level) {
 		PrintUsage(os.Stderr, "--level must be one of: info, warn, error", "logs")
-		return 2
+		return 1
 	}
 	normalizedSince, sinceErr := normalizeLogsSince(*since, logsSourceRuntime, time.Now())
 	if sinceErr != nil {
 		PrintUsage(os.Stderr, sinceErr.Error(), "logs")
-		return 2
+		return 1
 	}
 	slug := ""
 	if fs.NArg() == 1 {

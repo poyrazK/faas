@@ -156,10 +156,11 @@ PY
   echo "egress-render: OK cloudflare-origin"
 }
 
-# check_public_entry_ingress: an edge with no proxy in front opens 443 on its
-# entry addresses only, behind a per-source connection limit, drops
-# everything else sent to them before sshd's accept, and keeps 80 closed
-# (ADR-20261103163954 §2, §4).
+# check_public_entry_ingress: an edge with no proxy in front opens 443, and 80
+# for the redirect to HTTPS, on its entry addresses only, behind a per-source
+# connection limit, and drops everything else sent to them before sshd's
+# accept (ADR-20261103163954 §2, §4; ADR-20261127170000). With
+# FAAS_PUBLIC_ENTRY_HTTP=off (no redirect listener) 80 stays closed.
 check_public_entry_ingress() {
   local rendered
   rendered=$(render_go eth0 10.100.0.0/16 "" "" "" "" "" "" "" "" "203.0.113.10,2001:db8::10")
@@ -168,8 +169,8 @@ check_public_entry_ingress() {
     return 1
   fi
   local limit accept drop ssh
-  limit=$(grep -n 'ip daddr 203.0.113.10 tcp dport 443 ct state new add @public_entry_conns_v4 { ip saddr ct count over' <<<"$rendered" | cut -d: -f1 || true)
-  accept=$(grep -n 'ip daddr 203.0.113.10 tcp dport 443 accept' <<<"$rendered" | cut -d: -f1)
+  limit=$(grep -n 'ip daddr 203.0.113.10 tcp dport { 80, 443 } ct state new add @public_entry_conns_v4 { ip saddr ct count over' <<<"$rendered" | cut -d: -f1 || true)
+  accept=$(grep -n 'ip daddr 203.0.113.10 tcp dport { 80, 443 } accept' <<<"$rendered" | cut -d: -f1)
   drop=$(grep -n 'ip6 daddr 2001:db8::10 drop' <<<"$rendered" | cut -d: -f1)
   ssh=$(grep -n 'tcp dport 22 accept' <<<"$rendered" | head -1 | cut -d: -f1)
   if [[ -z "$accept" || -z "$drop" || -z "$ssh" ]] || (( accept > drop || drop > ssh )); then
@@ -179,6 +180,12 @@ check_public_entry_ingress() {
   # The kernel's per-source backstop drops before the 443 accept.
   if [[ -z "$limit" ]] || (( limit > accept )); then
     echo "egress-render: DIVERGE public-entry per-source limit missing or after the 443 accept"
+    return 1
+  fi
+  local closed
+  closed=$(FAAS_PUBLIC_ENTRY_HTTP=off render_go eth0 10.100.0.0/16 "" "" "" "" "" "" "" "" "203.0.113.10,2001:db8::10")
+  if ! grep -Fq 'ip daddr 203.0.113.10 tcp dport 443 accept' <<<"$closed" || grep -Fq '203.0.113.10 tcp dport { 80, 443 }' <<<"$closed"; then
+    echo "egress-render: DIVERGE public-entry with FAAS_PUBLIC_ENTRY_HTTP=off still opens 80"
     return 1
   fi
   echo "egress-render: OK public-entry"

@@ -994,6 +994,11 @@ func cmdProjectsEnvironmentsList(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	environments, err := client.ListProjectEnvironments(context.Background(), args[0])
+	if isNotFound(err) {
+		// `environment list basic-hello` (an app) answered only "no such
+		// project resource" (prod hunt r73).
+		return printErr("Project not found", fmt.Errorf("no project %q in this account; environments belong to projects: gregale project list names them", args[0]))
+	}
 	if err != nil {
 		return printErr("Could not list project environments", err)
 	}
